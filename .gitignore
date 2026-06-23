@@ -16,6 +16,11 @@ build/
 web/dist/
 api/dist/
 
+# tsc -b emitted artifacts
+*.tsbuildinfo
+web/vite.config.js
+web/vite.config.d.ts
+
 # prisma generated client
 api/src/generated/
 **/.prisma/
