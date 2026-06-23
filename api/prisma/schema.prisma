@@ -1,0 +1,122 @@
+// Minerva — Prisma schema (spec §5 + pgvector embedding tables, §5 note)
+// Vector columns use Unsupported("vector(1024)") — Voyage voyage-3 = 1024 dims.
+// IVFFlat/HNSW indexes are created by prisma/init-pgvector.sql / a later migration (M3).
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  extensions = [vector]
+}
+
+model Customer {
+  id          String          @id @default(cuid())
+  lineUserId  String          @unique
+  displayName String?
+  firstSeen   DateTime        @default(now())
+  lastSeen    DateTime        @default(now())
+  messages    Message[]
+  memory      CustomerMemory?
+  sessions    Session[]
+}
+
+model Session {
+  id         String    @id @default(cuid())
+  customerId String
+  customer   Customer  @relation(fields: [customerId], references: [id])
+  status     String    @default("open") // open | ended
+  startedAt  DateTime  @default(now())
+  endedAt    DateTime?
+  messages   Message[]
+}
+
+model Message {
+  id           String   @id @default(cuid())
+  customerId   String
+  sessionId    String?
+  role         String // customer | agent
+  text         String
+  agentId      String? // who sent (if agent)
+  kbIds        String[] // KB entries used
+  channelMsgId String? // LINE message id
+  createdAt    DateTime @default(now())
+
+  customer  Customer          @relation(fields: [customerId], references: [id])
+  session   Session?          @relation(fields: [sessionId], references: [id])
+  embedding MessageEmbedding?
+
+  @@index([customerId])
+  @@index([sessionId])
+}
+
+model CustomerMemory {
+  customerId         String   @id
+  customer           Customer @relation(fields: [customerId], references: [id])
+  summary            String   @default("")
+  summarizedThroughN Int      @default(0) // message count covered by summary
+  updatedAt          DateTime @updatedAt
+}
+
+model Agent {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  name         String
+  passwordHash String
+  role         String   @default("agent") // agent | supervisor
+  createdAt    DateTime @default(now())
+}
+
+model KbEntry {
+  id               String   @id @default(cuid())
+  category         String
+  questionVariants String[]
+  answer           String
+  sku              String?
+  sensitivity      String   @default("normal") // normal | price_stock | clinical | no_auto
+  status           String   @default("active") // active | pending | archived
+  source           String   @default("manual") // manual | learned
+  lastVerifiedAt   DateTime @default(now())
+  ownerAgentId     String?
+
+  embedding KbEmbedding?
+}
+
+model LearnedAnswer {
+  id               String   @id @default(cuid())
+  customerQuestion String
+  aiDraft          String
+  finalAnswer      String
+  agentId          String
+  edited           Boolean  @default(true)
+  status           String   @default("pending") // pending | approved | rejected
+  promotedKbId     String?
+  createdAt        DateTime @default(now())
+}
+
+model Draft {
+  id              String   @id @default(cuid())
+  messageId       String   @unique // the customer message it answers
+  type            String // draft | needs_human | out_of_scope
+  draftText       String
+  usedKb          String[]
+  note            String?
+  retrievedMsgIds String[]
+  createdAt       DateTime @default(now())
+}
+
+// ─── pgvector embedding tables (spec §5 note) ───────────────────────────
+model MessageEmbedding {
+  messageId String                      @id
+  message   Message                     @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  embedding Unsupported("vector(1024)")
+}
+
+model KbEmbedding {
+  kbId      String                      @id
+  kb        KbEntry                     @relation(fields: [kbId], references: [id], onDelete: Cascade)
+  embedding Unsupported("vector(1024)")
+}

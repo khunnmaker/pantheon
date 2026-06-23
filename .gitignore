@@ -1,0 +1,31 @@
+# dependencies
+node_modules/
+**/node_modules/
+
+# env / secrets
+.env
+**/.env
+!.env.example
+!**/.env.example
+
+# build output
+dist/
+build/
+**/dist/
+**/build/
+web/dist/
+api/dist/
+
+# prisma generated client
+api/src/generated/
+**/.prisma/
+
+# logs
+*.log
+npm-debug.log*
+
+# editor / os
+.DS_Store
+.vscode/
+.idea/
+*.swp

@@ -1,0 +1,59 @@
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: minerva-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-minerva}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-minerva}
+      POSTGRES_DB: ${POSTGRES_DB:-minerva}
+    ports:
+      - "5432:5432"
+    volumes:
+      - minerva_pgdata:/var/lib/postgresql/data
+      - ./api/prisma/init-pgvector.sql:/docker-entrypoint-initdb.d/00-pgvector.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-minerva} -d ${POSTGRES_DB:-minerva}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    container_name: minerva-api
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      # inside compose the db host is the service name `db`
+      DATABASE_URL: postgresql://${POSTGRES_USER:-minerva}:${POSTGRES_PASSWORD:-minerva}@db:5432/${POSTGRES_DB:-minerva}?schema=public
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      VOYAGE_API_KEY: ${VOYAGE_API_KEY:-}
+      LINE_CHANNEL_ACCESS_TOKEN: ${LINE_CHANNEL_ACCESS_TOKEN:-}
+      LINE_CHANNEL_SECRET: ${LINE_CHANNEL_SECRET:-}
+      RECENT_WINDOW: ${RECENT_WINDOW:-10}
+      RETRIEVE_K: ${RETRIEVE_K:-3}
+      SESSION_IDLE_MINUTES: ${SESSION_IDLE_MINUTES:-30}
+      PORT: 3000
+      NODE_ENV: production
+      WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:5173}
+    ports:
+      - "3000:3000"
+
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    container_name: minerva-web
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "5173:5173"
+
+volumes:
+  minerva_pgdata:
