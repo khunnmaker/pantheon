@@ -1,16 +1,18 @@
-// Minerva — Prisma schema (spec §5 + pgvector embedding tables, §5 note)
-// Vector columns use Unsupported("vector(1024)") — Voyage voyage-3 = 1024 dims.
-// IVFFlat/HNSW indexes are created by prisma/init-pgvector.sql / a later migration (M3).
+// Minerva — Prisma schema.
+//
+// SCOPE: M0–M2 are RELATIONAL ONLY and run on any vanilla PostgreSQL.
+// pgvector (embeddings/retrieval) is NOT used until M3, so the vector extension
+// and the two embedding tables are deferred — see the commented-out block at the
+// bottom of this file and prisma/init-pgvector.sql. Activate them in M3 once the
+// db has the `vector` extension available (docker-compose uses pgvector/pgvector).
 
 generator client {
-  provider        = "prisma-client-js"
-  previewFeatures = ["postgresqlExtensions"]
+  provider = "prisma-client-js"
 }
 
 datasource db {
-  provider   = "postgresql"
-  url        = env("DATABASE_URL")
-  extensions = [vector]
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
 }
 
 model Customer {
@@ -45,9 +47,9 @@ model Message {
   channelMsgId String? // LINE message id
   createdAt    DateTime @default(now())
 
-  customer  Customer          @relation(fields: [customerId], references: [id])
-  session   Session?          @relation(fields: [sessionId], references: [id])
-  embedding MessageEmbedding?
+  customer Customer @relation(fields: [customerId], references: [id])
+  session  Session? @relation(fields: [sessionId], references: [id])
+  // embedding MessageEmbedding?  // M3 — see deferred block below
 
   @@index([customerId])
   @@index([sessionId])
@@ -81,8 +83,7 @@ model KbEntry {
   source           String   @default("manual") // manual | learned
   lastVerifiedAt   DateTime @default(now())
   ownerAgentId     String?
-
-  embedding KbEmbedding?
+  // embedding KbEmbedding?  // M3 — see deferred block below
 }
 
 model LearnedAnswer {
@@ -108,15 +109,25 @@ model Draft {
   createdAt       DateTime @default(now())
 }
 
-// ─── pgvector embedding tables (spec §5 note) ───────────────────────────
-model MessageEmbedding {
-  messageId String                      @id
-  message   Message                     @relation(fields: [messageId], references: [id], onDelete: Cascade)
-  embedding Unsupported("vector(1024)")
-}
-
-model KbEmbedding {
-  kbId      String                      @id
-  kb        KbEntry                     @relation(fields: [kbId], references: [id], onDelete: Cascade)
-  embedding Unsupported("vector(1024)")
-}
+// ─── DEFERRED TO M3: pgvector embedding tables (spec §5 note) ────────────
+// Activate in M3 once the database has the `vector` extension. Steps:
+//   1. add `previewFeatures = ["postgresqlExtensions"]` to the generator
+//   2. add `extensions = [vector]` to the datasource
+//   3. uncomment the two models below and the `embedding` relation fields on
+//      Message and KbEntry
+//   4. `prisma migrate dev --name pgvector` (db must be pgvector/pgvector or
+//      a Postgres with the vector extension installed)
+//   5. add cosine HNSW indexes (see prisma/init-pgvector.sql)
+// Voyage voyage-3 = 1024 dims.
+//
+// model MessageEmbedding {
+//   messageId String                      @id
+//   message   Message                     @relation(fields: [messageId], references: [id], onDelete: Cascade)
+//   embedding Unsupported("vector(1024)")
+// }
+//
+// model KbEmbedding {
+//   kbId      String                      @id
+//   kb        KbEntry                     @relation(fields: [kbId], references: [id], onDelete: Cascade)
+//   embedding Unsupported("vector(1024)")
+// }

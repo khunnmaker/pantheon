@@ -24,45 +24,52 @@ every reply. The system remembers each customer (3-layer memory) and learns from
 docker-compose.yml   postgres(pgvector) + api + web
 ```
 
-## Prerequisites (install these first)
-M0 files are committed, but to **run/verify** them you need:
-- **Node.js 20+** — https://nodejs.org  (`node -v`, `npm -v`)
-- **Docker Desktop** — https://www.docker.com/products/docker-desktop  (`docker -v`)
+## Prerequisites
+- **Node.js 20+** — required. (Installed via winget on the dev machine: v24.x.)
+- **PostgreSQL 16** — for local dev *without Docker* (installed via winget). Plain Postgres
+  is enough for **M0–M2** (relational only).
+- **Docker Desktop** — needed for the full `pgvector` path in **M3+**. On Windows this needs
+  WSL2 (`wsl --install`, then a reboot). Not required to run M0–M2.
 
-> On this machine, neither `node` nor `docker` was on PATH at scaffold time — install both,
-> then follow the steps below.
+## Two ways to run
 
-## Quick start (M0)
+### A) Local dev on native PostgreSQL (no Docker — current setup)
+This is how M0 was verified on the dev machine.
 ```bash
-# 1. configure env
-cp .env.example .env
-# edit .env — at minimum set a DATABASE_URL and JWT_SECRET; LINE/Anthropic/Voyage
-# keys can stay blank until M1/M2/M3.
+# 1. api env (already points at the local postgres superuser)
+cd api && copy .env.example .env   # then set DATABASE_URL to your local postgres
 
-# 2. bring up postgres (pgvector) + build api/web
-docker compose up -d db
-cd api && cp .env.example .env && npm install
-
-# 3. create the database schema
-npx prisma migrate dev --name init
-# (pgvector extension is enabled by the db container's init script)
-
-# 4. run the api
+# 2. install + migrate + run
+npm install
+npx prisma migrate dev --name init   # creates the 8 relational tables
 npm run dev
-# health check:
-curl http://localhost:3000/health   ->  {"status":"ok",...}
+```
+```bash
+# health checks
+curl http://localhost:3000/health      # {"status":"ok","service":"minerva-api",...}
+curl http://localhost:3000/health/db   # {"status":"ok","db":"up"}
+```
+Web console:
+```bash
+cd web && npm install && npm run dev    # http://localhost:5173
 ```
 
-Or run everything in containers:
+### B) Everything in Docker (intended for M3+, needs WSL2)
 ```bash
+cp .env.example .env
 docker compose up --build
-# api:  http://localhost:3000/health
-# web:  http://localhost:5173
+# db uses the pgvector/pgvector image; api applies migrations on boot
+# api: http://localhost:3000/health   web: http://localhost:5173
 ```
+
+> **pgvector is deferred to M3.** The schema's vector extension + embedding tables are kept
+> as a documented, commented block in `api/prisma/schema.prisma` and `api/prisma/init-pgvector.sql`.
+> M0–M2 run on vanilla Postgres; activate pgvector when M3 (embeddings/retrieval) begins.
 
 ## Milestones
-- **M0 — Scaffold** ✅ (this commit): monorepo, docker-compose (postgres+pgvector),
-  Prisma schema + migrations, env loading, health check.
+- **M0 — Scaffold** ✅ **verified running**: monorepo, docker-compose (postgres+pgvector),
+  Prisma schema + relational migration applied, env loading, health check green
+  (`/health` + `/health/db` both ok on native Postgres). pgvector deferred to M3.
 - M1 — Ingest + console shell + auth
 - M2 — Draft + send (human-in-the-loop) + guardrails
 - M3 — 3-layer memory (embeddings + retrieval + auto-summary)
