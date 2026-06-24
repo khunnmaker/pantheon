@@ -52,6 +52,22 @@ export function hasNumbers(text: string): boolean {
   return /[0-9๐-๙]/.test(text || ''); // ASCII or Thai digits
 }
 
+// Price-like tokens (a number next to a currency unit), thousands-separators
+// stripped so "2,000 บาท" and "2000บาท" compare equal.
+function priceTokens(s: string): string[] {
+  return normalize(s).replace(/,/g, '').match(/[0-9๐-๙]+(?:\.[0-9๐-๙]+)?(?:บาท|baht|thb|฿)/g) || [];
+}
+
+// True if every price the draft states also appears in a cited KB answer — i.e.
+// the number was copied from supervisor-approved content, not invented by the AI.
+// A draft with no price tokens is trivially grounded.
+function pricesGrounded(draftText: string, citedKb: KbEntry[]): boolean {
+  const tokens = priceTokens(draftText);
+  if (tokens.length === 0) return true;
+  const kbTokens = new Set(priceTokens(citedKb.map((k) => k.answer).join(' ')));
+  return tokens.every((t) => kbTokens.has(t));
+}
+
 const OVERRIDE: Record<'price_stock' | 'clinical', { draft: string; note: string }> = {
   price_stock: {
     draft: 'ขอเช็กข้อมูลให้สักครู่นะคะ เดี๋ยวเจ้าหน้าที่ยืนยันให้อีกครั้งค่ะ 😊',
@@ -82,24 +98,37 @@ export function applyGuardrails(
   const kbPriceStock =
     citedSensitivity.includes('price_stock') || citedSensitivity.includes('no_auto');
 
-  let reason: SensitiveIntent = detectSensitiveIntent(question);
-  if (!reason && kbClinical) reason = 'clinical';
-  if (!reason && kbPriceStock) reason = 'price_stock';
-  // Backstop: scan the AI's own draft text — a "ready" draft must not itself
-  // assert a price/stock/clinical answer (catches English/non-keyword fabrications).
-  if (!reason && result.type === 'draft') reason = detectSensitiveIntent(result.draft);
+  // A cited KB entry that is itself sensitive → always escalate to staff, whatever
+  // the model produced (the supervisor classified this topic as needing a human).
+  let reason: SensitiveIntent = null;
+  if (kbClinical) reason = 'clinical';
+  else if (kbPriceStock) reason = 'price_stock';
+
+  if (!reason) {
+    // Backstop: the QUESTION or the AI's own DRAFT looks price/stock/clinical even
+    // though no sensitive KB entry was cited (catches non-keyword fabrications).
+    const qReason = detectSensitiveIntent(question);
+    const dReason = result.type === 'draft' ? detectSensitiveIntent(result.draft) : null;
+    reason = qReason || dReason;
+
+    // Exception: a price/stock-looking answer whose every stated price is grounded
+    // in a cited (supervisor-approved, non-sensitive) KB entry — e.g. the free-
+    // shipping threshold — is NOT an AI guess. Trust it and let the draft through.
+    if (reason === 'price_stock' && !!result.draft && pricesGrounded(result.draft, citedKb)) {
+      return { result, triggered: false, reason: null };
+    }
+  }
 
   if (!reason) return { result, triggered: false, reason: null };
 
   const o = OVERRIDE[reason];
-  // Keep the model's combined answer (so the answerable parts of a multi-question
-  // burst survive, tagged needs_human for review). Fall back to the canned text
-  // only if the draft is empty, the question is clinical (no AI medical content),
-  // or the draft states a PRICE (a number next to a currency unit — an AI-guessed
-  // price must never reach the composer). Other numbers (list markers, delivery
-  // days) are fine here; the send-time confirm still catches every numeric reply.
-  const statesPrice = PRICE_PATTERN.test(normalize(result.draft));
-  const keepModelDraft = reason !== 'clinical' && !!result.draft && !statesPrice;
+  // When escalating, keep the model's answer if it invents no price (every stated
+  // price is grounded in cited KB) — so the answerable parts of a multi-question
+  // burst, and grounded policy numbers, survive (still tagged needs_human for
+  // review). Clinical always uses the canned text (no AI medical content); an
+  // empty or price-inventing draft falls back to the canned text too.
+  const keepModelDraft =
+    reason !== 'clinical' && !!result.draft && pricesGrounded(result.draft, citedKb);
   return {
     result: {
       type: 'needs_human',

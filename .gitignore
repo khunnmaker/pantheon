@@ -25,6 +25,11 @@ web/vite.config.d.ts
 api/uploads/
 uploads/
 
+# raw customer chat exports (PII) used to build the KB — never commit
+.kb-source/
+extract-kb-source.mjs
+kb-proposed.json
+
 # prisma generated client
 api/src/generated/
 **/.prisma/
