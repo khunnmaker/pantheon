@@ -1,5 +1,6 @@
 import { prisma } from '../db/prisma.js';
 import { hashPassword } from '../auth/password.js';
+import { SAMPLE_KB } from '../kb/sampleKb.js';
 
 // Dev-only shared password for all seeded staff. Change for any real deployment.
 const DEV_PASSWORD = 'prominent123';
@@ -24,6 +25,32 @@ async function main() {
   }
   // eslint-disable-next-line no-console
   console.log(`\nDev password for all accounts: ${DEV_PASSWORD}`);
+
+  // Sample knowledge base (idempotent by fixed id). Replace with real FAQs later.
+  for (const k of SAMPLE_KB) {
+    await prisma.kbEntry.upsert({
+      where: { id: k.id },
+      update: {
+        category: k.category,
+        questionVariants: k.questionVariants,
+        answer: k.answer,
+        sensitivity: k.sensitivity,
+        status: 'active',
+        source: 'manual',
+      },
+      create: {
+        id: k.id,
+        category: k.category,
+        questionVariants: k.questionVariants,
+        answer: k.answer,
+        sensitivity: k.sensitivity,
+        status: 'active',
+        source: 'manual',
+      },
+    });
+  }
+  // eslint-disable-next-line no-console
+  console.log(`seeded ${SAMPLE_KB.length} KB entries`);
 }
 
 main()

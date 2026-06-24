@@ -45,7 +45,10 @@ model Message {
   agentId      String? // who sent (if agent)
   kbIds        String[] // KB entries used
   channelMsgId String? // LINE message id
-  createdAt    DateTime @default(now())
+  // For agent replies: the customer message this answers. Unique → a customer
+  // message can be answered exactly once (idempotent/replay-safe send).
+  answersMessageId String?  @unique
+  createdAt        DateTime @default(now())
 
   customer Customer @relation(fields: [customerId], references: [id])
   session  Session? @relation(fields: [sessionId], references: [id])

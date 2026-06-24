@@ -56,9 +56,21 @@ export async function consoleRoutes(app: FastifyInstance) {
       prisma.message.count({ where: { customerId: id, role: 'agent' } }),
     ]);
 
+    const ordered = recent.reverse(); // oldest-first for display
+
+    // Pending draft = the draft for the latest message IF that message is an
+    // unanswered customer question (last in the conversation).
+    const last = ordered[ordered.length - 1];
+    const pendingDraft =
+      last && last.role === 'customer'
+        ? await prisma.draft.findUnique({ where: { messageId: last.id } })
+        : null;
+
     return {
       customer,
-      messages: recent.reverse(), // oldest-first for display
+      messages: ordered,
+      pendingDraft,
+      pendingMessageId: last && last.role === 'customer' ? last.id : null,
       stats: {
         questions: customerCount,
         replies: agentCount,

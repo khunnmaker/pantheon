@@ -8,6 +8,9 @@ import { healthRoutes } from './routes/health.js';
 import { authRoutes } from './routes/auth.js';
 import { webhookRoutes } from './routes/webhook.js';
 import { consoleRoutes } from './routes/console.js';
+import { kbRoutes } from './routes/kb.js';
+import { messageRoutes } from './routes/messages.js';
+import { learningRoutes } from './routes/learning.js';
 import { initIo } from './ws/io.js';
 
 // Raw body is needed to verify the LINE webhook signature.
@@ -54,6 +57,9 @@ async function buildServer() {
   await app.register(authRoutes);
   await app.register(webhookRoutes);
   await app.register(consoleRoutes);
+  await app.register(kbRoutes);
+  await app.register(messageRoutes);
+  await app.register(learningRoutes);
 
   return app;
 }

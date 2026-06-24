@@ -89,7 +89,11 @@ docker compose up --build
   X-Line-Signature verification → store customer/message; agent login (JWT + agent/supervisor
   roles); live console queue over Socket.IO (JWT-authed); prototype ported to a real login +
   live read-only console. Drafting/sending is M2.
-- M2 — Draft + send (human-in-the-loop) + guardrails
+- **M2 — Draft + send (human-in-the-loop) + guardrails** ✅ **verified running**: sample KB +
+  CRUD (supervisor-gated); AI draft pipeline (Claude `claude-sonnet-4-6`) generated on ingest;
+  server-side guardrails force price/stock/clinical → `needs_human`; approve/edit/send via LINE
+  push (numbers require confirm); learning loop (edits captured → supervisor promotes to KB).
+  Set `LINE_DRY_RUN=1` to test the approve→send flow without messaging real customers.
 - M3 — 3-layer memory (embeddings + retrieval + auto-summary)
 - M4 — Learning loop
 - M5 — Polish (metrics, KB admin, PDPA retention)

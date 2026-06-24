@@ -32,10 +32,32 @@ export interface QueueItem {
   customer: CustomerLite;
   lastMessage: Message;
 }
+export type DraftType = 'draft' | 'needs_human' | 'out_of_scope';
+export interface Draft {
+  id: string;
+  messageId: string;
+  type: DraftType;
+  draftText: string;
+  usedKb: string[];
+  note: string | null;
+  createdAt: string;
+}
 export interface CustomerDetail {
   customer: CustomerLite & { firstSeen: string };
   messages: Message[];
+  pendingDraft: Draft | null;
+  pendingMessageId: string | null;
   stats: { questions: number; replies: number; lastSeen: string };
+}
+export interface LearnedAnswer {
+  id: string;
+  customerQuestion: string;
+  aiDraft: string;
+  finalAnswer: string;
+  agentId: string;
+  status: 'pending' | 'approved' | 'rejected';
+  promotedKbId: string | null;
+  createdAt: string;
 }
 
 const TOKEN_KEY = 'minerva_token';
@@ -96,3 +118,36 @@ export async function login(email: string, password: string): Promise<{ token: s
 export const getQueue = () => authed<{ queue: QueueItem[] }>('/api/queue');
 export const getCustomers = () => authed<{ customers: CustomerLite[] }>('/api/customers');
 export const getCustomer = (id: string) => authed<CustomerDetail>(`/api/customers/${id}`);
+
+export const regenerateDraft = (messageId: string) =>
+  authed<{ draft: Draft }>(`/api/messages/${messageId}/draft`, { method: 'POST' });
+
+export interface ReplyResult {
+  ok: boolean;
+  sent: boolean;
+  dryRun: boolean;
+  learnedCaptured: boolean;
+}
+// Returns { needsConfirm: true } when the reply has numbers and confirm wasn't set.
+export async function sendReply(
+  messageId: string,
+  finalText: string,
+  confirmNumbers?: boolean,
+): Promise<ReplyResult | { needsConfirm: true }> {
+  const token = getToken();
+  const res = await fetch(`${API_URL}/api/messages/${messageId}/reply`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
+    body: JSON.stringify({ finalText, confirmNumbers }),
+  });
+  if (res.status === 409) return { needsConfirm: true };
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json() as Promise<ReplyResult>;
+}
+
+export const getLearned = (status = 'pending') =>
+  authed<{ learned: LearnedAnswer[] }>(`/api/learned?status=${status}`);
+export const promoteLearned = (id: string) =>
+  authed<{ ok: boolean }>(`/api/learned/${id}/promote`, { method: 'POST' });
+export const rejectLearned = (id: string) =>
+  authed<{ ok: boolean }>(`/api/learned/${id}/reject`, { method: 'POST' });

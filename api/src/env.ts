@@ -17,6 +17,8 @@ const schema = z.object({
   // Needed M1 webhook / M2 send — optional at M0.
   LINE_CHANNEL_ACCESS_TOKEN: z.string().default(''),
   LINE_CHANNEL_SECRET: z.string().default(''),
+  // Set to "1"/"true" to never actually push to LINE (testing/staging safety).
+  LINE_DRY_RUN: z.string().default(''),
 
   // Pipeline tuning (spec §13).
   RECENT_WINDOW: z.coerce.number().int().positive().default(10),
