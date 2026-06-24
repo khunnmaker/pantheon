@@ -49,10 +49,25 @@ npm run dev
 curl http://localhost:3000/health      # {"status":"ok","service":"minerva-api",...}
 curl http://localhost:3000/health/db   # {"status":"ok","db":"up"}
 ```
-Web console:
+Seed staff accounts + run the console:
 ```bash
-cd web && npm install && npm run dev    # http://localhost:5173
+cd api && npm run seed                   # creates 3 dev staff accounts
+cd web && npm install && npm run dev     # http://localhost:5173 — log in to use the console
 ```
+
+### Staff accounts (dev seed)
+All use password **`prominent123`** (change for any real deployment):
+
+| email                    | name      | role       |
+|--------------------------|-----------|------------|
+| `mind@prominent.local`   | คุณมายด์   | agent      |
+| `fah@prominent.local`    | คุณฟ้า     | agent      |
+| `nadeer@prominent.local` | NaDeer    | supervisor |
+
+### Testing the LINE webhook without a real LINE OA
+Set a dev `LINE_CHANNEL_SECRET` in `api/.env`, then POST a body with a matching
+`X-Line-Signature` (HMAC-SHA256, base64). A correctly-signed body is ingested and pushed
+live to logged-in consoles over WebSocket; a wrong signature is rejected with 401.
 
 ### B) Everything in Docker (intended for M3+, needs WSL2)
 ```bash
@@ -70,7 +85,10 @@ docker compose up --build
 - **M0 — Scaffold** ✅ **verified running**: monorepo, docker-compose (postgres+pgvector),
   Prisma schema + relational migration applied, env loading, health check green
   (`/health` + `/health/db` both ok on native Postgres). pgvector deferred to M3.
-- M1 — Ingest + console shell + auth
+- **M1 — Ingest + console shell + auth** ✅ **verified running**: LINE webhook with
+  X-Line-Signature verification → store customer/message; agent login (JWT + agent/supervisor
+  roles); live console queue over Socket.IO (JWT-authed); prototype ported to a real login +
+  live read-only console. Drafting/sending is M2.
 - M2 — Draft + send (human-in-the-loop) + guardrails
 - M3 — 3-layer memory (embeddings + retrieval + auto-summary)
 - M4 — Learning loop

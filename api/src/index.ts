@@ -1,15 +1,49 @@
-import Fastify from 'fastify';
+import Fastify, { type FastifyRequest } from 'fastify';
 import cors from '@fastify/cors';
+import rateLimit from '@fastify/rate-limit';
+import sjson from 'secure-json-parse';
 import { env } from './env.js';
 import { prisma } from './db/prisma.js';
 import { healthRoutes } from './routes/health.js';
+import { authRoutes } from './routes/auth.js';
+import { webhookRoutes } from './routes/webhook.js';
+import { consoleRoutes } from './routes/console.js';
+import { initIo } from './ws/io.js';
+
+// Raw body is needed to verify the LINE webhook signature.
+declare module 'fastify' {
+  interface FastifyRequest {
+    rawBody?: string;
+  }
+}
 
 async function buildServer() {
   const app = Fastify({
-    logger: {
-      level: env.NODE_ENV === 'development' ? 'debug' : 'info',
-    },
+    logger: { level: env.NODE_ENV === 'development' ? 'debug' : 'info' },
   });
+
+  // Capture the raw JSON body (for HMAC signature checks) while still parsing it.
+  // Use secure-json-parse (Fastify's own default parser) so prototype-pollution
+  // protection is preserved on every JSON route — bare JSON.parse would drop it.
+  app.addContentTypeParser(
+    'application/json',
+    { parseAs: 'string' },
+    (req: FastifyRequest, body: string | Buffer, done) => {
+      const raw = typeof body === 'string' ? body : body.toString('utf8');
+      req.rawBody = raw;
+      try {
+        const parsed = raw.length
+          ? sjson.parse(raw, undefined, { protoAction: 'remove', constructorAction: 'remove' })
+          : {};
+        done(null, parsed);
+      } catch (err) {
+        done(err as Error, undefined);
+      }
+    },
+  );
+
+  // Rate limiting: opt-in per route (login is the only limited route in M1).
+  await app.register(rateLimit, { global: false });
 
   await app.register(cors, {
     origin: env.WEB_ORIGIN === '*' ? true : env.WEB_ORIGIN.split(','),
@@ -17,14 +51,18 @@ async function buildServer() {
   });
 
   await app.register(healthRoutes);
-
-  // M1+ route groups (auth, queue, customers, kb, learned, metrics) register here.
+  await app.register(authRoutes);
+  await app.register(webhookRoutes);
+  await app.register(consoleRoutes);
 
   return app;
 }
 
 async function main() {
   const app = await buildServer();
+
+  // Attach the Socket.IO server for live console push.
+  initIo(app.server);
 
   const shutdown = async (signal: string) => {
     app.log.info(`received ${signal}, shutting down`);
