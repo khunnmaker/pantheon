@@ -92,9 +92,14 @@ export function applyGuardrails(
   if (!reason) return { result, triggered: false, reason: null };
 
   const o = OVERRIDE[reason];
-  // Keep the model's needs_human draft ONLY if it is number-free; otherwise use
-  // the canned override so a model-guessed number never reaches the composer.
-  const keepModelDraft = result.type === 'needs_human' && !!result.draft && !hasNumbers(result.draft);
+  // Keep the model's combined answer (so the answerable parts of a multi-question
+  // burst survive, tagged needs_human for review). Fall back to the canned text
+  // only if the draft is empty, the question is clinical (no AI medical content),
+  // or the draft states a PRICE (a number next to a currency unit — an AI-guessed
+  // price must never reach the composer). Other numbers (list markers, delivery
+  // days) are fine here; the send-time confirm still catches every numeric reply.
+  const statesPrice = PRICE_PATTERN.test(normalize(result.draft));
+  const keepModelDraft = reason !== 'clinical' && !!result.draft && !statesPrice;
   return {
     result: {
       type: 'needs_human',

@@ -44,6 +44,27 @@ export async function generateDraftForMessage(messageId: string): Promise<DraftO
   });
   const summary = memory?.summary || undefined;
 
+  // Answer ALL unanswered customer messages since the last agent reply — not just
+  // the latest — so a single draft covers a customer's whole burst of questions.
+  const lastAgent = await prisma.message.findFirst({
+    where: { customerId: message.customerId, role: 'agent' },
+    orderBy: { createdAt: 'desc' },
+    select: { createdAt: true },
+  });
+  const unanswered = await prisma.message.findMany({
+    where: {
+      customerId: message.customerId,
+      role: 'customer',
+      ...(lastAgent ? { createdAt: { gt: lastAgent.createdAt } } : {}),
+    },
+    orderBy: { createdAt: 'asc' },
+    take: 15,
+  });
+  const questionText =
+    unanswered.length > 1
+      ? unanswered.map((m, i) => `${i + 1}. ${m.text}`).join('\n')
+      : message.text;
+
   // Retrieval (M3 layer 2): embed this message for future recall, then pull the
   // top-K most relevant OLDER messages (excluding the recent window already shown).
   let retrievedMessages: string | undefined;
@@ -51,7 +72,7 @@ export async function generateDraftForMessage(messageId: string): Promise<DraftO
   if (embeddingsAvailable()) {
     await embedMessage(message.id, message.text);
     try {
-      const qvec = await embedOne(message.text, 'query');
+      const qvec = await embedOne(questionText, 'query');
       const excludeIds = [message.id, ...recentRows.map((m) => m.id)];
       const hits = await retrieveSimilarMessages(message.customerId, qvec, env.RETRIEVE_K, excludeIds);
       if (hits.length) {
@@ -69,7 +90,7 @@ export async function generateDraftForMessage(messageId: string): Promise<DraftO
       result = { ...SAFE_DEFAULT, note: 'ยังไม่ได้ตั้งค่า ANTHROPIC_API_KEY — ขอให้เจ้าหน้าที่ตอบ' };
     } else {
       const { system, user } = buildDraftPrompt({
-        question: message.text,
+        question: questionText,
         kb,
         recentWindow,
         summary,
@@ -86,7 +107,7 @@ export async function generateDraftForMessage(messageId: string): Promise<DraftO
   const citedKb = kb.filter((k) =>
     result.used_kb.map((s) => s.toLowerCase()).includes(k.id.toLowerCase()),
   );
-  const guarded = applyGuardrails(result, message.text, citedKb);
+  const guarded = applyGuardrails(result, questionText, citedKb);
 
   const draft = await prisma.draft.upsert({
     where: { messageId },
