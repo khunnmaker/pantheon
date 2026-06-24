@@ -14,4 +14,5 @@ WORKDIR /app
 RUN npm install -g serve@14
 COPY --from=build /app/dist ./dist
 EXPOSE 5173
-CMD ["serve", "-s", "dist", "-l", "5173"]
+# Listen on the platform-provided PORT (Railway), falling back to 5173 locally.
+CMD ["sh", "-c", "serve -s dist -l ${PORT:-5173}"]
