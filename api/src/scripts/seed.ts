@@ -1,6 +1,6 @@
 import { prisma } from '../db/prisma.js';
 import { hashPassword } from '../auth/password.js';
-import { SAMPLE_KB } from '../kb/sampleKb.js';
+import { HISTORY_KB } from '../kb/historyKb.js';
 
 // Shared password for seeded staff. Defaults to the demo password for local dev;
 // set SEED_PASSWORD to a strong value before exposing the app to the internet.
@@ -27,8 +27,20 @@ async function main() {
   // eslint-disable-next-line no-console
   console.log(`\nDev password for all accounts: ${DEV_PASSWORD}`);
 
-  // Sample knowledge base (idempotent by fixed id). Replace with real FAQs later.
-  for (const k of SAMPLE_KB) {
+  // Retire any leftover placeholder sample KB (source 'manual') so it can't feed drafts.
+  const archived = await prisma.kbEntry.updateMany({
+    where: { source: 'manual', status: 'active' },
+    data: { status: 'archived' },
+  });
+  if (archived.count) {
+    // eslint-disable-next-line no-console
+    console.log(`archived ${archived.count} placeholder sample KB entries`);
+  }
+
+  // Real knowledge base distilled from chat history (idempotent by fixed id).
+  // NOTE: this re-applies the canonical answers — run it for initial setup, not
+  // after supervisors have edited entries in the console (it would overwrite them).
+  for (const k of HISTORY_KB) {
     await prisma.kbEntry.upsert({
       where: { id: k.id },
       update: {
@@ -37,7 +49,8 @@ async function main() {
         answer: k.answer,
         sensitivity: k.sensitivity,
         status: 'active',
-        source: 'manual',
+        source: 'chat-history',
+        lastVerifiedAt: new Date(),
       },
       create: {
         id: k.id,
@@ -46,12 +59,12 @@ async function main() {
         answer: k.answer,
         sensitivity: k.sensitivity,
         status: 'active',
-        source: 'manual',
+        source: 'chat-history',
       },
     });
   }
   // eslint-disable-next-line no-console
-  console.log(`seeded ${SAMPLE_KB.length} KB entries`);
+  console.log(`seeded ${HISTORY_KB.length} KB entries (chat-history)`);
 }
 
 main()
