@@ -8,7 +8,8 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-minerva}
       POSTGRES_DB: ${POSTGRES_DB:-minerva}
     ports:
-      - "5432:5432"
+      # Host 5433 to coexist with a native PostgreSQL on 5432 during local dev.
+      - "5433:5432"
     volumes:
       - minerva_pgdata:/var/lib/postgresql/data
       - ./api/prisma/init-pgvector.sql:/docker-entrypoint-initdb.d/00-pgvector.sql:ro
