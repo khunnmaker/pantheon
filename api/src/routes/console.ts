@@ -3,7 +3,6 @@ import { prisma } from '../db/prisma.js';
 import { requireAuth } from '../auth/middleware.js';
 import { endSession } from '../memory/summarize.js';
 import { pushToConsole } from '../ws/io.js';
-import { getRecentWebhooks } from '../line/webhookLog.js'; // TEMP debug (operator-message test)
 
 const RECENT_MESSAGES = 50;
 
@@ -97,8 +96,4 @@ export async function consoleRoutes(app: FastifyInstance) {
     pushToConsole('conversation:update', { customerId: req.params.id, ended: true });
     return { ok: true, summary };
   });
-
-  // TEMP debug — inspect recent raw webhooks to test whether LINE delivers
-  // operator-sent (OA Manager) messages. Remove after the test.
-  app.get('/api/debug/webhooks', async () => ({ webhooks: getRecentWebhooks() }));
 }
