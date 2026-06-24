@@ -13,6 +13,7 @@ import { messageRoutes } from './routes/messages.js';
 import { learningRoutes } from './routes/learning.js';
 import { initIo } from './ws/io.js';
 import { sweepIdleSessions } from './memory/summarize.js';
+import { ensureSeeded } from './db/ensureSeeded.js';
 
 // Raw body is needed to verify the LINE webhook signature.
 declare module 'fastify' {
@@ -67,6 +68,9 @@ async function buildServer() {
 
 async function main() {
   const app = await buildServer();
+
+  // Populate an empty (fresh cloud) database with the KB + staff on boot.
+  await ensureSeeded().catch((err) => app.log.error({ err }, 'ensureSeeded failed'));
 
   // Attach the Socket.IO server for live console push.
   initIo(app.server);
