@@ -48,6 +48,10 @@ model Message {
   // For agent replies: the customer message this answers. Unique → a customer
   // message can be answered exactly once (idempotent/replay-safe send).
   answersMessageId String?  @unique
+  // Non-text messages: "image" | "sticker" | "video" | "audio" | "file" | "location".
+  // attachmentRef holds image content-type, or "packageId/stickerId" for stickers.
+  attachmentType   String?
+  attachmentRef    String?
   createdAt        DateTime @default(now())
 
   customer Customer @relation(fields: [customerId], references: [id])

@@ -7,6 +7,7 @@ import { sendLineText } from '../line/send.js';
 import { generateDraftForMessage } from '../llm/draft.js';
 import { hasNumbers } from '../llm/guardrails.js';
 import { embedMessage } from '../memory/embeddings.js';
+import { readImageContent } from '../line/contentStore.js';
 import { pushToConsole } from '../ws/io.js';
 
 const replyBody = z.object({
@@ -16,6 +17,17 @@ const replyBody = z.object({
 
 export async function messageRoutes(app: FastifyInstance) {
   app.addHook('preHandler', requireAuth);
+
+  // GET /api/messages/:id/content — stream a stored image message (auth required).
+  app.get<{ Params: { id: string } }>('/api/messages/:id/content', async (req, reply) => {
+    const message = await prisma.message.findUnique({ where: { id: req.params.id } });
+    if (!message || message.attachmentType !== 'image') {
+      return reply.code(404).send({ error: 'not_found' });
+    }
+    const buf = await readImageContent(message.id);
+    if (!buf) return reply.code(404).send({ error: 'content_unavailable' });
+    return reply.header('content-type', message.attachmentRef ?? 'application/octet-stream').send(buf);
+  });
 
   // POST /api/messages/:id/draft — (re)generate the AI draft for a customer msg.
   app.post<{ Params: { id: string } }>('/api/messages/:id/draft', async (req, reply) => {

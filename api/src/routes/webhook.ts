@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { verifyLineSignature } from '../line/signature.js';
 import { ingestCustomerText } from '../line/ingest.js';
+import { saveImageContent } from '../line/contentStore.js';
 import { generateDraftForMessage } from '../llm/draft.js';
 import { prisma } from '../db/prisma.js';
 import { pushToConsole } from '../ws/io.js';
@@ -8,14 +9,42 @@ import { pushToConsole } from '../ws/io.js';
 // Cap events processed per webhook request (LINE batches are normally small).
 const MAX_EVENTS = 50;
 
-// Minimal shape of the LINE webhook events we handle (text messages).
-interface LineTextEvent {
+interface LineMessage {
   type: string;
-  message?: { type: string; id?: string; text?: string };
+  id?: string;
+  text?: string;
+  packageId?: string;
+  stickerId?: string;
+}
+interface LineEvent {
+  type: string;
+  message?: LineMessage;
   source?: { type: string; userId?: string };
 }
 interface LineWebhookBody {
-  events?: LineTextEvent[];
+  events?: LineEvent[];
+}
+
+const KIND_LABEL: Record<string, string> = {
+  image: 'รูปภาพ',
+  sticker: 'สติกเกอร์',
+  video: 'วิดีโอ',
+  audio: 'เสียง',
+  file: 'ไฟล์',
+  location: 'ตำแหน่งที่ตั้ง',
+};
+
+// Non-text messages can't be answered from the KB → store a needs_human draft so
+// the console flags it for a person (the AI never drafts a reply to a photo).
+async function nonTextNeedsHuman(messageId: string, kind: string): Promise<void> {
+  const label = KIND_LABEL[kind] ?? 'ข้อความ';
+  const note = `ลูกค้าส่ง${label} — ระบบ AI ตอบจากฐานความรู้ไม่ได้ ขอให้เจ้าหน้าที่ตรวจและตอบเองค่ะ`;
+  const draft = await prisma.draft.upsert({
+    where: { messageId },
+    update: { type: 'needs_human', draftText: '', note, usedKb: [] },
+    create: { messageId, type: 'needs_human', draftText: '', usedKb: [], note, retrievedMsgIds: [] },
+  });
+  pushToConsole('draft:new', { messageId, draft, guardrailReason: null });
 }
 
 export async function webhookRoutes(app: FastifyInstance) {
@@ -38,49 +67,97 @@ export async function webhookRoutes(app: FastifyInstance) {
 
     for (const ev of events) {
       try {
-        if (ev.type !== 'message' || ev.message?.type !== 'text') continue;
+        if (ev.type !== 'message' || !ev.message) continue;
         const lineUserId = ev.source?.userId;
-        const text = ev.message?.text;
-        if (!lineUserId || !text) continue;
+        if (!lineUserId) continue;
 
-        // Dedup LINE's at-least-once delivery retries: if we already stored this
-        // message id, skip — don't re-ingest or re-spend a Claude draft call.
-        const channelMsgId = ev.message?.id;
+        // Dedup LINE's at-least-once delivery retries.
+        const channelMsgId = ev.message.id;
         if (channelMsgId) {
           const dup = await prisma.message.findFirst({ where: { channelMsgId }, select: { id: true } });
           if (dup) continue;
         }
 
+        const mtype = ev.message.type;
+
+        if (mtype === 'text') {
+          const text = ev.message.text;
+          if (!text) continue;
+          const result = await ingestCustomerText({ lineUserId, text, channelMsgId });
+          pushToConsole('message:new', {
+            customer: result.customer,
+            message: result.message,
+            isNewCustomer: result.isNewCustomer,
+          });
+          const msgId = result.message.id;
+          const customerId = result.customer.id;
+          void generateDraftForMessage(msgId)
+            .then((d) =>
+              pushToConsole('draft:new', { messageId: msgId, customerId, draft: d.draft, guardrailReason: d.guardrailReason }),
+            )
+            .catch((err) => req.log.error({ err }, 'draft generation failed'));
+          continue;
+        }
+
+        if (mtype === 'sticker') {
+          const ref = `${ev.message.packageId ?? ''}/${ev.message.stickerId ?? ''}`;
+          const result = await ingestCustomerText({
+            lineUserId,
+            text: '[สติกเกอร์]',
+            channelMsgId,
+            attachmentType: 'sticker',
+            attachmentRef: ref,
+          });
+          pushToConsole('message:new', {
+            customer: result.customer,
+            message: result.message,
+            isNewCustomer: result.isNewCustomer,
+          });
+          await nonTextNeedsHuman(result.message.id, 'sticker');
+          continue;
+        }
+
+        if (mtype === 'image') {
+          const result = await ingestCustomerText({
+            lineUserId,
+            text: '[รูปภาพ]',
+            channelMsgId,
+            attachmentType: 'image',
+          });
+          let message = result.message;
+          if (channelMsgId) {
+            const contentType = await saveImageContent(message.id, channelMsgId);
+            if (contentType) {
+              message = await prisma.message.update({
+                where: { id: message.id },
+                data: { attachmentRef: contentType },
+              });
+            }
+          }
+          pushToConsole('message:new', {
+            customer: result.customer,
+            message,
+            isNewCustomer: result.isNewCustomer,
+          });
+          await nonTextNeedsHuman(message.id, 'image');
+          continue;
+        }
+
+        // video / audio / file / location / other
+        const label = KIND_LABEL[mtype] ?? 'ข้อความ';
         const result = await ingestCustomerText({
           lineUserId,
-          text,
+          text: `[${label}]`,
           channelMsgId,
+          attachmentType: mtype,
         });
-
-        // Live-push the new question to every logged-in console.
         pushToConsole('message:new', {
           customer: result.customer,
           message: result.message,
           isNewCustomer: result.isNewCustomer,
         });
-
-        // Generate the AI draft asynchronously so the webhook responds fast to
-        // LINE; push it to the console when ready. Never auto-sends.
-        const msgId = result.message.id;
-        const customerId = result.customer.id;
-        void generateDraftForMessage(msgId)
-          .then((d) =>
-            pushToConsole('draft:new', {
-              messageId: msgId,
-              customerId,
-              draft: d.draft,
-              guardrailReason: d.guardrailReason,
-            }),
-          )
-          .catch((err) => req.log.error({ err }, 'draft generation failed'));
+        await nonTextNeedsHuman(result.message.id, mtype);
       } catch (err) {
-        // Don't fail the whole webhook on one bad event — log and continue so
-        // LINE doesn't retry the entire batch.
         req.log.error({ err }, 'failed to ingest LINE event');
       }
     }

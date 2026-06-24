@@ -10,7 +10,7 @@ const QUICK = [
 
 export default function Login({ onLogin }: { onLogin: (agent: Agent) => void }) {
   const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('prominent123');
+  const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
@@ -71,7 +71,7 @@ export default function Login({ onLogin }: { onLogin: (agent: Agent) => void }) 
         </button>
 
         <div className="mt-4 pt-3 border-t border-slate-100">
-          <p className="text-[11px] text-slate-400 mb-2">เข้าสู่ระบบด่วน (บัญชีตัวอย่าง · รหัส prominent123):</p>
+          <p className="text-[11px] text-slate-400 mb-2">เลือกชื่อพนักงาน (พิมพ์รหัสผ่านในช่องด้านบนก่อน):</p>
           <div className="flex flex-wrap gap-1">
             {QUICK.map((q) => (
               <button

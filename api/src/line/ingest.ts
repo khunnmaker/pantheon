@@ -6,6 +6,8 @@ export interface IngestInput {
   lineUserId: string;
   text: string;
   channelMsgId?: string;
+  attachmentType?: string; // image | sticker | video | audio | file | location
+  attachmentRef?: string; // image content-type, or "packageId/stickerId" for stickers
 }
 
 export interface IngestResult {
@@ -18,7 +20,7 @@ export interface IngestResult {
 // Upsert the customer, attach to an open session, and store the inbound text.
 // NB: never sends a reply — drafting/sending is M2.
 export async function ingestCustomerText(input: IngestInput): Promise<IngestResult> {
-  const { lineUserId, text, channelMsgId } = input;
+  const { lineUserId, text, channelMsgId, attachmentType, attachmentRef } = input;
 
   let customer = await prisma.customer.findUnique({ where: { lineUserId } });
   const isNewCustomer = !customer;
@@ -52,6 +54,8 @@ export async function ingestCustomerText(input: IngestInput): Promise<IngestResu
       role: 'customer',
       text,
       channelMsgId,
+      attachmentType,
+      attachmentRef,
     },
   });
 

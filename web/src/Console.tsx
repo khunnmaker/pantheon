@@ -5,7 +5,7 @@ import {
 } from 'lucide-react';
 import {
   getQueue, getCustomers, getCustomer, clearSession, regenerateDraft, sendReply,
-  getLearned, promoteLearned, rejectLearned, endSession,
+  getLearned, promoteLearned, rejectLearned, endSession, API_URL, getToken,
   type Agent, type CustomerLite, type CustomerDetail, type Message, type DraftType, type LearnedAnswer,
 } from './lib/api';
 import { getSocket, disconnectSocket } from './lib/socket';
@@ -27,6 +27,42 @@ const TYPE_META: Record<DraftType, { label: string; cls: string }> = {
   needs_human: { label: 'ต้องให้คนตอบ', cls: 'bg-amber-100 text-amber-700 border-amber-300' },
   out_of_scope: { label: 'นอกขอบเขต', cls: 'bg-slate-100 text-slate-600 border-slate-300' },
 };
+
+// Customer image: fetched with the JWT (so the endpoint stays auth-protected),
+// shown via an object URL.
+function AuthedImage({ messageId }: { messageId: string }) {
+  const [url, setUrl] = useState('');
+  useEffect(() => {
+    let obj = '';
+    fetch(`${API_URL}/api/messages/${messageId}/content`, { headers: { authorization: `Bearer ${getToken() ?? ''}` } })
+      .then((r) => (r.ok ? r.blob() : Promise.reject(new Error('no content'))))
+      .then((b) => { obj = URL.createObjectURL(b); setUrl(obj); })
+      .catch(() => undefined);
+    return () => { if (obj) URL.revokeObjectURL(obj); };
+  }, [messageId]);
+  if (!url) return <span className="text-xs text-slate-400">📷 กำลังโหลดรูป…</span>;
+  return <img src={url} alt="รูปจากลูกค้า" className="max-w-[220px] max-h-[260px] rounded-lg block" />;
+}
+
+function StickerImage({ refStr }: { refStr: string }) {
+  const [failed, setFailed] = useState(false);
+  const stickerId = refStr.split('/')[1];
+  if (!stickerId || failed) return <span>[สติกเกอร์]</span>;
+  return (
+    <img
+      src={`https://stickershop.line-scdn.net/stickershop/v1/sticker/${stickerId}/android/sticker.png`}
+      alt="สติกเกอร์"
+      className="w-24 h-24 object-contain"
+      onError={() => setFailed(true)}
+    />
+  );
+}
+
+function MessageBody({ m }: { m: Message }) {
+  if (m.attachmentType === 'image') return <AuthedImage messageId={m.id} />;
+  if (m.attachmentType === 'sticker') return <StickerImage refStr={m.attachmentRef ?? ''} />;
+  return <>{m.text}</>;
+}
 
 export default function Console({ agent, onLogout }: { agent: Agent; onLogout: () => void }) {
   const [view, setView] = useState<'console' | 'learning'>('console');
@@ -312,7 +348,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                       <div key={m.id} className={m.role === 'customer' ? 'flex justify-start' : 'flex justify-end'}>
                         <div className={'max-w-[78%] px-3 py-2 rounded-2xl text-sm whitespace-pre-wrap ' +
                           (m.role === 'customer' ? 'bg-white border border-slate-200 rounded-tl-sm' : 'bg-teal-600 text-white rounded-tr-sm')}>
-                          {m.text}
+                          <MessageBody m={m} />
                           <div className={'text-[10px] mt-0.5 ' + (m.role === 'customer' ? 'text-slate-400' : 'text-teal-100')}>{fmtTime(m.createdAt)}</div>
                         </div>
                       </div>

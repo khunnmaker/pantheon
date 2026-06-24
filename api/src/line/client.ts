@@ -26,3 +26,21 @@ export async function fetchDisplayName(lineUserId: string): Promise<string | nul
     return null;
   }
 }
+
+// Download the binary content of an image/file message via the LINE content API.
+// Returns null if no token or the fetch fails.
+export async function fetchMessageContent(
+  lineMessageId: string,
+): Promise<{ buffer: Buffer; contentType: string } | null> {
+  if (!env.LINE_CHANNEL_ACCESS_TOKEN) return null;
+  try {
+    const res = await fetch(`https://api-data.line.me/v2/bot/message/${lineMessageId}/content`, {
+      headers: { Authorization: `Bearer ${env.LINE_CHANNEL_ACCESS_TOKEN}` },
+    });
+    if (!res.ok) return null;
+    const buffer = Buffer.from(await res.arrayBuffer());
+    return { buffer, contentType: res.headers.get('content-type') || 'application/octet-stream' };
+  } catch {
+    return null;
+  }
+}

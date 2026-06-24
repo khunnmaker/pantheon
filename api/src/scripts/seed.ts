@@ -2,8 +2,9 @@ import { prisma } from '../db/prisma.js';
 import { hashPassword } from '../auth/password.js';
 import { SAMPLE_KB } from '../kb/sampleKb.js';
 
-// Dev-only shared password for all seeded staff. Change for any real deployment.
-const DEV_PASSWORD = 'prominent123';
+// Shared password for seeded staff. Defaults to the demo password for local dev;
+// set SEED_PASSWORD to a strong value before exposing the app to the internet.
+const DEV_PASSWORD = process.env.SEED_PASSWORD || 'prominent123';
 
 const STAFF = [
   { email: 'mind@prominent.local', name: 'คุณมายด์', role: 'agent' },

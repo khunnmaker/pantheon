@@ -21,6 +21,10 @@ api/dist/
 web/vite.config.js
 web/vite.config.d.ts
 
+# downloaded LINE image content
+api/uploads/
+uploads/
+
 # prisma generated client
 api/src/generated/
 **/.prisma/
