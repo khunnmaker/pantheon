@@ -5,6 +5,7 @@ import { saveImageContent } from '../line/contentStore.js';
 import { generateDraftForMessage, generateImageDraft } from '../llm/draft.js';
 import { prisma } from '../db/prisma.js';
 import { pushToConsole } from '../ws/io.js';
+import { recordWebhook } from '../line/webhookLog.js'; // TEMP debug (operator-message test)
 
 // Cap events processed per webhook request (LINE batches are normally small).
 const MAX_EVENTS = 50;
@@ -52,8 +53,11 @@ export async function webhookRoutes(app: FastifyInstance) {
   app.post('/webhook/line', async (req, reply) => {
     const signature = req.headers['x-line-signature'] as string | undefined;
     const raw = req.rawBody ?? '';
+    const validSig = verifyLineSignature(raw, signature);
 
-    if (!verifyLineSignature(raw, signature)) {
+    recordWebhook(validSig, raw); // TEMP debug: capture all inbound for the operator-message test
+
+    if (!validSig) {
       req.log.warn('rejected webhook: invalid X-Line-Signature');
       return reply.code(401).send({ error: 'invalid_signature' });
     }
