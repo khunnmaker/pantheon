@@ -6,6 +6,7 @@ import { requireAuth } from '../auth/middleware.js';
 import { sendLineText } from '../line/send.js';
 import { generateDraftForMessage } from '../llm/draft.js';
 import { hasNumbers } from '../llm/guardrails.js';
+import { embedMessage } from '../memory/embeddings.js';
 import { pushToConsole } from '../ws/io.js';
 
 const replyBody = z.object({
@@ -91,6 +92,9 @@ export async function messageRoutes(app: FastifyInstance) {
         data: { channelMsgId: sendResult.channelMsgId },
       });
     }
+
+    // Embed the sent reply so it's retrievable in future drafts (best-effort).
+    void embedMessage(agentMessage.id, finalText).catch(() => undefined);
 
     // Learning loop: capture edits (final differs from the AI draft).
     let learnedCaptured = false;

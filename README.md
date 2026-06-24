@@ -94,10 +94,13 @@ docker compose up --build
   server-side guardrails force price/stock/clinical → `needs_human`; approve/edit/send via LINE
   push (numbers require confirm); learning loop (edits captured → supervisor promotes to KB).
   Set `LINE_DRY_RUN=1` to test the approve→send flow without messaging real customers.
-- **M3 — 3-layer memory** — _layer 1 (long-term summary) ✅ verified_: session-end auto-summary
-  (Claude) stored on `CustomerMemory` and injected into every draft; manual "จบแชท" (end chat)
-  endpoint + idle-session sweep (`SESSION_IDLE_MINUTES`). _Layer 2 (retrieval) + recent-window
-  pending_ — needs `VOYAGE_API_KEY` + pgvector (Docker/WSL2 or native build).
+- **M3 — 3-layer memory** ✅ **verified**: (1) **long-term summary** — session-end auto-summary
+  (Claude) on `CustomerMemory`, injected into every draft (manual "จบแชท" + idle sweep); (2)
+  **retrieval** — Voyage `voyage-3` embeddings in pgvector (`message_embedding`/`kb_embedding`,
+  HNSW cosine), top-`RETRIEVE_K` relevant past messages pulled into the prompt; (3) **recent window**
+  — last `RECENT_WINDOW` messages verbatim. DB is the `pgvector/pgvector` container (host `:5433`).
+  > Voyage free tier is 3 req/min until a payment method is added (free tokens still apply); the
+  > pipeline degrades gracefully (summary + recent window) if an embed call is rate-limited.
 - M4 — Learning loop
 - M5 — Polish (metrics, KB admin, PDPA retention)
 
