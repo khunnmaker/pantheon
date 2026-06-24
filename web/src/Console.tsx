@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import {
   Bot, User, LogOut, Clock, Inbox, Wifi, WifiOff, Loader2, ShieldCheck, MessageSquare,
-  Send, Check, CheckCircle2, RefreshCw, AlertTriangle, Brain, Database, Sparkles, GraduationCap,
+  Send, Check, CheckCircle2, RefreshCw, AlertTriangle, Brain, Database, Sparkles, GraduationCap, Wand2,
 } from 'lucide-react';
 import {
-  getQueue, getCustomers, getCustomer, clearSession, regenerateDraft, sendReply,
+  getQueue, getCustomers, getCustomer, clearSession, regenerateDraft, rewriteText, sendReply,
   getLearned, promoteLearned, rejectLearned, endSession, API_URL, getToken,
   type Agent, type CustomerLite, type CustomerDetail, type Message, type DraftType, type LearnedAnswer,
 } from './lib/api';
@@ -75,6 +75,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
 
   const [editText, setEditText] = useState('');
   const [sending, setSending] = useState(false);
+  const [rewriting, setRewriting] = useState(false);
   const [ending, setEnding] = useState(false);
   const [needsConfirm, setNeedsConfirm] = useState(false);
   const [toast, setToast] = useState('');
@@ -193,6 +194,23 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
       setError('ส่งไม่สำเร็จ: ' + (e as Error).message);
     } finally {
       setSending(false);
+    }
+  }
+
+  // Polish the agent's current text (grammar/wording) without changing meaning/numbers.
+  async function rewrite() {
+    if (!editText.trim() || rewriting || sending) return;
+    setRewriting(true);
+    setError('');
+    try {
+      const { text } = await rewriteText(editText.trim());
+      setEditText(text);
+      setNeedsConfirm(false); // text changed — re-check numbers on send
+      flashToast('เรียบเรียงใหม่แล้ว — ตรวจทานก่อนส่ง');
+    } catch (e) {
+      setError('เรียบเรียงใหม่ไม่สำเร็จ: ' + (e as Error).message);
+    } finally {
+      setRewriting(false);
     }
   }
 
@@ -377,14 +395,21 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                         className="w-full p-3 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-teal-400 resize-none" placeholder="พิมพ์/แก้คำตอบก่อนส่ง…" />
                       {edited && <div className="text-[11px] text-amber-600 flex items-center gap-1"><Brain size={12} /> มีการแก้ — จะถูกเก็บเข้าคลังการเรียนรู้เมื่อส่ง</div>}
                       {error && <div className="text-xs text-rose-600 bg-rose-50 border border-rose-200 rounded-lg p-2">{error}</div>}
-                      <div className="flex gap-2">
-                        <button onClick={approve} disabled={sending || !editText.trim()}
-                          className={'flex-1 px-3 py-2 rounded-xl text-white text-sm font-semibold flex items-center justify-center gap-1 disabled:opacity-50 ' + (needsConfirm ? 'bg-amber-600 hover:bg-amber-700' : 'bg-emerald-600 hover:bg-emerald-700')}>
+                      <div className="space-y-2">
+                        <button onClick={approve} disabled={sending || rewriting || !editText.trim()}
+                          className={'w-full px-3 py-2 rounded-xl text-white text-sm font-semibold flex items-center justify-center gap-1 disabled:opacity-50 ' + (needsConfirm ? 'bg-amber-600 hover:bg-amber-700' : 'bg-emerald-600 hover:bg-emerald-700')}>
                           {sending ? <Loader2 size={16} className="animate-spin" /> : <Send size={15} />} {needsConfirm ? 'ยืนยันส่ง (มีตัวเลข)' : 'อนุมัติ & ส่ง'}
                         </button>
-                        <button onClick={regenerate} disabled={sending} className="px-3 py-2 rounded-xl bg-slate-200 hover:bg-slate-300 text-slate-700 text-sm font-semibold flex items-center gap-1 disabled:opacity-50">
-                          <RefreshCw size={15} /> ร่างใหม่
-                        </button>
+                        <div className="flex gap-2">
+                          <button onClick={rewrite} disabled={rewriting || sending || !editText.trim()}
+                            title="ให้ AI ช่วยแก้ไวยากรณ์และเรียบเรียงข้อความที่คุณพิมพ์ใหม่ (ไม่เปลี่ยนความหมายหรือตัวเลข)"
+                            className="flex-1 px-3 py-2 rounded-xl bg-indigo-100 hover:bg-indigo-200 text-indigo-700 text-sm font-semibold flex items-center justify-center gap-1 disabled:opacity-50">
+                            {rewriting ? <Loader2 size={15} className="animate-spin" /> : <Wand2 size={15} />} เรียบเรียงใหม่
+                          </button>
+                          <button onClick={regenerate} disabled={sending || rewriting} className="flex-1 px-3 py-2 rounded-xl bg-slate-200 hover:bg-slate-300 text-slate-700 text-sm font-semibold flex items-center justify-center gap-1 disabled:opacity-50">
+                            <RefreshCw size={15} /> ร่างใหม่
+                          </button>
+                        </div>
                       </div>
                     </div>
                   ) : (

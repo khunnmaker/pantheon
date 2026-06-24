@@ -125,6 +125,10 @@ export const getCustomer = (id: string) => authed<CustomerDetail>(`/api/customer
 export const regenerateDraft = (messageId: string) =>
   authed<{ draft: Draft }>(`/api/messages/${messageId}/draft`, { method: 'POST' });
 
+// Polish an agent's drafted reply (grammar/wording) without changing meaning/numbers.
+export const rewriteText = (text: string) =>
+  authed<{ text: string }>('/api/rewrite', { method: 'POST', body: JSON.stringify({ text }) });
+
 export interface ReplyResult {
   ok: boolean;
   sent: boolean;

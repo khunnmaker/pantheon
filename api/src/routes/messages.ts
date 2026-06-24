@@ -5,6 +5,7 @@ import { prisma } from '../db/prisma.js';
 import { requireAuth } from '../auth/middleware.js';
 import { sendLineText } from '../line/send.js';
 import { generateDraftForMessage } from '../llm/draft.js';
+import { rewriteText } from '../llm/rewrite.js';
 import { hasNumbers } from '../llm/guardrails.js';
 import { embedMessage } from '../memory/embeddings.js';
 import { readImageContent } from '../line/contentStore.js';
@@ -14,6 +15,8 @@ const replyBody = z.object({
   finalText: z.string().min(1),
   confirmNumbers: z.boolean().optional(),
 });
+
+const rewriteBody = z.object({ text: z.string().min(1).max(4000) });
 
 export async function messageRoutes(app: FastifyInstance) {
   app.addHook('preHandler', requireAuth);
@@ -135,5 +138,20 @@ export async function messageRoutes(app: FastifyInstance) {
       message: agentMessage,
       learnedCaptured,
     };
+  });
+
+  // POST /api/rewrite — polish an agent's drafted reply (grammar/wording/arrangement)
+  // without changing meaning or numbers. Staff-initiated; the /reply send guard still
+  // requires a numbers-confirm before anything reaches the customer.
+  app.post('/api/rewrite', async (req, reply) => {
+    const parsed = rewriteBody.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'invalid_body' });
+    try {
+      const text = await rewriteText(parsed.data.text);
+      return { text };
+    } catch (err) {
+      req.log.error({ err }, 'rewrite failed');
+      return reply.code(502).send({ error: 'rewrite_failed' });
+    }
   });
 }
