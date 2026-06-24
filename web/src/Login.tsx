@@ -37,7 +37,7 @@ export default function Login({ onLogin }: { onLogin: (agent: Agent) => void }) 
           <Bot size={24} />
           <h1 className="text-xl font-bold">Minerva</h1>
         </div>
-        <p className="text-sm text-slate-500 mb-5">เข้าสู่ระบบคอนโซลพนักงาน</p>
+        <p className="text-sm text-slate-500 mb-5">เข้าสู่ระบบ</p>
 
         <label className="block text-xs font-semibold text-slate-500 mb-1">อีเมล</label>
         <input

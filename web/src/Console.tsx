@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import {
   Bot, User, LogOut, Clock, Inbox, Wifi, WifiOff, Loader2, ShieldCheck, MessageSquare,
-  Send, Check, CheckCircle2, RefreshCw, AlertTriangle, Brain, Database, Sparkles, GraduationCap, Wand2,
+  Send, Check, CheckCircle2, RefreshCw, Brain, GraduationCap, Wand2,
 } from 'lucide-react';
 import {
   getQueue, getCustomers, getCustomer, clearSession, regenerateDraft, rewriteText, sendReply,
@@ -264,7 +264,6 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
   }
 
   const draft = detail?.pendingDraft ?? null;
-  const edited = !!draft && editText.trim() !== draft.draftText.trim();
 
   return (
     <div className="min-h-screen bg-slate-100 p-3 sm:p-5 font-sans text-slate-800">
@@ -273,8 +272,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
         <div className="mb-4 flex items-center justify-between gap-3 flex-wrap">
           <div className="flex items-center gap-2 text-teal-700">
             <Bot size={22} />
-            <h1 className="text-xl sm:text-2xl font-bold">Minerva — คอนโซลพนักงาน</h1>
-            <span className="text-xs px-2 py-0.5 rounded-full bg-slate-200 text-slate-600">M2</span>
+            <h1 className="text-xl sm:text-2xl font-bold">Minerva</h1>
           </div>
           <div className="flex items-center gap-2">
             <div className="flex rounded-xl border border-slate-200 bg-white overflow-hidden text-sm">
@@ -363,7 +361,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                       </div>
                       {detail.memory?.summary && (
                         <div className="mx-4 mb-2 text-[11px] text-teal-800 bg-teal-50 border border-teal-200 rounded-lg p-2">
-                          <span className="font-bold flex items-center gap-1 mb-0.5"><Brain size={12} /> ความจำระยะยาว (AI ใช้ทุกคำตอบ)</span>
+                          <span className="font-bold flex items-center gap-1 mb-0.5"><Brain size={12} /> ความจำระยะยาว</span>
                           {detail.memory.summary}
                         </div>
                       )}
@@ -386,23 +384,12 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                   {/* draft composer */}
                   {draft ? (
                     <div className="border-t border-slate-200 p-3 space-y-2 bg-white">
-                      <div className="flex items-center justify-between">
+                      <div>
                         <span className={'text-xs font-semibold px-2 py-1 rounded-full border ' + TYPE_META[draft.type].cls}>{TYPE_META[draft.type].label}</span>
-                        <div className="flex items-center gap-2">
-                          <span className="text-[11px] text-teal-600 flex items-center gap-1"><Sparkles size={12} /> ร่างโดย AI</span>
-                          {draft.type !== 'draft' && <span className="flex items-center gap-1 text-xs text-amber-600"><AlertTriangle size={13} /> ตรวจ/เติมก่อนส่ง</span>}
-                        </div>
                       </div>
-                      {draft.note && <div className="text-xs text-slate-500 bg-slate-50 rounded-lg p-2 border border-slate-200">เหตุผล: {draft.note}</div>}
-                      {draft.usedKb.length > 0 && (
-                        <div className="flex items-center gap-1 flex-wrap">
-                          <span className="text-xs text-slate-500 flex items-center gap-1"><Database size={12} /> KB:</span>
-                          {draft.usedKb.map((id) => <span key={id} className="text-xs px-2 py-0.5 rounded bg-teal-50 text-teal-700 border border-teal-200">{id}</span>)}
-                        </div>
-                      )}
+                      {draft.note && <div className="text-xs text-slate-500 bg-slate-50 rounded-lg p-2 border border-slate-200">{draft.note}</div>}
                       <textarea value={editText} onChange={(e) => { setEditText(e.target.value); setNeedsConfirm(false); }} rows={3}
                         className="w-full p-3 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-teal-400 resize-none" placeholder="พิมพ์/แก้คำตอบก่อนส่ง…" />
-                      {edited && <div className="text-[11px] text-amber-600 flex items-center gap-1"><Brain size={12} /> มีการแก้ — จะถูกเก็บเข้าคลังการเรียนรู้เมื่อส่ง</div>}
                       {error && <div className="text-xs text-rose-600 bg-rose-50 border border-rose-200 rounded-lg p-2">{error}</div>}
                       <div className="grid grid-cols-3 gap-2">
                         <button onClick={approve} disabled={sending || rewriting || !editText.trim()}
@@ -427,7 +414,6 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                       {detail && detail.messages.length > 0 ? 'ลูกค้าได้รับคำตอบล่าสุดแล้ว — รอคำถามใหม่' : 'รอคำถามจากลูกค้า…'}
                     </div>
                   )}
-                  <div className="px-4 py-1.5 border-t border-slate-100 text-[11px] text-slate-400">🔒 ราคา/สต็อก/คำถามคลินิก → ระบบบังคับให้คนตอบเสมอ</div>
                 </>
               )}
             </div>
