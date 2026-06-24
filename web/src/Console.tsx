@@ -395,19 +395,21 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                         className="w-full p-3 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-teal-400 resize-none" placeholder="พิมพ์/แก้คำตอบก่อนส่ง…" />
                       {edited && <div className="text-[11px] text-amber-600 flex items-center gap-1"><Brain size={12} /> มีการแก้ — จะถูกเก็บเข้าคลังการเรียนรู้เมื่อส่ง</div>}
                       {error && <div className="text-xs text-rose-600 bg-rose-50 border border-rose-200 rounded-lg p-2">{error}</div>}
-                      <div className="flex gap-2">
+                      <div className="grid grid-cols-3 gap-2">
                         <button onClick={approve} disabled={sending || rewriting || !editText.trim()}
-                          className={'flex-1 min-w-0 px-3 py-2 rounded-xl text-white text-sm font-semibold flex items-center justify-center gap-1 disabled:opacity-50 ' + (needsConfirm ? 'bg-amber-600 hover:bg-amber-700' : 'bg-emerald-600 hover:bg-emerald-700')}>
-                          {sending ? <Loader2 size={16} className="animate-spin" /> : <Send size={15} />} <span className="truncate">{needsConfirm ? 'ยืนยันส่ง (มีตัวเลข)' : 'อนุมัติ & ส่ง'}</span>
+                          title={needsConfirm ? 'ยืนยันส่ง (คำตอบมีตัวเลข)' : 'อนุมัติและส่งให้ลูกค้า'}
+                          className={'min-w-0 px-2 py-2 rounded-xl text-white text-sm font-semibold flex items-center justify-center gap-1 disabled:opacity-50 ' + (needsConfirm ? 'bg-amber-600 hover:bg-amber-700' : 'bg-emerald-600 hover:bg-emerald-700')}>
+                          {sending ? <Loader2 size={16} className="animate-spin" /> : <Send size={15} />} <span className="truncate">{needsConfirm ? 'ยืนยันส่ง' : 'อนุมัติ & ส่ง'}</span>
                         </button>
                         <button onClick={rewrite} disabled={rewriting || sending || !editText.trim()}
                           title="ให้ AI ช่วยแก้ไวยากรณ์และเรียบเรียงข้อความที่คุณพิมพ์ใหม่ (ไม่เปลี่ยนความหมายหรือตัวเลข)"
-                          className="shrink-0 px-2.5 py-2 rounded-xl bg-indigo-100 hover:bg-indigo-200 text-indigo-700 text-sm font-semibold flex items-center gap-1 disabled:opacity-50">
-                          {rewriting ? <Loader2 size={15} className="animate-spin" /> : <Wand2 size={15} />} เรียบเรียงใหม่
+                          className="min-w-0 px-2 py-2 rounded-xl bg-indigo-100 hover:bg-indigo-200 text-indigo-700 text-sm font-semibold flex items-center justify-center gap-1 disabled:opacity-50">
+                          {rewriting ? <Loader2 size={15} className="animate-spin" /> : <Wand2 size={15} />} <span className="truncate">เรียบเรียงใหม่</span>
                         </button>
                         <button onClick={regenerate} disabled={sending || rewriting}
-                          className="shrink-0 px-2.5 py-2 rounded-xl bg-slate-200 hover:bg-slate-300 text-slate-700 text-sm font-semibold flex items-center gap-1 disabled:opacity-50">
-                          <RefreshCw size={15} /> ร่างใหม่
+                          title="ให้ AI ร่างคำตอบใหม่จาก KB (ทิ้งข้อความที่แก้)"
+                          className="min-w-0 px-2 py-2 rounded-xl bg-slate-200 hover:bg-slate-300 text-slate-700 text-sm font-semibold flex items-center justify-center gap-1 disabled:opacity-50">
+                          <RefreshCw size={15} /> <span className="truncate">ร่างใหม่</span>
                         </button>
                       </div>
                     </div>
