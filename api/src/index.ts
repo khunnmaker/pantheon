@@ -12,6 +12,7 @@ import { kbRoutes } from './routes/kb.js';
 import { messageRoutes } from './routes/messages.js';
 import { learningRoutes } from './routes/learning.js';
 import { initIo } from './ws/io.js';
+import { sweepIdleSessions } from './memory/summarize.js';
 
 // Raw body is needed to verify the LINE webhook signature.
 declare module 'fastify' {
@@ -82,6 +83,14 @@ async function main() {
   try {
     await app.listen({ port: env.PORT, host: '0.0.0.0' });
     app.log.info(`Minerva API listening on :${env.PORT} (${env.NODE_ENV})`);
+
+    // Periodically end + summarize idle sessions (long-term memory, M3 layer 1).
+    const sweep = setInterval(() => {
+      void sweepIdleSessions(env.SESSION_IDLE_MINUTES).catch((err) =>
+        app.log.error({ err }, 'idle session sweep failed'),
+      );
+    }, 60_000);
+    sweep.unref();
   } catch (err) {
     app.log.error(err);
     process.exit(1);

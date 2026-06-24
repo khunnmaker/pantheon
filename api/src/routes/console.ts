@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { prisma } from '../db/prisma.js';
 import { requireAuth } from '../auth/middleware.js';
+import { endSession } from '../memory/summarize.js';
 
 const RECENT_MESSAGES = 50;
 
@@ -66,16 +67,27 @@ export async function consoleRoutes(app: FastifyInstance) {
         ? await prisma.draft.findUnique({ where: { messageId: last.id } })
         : null;
 
+    const memory = await prisma.customerMemory.findUnique({ where: { customerId: id } });
+
     return {
       customer,
       messages: ordered,
       pendingDraft,
       pendingMessageId: last && last.role === 'customer' ? last.id : null,
+      memory: memory ? { summary: memory.summary, updatedAt: memory.updatedAt } : null,
       stats: {
         questions: customerCount,
         replies: agentCount,
         lastSeen: customer.lastSeen,
       },
     };
+  });
+
+  // POST /api/customers/:id/end-session — end the chat and refresh long-term memory.
+  app.post<{ Params: { id: string } }>('/api/customers/:id/end-session', async (req, reply) => {
+    const customer = await prisma.customer.findUnique({ where: { id: req.params.id } });
+    if (!customer) return reply.code(404).send({ error: 'not_found' });
+    const summary = await endSession(req.params.id);
+    return { ok: true, summary };
   });
 }

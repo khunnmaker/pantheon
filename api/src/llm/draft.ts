@@ -36,12 +36,19 @@ export async function generateDraftForMessage(messageId: string): Promise<DraftO
     .map((m) => histLine(m.role, m.text))
     .join('\n');
 
+  // Long-term memory (M3 layer 1) — updated on session end. Retrieval (layer 2)
+  // is added once embeddings + pgvector are available.
+  const memory = await prisma.customerMemory.findUnique({
+    where: { customerId: message.customerId },
+  });
+  const summary = memory?.summary || undefined;
+
   let result: DraftResult;
   try {
     if (!llmAvailable()) {
       result = { ...SAFE_DEFAULT, note: 'ยังไม่ได้ตั้งค่า ANTHROPIC_API_KEY — ขอให้เจ้าหน้าที่ตอบ' };
     } else {
-      const { system, user } = buildDraftPrompt({ question: message.text, kb, recentWindow });
+      const { system, user } = buildDraftPrompt({ question: message.text, kb, recentWindow, summary });
       const raw = await callClaude(user, system);
       result = parseDraft(raw);
     }

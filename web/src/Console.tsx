@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import {
   Bot, User, LogOut, Clock, Inbox, Wifi, WifiOff, Loader2, ShieldCheck, MessageSquare,
-  Send, Check, RefreshCw, AlertTriangle, Brain, Database, Sparkles, GraduationCap,
+  Send, Check, CheckCircle2, RefreshCw, AlertTriangle, Brain, Database, Sparkles, GraduationCap,
 } from 'lucide-react';
 import {
   getQueue, getCustomers, getCustomer, clearSession, regenerateDraft, sendReply,
-  getLearned, promoteLearned, rejectLearned,
+  getLearned, promoteLearned, rejectLearned, endSession,
   type Agent, type CustomerLite, type CustomerDetail, type Message, type DraftType, type LearnedAnswer,
 } from './lib/api';
 import { getSocket, disconnectSocket } from './lib/socket';
@@ -39,6 +39,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
 
   const [editText, setEditText] = useState('');
   const [sending, setSending] = useState(false);
+  const [ending, setEnding] = useState(false);
   const [needsConfirm, setNeedsConfirm] = useState(false);
   const [toast, setToast] = useState('');
   const [error, setError] = useState('');
@@ -175,6 +176,20 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
     }
   }
 
+  async function endChat() {
+    if (!selectedId || ending) return;
+    setEnding(true);
+    try {
+      const res = await endSession(selectedId);
+      flashToast(res.summary ? 'จบแชทแล้ว — อัปเดตความจำระยะยาว ✓' : 'จบแชทแล้ว');
+      await loadDetail(selectedId);
+    } catch {
+      setError('จบแชทไม่สำเร็จ');
+    } finally {
+      setEnding(false);
+    }
+  }
+
   async function promote(id: string) {
     await promoteLearned(id).catch(() => undefined);
     await refreshLearned();
@@ -273,10 +288,22 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
               ) : (
                 <>
                   {detail && (
-                    <div className="px-4 py-2 border-b border-slate-100 bg-slate-50 text-xs text-slate-500 flex items-center gap-2">
-                      <b className="text-slate-700">{nameOf(detail.customer)}</b>
-                      <span>· LINE: {detail.customer.lineUserId}</span>
-                      <span className="ml-auto">ลูกค้าตั้งแต่ {fmtTime(detail.customer.firstSeen)}</span>
+                    <div className="border-b border-slate-100 bg-slate-50">
+                      <div className="px-4 py-2 text-xs text-slate-500 flex items-center gap-2">
+                        <b className="text-slate-700">{nameOf(detail.customer)}</b>
+                        <span>· LINE: {detail.customer.lineUserId}</span>
+                        <button onClick={endChat} disabled={ending}
+                          className="ml-auto text-[11px] px-2 py-1 rounded-lg bg-white border border-slate-200 hover:bg-slate-100 text-slate-600 flex items-center gap-1 disabled:opacity-50"
+                          title="จบบทสนทนาแล้วสรุปความจำระยะยาว">
+                          {ending ? <Loader2 size={12} className="animate-spin" /> : <CheckCircle2 size={12} />} จบแชท
+                        </button>
+                      </div>
+                      {detail.memory?.summary && (
+                        <div className="mx-4 mb-2 text-[11px] text-teal-800 bg-teal-50 border border-teal-200 rounded-lg p-2">
+                          <span className="font-bold flex items-center gap-1 mb-0.5"><Brain size={12} /> ความจำระยะยาว (AI ใช้ทุกคำตอบ)</span>
+                          {detail.memory.summary}
+                        </div>
+                      )}
                     </div>
                   )}
                   <div className="flex-1 overflow-y-auto p-3 space-y-2 bg-green-50">

@@ -47,6 +47,7 @@ export interface CustomerDetail {
   messages: Message[];
   pendingDraft: Draft | null;
   pendingMessageId: string | null;
+  memory: { summary: string; updatedAt: string } | null;
   stats: { questions: number; replies: number; lastSeen: string };
 }
 export interface LearnedAnswer {
@@ -144,6 +145,9 @@ export async function sendReply(
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json() as Promise<ReplyResult>;
 }
+
+export const endSession = (customerId: string) =>
+  authed<{ ok: boolean; summary: string | null }>(`/api/customers/${customerId}/end-session`, { method: 'POST' });
 
 export const getLearned = (status = 'pending') =>
   authed<{ learned: LearnedAnswer[] }>(`/api/learned?status=${status}`);
