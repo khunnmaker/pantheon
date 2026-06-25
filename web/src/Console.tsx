@@ -7,7 +7,7 @@ import {
 import {
   getQueue, getCustomers, getCustomer, searchCustomers, clearSession, regenerateDraft, rewriteText, sendReply, setNickname, setCategory,
   uploadAttachment, getLearned, promoteLearned, rejectLearned, endSession, API_URL, getToken,
-  getQuickReplies, addQuickReply, deleteQuickReply, sendQuickReply,
+  getQuickReplies, addQuickReply, deleteQuickReply, sendQuickReply, sendMessage,
   type Agent, type CustomerLite, type CustomerDetail, type Message, type DraftType, type LearnedAnswer, type PendingProduct, type QuickReply,
 } from './lib/api';
 import { getSocket, disconnectSocket } from './lib/socket';
@@ -192,6 +192,9 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
   const [qrSaving, setQrSaving] = useState(false);
   const [qrOpen, setQrOpen] = useState(false);
   const [qrSending, setQrSending] = useState(false);
+  const [freeText, setFreeText] = useState('');
+  const [freeSending, setFreeSending] = useState(false);
+  const [freeNeedsConfirm, setFreeNeedsConfirm] = useState(false);
   const [toast, setToast] = useState('');
   const [error, setError] = useState('');
 
@@ -217,6 +220,8 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
       setRewriteNote(null);
       setSelectedProductSkus(d.pendingProduct?.photoSku ? [d.pendingProduct.sku] : []);
       setUpload(null);
+      setFreeText('');
+      setFreeNeedsConfirm(false);
     } finally {
       setLoadingDetail(false);
     }
@@ -402,6 +407,28 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
       setError('ส่งข้อความไม่สำเร็จ');
     } finally {
       setQrSending(false);
+    }
+  }
+
+  // Free-form message (correction/addition) when there's no pending question.
+  async function freeSend() {
+    if (!selectedId || !freeText.trim() || freeSending) return;
+    setFreeSending(true);
+    setError('');
+    try {
+      const res = await sendMessage(selectedId, freeText.trim(), freeNeedsConfirm);
+      if ('needsConfirm' in res) {
+        setFreeNeedsConfirm(true);
+        setError('ข้อความมีราคา — โปรดตรวจสอบแล้วกด "ยืนยันส่ง" อีกครั้ง');
+        return;
+      }
+      setFreeText('');
+      setFreeNeedsConfirm(false);
+      flashToast(res.dryRun ? 'บันทึกแล้ว (โหมดทดสอบ)' : 'ส่งข้อความให้ลูกค้าแล้ว ✓');
+    } catch {
+      setError('ส่งข้อความไม่สำเร็จ');
+    } finally {
+      setFreeSending(false);
     }
   }
   async function saveQuickReply() {
@@ -772,9 +799,21 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                         </button>
                       </div>
                     </div>
+                  ) : detail && detail.messages.length > 0 ? (
+                    <div className="border-t border-slate-200 p-3 space-y-2 bg-white">
+                      <div className="text-[11px] text-slate-400">ลูกค้าได้รับคำตอบล่าสุดแล้ว — พิมพ์เพื่อส่งข้อความเพิ่มเติม / แก้ไขได้</div>
+                      {error && <div className="text-xs text-rose-600 bg-rose-50 border border-rose-200 rounded-lg p-2">{error}</div>}
+                      <textarea value={freeText} onChange={(e) => { setFreeText(e.target.value); setFreeNeedsConfirm(false); }} rows={2}
+                        className="w-full p-3 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-teal-400 resize-none" placeholder="พิมพ์ข้อความถึงลูกค้า…" />
+                      <button onClick={freeSend} disabled={!freeText.trim() || freeSending}
+                        title={freeNeedsConfirm ? 'ยืนยันส่ง (ข้อความมีราคา)' : 'ส่งข้อความให้ลูกค้า'}
+                        className={'w-full px-2 py-2 rounded-xl text-white text-sm font-semibold flex items-center justify-center gap-1 disabled:opacity-50 ' + (freeNeedsConfirm ? 'bg-amber-600 hover:bg-amber-700' : 'bg-emerald-600 hover:bg-emerald-700')}>
+                        {freeSending ? <Loader2 size={16} className="animate-spin" /> : <Send size={15} />} {freeNeedsConfirm ? 'ยืนยันส่ง' : 'ส่งข้อความ'}
+                      </button>
+                    </div>
                   ) : (
                     <div className="px-4 py-3 border-t border-slate-200 text-xs text-slate-400 text-center">
-                      {detail && detail.messages.length > 0 ? 'ลูกค้าได้รับคำตอบล่าสุดแล้ว — รอคำถามใหม่' : 'รอคำถามจากลูกค้า…'}
+                      รอคำถามจากลูกค้า…
                     </div>
                   )}
                 </>

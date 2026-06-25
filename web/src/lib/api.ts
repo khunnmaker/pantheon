@@ -218,6 +218,23 @@ export const sendQuickReply = (customerId: string, quickReplyId: string) =>
     body: JSON.stringify({ quickReplyId }),
   });
 
+// Send a free-form message to the customer (correction/addition after answering).
+export async function sendMessage(
+  customerId: string,
+  text: string,
+  confirmNumbers?: boolean,
+): Promise<{ message: Message; dryRun: boolean } | { needsConfirm: true }> {
+  const token = getToken();
+  const res = await fetch(`${API_URL}/api/customers/${customerId}/message`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
+    body: JSON.stringify({ text, confirmNumbers }),
+  });
+  if (res.status === 409) return { needsConfirm: true };
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json() as Promise<{ message: Message; dryRun: boolean }>;
+}
+
 export const getLearned = (status = 'pending') =>
   authed<{ learned: LearnedAnswer[] }>(`/api/learned?status=${status}`);
 export const promoteLearned = (id: string) =>
