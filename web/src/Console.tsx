@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import {
   Bot, User, LogOut, Clock, Inbox, Wifi, WifiOff, Loader2, ShieldCheck, MessageSquare,
-  Send, Check, CheckCircle2, RefreshCw, Brain, GraduationCap, Wand2, Pencil, AlertTriangle,
+  Send, Check, CheckCircle2, RefreshCw, Brain, GraduationCap, Wand2, Pencil, AlertTriangle, Search,
 } from 'lucide-react';
 import {
-  getQueue, getCustomers, getCustomer, clearSession, regenerateDraft, rewriteText, sendReply, setNickname,
+  getQueue, getCustomers, getCustomer, searchCustomers, clearSession, regenerateDraft, rewriteText, sendReply, setNickname,
   getLearned, promoteLearned, rejectLearned, endSession, API_URL, getToken,
   type Agent, type CustomerLite, type CustomerDetail, type Message, type DraftType, type LearnedAnswer,
 } from './lib/api';
@@ -78,6 +78,8 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
   const [rewriting, setRewriting] = useState(false);
   const [nickEdit, setNickEdit] = useState<string | null>(null);
   const [rewriteNote, setRewriteNote] = useState<string | null>(null);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [searchResults, setSearchResults] = useState<CustomerLite[] | null>(null);
   const [ending, setEnding] = useState(false);
   const [needsConfirm, setNeedsConfirm] = useState(false);
   const [toast, setToast] = useState('');
@@ -170,6 +172,16 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [detail?.messages.length]);
+
+  // Debounced customer search (by nickname / LINE name) — includes ended chats.
+  useEffect(() => {
+    const q = searchTerm.trim();
+    if (!q) { setSearchResults(null); return; }
+    const t = setTimeout(() => {
+      searchCustomers(q).then((r) => setSearchResults(r.customers)).catch(() => setSearchResults([]));
+    }, 300);
+    return () => clearTimeout(t);
+  }, [searchTerm]);
 
   function flashToast(msg: string) {
     setToast(msg);
@@ -282,6 +294,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
   }
 
   const draft = detail?.pendingDraft ?? null;
+  const displayList = searchResults ?? customers;
 
   return (
     <div className="min-h-screen bg-slate-100 p-3 sm:p-5 font-sans text-slate-800">
@@ -317,14 +330,26 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                 <Inbox size={18} /> คิวลูกค้า
                 <span className="ml-auto text-xs bg-teal-800 px-2 py-0.5 rounded-full">{waitingIds.size} รอตอบ</span>
               </div>
+              <div className="px-2 pt-2 shrink-0">
+                <div className="relative">
+                  <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)}
+                    placeholder="ค้นหาชื่อเล่น / ชื่อลูกค้า…"
+                    className="w-full pl-8 pr-2 py-1.5 rounded-lg border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-teal-400" />
+                </div>
+              </div>
               <div className="flex-1 overflow-y-auto p-2 space-y-1">
-                {customers.length === 0 && (
+                {searchResults !== null && searchResults.length > 0 && (
+                  <div className="px-1 pb-1 text-[11px] text-slate-400">ผลค้นหา {searchResults.length} ราย (รวมแชทที่จบแล้ว)</div>
+                )}
+                {displayList.length === 0 && (
                   <div className="text-slate-400 text-sm text-center py-10 px-3">
-                    ยังไม่มีข้อความจากลูกค้า<br />
-                    <span className="text-xs">เมื่อมีข้อความเข้า LINE จะปรากฏที่นี่แบบเรียลไทม์</span>
+                    {searchResults !== null ? 'ไม่พบลูกค้าที่ตรงกับคำค้นหา' : (
+                      <>ยังไม่มีข้อความจากลูกค้า<br /><span className="text-xs">เมื่อมีข้อความเข้า LINE จะปรากฏที่นี่แบบเรียลไทม์</span></>
+                    )}
                   </div>
                 )}
-                {customers.map((c) => {
+                {displayList.map((c) => {
                   const waiting = waitingIds.has(c.id);
                   const active = selectedId === c.id;
                   return (

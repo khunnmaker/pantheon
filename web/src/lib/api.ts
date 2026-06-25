@@ -123,6 +123,9 @@ export const getQueue = () => authed<{ queue: QueueItem[] }>('/api/queue');
 export const getCustomers = () => authed<{ customers: CustomerLite[] }>('/api/customers');
 export const getCustomer = (id: string) => authed<CustomerDetail>(`/api/customers/${id}`);
 
+export const searchCustomers = (q: string) =>
+  authed<{ customers: CustomerLite[] }>(`/api/customers/search?q=${encodeURIComponent(q)}`);
+
 export const setNickname = (customerId: string, nickname: string) =>
   authed<{ ok: boolean; nickname: string | null }>(`/api/customers/${customerId}/nickname`, {
     method: 'POST',

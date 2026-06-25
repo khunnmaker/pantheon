@@ -46,6 +46,27 @@ export async function consoleRoutes(app: FastifyInstance) {
     return { customers };
   });
 
+  // GET /api/customers/search?q= — find ANY customer (including ended chats) by
+  // nickname / LINE display name / LINE id. Powers the queue search box. The
+  // nickname is tied to the LINE id, so it persists across จบแชท.
+  app.get('/api/customers/search', async (req) => {
+    const q = ((req.query as { q?: string })?.q ?? '').trim();
+    if (!q) return { customers: [] };
+    const customers = await prisma.customer.findMany({
+      where: {
+        OR: [
+          { nickname: { contains: q, mode: 'insensitive' } },
+          { displayName: { contains: q, mode: 'insensitive' } },
+          { lineUserId: { contains: q } },
+        ],
+      },
+      orderBy: { lastSeen: 'desc' },
+      take: 30,
+      select: { id: true, lineUserId: true, displayName: true, nickname: true, firstSeen: true, lastSeen: true },
+    });
+    return { customers };
+  });
+
   // GET /api/customers/:id — profile + recent messages + simple stats.
   app.get<{ Params: { id: string } }>('/api/customers/:id', async (req, reply) => {
     const { id } = req.params;
