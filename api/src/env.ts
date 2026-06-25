@@ -26,6 +26,10 @@ const schema = z.object({
   SESSION_IDLE_MINUTES: z.coerce.number().int().positive().default(30),
 
   WEB_ORIGIN: z.string().default('http://localhost:5173'),
+
+  // Where customer images are stored. In prod set this to a mounted persistent
+  // volume path (e.g. /data); defaults to ./uploads for local dev.
+  UPLOAD_DIR: z.string().default(''),
 });
 
 const parsed = schema.safeParse(process.env);
