@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { verifyLineSignature } from '../line/signature.js';
 import { ingestCustomerText } from '../line/ingest.js';
 import { saveImageContent } from '../line/contentStore.js';
-import { generateDraftForMessage, generateImageDraft } from '../llm/draft.js';
+import { generateDraftForMessage, generateImageDraft, generateStickerDraft } from '../llm/draft.js';
 import { prisma } from '../db/prisma.js';
 import { pushToConsole } from '../ws/io.js';
 
@@ -15,6 +15,7 @@ interface LineMessage {
   text?: string;
   packageId?: string;
   stickerId?: string;
+  keywords?: string[]; // LINE-supplied words describing a sticker (e.g. "Thank you")
 }
 interface LineEvent {
   type: string;
@@ -101,9 +102,11 @@ export async function webhookRoutes(app: FastifyInstance) {
 
         if (mtype === 'sticker') {
           const ref = `${ev.message.packageId ?? ''}/${ev.message.stickerId ?? ''}`;
+          // LINE describes the sticker with keyword(s) (+ optional text on message stickers).
+          const meaning = [ev.message.text, ...(ev.message.keywords ?? [])].filter(Boolean).join(', ');
           const result = await ingestCustomerText({
             lineUserId,
-            text: '[สติกเกอร์]',
+            text: meaning ? `[สติกเกอร์] ${meaning}` : '[สติกเกอร์]',
             channelMsgId,
             attachmentType: 'sticker',
             attachmentRef: ref,
@@ -113,7 +116,21 @@ export async function webhookRoutes(app: FastifyInstance) {
             message: result.message,
             isNewCustomer: result.isNewCustomer,
           });
-          await nonTextNeedsHuman(result.message.id, 'sticker');
+          // With keyword(s) the AI can draft a fitting reply; with none, defer to a human.
+          if (meaning) {
+            const sMsgId = result.message.id;
+            const sCustomerId = result.customer.id;
+            void generateStickerDraft(sMsgId)
+              .then((d) =>
+                pushToConsole('draft:new', { messageId: sMsgId, customerId: sCustomerId, draft: d.draft, guardrailReason: d.guardrailReason }),
+              )
+              .catch(async (err) => {
+                req.log.error({ err }, 'sticker draft failed');
+                await nonTextNeedsHuman(sMsgId, 'sticker');
+              });
+          } else {
+            await nonTextNeedsHuman(result.message.id, 'sticker');
+          }
           continue;
         }
 

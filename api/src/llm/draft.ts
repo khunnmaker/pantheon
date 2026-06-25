@@ -1,7 +1,7 @@
 import type { Draft } from '@prisma/client';
 import { prisma } from '../db/prisma.js';
 import { env } from '../env.js';
-import { buildDraftPrompt, buildImagePrompt } from './prompt.js';
+import { buildDraftPrompt, buildImagePrompt, buildStickerPrompt } from './prompt.js';
 import { parseDraft, SAFE_DEFAULT, type DraftResult } from './parser.js';
 import { applyGuardrails, type SensitiveIntent } from './guardrails.js';
 import { callClaude, callClaudeWithImage, llmAvailable } from './anthropic.js';
@@ -25,6 +25,10 @@ export async function generateDraftForMessage(messageId: string): Promise<DraftO
   if (!message || message.role !== 'customer') {
     throw new Error('draftable customer message not found');
   }
+
+  // Non-text messages have dedicated draft paths (sticker = LINE keywords, image = vision).
+  if (message.attachmentType === 'sticker') return generateStickerDraft(messageId);
+  if (message.attachmentType === 'image') return generateImageDraft(messageId);
 
   const kb = await prisma.kbEntry.findMany({ where: { status: 'active' } });
 
@@ -177,6 +181,67 @@ export async function generateImageDraft(messageId: string): Promise<DraftOutcom
     result.used_kb.map((s) => s.toLowerCase()).includes(k.id.toLowerCase()),
   );
   const guarded = applyGuardrails(result, message.text, citedKb);
+
+  const draft = await prisma.draft.upsert({
+    where: { messageId },
+    update: {
+      type: guarded.result.type,
+      draftText: guarded.result.draft,
+      usedKb: guarded.result.used_kb,
+      note: guarded.result.note,
+    },
+    create: {
+      messageId,
+      type: guarded.result.type,
+      draftText: guarded.result.draft,
+      usedKb: guarded.result.used_kb,
+      note: guarded.result.note,
+      retrievedMsgIds: [],
+    },
+  });
+
+  return { draft, result: guarded.result, guardrailReason: guarded.reason };
+}
+
+const STICKER_FALLBACK: DraftResult = {
+  type: 'needs_human',
+  draft: '',
+  used_kb: [],
+  note: 'ลูกค้าส่งสติกเกอร์ — ขอให้เจ้าหน้าที่ดูและตอบเองค่ะ',
+};
+
+// Draft a reply to a STICKER using LINE's keyword(s) (kept on the message text)
+// for its meaning + recent context. Safe-defaults to needs_human.
+export async function generateStickerDraft(messageId: string): Promise<DraftOutcome> {
+  const message = await prisma.message.findUnique({ where: { id: messageId } });
+  if (!message || message.role !== 'customer' || message.attachmentType !== 'sticker') {
+    throw new Error('sticker message not found');
+  }
+  const meaning = message.text.replace(/^\[สติกเกอร์\]\s*/, '').trim();
+
+  const recentRows = await prisma.message.findMany({
+    where: { customerId: message.customerId },
+    orderBy: { createdAt: 'desc' },
+    take: env.RECENT_WINDOW,
+  });
+  const recentWindow = recentRows.reverse().map((m) => histLine(m.role, m.text)).join('\n');
+  const memory = await prisma.customerMemory.findUnique({ where: { customerId: message.customerId } });
+  const summary = memory?.summary || undefined;
+
+  let result: DraftResult;
+  try {
+    if (!llmAvailable() || !meaning) {
+      result = STICKER_FALLBACK;
+    } else {
+      const { system, user } = buildStickerPrompt({ meaning, recentWindow, summary });
+      const raw = await callClaude(user, system);
+      result = parseDraft(raw);
+    }
+  } catch {
+    result = STICKER_FALLBACK;
+  }
+
+  const guarded = applyGuardrails(result, meaning, []);
 
   const draft = await prisma.draft.upsert({
     where: { messageId },
