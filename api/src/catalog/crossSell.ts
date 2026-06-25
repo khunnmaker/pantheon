@@ -1,5 +1,5 @@
 import { prisma } from '../db/prisma.js';
-import { findProducts } from './match.js';
+import { findProducts, type ProductMatch } from './match.js';
 
 const DEMOTE_AT = -3; // score at/below which a cross-sell is hidden (regularly skipped)
 const PROMOTE_AT = 1; // score at/above which a learned pairing is shown first
@@ -15,6 +15,8 @@ export async function buildCrossSell(
 ): Promise<string[]> {
   const out: string[] = [];
   const demoted = new Set<string>();
+  const seenNames = new Set<string>(); // avoid several variants of the same product
+  const nameKey = (en: string, th: string, sku: string) => (en || th || sku).trim().toLowerCase();
 
   if (anchorSku) {
     const links = await prisma.crossSellLink.findMany({ where: { anchorSku }, orderBy: { score: 'desc' } });
@@ -23,27 +25,41 @@ export async function buildCrossSell(
       if (out.length >= TARGET) break;
       if (l.score >= PROMOTE_AT && !excludeSkus.has(l.crossSku) && !out.includes(l.crossSku)) {
         const p = await prisma.product.findUnique({ where: { sku: l.crossSku } });
-        if (p?.photoSku && p.status === 'active') out.push(l.crossSku);
+        if (p?.photoSku && p.status === 'active') {
+          const k = nameKey(p.nameEn, p.nameTh, p.sku);
+          if (!seenNames.has(k)) {
+            out.push(l.crossSku);
+            seenNames.add(k);
+          }
+        }
       }
     }
   }
 
-  const usable = (sku: string, photoSku: string | null) =>
-    !!photoSku && !excludeSkus.has(sku) && !out.includes(sku) && !demoted.has(sku);
+  const tryAdd = (h: ProductMatch): boolean => {
+    if (out.length >= TARGET) return false;
+    if (!h.photoSku || excludeSkus.has(h.sku) || out.includes(h.sku) || demoted.has(h.sku)) return false;
+    const k = nameKey(h.nameEn, h.nameTh, h.sku);
+    if (seenNames.has(k)) return false;
+    out.push(h.sku);
+    seenNames.add(k);
+    return true;
+  };
 
-  // First pass: one fresh product per AI term (variety).
+  // First pass: one product per term (variety).
   for (const term of aiTerms) {
     if (out.length >= TARGET) break;
-    const hit = (await findProducts(term, 5)).find((h) => usable(h.sku, h.photoSku));
-    if (hit) out.push(hit.sku);
+    for (const h of await findProducts(term, 5)) {
+      if (tryAdd(h)) break;
+    }
   }
-  // Second pass: top up toward TARGET with more from each term if still short.
+  // Second pass: top up toward TARGET.
   if (out.length < TARGET) {
     for (const term of aiTerms) {
       if (out.length >= TARGET) break;
       for (const h of await findProducts(term, 6)) {
         if (out.length >= TARGET) break;
-        if (usable(h.sku, h.photoSku)) out.push(h.sku);
+        tryAdd(h);
       }
     }
   }
