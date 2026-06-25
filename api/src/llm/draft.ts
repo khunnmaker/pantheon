@@ -2,6 +2,7 @@ import type { Draft } from '@prisma/client';
 import { prisma } from '../db/prisma.js';
 import { env } from '../env.js';
 import { buildDraftPrompt, buildImagePrompt, buildStickerPrompt } from './prompt.js';
+import { findProducts } from '../catalog/match.js';
 import { parseDraft, SAFE_DEFAULT, type DraftResult } from './parser.js';
 import { applyGuardrails, type SensitiveIntent } from './guardrails.js';
 import { callClaude, callClaudeWithImage, llmAvailable } from './anthropic.js';
@@ -88,6 +89,14 @@ export async function generateDraftForMessage(messageId: string): Promise<DraftO
     }
   }
 
+  // M4: find catalog products matching the question; their prices are trusted
+  // grounding so the AI may quote them (still numbers-confirmed at send time).
+  const products = await findProducts(questionText);
+  const groundedPriceText = products
+    .filter((p) => p.price > 0)
+    .map((p) => `${p.price}บาท`)
+    .join(' ');
+
   let result: DraftResult;
   try {
     if (!llmAvailable()) {
@@ -99,6 +108,7 @@ export async function generateDraftForMessage(messageId: string): Promise<DraftO
         recentWindow,
         summary,
         retrievedMessages,
+        products,
       });
       const raw = await callClaude(user, system);
       result = parseDraft(raw);
@@ -111,7 +121,14 @@ export async function generateDraftForMessage(messageId: string): Promise<DraftO
   const citedKb = kb.filter((k) =>
     result.used_kb.map((s) => s.toLowerCase()).includes(k.id.toLowerCase()),
   );
-  const guarded = applyGuardrails(result, questionText, citedKb);
+  const guarded = applyGuardrails(result, questionText, citedKb, groundedPriceText);
+
+  // Attach the catalog product (for its photo on send) only when the answer is
+  // sendable and the model cited a real matched SKU.
+  const matchedSku = (result.used_products ?? []).find((sku) =>
+    products.some((p) => p.sku === sku),
+  );
+  const productSku = guarded.result.type === 'draft' ? matchedSku ?? null : null;
 
   const draft = await prisma.draft.upsert({
     where: { messageId },
@@ -120,6 +137,7 @@ export async function generateDraftForMessage(messageId: string): Promise<DraftO
       draftText: guarded.result.draft,
       usedKb: guarded.result.used_kb,
       note: guarded.result.note,
+      productSku,
     },
     create: {
       messageId,
@@ -128,6 +146,7 @@ export async function generateDraftForMessage(messageId: string): Promise<DraftO
       usedKb: guarded.result.used_kb,
       note: guarded.result.note,
       retrievedMsgIds: retrievedIds,
+      productSku,
     },
   });
 

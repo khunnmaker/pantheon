@@ -118,6 +118,8 @@ model Draft {
   usedKb          String[]
   note            String?
   retrievedMsgIds String[]
+  // catalog product this draft is about — its photo is attached on send (M4)
+  productSku      String?
   createdAt       DateTime @default(now())
 }
 

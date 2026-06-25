@@ -4,6 +4,7 @@ export interface DraftResult {
   type: DraftType;
   draft: string;
   used_kb: string[];
+  used_products?: string[]; // catalog SKUs the draft drew on (for attaching the photo)
   note: string;
 }
 
@@ -34,8 +35,11 @@ export function parseDraft(raw: string): DraftResult {
     const used_kb = Array.isArray(obj.used_kb)
       ? obj.used_kb.filter((x): x is string => typeof x === 'string')
       : [];
+    const used_products = Array.isArray(obj.used_products)
+      ? obj.used_products.filter((x): x is string => typeof x === 'string')
+      : [];
 
-    return { type, draft, used_kb, note };
+    return { type, draft, used_kb, used_products, note };
   } catch {
     return SAFE_DEFAULT;
   }

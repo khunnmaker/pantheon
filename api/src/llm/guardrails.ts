@@ -58,14 +58,17 @@ function priceTokens(s: string): string[] {
   return normalize(s).replace(/,/g, '').match(/[0-9๐-๙]+(?:\.[0-9๐-๙]+)?(?:บาท|baht|thb|฿)/g) || [];
 }
 
-// True if every price the draft states also appears in a cited KB answer — i.e.
-// the number was copied from supervisor-approved content, not invented by the AI.
-// A draft with no price tokens is trivially grounded.
-function pricesGrounded(draftText: string, citedKb: KbEntry[]): boolean {
+// True if every price the draft states also appears in a cited KB answer OR in
+// the matched catalog products (extraGroundedText) — i.e. the number was copied
+// from approved content / the price list, not invented. No price tokens = grounded.
+function pricesGrounded(draftText: string, citedKb: KbEntry[], extraGroundedText = ''): boolean {
   const tokens = priceTokens(draftText);
   if (tokens.length === 0) return true;
-  const kbTokens = new Set(priceTokens(citedKb.map((k) => k.answer).join(' ')));
-  return tokens.every((t) => kbTokens.has(t));
+  const grounded = new Set([
+    ...priceTokens(citedKb.map((k) => k.answer).join(' ')),
+    ...priceTokens(extraGroundedText),
+  ]);
+  return tokens.every((t) => grounded.has(t));
 }
 
 const OVERRIDE: Record<'price_stock' | 'clinical', { draft: string; note: string }> = {
@@ -92,6 +95,7 @@ export function applyGuardrails(
   result: DraftResult,
   question: string,
   citedKb: KbEntry[],
+  groundedPriceText = '', // matched catalog product prices (M4) — trusted like KB
 ): GuardrailOutcome {
   const citedSensitivity = citedKb.map((k) => k.sensitivity);
   const kbClinical = citedSensitivity.includes('clinical');
@@ -114,7 +118,7 @@ export function applyGuardrails(
     // Exception: a price/stock-looking answer whose every stated price is grounded
     // in a cited (supervisor-approved, non-sensitive) KB entry — e.g. the free-
     // shipping threshold — is NOT an AI guess. Trust it and let the draft through.
-    if (reason === 'price_stock' && !!result.draft && pricesGrounded(result.draft, citedKb)) {
+    if (reason === 'price_stock' && !!result.draft && pricesGrounded(result.draft, citedKb, groundedPriceText)) {
       return { result, triggered: false, reason: null };
     }
   }
@@ -128,7 +132,7 @@ export function applyGuardrails(
   // review). Clinical always uses the canned text (no AI medical content); an
   // empty or price-inventing draft falls back to the canned text too.
   const keepModelDraft =
-    reason !== 'clinical' && !!result.draft && pricesGrounded(result.draft, citedKb);
+    reason !== 'clinical' && !!result.draft && pricesGrounded(result.draft, citedKb, groundedPriceText);
   return {
     result: {
       type: 'needs_human',
