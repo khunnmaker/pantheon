@@ -203,6 +203,13 @@ export const addQuickReply = (label: string, body: string) =>
   authed<{ item: QuickReply }>('/api/quick-replies', { method: 'POST', body: JSON.stringify({ label, body }) });
 export const deleteQuickReply = (id: string) =>
   authed<{ ok: boolean }>(`/api/quick-replies/${id}`, { method: 'DELETE' });
+// Send a quick-reply template to the customer as a standalone message (does not
+// touch the pending question or the draft composer).
+export const sendQuickReply = (customerId: string, quickReplyId: string) =>
+  authed<{ ok: boolean; message: Message; dryRun: boolean }>(`/api/customers/${customerId}/quick-reply`, {
+    method: 'POST',
+    body: JSON.stringify({ quickReplyId }),
+  });
 
 export const getLearned = (status = 'pending') =>
   authed<{ learned: LearnedAnswer[] }>(`/api/learned?status=${status}`);

@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { prisma } from '../db/prisma.js';
 import { requireAuth } from '../auth/middleware.js';
 import { endSession } from '../memory/summarize.js';
+import { sendLineText } from '../line/send.js';
 import { pushToConsole } from '../ws/io.js';
 
 const RECENT_MESSAGES = 50;
@@ -87,13 +88,22 @@ export async function consoleRoutes(app: FastifyInstance) {
 
     const ordered = recent.reverse(); // oldest-first for display
 
-    // Pending draft = the draft for the latest message IF that message is an
-    // unanswered customer question (last in the conversation).
-    const last = ordered[ordered.length - 1];
-    const pendingDraft =
-      last && last.role === 'customer'
-        ? await prisma.draft.findUnique({ where: { messageId: last.id } })
-        : null;
+    // Pending = the most recent CUSTOMER message not yet answered by a reply (a
+    // standalone quick-reply does NOT answer it) — so the composer stays open even
+    // after the team sends one or more quick-replies.
+    const latestCustomer = [...ordered].reverse().find((m) => m.role === 'customer');
+    let pendingMessageId: string | null = null;
+    let pendingDraft = null;
+    if (latestCustomer) {
+      const answered = await prisma.message.findFirst({
+        where: { answersMessageId: latestCustomer.id },
+        select: { id: true },
+      });
+      if (!answered) {
+        pendingMessageId = latestCustomer.id;
+        pendingDraft = await prisma.draft.findUnique({ where: { messageId: latestCustomer.id } });
+      }
+    }
 
     const memory = await prisma.customerMemory.findUnique({ where: { customerId: id } });
 
@@ -149,7 +159,7 @@ export async function consoleRoutes(app: FastifyInstance) {
       pendingProduct,
       productCandidates,
       crossSellCandidates,
-      pendingMessageId: last && last.role === 'customer' ? last.id : null,
+      pendingMessageId,
       memory: memory ? { summary: memory.summary, updatedAt: memory.updatedAt } : null,
       stats: {
         questions: customerCount,
@@ -181,5 +191,38 @@ export async function consoleRoutes(app: FastifyInstance) {
     if (!customer) return reply.code(404).send({ error: 'not_found' });
     pushToConsole('conversation:update', { customerId: req.params.id });
     return { ok: true, nickname };
+  });
+
+  // POST /api/customers/:id/quick-reply — send a saved quick-reply template to the
+  // customer as a STANDALONE message (answersMessageId stays null, so it does NOT
+  // consume the pending question — the team keeps composing their main reply).
+  app.post<{ Params: { id: string } }>('/api/customers/:id/quick-reply', async (req, reply) => {
+    const parsed = z.object({ quickReplyId: z.string() }).safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'invalid_body' });
+    const customer = await prisma.customer.findUnique({ where: { id: req.params.id } });
+    if (!customer) return reply.code(404).send({ error: 'not_found' });
+    const qr = await prisma.quickReply.findUnique({ where: { id: parsed.data.quickReplyId } });
+    if (!qr) return reply.code(404).send({ error: 'quick_reply_not_found' });
+
+    let sendResult;
+    try {
+      sendResult = await sendLineText(customer.lineUserId, qr.body);
+    } catch (err) {
+      req.log.error({ err }, 'quick-reply send failed');
+      return reply.code(502).send({ error: 'line_send_failed' });
+    }
+    const message = await prisma.message.create({
+      data: {
+        customerId: customer.id,
+        role: 'agent',
+        text: qr.body,
+        agentId: req.agent!.id,
+        kbIds: [],
+        ...(sendResult.channelMsgId ? { channelMsgId: sendResult.channelMsgId } : {}),
+      },
+    });
+    await prisma.customer.update({ where: { id: customer.id }, data: { lastSeen: new Date() } });
+    pushToConsole('conversation:update', { customerId: customer.id, message });
+    return { ok: true, message, dryRun: sendResult.dryRun };
   });
 }
