@@ -267,39 +267,34 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
 
   return (
     <div className="min-h-screen bg-slate-100 p-3 sm:p-5 font-sans text-slate-800">
-      <div className="max-w-6xl mx-auto flex gap-3 sm:gap-4 items-stretch">
-        {/* left icon rail */}
-        <div className="flex flex-col items-center gap-1.5 bg-white rounded-2xl shadow-sm border border-slate-200 py-3 px-2 shrink-0">
-          <div className="text-teal-700 mb-1" title="Minerva"><Bot size={24} /></div>
-          <button onClick={() => setView('console')} title="คอนโซล"
-            className={'p-2 rounded-xl ' + (view === 'console' ? 'bg-teal-600 text-white' : 'text-slate-500 hover:bg-slate-100')}><MessageSquare size={20} /></button>
-          <button onClick={() => setView('learning')} title="การเรียนรู้"
-            className={'relative p-2 rounded-xl ' + (view === 'learning' ? 'bg-teal-600 text-white' : 'text-slate-500 hover:bg-slate-100')}>
-            <GraduationCap size={20} />
-            {learned.length > 0 && <span className="absolute -top-0.5 -right-0.5 text-[10px] bg-amber-400 text-white rounded-full px-1 leading-tight">{learned.length}</span>}
-          </button>
-          <div className="flex-1" />
-          <span title={connected ? 'เชื่อมต่อสด' : 'ออฟไลน์'} className={'p-1.5 ' + (connected ? 'text-emerald-600' : 'text-slate-300')}>
-            {connected ? <Wifi size={18} /> : <WifiOff size={18} />}
-          </span>
-          <span title={agent.name + (agent.role === 'supervisor' ? ' (หัวหน้า)' : '')}
-            className="relative w-9 h-9 rounded-full bg-teal-600 text-white flex items-center justify-center text-sm font-bold">
-            {agent.name.replace(/^คุณ/, '').charAt(0)}
-            {agent.role === 'supervisor' && <span className="absolute -bottom-1 -right-1 bg-white rounded-full text-teal-600 flex"><ShieldCheck size={13} /></span>}
-          </span>
-          <button onClick={logout} title="ออกจากระบบ" className="p-2 rounded-xl text-slate-400 hover:text-rose-500 hover:bg-slate-100"><LogOut size={18} /></button>
-        </div>
-
-        {/* main content */}
-        <div className="flex-1 min-w-0">
+      <div className="max-w-6xl mx-auto">
         {toast && <div className="mb-3 text-sm bg-emerald-50 border border-emerald-200 text-emerald-700 rounded-xl px-3 py-2 flex items-center gap-2"><Check size={15} /> {toast}</div>}
-
-        {view === 'learning' ? (
-          <LearningView learned={learned} isSupervisor={agent.role === 'supervisor'} onPromote={promote} onReject={reject} />
-        ) : (
-          <div className="grid md:grid-cols-[320px_1fr] gap-4">
+        <div className="grid md:grid-cols-[300px_1fr] gap-4 h-[calc(100vh-2.5rem)]">
+          {/* LEFT: icon bar (top) + queue (bottom) */}
+          <div className="flex flex-col gap-3 min-h-0">
+            {/* icon bar */}
+            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 flex items-center gap-1 px-2 py-2 shrink-0">
+              <div className="text-teal-700 px-1" title="Minerva"><Bot size={22} /></div>
+              <button onClick={() => setView('console')} title="คอนโซล"
+                className={'p-2 rounded-xl ' + (view === 'console' ? 'bg-teal-600 text-white' : 'text-slate-500 hover:bg-slate-100')}><MessageSquare size={19} /></button>
+              <button onClick={() => setView('learning')} title="การเรียนรู้"
+                className={'relative p-2 rounded-xl ' + (view === 'learning' ? 'bg-teal-600 text-white' : 'text-slate-500 hover:bg-slate-100')}>
+                <GraduationCap size={19} />
+                {learned.length > 0 && <span className="absolute -top-0.5 -right-0.5 text-[10px] bg-amber-400 text-white rounded-full px-1 leading-tight">{learned.length}</span>}
+              </button>
+              <div className="flex-1" />
+              <span title={connected ? 'เชื่อมต่อสด' : 'ออฟไลน์'} className={'px-1 ' + (connected ? 'text-emerald-600' : 'text-slate-300')}>
+                {connected ? <Wifi size={17} /> : <WifiOff size={17} />}
+              </span>
+              <span title={agent.name + (agent.role === 'supervisor' ? ' (หัวหน้า)' : '')}
+                className="relative w-8 h-8 rounded-full bg-teal-600 text-white flex items-center justify-center text-xs font-bold shrink-0">
+                {agent.name.replace(/^คุณ/, '').charAt(0)}
+                {agent.role === 'supervisor' && <span className="absolute -bottom-1 -right-1 bg-white rounded-full text-teal-600 flex"><ShieldCheck size={12} /></span>}
+              </span>
+              <button onClick={logout} title="ออกจากระบบ" className="p-2 rounded-xl text-slate-400 hover:text-rose-500 hover:bg-slate-100"><LogOut size={17} /></button>
+            </div>
             {/* queue */}
-            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 flex flex-col h-[calc(100vh-3rem)]">
+            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 flex flex-col flex-1 min-h-0">
               <div className="px-4 py-3 bg-teal-700 text-white rounded-t-2xl font-semibold flex items-center gap-2">
                 <Inbox size={18} /> คิวลูกค้า
                 <span className="ml-auto text-xs bg-teal-800 px-2 py-0.5 rounded-full">{waitingIds.size} รอตอบ</span>
@@ -332,9 +327,14 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                 })}
               </div>
             </div>
+          </div>
 
-            {/* conversation + draft composer */}
-            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 flex flex-col h-[calc(100vh-3rem)]">
+          {/* RIGHT: conversation (or learning) */}
+          <div className="min-h-0 overflow-y-auto">
+            {view === 'learning' ? (
+              <LearningView learned={learned} isSupervisor={agent.role === 'supervisor'} onPromote={promote} onReject={reject} />
+            ) : (
+            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 flex flex-col h-full">
               <div className="px-4 py-3 bg-green-600 text-white rounded-t-2xl font-semibold flex items-center justify-between">
                 <span className="flex items-center gap-2"><MessageSquare size={18} /> บทสนทนา</span>
                 {detail && <span className="text-xs font-normal">ถาม {detail.stats.questions} · ตอบ {detail.stats.replies}</span>}
@@ -415,8 +415,8 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                 </>
               )}
             </div>
+            )}
           </div>
-        )}
         </div>
       </div>
     </div>
