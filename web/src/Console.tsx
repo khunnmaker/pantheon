@@ -153,11 +153,7 @@ function PhotoStrip({ direct, cross, selected, onToggle, label }: {
       <div className="flex gap-2 overflow-x-auto pb-1 items-stretch">
         {direct.map((p) => thumb(p, false))}
         {direct.length > 0 && cross.length > 0 && (
-          <div className="shrink-0 self-stretch flex flex-col items-center justify-center px-0.5">
-            <div className="w-px flex-1 bg-teal-300" />
-            <span className="text-[9px] text-teal-500 py-1 [writing-mode:vertical-rl]">ขายคู่</span>
-            <div className="w-px flex-1 bg-teal-300" />
-          </div>
+          <div className="shrink-0 self-stretch w-px bg-teal-300 mx-1" />
         )}
         {cross.map((p) => thumb(p, true))}
       </div>
