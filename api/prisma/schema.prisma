@@ -21,7 +21,7 @@ model Customer {
   displayName String?
   // staff-assigned nickname (shown in the console in preference to the LINE name)
   nickname    String?
-  // staff-assigned area/type category (e.g. C.1–C.6 by zone, Lab)
+  // staff-assigned area/type category (e.g. C1–C6 by zone, Lab) — one per customer
   category    String?
   firstSeen   DateTime        @default(now())
   lastSeen    DateTime        @default(now())

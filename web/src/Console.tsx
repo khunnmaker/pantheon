@@ -23,7 +23,7 @@ function fmtTime(t?: string) {
   }
 }
 const nameOf = (c: CustomerLite) => c.nickname || c.displayName || c.lineUserId;
-const CATEGORIES = ['C.1', 'C.2', 'C.3', 'C.4', 'C.5', 'C.6', 'Lab'];
+const CATEGORIES = ['C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'Lab'];
 
 const TYPE_META: Record<DraftType, { label: string; cls: string }> = {
   draft: { label: 'ร่างพร้อมส่ง', cls: 'bg-emerald-100 text-emerald-700 border-emerald-300' },
@@ -177,7 +177,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
   const [rewriteNote, setRewriteNote] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [searchResults, setSearchResults] = useState<CustomerLite[] | null>(null);
-  const [categoryFilter, setCategoryFilter] = useState<string | null>(null);
+  const [categoryFilters, setCategoryFilters] = useState<string[]>([]);
   const [catOpen, setCatOpen] = useState(false);
   const [ending, setEnding] = useState(false);
   const [needsConfirm, setNeedsConfirm] = useState(false);
@@ -492,7 +492,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
   }
 
   const draft = detail?.pendingDraft ?? null;
-  const displayList = searchResults ?? customers.filter((c) => !categoryFilter || c.category === categoryFilter);
+  const displayList = searchResults ?? customers.filter((c) => categoryFilters.length === 0 || (c.category != null && categoryFilters.includes(c.category)));
 
   return (
     <div className="min-h-screen bg-slate-100 p-3 sm:p-5 font-sans text-slate-800">
@@ -537,13 +537,13 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                 </div>
               </div>
               <div className="px-2 pb-1 shrink-0 flex flex-wrap gap-1">
-                <button onClick={() => setCategoryFilter(null)}
-                  className={'text-[10px] px-1.5 py-0.5 rounded-full border ' + (!categoryFilter ? 'bg-teal-600 text-white border-teal-600' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50')}>
+                <button onClick={() => setCategoryFilters([])}
+                  className={'text-[10px] px-1.5 py-0.5 rounded-full border ' + (categoryFilters.length === 0 ? 'bg-teal-600 text-white border-teal-600' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50')}>
                   ทั้งหมด
                 </button>
                 {CATEGORIES.map((cat) => (
-                  <button key={cat} onClick={() => setCategoryFilter((f) => (f === cat ? null : cat))}
-                    className={'text-[10px] px-1.5 py-0.5 rounded-full border ' + (categoryFilter === cat ? 'bg-teal-600 text-white border-teal-600' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50')}>
+                  <button key={cat} onClick={() => setCategoryFilters((fs) => (fs.includes(cat) ? fs.filter((f) => f !== cat) : [...fs, cat]))}
+                    className={'text-[10px] px-1.5 py-0.5 rounded-full border ' + (categoryFilters.includes(cat) ? 'bg-teal-600 text-white border-teal-600' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50')}>
                     {cat}
                   </button>
                 ))}
