@@ -105,9 +105,13 @@ function MessageBody({ m }: { m: Message }) {
     return (
       <div className="space-y-1.5">
         {m.text && <div>{m.text}</div>}
-        <img src={`${API_URL}/content/product/${m.attachmentRef}`} alt="รูปสินค้า"
-          className="max-w-[200px] max-h-[200px] rounded-lg bg-white block"
-          onError={(e) => { e.currentTarget.style.display = 'none'; }} />
+        <div className="flex flex-wrap gap-1.5">
+          {m.attachmentRef.split(',').filter(Boolean).map((sku) => (
+            <img key={sku} src={`${API_URL}/content/product/${sku}`} alt="รูปสินค้า"
+              className="max-w-[150px] max-h-[150px] rounded-lg bg-white block"
+              onError={(e) => { e.currentTarget.style.display = 'none'; }} />
+          ))}
+        </div>
       </div>
     );
   return <>{m.text}</>;
@@ -131,7 +135,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
   const [searchResults, setSearchResults] = useState<CustomerLite[] | null>(null);
   const [ending, setEnding] = useState(false);
   const [needsConfirm, setNeedsConfirm] = useState(false);
-  const [selectedProductSku, setSelectedProductSku] = useState<string | null>(null);
+  const [selectedProductSkus, setSelectedProductSkus] = useState<string[]>([]);
   const [upload, setUpload] = useState<{ uploadId: string; kind: string; fileName: string; previewUrl: string } | null>(null);
   const [uploading, setUploading] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(true); // show/hide draft note + photo picker
@@ -158,7 +162,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
       setEditText(d.pendingDraft?.draftText ?? '');
       setNeedsConfirm(false);
       setRewriteNote(null);
-      setSelectedProductSku(d.pendingProduct?.photoSku ? d.pendingProduct.sku : null);
+      setSelectedProductSkus(d.pendingProduct?.photoSku ? [d.pendingProduct.sku] : []);
       setUpload(null);
     } finally {
       setLoadingDetail(false);
@@ -257,7 +261,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
     setSending(true);
     setError('');
     try {
-      const res = await sendReply(msgId, editText.trim(), needsConfirm, selectedProductSku ?? undefined, upload?.uploadId);
+      const res = await sendReply(msgId, editText.trim(), needsConfirm, selectedProductSkus.length ? selectedProductSkus : undefined, upload?.uploadId);
       if ('needsConfirm' in res) {
         setNeedsConfirm(true);
         setError('คำตอบมีตัวเลข — โปรดตรวจสอบแล้วกด "ยืนยันส่ง" อีกครั้ง');
@@ -310,7 +314,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
       const b64 = dataUrl.split(',')[1] ?? '';
       const out = await uploadAttachment(b64, file.name, file.type || 'application/octet-stream');
       setUpload({ uploadId: out.uploadId, kind: out.kind, fileName: out.fileName, previewUrl: file.type.startsWith('image/') ? dataUrl : '' });
-      setSelectedProductSku(null); // a staff upload replaces a catalog photo choice
+      setSelectedProductSkus([]); // a staff upload replaces catalog photo choices
     } catch (err) {
       setError('อัปโหลดไม่สำเร็จ: ' + (err as Error).message);
     } finally {
@@ -532,14 +536,14 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                           <div className="text-[11px] text-teal-700 font-medium">
                             {detail.productCandidates.length === 1
                               ? 'รูปสินค้าจากแคตตาล็อก (กดเพื่อแนบ/ไม่แนบ):'
-                              : 'เลือกรูปสินค้าที่จะแนบ (กดเลือก 1 รูป):'}
+                              : 'เลือกรูปสินค้าที่จะแนบ (เลือกได้หลายรูป):'}
                           </div>
                           <div className="flex gap-2 overflow-x-auto pb-1">
                             {detail.productCandidates.map((p) => {
-                              const sel = selectedProductSku === p.sku;
+                              const sel = selectedProductSkus.includes(p.sku);
                               return (
                                 <button key={p.sku} type="button"
-                                  onClick={() => setSelectedProductSku(sel ? null : p.sku)}
+                                  onClick={() => { setSelectedProductSkus((prev) => (prev.includes(p.sku) ? prev.filter((s) => s !== p.sku) : [...prev, p.sku])); setUpload(null); }}
                                   title={[p.nameEn, p.nameTh].filter(Boolean).join(' / ')}
                                   className={'shrink-0 w-[88px] rounded-lg border p-1 text-left transition ' + (sel ? 'border-teal-500 ring-2 ring-teal-400 bg-white' : 'border-teal-100 bg-white/60 hover:border-teal-300')}>
                                   <div className="relative h-[68px] flex items-center justify-center bg-white rounded">
@@ -555,9 +559,6 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                                 </button>
                               );
                             })}
-                          </div>
-                          <div className="text-[11px] text-teal-700">
-                            {selectedProductSku ? '✓ จะแนบรูปที่เลือกไปกับคำตอบ' : 'ยังไม่เลือกรูป — จะส่งเฉพาะข้อความ'}
                           </div>
                         </div>
                       )}

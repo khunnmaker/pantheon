@@ -161,14 +161,14 @@ export async function sendReply(
   messageId: string,
   finalText: string,
   confirmNumbers?: boolean,
-  attachProductSku?: string,
+  attachProductSkus?: string[],
   uploadId?: string,
 ): Promise<ReplyResult | { needsConfirm: true }> {
   const token = getToken();
   const res = await fetch(`${API_URL}/api/messages/${messageId}/reply`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
-    body: JSON.stringify({ finalText, confirmNumbers, attachProductSku, uploadId }),
+    body: JSON.stringify({ finalText, confirmNumbers, attachProductSkus, uploadId }),
   });
   if (res.status === 409) return { needsConfirm: true };
   if (!res.ok) throw new Error(`HTTP ${res.status}`);

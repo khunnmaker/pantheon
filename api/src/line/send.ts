@@ -34,13 +34,21 @@ export async function sendLineText(lineUserId: string, text: string): Promise<Se
   return push(lineUserId, [{ type: 'text', text }]);
 }
 
-// Text reply + optional product photo (image follows the text in the same push).
+// Text reply + optional product photo(s). LINE allows at most 5 messages per push,
+// so a text + many images is sent in chunks; returns the first push's result.
 export async function sendLineReply(
   lineUserId: string,
   text: string,
-  imageUrl?: string,
+  imageUrls: string[] = [],
 ): Promise<SendResult> {
   const messages: LineOutMessage[] = [{ type: 'text', text }];
-  if (imageUrl) messages.push({ type: 'image', originalContentUrl: imageUrl, previewImageUrl: imageUrl });
-  return push(lineUserId, messages);
+  for (const url of imageUrls) {
+    messages.push({ type: 'image', originalContentUrl: url, previewImageUrl: url });
+  }
+  let first: SendResult | undefined;
+  for (let i = 0; i < messages.length; i += 5) {
+    const res = await push(lineUserId, messages.slice(i, i + 5));
+    first ??= res;
+  }
+  return first as SendResult;
 }

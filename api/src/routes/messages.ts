@@ -18,7 +18,7 @@ import { pushToConsole } from '../ws/io.js';
 const replyBody = z.object({
   finalText: z.string().min(1),
   confirmNumbers: z.boolean().optional(),
-  attachProductSku: z.string().optional(), // attach this product's catalog photo
+  attachProductSkus: z.array(z.string()).max(6).optional(), // catalog photos to attach
   uploadId: z.string().max(80).optional(), // attach a staff-uploaded photo/file
 });
 
@@ -104,28 +104,34 @@ export async function messageRoutes(app: FastifyInstance) {
     // LINE image; files append a download link to the text (OAs can't attach files).
     const base = `${(req.headers['x-forwarded-proto'] as string) || req.protocol}://${req.headers.host}`;
     let attach: { attachmentType: string; attachmentRef: string; attachmentName?: string } | undefined;
-    let sendImageUrl: string | undefined;
+    let imageUrls: string[] = [];
     let sendText = finalText;
     if (parsed.data.uploadId && UPLOAD_ID_RE.test(parsed.data.uploadId)) {
       const meta = await readStaffUploadMeta(parsed.data.uploadId);
       if (meta) {
         const url = `${base}/content/upload/${parsed.data.uploadId}`;
         if (meta.kind === 'image') {
-          sendImageUrl = url;
+          imageUrls = [url];
           attach = { attachmentType: 'image', attachmentRef: parsed.data.uploadId };
         } else {
           sendText = `${finalText}\n\n📎 ${meta.fileName}: ${url}`;
           attach = { attachmentType: 'file', attachmentRef: parsed.data.uploadId, attachmentName: meta.fileName };
         }
       }
-    } else if (parsed.data.attachProductSku) {
-      const prod = await prisma.product.findUnique({ where: { sku: parsed.data.attachProductSku } });
-      if (prod?.photoSku) {
-        const file = path.join(PRODUCT_PHOTO_DIR, `${prod.photoSku}.png`);
-        if (await fs.access(file).then(() => true).catch(() => false)) {
-          sendImageUrl = `${base}/content/product/${prod.photoSku}`;
-          attach = { attachmentType: 'product', attachmentRef: prod.photoSku };
+    } else if (parsed.data.attachProductSkus?.length) {
+      const prods = await prisma.product.findMany({ where: { sku: { in: parsed.data.attachProductSkus } } });
+      const bySku = new Map(prods.map((p) => [p.sku, p]));
+      const photoSkus: string[] = [];
+      for (const sku of parsed.data.attachProductSkus) {
+        const photoSku = bySku.get(sku)?.photoSku;
+        if (photoSku && !photoSkus.includes(photoSku)) {
+          const file = path.join(PRODUCT_PHOTO_DIR, `${photoSku}.png`);
+          if (await fs.access(file).then(() => true).catch(() => false)) photoSkus.push(photoSku);
         }
+      }
+      if (photoSkus.length) {
+        imageUrls = photoSkus.map((ps) => `${base}/content/product/${ps}`);
+        attach = { attachmentType: 'product', attachmentRef: photoSkus.join(',') };
       }
     }
 
@@ -156,7 +162,7 @@ export async function messageRoutes(app: FastifyInstance) {
     // Send via LINE (or dry-run). On failure, release the claim so it can retry.
     let sendResult;
     try {
-      sendResult = await sendLineReply(customer.lineUserId, sendText, sendImageUrl);
+      sendResult = await sendLineReply(customer.lineUserId, sendText, imageUrls);
     } catch (err) {
       req.log.error({ err }, 'LINE send failed');
       await prisma.message.delete({ where: { id: agentMessage.id } }).catch(() => undefined);
