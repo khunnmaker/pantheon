@@ -191,6 +191,19 @@ export const uploadAttachment = (dataB64: string, fileName: string, contentType:
 export const endSession = (customerId: string) =>
   authed<{ ok: boolean; summary: string | null }>(`/api/customers/${customerId}/end-session`, { method: 'POST' });
 
+export interface QuickReply {
+  id: string;
+  label: string;
+  body: string;
+  sortOrder: number;
+  createdAt: string;
+}
+export const getQuickReplies = () => authed<{ items: QuickReply[] }>('/api/quick-replies');
+export const addQuickReply = (label: string, body: string) =>
+  authed<{ item: QuickReply }>('/api/quick-replies', { method: 'POST', body: JSON.stringify({ label, body }) });
+export const deleteQuickReply = (id: string) =>
+  authed<{ ok: boolean }>(`/api/quick-replies/${id}`, { method: 'DELETE' });
+
 export const getLearned = (status = 'pending') =>
   authed<{ learned: LearnedAnswer[] }>(`/api/learned?status=${status}`);
 export const promoteLearned = (id: string) =>

@@ -7,7 +7,8 @@ import {
 import {
   getQueue, getCustomers, getCustomer, searchCustomers, clearSession, regenerateDraft, rewriteText, sendReply, setNickname,
   uploadAttachment, getLearned, promoteLearned, rejectLearned, endSession, API_URL, getToken,
-  type Agent, type CustomerLite, type CustomerDetail, type Message, type DraftType, type LearnedAnswer, type PendingProduct,
+  getQuickReplies, addQuickReply, deleteQuickReply,
+  type Agent, type CustomerLite, type CustomerDetail, type Message, type DraftType, type LearnedAnswer, type PendingProduct, type QuickReply,
 } from './lib/api';
 import { getSocket, disconnectSocket } from './lib/socket';
 
@@ -181,6 +182,11 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
   const [upload, setUpload] = useState<{ uploadId: string; kind: string; fileName: string; previewUrl: string } | null>(null);
   const [uploading, setUploading] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(true); // show/hide draft note + photo picker
+  const [quickReplies, setQuickReplies] = useState<QuickReply[]>([]);
+  const [qrManage, setQrManage] = useState(false);
+  const [qrLabel, setQrLabel] = useState('');
+  const [qrBody, setQrBody] = useState('');
+  const [qrSaving, setQrSaving] = useState(false);
   const [toast, setToast] = useState('');
   const [error, setError] = useState('');
 
@@ -214,6 +220,10 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
   const refreshLearned = useCallback(async () => {
     const { learned: l } = await getLearned('pending');
     setLearned(l);
+  }, []);
+
+  useEffect(() => {
+    getQuickReplies().then(({ items }) => setQuickReplies(items)).catch(() => undefined);
   }, []);
 
   // initial load + live socket
@@ -367,6 +377,31 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
     } finally {
       setUploading(false);
     }
+  }
+
+  function insertQuickReply(body: string) {
+    setEditText((t) => (t.trim() ? t.replace(/\s*$/, '') + '\n' + body : body));
+    setNeedsConfirm(false);
+    setRewriteNote(null);
+  }
+  async function saveQuickReply() {
+    if (!qrLabel.trim() || !qrBody.trim() || qrSaving) return;
+    setQrSaving(true);
+    try {
+      await addQuickReply(qrLabel.trim(), qrBody.trim());
+      setQrLabel('');
+      setQrBody('');
+      const { items } = await getQuickReplies();
+      setQuickReplies(items);
+    } catch {
+      setError('บันทึกข้อความสำเร็จรูปไม่สำเร็จ');
+    } finally {
+      setQrSaving(false);
+    }
+  }
+  async function removeQuickReply(id: string) {
+    setQuickReplies((qs) => qs.filter((q) => q.id !== id));
+    await deleteQuickReply(id).catch(() => undefined);
   }
 
   async function regenerate() {
@@ -582,6 +617,37 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                           selected={selectedProductSkus}
                           onToggle={toggleProductSku}
                         />
+                      )}
+                      {(quickReplies.length > 0 || qrManage) && (
+                        <div className="space-y-1.5">
+                          <div className="flex flex-wrap gap-1 items-center">
+                            {quickReplies.map((q) => (
+                              <span key={q.id} className="inline-flex items-center">
+                                <button type="button" onClick={() => insertQuickReply(q.body)} title={q.body}
+                                  className="text-[11px] px-2 py-1 rounded-full bg-slate-100 hover:bg-teal-100 text-slate-600 hover:text-teal-700 border border-slate-200 transition">
+                                  {q.label}
+                                </button>
+                                {qrManage && <button type="button" onClick={() => removeQuickReply(q.id)} title="ลบ" className="ml-0.5 mr-1 text-rose-400 hover:text-rose-600"><X size={11} /></button>}
+                              </span>
+                            ))}
+                            <button type="button" onClick={() => setQrManage((v) => !v)} title="จัดการข้อความสำเร็จรูป"
+                              className={'text-[11px] px-1.5 py-1 rounded-full ' + (qrManage ? 'bg-teal-100 text-teal-700' : 'text-slate-400 hover:bg-slate-100')}>
+                              <Pencil size={11} />
+                            </button>
+                          </div>
+                          {qrManage && (
+                            <div className="flex flex-col gap-1.5 bg-slate-50 border border-slate-200 rounded-lg p-2">
+                              <input value={qrLabel} onChange={(e) => setQrLabel(e.target.value)} placeholder="ชื่อปุ่ม (เช่น ที่อยู่ร้าน)"
+                                className="text-xs px-2 py-1 rounded border border-slate-200 focus:outline-none focus:ring-1 focus:ring-teal-400" />
+                              <textarea value={qrBody} onChange={(e) => setQrBody(e.target.value)} rows={2} placeholder="ข้อความที่จะส่ง…"
+                                className="text-xs px-2 py-1 rounded border border-slate-200 resize-none focus:outline-none focus:ring-1 focus:ring-teal-400" />
+                              <button type="button" onClick={saveQuickReply} disabled={qrSaving || !qrLabel.trim() || !qrBody.trim()}
+                                className="self-start text-xs px-3 py-1 rounded-lg bg-teal-600 hover:bg-teal-700 text-white disabled:opacity-50">
+                                {qrSaving ? 'กำลังบันทึก…' : 'เพิ่มข้อความ'}
+                              </button>
+                            </div>
+                          )}
+                        </div>
                       )}
                       <textarea value={editText} onChange={(e) => { setEditText(e.target.value); setNeedsConfirm(false); setRewriteNote(null); }} rows={3}
                         className="w-full p-3 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-teal-400 resize-none" placeholder="พิมพ์/แก้คำตอบก่อนส่ง…" />

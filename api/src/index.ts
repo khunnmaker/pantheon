@@ -13,10 +13,12 @@ import { kbRoutes } from './routes/kb.js';
 import { messageRoutes } from './routes/messages.js';
 import { learningRoutes } from './routes/learning.js';
 import { catalogRoutes } from './routes/catalog.js';
+import { quickReplyRoutes } from './routes/quickReplies.js';
 import { initIo } from './ws/io.js';
 import { sweepIdleSessions } from './memory/summarize.js';
 import { ensureSeeded } from './db/ensureSeeded.js';
 import { ensureCatalog } from './db/ensureCatalog.js';
+import { ensureQuickReplies } from './db/ensureQuickReplies.js';
 
 // Raw body is needed to verify the LINE webhook signature.
 declare module 'fastify' {
@@ -67,6 +69,7 @@ async function buildServer() {
   await app.register(messageRoutes);
   await app.register(learningRoutes);
   await app.register(catalogRoutes);
+  await app.register(quickReplyRoutes);
 
   return app;
 }
@@ -78,6 +81,8 @@ async function main() {
   await ensureSeeded().catch((err) => app.log.error({ err }, 'ensureSeeded failed'));
   // Seed the product catalog (price/name) on first boot.
   await ensureCatalog().catch((err) => app.log.error({ err }, 'ensureCatalog failed'));
+  // Seed the starter quick-reply templates on first boot.
+  await ensureQuickReplies().catch((err) => app.log.error({ err }, 'ensureQuickReplies failed'));
 
   // Attach the Socket.IO server for live console push.
   initIo(app.server);

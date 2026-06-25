@@ -146,6 +146,16 @@ model CrossSellLink {
   @@index([anchorSku])
 }
 
+// Staff quick-reply templates — canned messages (address, hours, payment, catalog,
+// shipping…) the team inserts with one click. Editable in the console.
+model QuickReply {
+  id        String   @id @default(cuid())
+  label     String
+  body      String
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+}
+
 // Product catalog — extracted from the Prominent PDF catalogue via vision.
 // price=0 means "unknown" (the AI must NOT quote it; defer to staff). Variant
 // SKUs (color/size) share a photo via photoSku (resolved to the cell's lead SKU).
