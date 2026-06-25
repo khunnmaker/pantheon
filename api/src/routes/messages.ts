@@ -73,6 +73,19 @@ export async function messageRoutes(app: FastifyInstance) {
 
     const draft = await prisma.draft.findUnique({ where: { messageId: customerMsg.id } });
 
+    // Resolve an optional product photo to attach — only if the file really exists
+    // on the volume (a 404 image URL would make LINE reject the whole push).
+    // Resolved BEFORE the message is created so the sent photo is recorded on the
+    // reply and shows in the console conversation (not just delivered to LINE).
+    let photoSku: string | null = null;
+    if (parsed.data.attachProductSku) {
+      const prod = await prisma.product.findUnique({ where: { sku: parsed.data.attachProductSku } });
+      if (prod?.photoSku) {
+        const file = path.join(PRODUCT_PHOTO_DIR, `${prod.photoSku}.png`);
+        if (await fs.access(file).then(() => true).catch(() => false)) photoSku = prod.photoSku;
+      }
+    }
+
     // Claim this customer message atomically BEFORE sending. The unique
     // answersMessageId means a double-click / retry / concurrent request can't
     // double-send — only the first create wins; the rest get 409 already_replied.
@@ -87,6 +100,7 @@ export async function messageRoutes(app: FastifyInstance) {
           agentId: agent.id,
           kbIds: draft?.usedKb ?? [],
           answersMessageId: customerMsg.id,
+          ...(photoSku ? { attachmentType: 'product', attachmentRef: photoSku } : {}),
         },
       });
     } catch (err) {
@@ -96,23 +110,10 @@ export async function messageRoutes(app: FastifyInstance) {
       throw err;
     }
 
-    // Resolve an optional product photo to attach (only if the file really exists
-    // on the volume — a 404 image URL would make LINE reject the whole push).
-    let imageUrl: string | undefined;
-    if (parsed.data.attachProductSku) {
-      const prod = await prisma.product.findUnique({ where: { sku: parsed.data.attachProductSku } });
-      const photoSku = prod?.photoSku;
-      if (photoSku) {
-        const file = path.join(PRODUCT_PHOTO_DIR, `${photoSku}.png`);
-        const exists = await fs.access(file).then(() => true).catch(() => false);
-        if (exists) {
-          const proto = (req.headers['x-forwarded-proto'] as string) || req.protocol;
-          imageUrl = `${proto}://${req.headers.host}/content/product/${photoSku}`;
-        }
-      }
-    }
-
     // Send via LINE (or dry-run). On failure, release the claim so it can retry.
+    const imageUrl = photoSku
+      ? `${(req.headers['x-forwarded-proto'] as string) || req.protocol}://${req.headers.host}/content/product/${photoSku}`
+      : undefined;
     let sendResult;
     try {
       sendResult = await sendLineReply(customer.lineUserId, finalText, imageUrl);

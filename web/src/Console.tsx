@@ -64,6 +64,16 @@ function StickerImage({ refStr }: { refStr: string }) {
 function MessageBody({ m }: { m: Message }) {
   if (m.attachmentType === 'image') return <AuthedImage messageId={m.id} />;
   if (m.attachmentType === 'sticker') return <StickerImage refStr={m.attachmentRef ?? ''} />;
+  // Agent reply that included a catalog product photo — show text + the photo.
+  if (m.attachmentType === 'product' && m.attachmentRef)
+    return (
+      <div className="space-y-1.5">
+        {m.text && <div>{m.text}</div>}
+        <img src={`${API_URL}/content/product/${m.attachmentRef}`} alt="รูปสินค้า"
+          className="max-w-[200px] max-h-[200px] rounded-lg bg-white block"
+          onError={(e) => { e.currentTarget.style.display = 'none'; }} />
+      </div>
+    );
   return <>{m.text}</>;
 }
 
