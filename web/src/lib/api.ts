@@ -60,6 +60,7 @@ export interface CustomerDetail {
   pendingDraft: Draft | null;
   pendingProduct: PendingProduct | null;
   productCandidates: PendingProduct[];
+  crossSellCandidates: PendingProduct[]; // AI cross-sell suggestions
   pendingMessageId: string | null;
   memory: { summary: string; updatedAt: string } | null;
   stats: { questions: number; replies: number; lastSeen: string };

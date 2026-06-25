@@ -5,6 +5,7 @@ export interface DraftResult {
   draft: string;
   used_kb: string[];
   used_products?: string[]; // catalog SKUs the draft drew on (for attaching the photo)
+  cross_sell_terms?: string[]; // complementary product types to look up in the catalog
   note: string;
 }
 
@@ -38,8 +39,11 @@ export function parseDraft(raw: string): DraftResult {
     const used_products = Array.isArray(obj.used_products)
       ? obj.used_products.filter((x): x is string => typeof x === 'string')
       : [];
+    const cross_sell_terms = Array.isArray(obj.cross_sell_terms)
+      ? obj.cross_sell_terms.filter((x): x is string => typeof x === 'string').slice(0, 3)
+      : [];
 
-    return { type, draft, used_kb, used_products, note };
+    return { type, draft, used_kb, used_products, cross_sell_terms, note };
   } catch {
     return SAFE_DEFAULT;
   }

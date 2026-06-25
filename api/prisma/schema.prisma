@@ -125,6 +125,8 @@ model Draft {
   productSku      String?
   // candidate product SKUs (with photos) for staff to choose from when unsure
   candidateSkus   String[]
+  // AI-suggested cross-sell/complementary product SKUs (with photos)
+  crossSellSkus   String[]
   createdAt       DateTime @default(now())
 }
 

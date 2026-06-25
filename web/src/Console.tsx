@@ -7,7 +7,7 @@ import {
 import {
   getQueue, getCustomers, getCustomer, searchCustomers, clearSession, regenerateDraft, rewriteText, sendReply, setNickname,
   uploadAttachment, getLearned, promoteLearned, rejectLearned, endSession, API_URL, getToken,
-  type Agent, type CustomerLite, type CustomerDetail, type Message, type DraftType, type LearnedAnswer,
+  type Agent, type CustomerLite, type CustomerDetail, type Message, type DraftType, type LearnedAnswer, type PendingProduct,
 } from './lib/api';
 import { getSocket, disconnectSocket } from './lib/socket';
 
@@ -115,6 +115,43 @@ function MessageBody({ m }: { m: Message }) {
       </div>
     );
   return <>{m.text}</>;
+}
+
+// A horizontal strip of selectable product photos (shared by the direct-match and
+// cross-sell rows). Multi-select; selected items get a ✓ and a ring.
+function PhotoStrip({ items, selected, onToggle, label }: {
+  items: PendingProduct[];
+  selected: string[];
+  onToggle: (sku: string) => void;
+  label: string;
+}) {
+  if (!items.length) return null;
+  return (
+    <div className="bg-teal-50 border border-teal-200 rounded-xl p-2 space-y-1.5">
+      <div className="text-[11px] text-teal-700 font-medium">{label}</div>
+      <div className="flex gap-2 overflow-x-auto pb-1">
+        {items.map((p) => {
+          const sel = selected.includes(p.sku);
+          return (
+            <button key={p.sku} type="button" onClick={() => onToggle(p.sku)}
+              title={[p.nameEn, p.nameTh].filter(Boolean).join(' / ')}
+              className={'shrink-0 w-[88px] rounded-lg border p-1 text-left transition ' + (sel ? 'border-teal-500 ring-2 ring-teal-400 bg-white' : 'border-teal-100 bg-white/60 hover:border-teal-300')}>
+              <div className="relative h-[68px] flex items-center justify-center bg-white rounded">
+                {p.photoSku && <img src={`${API_URL}/content/product/${p.photoSku}`} alt=""
+                  className="max-w-full max-h-full object-contain"
+                  onError={(e) => { e.currentTarget.style.visibility = 'hidden'; }} />}
+                {sel && <span className="absolute top-0.5 right-0.5 bg-teal-600 text-white rounded-full p-0.5 flex"><Check size={11} /></span>}
+              </div>
+              <div className="text-[10px] mt-1 leading-tight">
+                <div className="font-semibold text-teal-800 truncate">{[p.nameEn, p.nameTh].filter(Boolean).join(' / ') || p.sku}</div>
+                <div className="text-teal-600">{p.price > 0 ? `${p.price.toLocaleString()} บาท` : '—'}</div>
+              </div>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
 }
 
 export default function Console({ agent, onLogout }: { agent: Agent; onLogout: () => void }) {
@@ -297,6 +334,11 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
       setRewriting(false);
     }
   }
+
+  const toggleProductSku = (sku: string) => {
+    setSelectedProductSkus((prev) => (prev.includes(sku) ? prev.filter((s) => s !== sku) : [...prev, sku]));
+    setUpload(null); // a catalog photo choice replaces a staff upload
+  };
 
   // Staff upload a photo/file to attach to the reply.
   async function onPickFile(file?: File) {
@@ -531,36 +573,23 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                           {detailsOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
                         </button>
                       </div>
-                      {detailsOpen && detail?.productCandidates && detail.productCandidates.length > 0 && (
-                        <div className="bg-teal-50 border border-teal-200 rounded-xl p-2 space-y-1.5">
-                          <div className="text-[11px] text-teal-700 font-medium">
-                            {detail.productCandidates.length === 1
+                      {detailsOpen && (
+                        <>
+                          <PhotoStrip
+                            items={detail?.productCandidates ?? []}
+                            selected={selectedProductSkus}
+                            onToggle={toggleProductSku}
+                            label={(detail?.productCandidates.length ?? 0) === 1
                               ? 'รูปสินค้าจากแคตตาล็อก (กดเพื่อแนบ/ไม่แนบ):'
                               : 'เลือกรูปสินค้าที่จะแนบ (เลือกได้หลายรูป):'}
-                          </div>
-                          <div className="flex gap-2 overflow-x-auto pb-1">
-                            {detail.productCandidates.map((p) => {
-                              const sel = selectedProductSkus.includes(p.sku);
-                              return (
-                                <button key={p.sku} type="button"
-                                  onClick={() => { setSelectedProductSkus((prev) => (prev.includes(p.sku) ? prev.filter((s) => s !== p.sku) : [...prev, p.sku])); setUpload(null); }}
-                                  title={[p.nameEn, p.nameTh].filter(Boolean).join(' / ')}
-                                  className={'shrink-0 w-[88px] rounded-lg border p-1 text-left transition ' + (sel ? 'border-teal-500 ring-2 ring-teal-400 bg-white' : 'border-teal-100 bg-white/60 hover:border-teal-300')}>
-                                  <div className="relative h-[68px] flex items-center justify-center bg-white rounded">
-                                    {p.photoSku && <img src={`${API_URL}/content/product/${p.photoSku}`} alt=""
-                                      className="max-w-full max-h-full object-contain"
-                                      onError={(e) => { e.currentTarget.style.visibility = 'hidden'; }} />}
-                                    {sel && <span className="absolute top-0.5 right-0.5 bg-teal-600 text-white rounded-full p-0.5 flex"><Check size={11} /></span>}
-                                  </div>
-                                  <div className="text-[10px] mt-1 leading-tight">
-                                    <div className="font-semibold text-teal-800 truncate">{[p.nameEn, p.nameTh].filter(Boolean).join(' / ') || p.sku}</div>
-                                    <div className="text-teal-600">{p.price > 0 ? `${p.price.toLocaleString()} บาท` : '—'}</div>
-                                  </div>
-                                </button>
-                              );
-                            })}
-                          </div>
-                        </div>
+                          />
+                          <PhotoStrip
+                            items={detail?.crossSellCandidates ?? []}
+                            selected={selectedProductSkus}
+                            onToggle={toggleProductSku}
+                            label="💡 สินค้าที่มักซื้อคู่กัน — เสนอเพิ่มได้:"
+                          />
+                        </>
                       )}
                       <textarea value={editText} onChange={(e) => { setEditText(e.target.value); setNeedsConfirm(false); setRewriteNote(null); }} rows={3}
                         className="w-full p-3 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-teal-400 resize-none" placeholder="พิมพ์/แก้คำตอบก่อนส่ง…" />

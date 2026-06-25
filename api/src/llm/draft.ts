@@ -138,6 +138,18 @@ export async function generateDraftForMessage(messageId: string): Promise<DraftO
   // matched products that actually have a photo (the AI's pick is among them).
   const candidateSkus = products.filter((p) => p.photoSku).slice(0, 6).map((p) => p.sku);
 
+  // AI cross-sell: the model named complementary product TYPES; resolve each to a
+  // real catalog product with a photo (grounded — never an invented SKU). Excludes
+  // the direct matches so it's genuinely "also consider", not a repeat.
+  const directSkuSet = new Set([...products.map((p) => p.sku), ...candidateSkus]);
+  const crossSellSkus: string[] = [];
+  for (const term of result.cross_sell_terms ?? []) {
+    if (crossSellSkus.length >= 4) break;
+    const hits = await findProducts(term, 3);
+    const pick = hits.find((h) => h.photoSku && !directSkuSet.has(h.sku) && !crossSellSkus.includes(h.sku));
+    if (pick) crossSellSkus.push(pick.sku);
+  }
+
   const draft = await prisma.draft.upsert({
     where: { messageId },
     update: {
@@ -147,6 +159,7 @@ export async function generateDraftForMessage(messageId: string): Promise<DraftO
       note: guarded.result.note,
       productSku,
       candidateSkus,
+      crossSellSkus,
     },
     create: {
       messageId,
@@ -157,6 +170,7 @@ export async function generateDraftForMessage(messageId: string): Promise<DraftO
       retrievedMsgIds: retrievedIds,
       productSku,
       candidateSkus,
+      crossSellSkus,
     },
   });
 

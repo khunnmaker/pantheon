@@ -124,12 +124,31 @@ export async function consoleRoutes(app: FastifyInstance) {
         .map((p) => ({ sku: p.sku, nameEn: p.nameEn, nameTh: p.nameTh, price: p.price, photoSku: p.photoSku }));
     }
 
+    // AI cross-sell candidates — complementary products; skip any photo already
+    // shown as a direct match so the two rows don't repeat.
+    let crossSellCandidates: ProductCard[] = [];
+    if (pendingDraft?.crossSellSkus?.length) {
+      const prods = await prisma.product.findMany({ where: { sku: { in: pendingDraft.crossSellSkus } } });
+      const bySku = new Map(prods.map((p) => [p.sku, p]));
+      const seenPhoto = new Set(productCandidates.map((c) => c.photoSku as string));
+      crossSellCandidates = pendingDraft.crossSellSkus
+        .map((sku) => bySku.get(sku))
+        .filter((p): p is NonNullable<typeof p> => !!p && !!p.photoSku)
+        .filter((p) => {
+          if (seenPhoto.has(p.photoSku as string)) return false;
+          seenPhoto.add(p.photoSku as string);
+          return true;
+        })
+        .map((p) => ({ sku: p.sku, nameEn: p.nameEn, nameTh: p.nameTh, price: p.price, photoSku: p.photoSku }));
+    }
+
     return {
       customer,
       messages: ordered,
       pendingDraft,
       pendingProduct,
       productCandidates,
+      crossSellCandidates,
       pendingMessageId: last && last.role === 'customer' ? last.id : null,
       memory: memory ? { summary: memory.summary, updatedAt: memory.updatedAt } : null,
       stats: {
