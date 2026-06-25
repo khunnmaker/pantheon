@@ -124,10 +124,15 @@ export async function generateDraftForMessage(messageId: string): Promise<DraftO
   const guarded = applyGuardrails(result, questionText, citedKb, groundedPriceText);
 
   // Attach the catalog product (for its photo on send) only when the answer is
-  // sendable and the model cited a real matched SKU.
-  const matchedSku = (result.used_products ?? []).find((sku) =>
+  // sendable. Prefer the SKU the model cited; else fall back to a matched product
+  // whose price the draft actually quotes (the model often omits used_products).
+  let matchedSku = (result.used_products ?? []).find((sku) =>
     products.some((p) => p.sku === sku),
   );
+  if (!matchedSku && guarded.result.type === 'draft' && guarded.result.draft) {
+    const flat = guarded.result.draft.replace(/\s+/g, '').replace(/,/g, '');
+    matchedSku = products.find((p) => p.price > 0 && flat.includes(`${p.price}บาท`))?.sku;
+  }
   const productSku = guarded.result.type === 'draft' ? matchedSku ?? null : null;
 
   const draft = await prisma.draft.upsert({

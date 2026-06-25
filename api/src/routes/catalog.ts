@@ -1,4 +1,6 @@
 import type { FastifyInstance } from 'fastify';
+import { promises as fs } from 'node:fs';
+import path from 'node:path';
 import { prisma } from '../db/prisma.js';
 import { requireAuth } from '../auth/middleware.js';
 import { CATALOG_PRODUCTS } from '../catalog/catalogData.js';
@@ -7,6 +9,9 @@ import { buildDraftPrompt } from '../llm/prompt.js';
 import { callClaude } from '../llm/anthropic.js';
 import { parseDraft } from '../llm/parser.js';
 import { applyGuardrails } from '../llm/guardrails.js';
+import { PRODUCT_PHOTO_DIR } from './content.js';
+
+const SKU_RE = /^[A-Za-z0-9_-]+$/;
 
 export async function catalogRoutes(app: FastifyInstance) {
   app.addHook('preHandler', requireAuth);
@@ -62,5 +67,30 @@ export async function catalogRoutes(app: FastifyInstance) {
     }));
     const res = await prisma.product.createMany({ data, skipDuplicates: true });
     return { ok: true, imported: res.count };
+  });
+
+  // Supervisor-only: upload a product photo (base64 PNG) to the persistent volume,
+  // served publicly at /content/product/:sku. Used by scripts/upload_photos.js.
+  app.post<{ Params: { sku: string } }>('/api/catalog/photo/:sku', async (req, reply) => {
+    if (req.agent?.role !== 'supervisor') return reply.code(403).send({ error: 'forbidden' });
+    const { sku } = req.params;
+    if (!SKU_RE.test(sku)) return reply.code(400).send({ error: 'bad_sku' });
+    const b64 = (req.body as { dataB64?: string }).dataB64;
+    if (!b64) return reply.code(400).send({ error: 'missing_data' });
+    const buf = Buffer.from(b64, 'base64');
+    if (!buf.length) return reply.code(400).send({ error: 'empty' });
+    await fs.mkdir(PRODUCT_PHOTO_DIR, { recursive: true });
+    await fs.writeFile(path.join(PRODUCT_PHOTO_DIR, `${sku}.png`), buf);
+    return { ok: true, sku, bytes: buf.length };
+  });
+
+  // How many product photos are present on the volume (upload progress).
+  app.get('/api/catalog/photos/count', async () => {
+    try {
+      const files = await fs.readdir(PRODUCT_PHOTO_DIR);
+      return { count: files.filter((f) => f.endsWith('.png')).length };
+    } catch {
+      return { count: 0 };
+    }
   });
 }

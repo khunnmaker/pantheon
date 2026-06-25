@@ -97,50 +97,42 @@ export function applyGuardrails(
   citedKb: KbEntry[],
   groundedPriceText = '', // matched catalog product prices (M4) — trusted like KB
 ): GuardrailOutcome {
-  const citedSensitivity = citedKb.map((k) => k.sensitivity);
-  const kbClinical = citedSensitivity.includes('clinical');
-  const kbPriceStock =
-    citedSensitivity.includes('price_stock') || citedSensitivity.includes('no_auto');
+  const sens = citedKb.map((k) => k.sensitivity);
+  const kbClinical = sens.includes('clinical');
+  const kbNoAuto = sens.includes('no_auto');
+  const kbPriceStock = sens.includes('price_stock');
 
-  // A cited KB entry that is itself sensitive → always escalate to staff, whatever
-  // the model produced (the supervisor classified this topic as needing a human).
-  let reason: SensitiveIntent = null;
-  if (kbClinical) reason = 'clinical';
-  else if (kbPriceStock) reason = 'price_stock';
+  const qReason = detectSensitiveIntent(question);
+  const dReason = result.type === 'draft' ? detectSensitiveIntent(result.draft) : null;
 
-  if (!reason) {
-    // Backstop: the QUESTION or the AI's own DRAFT looks price/stock/clinical even
-    // though no sensitive KB entry was cited (catches non-keyword fabrications).
-    const qReason = detectSensitiveIntent(question);
-    const dReason = result.type === 'draft' ? detectSensitiveIntent(result.draft) : null;
-    reason = qReason || dReason;
+  // Every price the draft states is grounded in cited KB or the matched catalog
+  // products (a draft with no price tokens is trivially grounded).
+  const grounded = pricesGrounded(result.draft, citedKb, groundedPriceText);
+  // Does the draft actually QUOTE a grounded price? — distinguishes a real price
+  // answer (allowed) from a stock/availability reply that only defers (escalate).
+  const statesGroundedPrice = priceTokens(result.draft).length > 0 && grounded;
 
-    // Exception: a price/stock-looking answer whose every stated price is grounded
-    // in a cited (supervisor-approved, non-sensitive) KB entry — e.g. the free-
-    // shipping threshold — is NOT an AI guess. Trust it and let the draft through.
-    if (reason === 'price_stock' && !!result.draft && pricesGrounded(result.draft, citedKb, groundedPriceText)) {
-      return { result, triggered: false, reason: null };
-    }
-  }
-
-  if (!reason) return { result, triggered: false, reason: null };
-
-  const o = OVERRIDE[reason];
-  // When escalating, keep the model's answer if it invents no price (every stated
-  // price is grounded in cited KB) — so the answerable parts of a multi-question
-  // burst, and grounded policy numbers, survive (still tagged needs_human for
-  // review). Clinical always uses the canned text (no AI medical content); an
-  // empty or price-inventing draft falls back to the canned text too.
-  const keepModelDraft =
-    reason !== 'clinical' && !!result.draft && pricesGrounded(result.draft, citedKb, groundedPriceText);
-  return {
-    result: {
-      type: 'needs_human',
-      draft: keepModelDraft ? result.draft : o.draft,
-      used_kb: result.used_kb,
-      note: o.note,
-    },
-    triggered: true,
-    reason,
+  const escalate = (reason: 'price_stock' | 'clinical'): GuardrailOutcome => {
+    const o = OVERRIDE[reason];
+    // Keep the model's text only if it invents no price (grounded) and isn't
+    // clinical — so a polite "we'll check" and answerable parts survive.
+    const keep = reason !== 'clinical' && !!result.draft && grounded;
+    return {
+      result: { type: 'needs_human', draft: keep ? result.draft : o.draft, used_kb: result.used_kb, note: o.note },
+      triggered: true,
+      reason,
+    };
   };
+
+  // 1. Clinical always reaches a professional — no exceptions.
+  if (kbClinical || qReason === 'clinical' || dReason === 'clinical') return escalate('clinical');
+  // 2. A KB topic a supervisor marked no_auto always escalates.
+  if (kbNoAuto) return escalate('price_stock');
+  // 3. Price/stock: a grounded price answer (KB or catalog) is trusted and passes;
+  //    anything else price/stock-looking (incl. stock/availability) defers to staff.
+  if (kbPriceStock || qReason === 'price_stock' || dReason === 'price_stock') {
+    if (statesGroundedPrice) return { result, triggered: false, reason: null };
+    return escalate('price_stock');
+  }
+  return { result, triggered: false, reason: null };
 }

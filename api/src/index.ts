@@ -5,6 +5,7 @@ import sjson from 'secure-json-parse';
 import { env } from './env.js';
 import { prisma } from './db/prisma.js';
 import { healthRoutes } from './routes/health.js';
+import { contentRoutes } from './routes/content.js';
 import { authRoutes } from './routes/auth.js';
 import { webhookRoutes } from './routes/webhook.js';
 import { consoleRoutes } from './routes/console.js';
@@ -58,6 +59,7 @@ async function buildServer() {
   });
 
   await app.register(healthRoutes);
+  await app.register(contentRoutes);
   await app.register(authRoutes);
   await app.register(webhookRoutes);
   await app.register(consoleRoutes);
