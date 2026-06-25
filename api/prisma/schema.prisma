@@ -121,6 +121,25 @@ model Draft {
   createdAt       DateTime @default(now())
 }
 
+// Product catalog — extracted from the Prominent PDF catalogue via vision.
+// price=0 means "unknown" (the AI must NOT quote it; defer to staff). Variant
+// SKUs (color/size) share a photo via photoSku (resolved to the cell's lead SKU).
+model Product {
+  sku       String   @id // e.g. "07-10-09"
+  nameEn    String   @default("")
+  nameTh    String   @default("")
+  price     Int      @default(0) // baht; 0 = unknown
+  promo     String   @default("") // e.g. "ซื้อ 9 แถม 1"
+  note      String   @default("") // pack/size/weight
+  page      Int? // catalog page
+  photoSku  String? // SKU whose photo file represents this product (self or lead variant)
+  keywords  String[] // search terms (tokenized names) for matching
+  status    String   @default("active") // active | archived
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+}
+
 // ─── DEFERRED TO M3: pgvector embedding tables (spec §5 note) ────────────
 // Activate in M3 once the database has the `vector` extension. Steps:
 //   1. add `previewFeatures = ["postgresqlExtensions"]` to the generator

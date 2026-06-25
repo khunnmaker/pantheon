@@ -11,9 +11,11 @@ import { consoleRoutes } from './routes/console.js';
 import { kbRoutes } from './routes/kb.js';
 import { messageRoutes } from './routes/messages.js';
 import { learningRoutes } from './routes/learning.js';
+import { catalogRoutes } from './routes/catalog.js';
 import { initIo } from './ws/io.js';
 import { sweepIdleSessions } from './memory/summarize.js';
 import { ensureSeeded } from './db/ensureSeeded.js';
+import { ensureCatalog } from './db/ensureCatalog.js';
 
 // Raw body is needed to verify the LINE webhook signature.
 declare module 'fastify' {
@@ -62,6 +64,7 @@ async function buildServer() {
   await app.register(kbRoutes);
   await app.register(messageRoutes);
   await app.register(learningRoutes);
+  await app.register(catalogRoutes);
 
   return app;
 }
@@ -71,6 +74,8 @@ async function main() {
 
   // Populate an empty (fresh cloud) database with the KB + staff on boot.
   await ensureSeeded().catch((err) => app.log.error({ err }, 'ensureSeeded failed'));
+  // Seed the product catalog (price/name) on first boot.
+  await ensureCatalog().catch((err) => app.log.error({ err }, 'ensureCatalog failed'));
 
   // Attach the Socket.IO server for live console push.
   initIo(app.server);
