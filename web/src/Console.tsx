@@ -564,24 +564,23 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                         </div>
                       )}
                       {error && <div className="text-xs text-rose-600 bg-rose-50 border border-rose-200 rounded-lg p-2">{error}</div>}
-                      <div className="flex items-center gap-2 flex-wrap">
+                      {upload && (
+                        <div className="flex items-center gap-2 bg-teal-50 border border-teal-200 rounded-lg pl-1 pr-2 py-1 text-xs w-fit">
+                          {upload.previewUrl
+                            ? <img src={upload.previewUrl} alt="" className="w-8 h-8 object-cover rounded" />
+                            : <Paperclip size={14} className="text-teal-700" />}
+                          <span className="truncate max-w-[180px] text-teal-800">{upload.fileName}</span>
+                          <button type="button" onClick={() => setUpload(null)} className="text-slate-400 hover:text-rose-500"><X size={14} /></button>
+                        </div>
+                      )}
+                      <div className="grid grid-cols-[auto_1fr_1fr_1fr] gap-2">
                         <input ref={fileRef} type="file" className="hidden"
                           onChange={(e) => { void onPickFile(e.target.files?.[0] ?? undefined); e.currentTarget.value = ''; }} />
                         <button type="button" onClick={() => fileRef.current?.click()} disabled={uploading || sending || rewriting}
-                          className="px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-medium flex items-center gap-1 disabled:opacity-50">
-                          {uploading ? <Loader2 size={14} className="animate-spin" /> : <Paperclip size={14} />} แนบรูป/ไฟล์
+                          title="แนบรูป/ไฟล์" aria-label="แนบรูป/ไฟล์"
+                          className="px-2.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 flex items-center justify-center disabled:opacity-50">
+                          {uploading ? <Loader2 size={16} className="animate-spin" /> : <Paperclip size={16} />}
                         </button>
-                        {upload && (
-                          <div className="flex items-center gap-2 bg-teal-50 border border-teal-200 rounded-lg pl-1 pr-2 py-1 text-xs">
-                            {upload.previewUrl
-                              ? <img src={upload.previewUrl} alt="" className="w-8 h-8 object-cover rounded" />
-                              : <Paperclip size={14} className="text-teal-700" />}
-                            <span className="truncate max-w-[150px] text-teal-800">{upload.fileName}</span>
-                            <button type="button" onClick={() => setUpload(null)} className="text-slate-400 hover:text-rose-500"><X size={14} /></button>
-                          </div>
-                        )}
-                      </div>
-                      <div className="grid grid-cols-3 gap-2">
                         <button onClick={approve} disabled={sending || rewriting || !editText.trim()}
                           title={needsConfirm ? 'ยืนยันส่ง (คำตอบมีตัวเลข)' : 'อนุมัติและส่งให้ลูกค้า'}
                           className={'min-w-0 px-2 py-2 rounded-xl text-white text-sm font-semibold flex items-center justify-center gap-1 disabled:opacity-50 ' + (needsConfirm ? 'bg-amber-600 hover:bg-amber-700' : 'bg-emerald-600 hover:bg-emerald-700')}>
