@@ -119,12 +119,11 @@ function MessageBody({ m }: { m: Message }) {
 
 // A horizontal strip of selectable product photos (shared by the direct-match and
 // cross-sell rows). Multi-select; selected items get a ✓ and a ring.
-function PhotoStrip({ direct, cross, selected, onToggle, label }: {
+function PhotoStrip({ direct, cross, selected, onToggle }: {
   direct: PendingProduct[];
   cross: PendingProduct[];
   selected: string[];
   onToggle: (sku: string) => void;
-  label: string;
 }) {
   if (!direct.length && !cross.length) return null;
   const thumb = (p: PendingProduct, isCross: boolean) => {
@@ -148,8 +147,7 @@ function PhotoStrip({ direct, cross, selected, onToggle, label }: {
     );
   };
   return (
-    <div className="bg-teal-50 border border-teal-200 rounded-xl p-2 space-y-1.5">
-      <div className="text-[11px] text-teal-700 font-medium">{label}</div>
+    <div className="bg-teal-50 border border-teal-200 rounded-xl p-2">
       <div className="flex gap-2 overflow-x-auto pb-1 items-stretch">
         {direct.map((p) => thumb(p, false))}
         {direct.length > 0 && cross.length > 0 && (
@@ -586,7 +584,6 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                           cross={detail?.crossSellCandidates ?? []}
                           selected={selectedProductSkus}
                           onToggle={toggleProductSku}
-                          label={`เลือกรูปสินค้าที่จะแนบ${(detail?.crossSellCandidates?.length ?? 0) > 0 ? ' — ซ้าย = ลูกค้าถาม · ขวา 💡 = ขายคู่' : ''}:`}
                         />
                       )}
                       <textarea value={editText} onChange={(e) => { setEditText(e.target.value); setNeedsConfirm(false); setRewriteNote(null); }} rows={3}
