@@ -13,6 +13,9 @@ export async function buildCrossSell(
   aiTerms: string[],
   excludeSkus: Set<string>,
 ): Promise<string[]> {
+  // No AI terms = the model judged this isn't a product question → no cross-sell
+  // (don't pad billing/greeting/address questions with catalog neighbors).
+  if (!aiTerms.length) return [];
   const out: string[] = [];
   const demoted = new Set<string>();
   const seenNames = new Set<string>(); // avoid several variants of the same product
@@ -25,7 +28,7 @@ export async function buildCrossSell(
       if (out.length >= TARGET) break;
       if (l.score >= PROMOTE_AT && !excludeSkus.has(l.crossSku) && !out.includes(l.crossSku)) {
         const p = await prisma.product.findUnique({ where: { sku: l.crossSku } });
-        if (p?.photoSku && p.status === 'active') {
+        if (p?.photoSku && p.status === 'active' && (p.nameEn || p.nameTh)) {
           const k = nameKey(p.nameEn, p.nameTh, p.sku);
           if (!seenNames.has(k)) {
             out.push(l.crossSku);
@@ -38,7 +41,8 @@ export async function buildCrossSell(
 
   const tryAdd = (h: ProductMatch): boolean => {
     if (out.length >= TARGET) return false;
-    if (!h.photoSku || excludeSkus.has(h.sku) || out.includes(h.sku) || demoted.has(h.sku)) return false;
+    if (!h.photoSku || !(h.nameEn || h.nameTh)) return false; // need a photo + a name
+    if (excludeSkus.has(h.sku) || out.includes(h.sku) || demoted.has(h.sku)) return false;
     const k = nameKey(h.nameEn, h.nameTh, h.sku);
     if (seenNames.has(k)) return false;
     out.push(h.sku);
