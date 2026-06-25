@@ -57,21 +57,26 @@ async function main() {
     fail = 0;
   for (let i = 0; i < entries.length; i++) {
     const [sku, file] = entries[i];
-    try {
-      const dataB64 = fs.readFileSync(file).toString('base64');
-      const res = await fetch(`${BASE}/api/catalog/photo/${encodeURIComponent(sku)}`, {
-        method: 'POST',
-        headers: auth,
-        body: JSON.stringify({ dataB64 }),
-      });
-      if (res.ok) ok++;
-      else {
-        fail++;
-        if (fail <= 5) console.log(`  FAIL ${sku}: ${res.status} ${await res.text()}`);
+    const dataB64 = fs.readFileSync(file).toString('base64');
+    let success = false;
+    let lastErr = '';
+    for (let attempt = 0; attempt < 3 && !success; attempt++) {
+      try {
+        const res = await fetch(`${BASE}/api/catalog/photo/${encodeURIComponent(sku)}`, {
+          method: 'POST',
+          headers: auth,
+          body: JSON.stringify({ dataB64 }),
+        });
+        if (res.ok) success = true;
+        else lastErr = `${res.status} ${await res.text()}`;
+      } catch (e) {
+        lastErr = e.message;
       }
-    } catch (e) {
+    }
+    if (success) ok++;
+    else {
       fail++;
-      if (fail <= 5) console.log(`  ERR ${sku}: ${e.message}`);
+      if (fail <= 8) console.log(`  FAIL ${sku}: ${lastErr}`);
     }
     if ((i + 1) % 50 === 0) console.log(`  ${i + 1}/${entries.length} (ok=${ok} fail=${fail})`);
   }

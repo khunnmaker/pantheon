@@ -43,12 +43,21 @@ export interface Draft {
   draftText: string;
   usedKb: string[];
   note: string | null;
+  productSku?: string | null;
   createdAt: string;
+}
+export interface PendingProduct {
+  sku: string;
+  nameEn: string;
+  nameTh: string;
+  price: number;
+  photoSku: string | null;
 }
 export interface CustomerDetail {
   customer: CustomerLite & { firstSeen: string };
   messages: Message[];
   pendingDraft: Draft | null;
+  pendingProduct: PendingProduct | null;
   pendingMessageId: string | null;
   memory: { summary: string; updatedAt: string } | null;
   stats: { questions: number; replies: number; lastSeen: string };
@@ -150,12 +159,13 @@ export async function sendReply(
   messageId: string,
   finalText: string,
   confirmNumbers?: boolean,
+  attachProductSku?: string,
 ): Promise<ReplyResult | { needsConfirm: true }> {
   const token = getToken();
   const res = await fetch(`${API_URL}/api/messages/${messageId}/reply`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
-    body: JSON.stringify({ finalText, confirmNumbers }),
+    body: JSON.stringify({ finalText, confirmNumbers, attachProductSku }),
   });
   if (res.status === 409) return { needsConfirm: true };
   if (!res.ok) throw new Error(`HTTP ${res.status}`);

@@ -1,19 +1,23 @@
 import type { FastifyInstance } from 'fastify';
+import { promises as fs } from 'node:fs';
+import path from 'node:path';
 import { z } from 'zod';
 import { Prisma } from '@prisma/client';
 import { prisma } from '../db/prisma.js';
 import { requireAuth } from '../auth/middleware.js';
-import { sendLineText } from '../line/send.js';
+import { sendLineReply } from '../line/send.js';
 import { generateDraftForMessage } from '../llm/draft.js';
 import { rewriteText } from '../llm/rewrite.js';
 import { hasNumbers } from '../llm/guardrails.js';
 import { embedMessage } from '../memory/embeddings.js';
 import { readImageContent } from '../line/contentStore.js';
+import { PRODUCT_PHOTO_DIR } from './content.js';
 import { pushToConsole } from '../ws/io.js';
 
 const replyBody = z.object({
   finalText: z.string().min(1),
   confirmNumbers: z.boolean().optional(),
+  attachProductSku: z.string().optional(), // attach this product's catalog photo
 });
 
 const rewriteBody = z.object({ text: z.string().min(1).max(4000) });
@@ -92,10 +96,26 @@ export async function messageRoutes(app: FastifyInstance) {
       throw err;
     }
 
+    // Resolve an optional product photo to attach (only if the file really exists
+    // on the volume — a 404 image URL would make LINE reject the whole push).
+    let imageUrl: string | undefined;
+    if (parsed.data.attachProductSku) {
+      const prod = await prisma.product.findUnique({ where: { sku: parsed.data.attachProductSku } });
+      const photoSku = prod?.photoSku;
+      if (photoSku) {
+        const file = path.join(PRODUCT_PHOTO_DIR, `${photoSku}.png`);
+        const exists = await fs.access(file).then(() => true).catch(() => false);
+        if (exists) {
+          const proto = (req.headers['x-forwarded-proto'] as string) || req.protocol;
+          imageUrl = `${proto}://${req.headers.host}/content/product/${photoSku}`;
+        }
+      }
+    }
+
     // Send via LINE (or dry-run). On failure, release the claim so it can retry.
     let sendResult;
     try {
-      sendResult = await sendLineText(customer.lineUserId, finalText);
+      sendResult = await sendLineReply(customer.lineUserId, finalText, imageUrl);
     } catch (err) {
       req.log.error({ err }, 'LINE send failed');
       await prisma.message.delete({ where: { id: agentMessage.id } }).catch(() => undefined);

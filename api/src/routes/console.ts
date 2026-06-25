@@ -95,10 +95,20 @@ export async function consoleRoutes(app: FastifyInstance) {
 
     const memory = await prisma.customerMemory.findUnique({ where: { customerId: id } });
 
+    // Catalog product the AI drafted about — its photo can be attached on send.
+    let pendingProduct = null;
+    if (pendingDraft?.productSku) {
+      const p = await prisma.product.findUnique({ where: { sku: pendingDraft.productSku } });
+      if (p) {
+        pendingProduct = { sku: p.sku, nameEn: p.nameEn, nameTh: p.nameTh, price: p.price, photoSku: p.photoSku };
+      }
+    }
+
     return {
       customer,
       messages: ordered,
       pendingDraft,
+      pendingProduct,
       pendingMessageId: last && last.role === 'customer' ? last.id : null,
       memory: memory ? { summary: memory.summary, updatedAt: memory.updatedAt } : null,
       stats: {

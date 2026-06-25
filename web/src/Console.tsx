@@ -85,6 +85,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
   const [searchResults, setSearchResults] = useState<CustomerLite[] | null>(null);
   const [ending, setEnding] = useState(false);
   const [needsConfirm, setNeedsConfirm] = useState(false);
+  const [attachPhoto, setAttachPhoto] = useState(false);
   const [toast, setToast] = useState('');
   const [error, setError] = useState('');
 
@@ -107,6 +108,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
       setEditText(d.pendingDraft?.draftText ?? '');
       setNeedsConfirm(false);
       setRewriteNote(null);
+      setAttachPhoto(!!d.pendingProduct?.photoSku);
     } finally {
       setLoadingDetail(false);
     }
@@ -204,7 +206,9 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
     setSending(true);
     setError('');
     try {
-      const res = await sendReply(msgId, editText.trim(), needsConfirm);
+      const attachSku =
+        attachPhoto && detail?.pendingProduct?.sku ? detail.pendingProduct.sku : undefined;
+      const res = await sendReply(msgId, editText.trim(), needsConfirm, attachSku);
       if ('needsConfirm' in res) {
         setNeedsConfirm(true);
         setError('คำตอบมีตัวเลข — โปรดตรวจสอบแล้วกด "ยืนยันส่ง" อีกครั้ง');
@@ -445,6 +449,30 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                         <span className={'text-xs font-semibold px-2 py-1 rounded-full border ' + TYPE_META[draft.type].cls}>{TYPE_META[draft.type].label}</span>
                       </div>
                       {draft.note && <div className="text-xs text-slate-500 bg-slate-50 rounded-lg p-2 border border-slate-200">{draft.note}</div>}
+                      {detail?.pendingProduct && (
+                        <div className="flex items-center gap-3 bg-teal-50 border border-teal-200 rounded-xl p-2">
+                          {detail.pendingProduct.photoSku && (
+                            <img src={`${API_URL}/content/product/${detail.pendingProduct.photoSku}`} alt=""
+                              className="w-16 h-16 object-contain bg-white rounded-lg border border-teal-100 shrink-0"
+                              onError={(e) => { e.currentTarget.style.display = 'none'; }} />
+                          )}
+                          <div className="min-w-0 flex-1 text-xs leading-tight">
+                            <div className="font-semibold text-teal-800 truncate">
+                              {[detail.pendingProduct.nameEn, detail.pendingProduct.nameTh].filter(Boolean).join(' / ') || detail.pendingProduct.sku}
+                            </div>
+                            <div className="text-teal-700">
+                              {detail.pendingProduct.price > 0 ? `${detail.pendingProduct.price.toLocaleString()} บาท` : 'ราคา: ขอเจ้าหน้าที่ยืนยัน'}
+                              <span className="text-teal-400"> · {detail.pendingProduct.sku}</span>
+                            </div>
+                          </div>
+                          {detail.pendingProduct.photoSku && (
+                            <label className="flex items-center gap-1.5 text-xs text-teal-800 shrink-0 cursor-pointer select-none">
+                              <input type="checkbox" checked={attachPhoto} onChange={(e) => setAttachPhoto(e.target.checked)} />
+                              แนบรูป
+                            </label>
+                          )}
+                        </div>
+                      )}
                       <textarea value={editText} onChange={(e) => { setEditText(e.target.value); setNeedsConfirm(false); setRewriteNote(null); }} rows={3}
                         className="w-full p-3 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-teal-400 resize-none" placeholder="พิมพ์/แก้คำตอบก่อนส่ง…" />
                       {rewriteNote && (

@@ -7,22 +7,40 @@ export interface SendResult {
   channelMsgId?: string;
 }
 
+type LineOutMessage =
+  | { type: 'text'; text: string }
+  | { type: 'image'; originalContentUrl: string; previewImageUrl: string };
+
 const dryRunForced = () => env.LINE_DRY_RUN === '1' || env.LINE_DRY_RUN.toLowerCase() === 'true';
 
-// Push a text reply to a customer. Dry-run (log only) when no access token is
-// configured OR LINE_DRY_RUN is set — so the approve→send flow is testable
-// without messaging real customers.
-export async function sendLineText(lineUserId: string, text: string): Promise<SendResult> {
+// Push one or more messages. Dry-run (log only) when no access token is configured
+// OR LINE_DRY_RUN is set — so the approve→send flow is testable without messaging
+// real customers. Never logs PII (masks the userId, logs only message kinds).
+async function push(lineUserId: string, messages: LineOutMessage[]): Promise<SendResult> {
   const c = getLineClient();
   if (!c || dryRunForced()) {
-    // Don't log PII: mask the LINE userId and log only the reply length, not text.
     const masked = lineUserId.length > 6 ? `${lineUserId.slice(0, 2)}…${lineUserId.slice(-4)}` : 'U…';
     // eslint-disable-next-line no-console
-    console.log(`[LINE DRY-RUN] -> ${masked} (${text.length} chars)`);
+    console.log(`[LINE DRY-RUN] -> ${masked} (${messages.map((m) => m.type).join('+')})`);
     return { sent: false, dryRun: true };
   }
-  const res = await c.pushMessage({ to: lineUserId, messages: [{ type: 'text', text }] });
-  // pushMessage returns sentMessages[] with ids on success
+  // @line/bot-sdk Message union — our literals match Text/Image message shapes.
+  const res = await c.pushMessage({ to: lineUserId, messages: messages as never });
   const channelMsgId = res?.sentMessages?.[0]?.id;
   return { sent: true, dryRun: false, channelMsgId };
+}
+
+export async function sendLineText(lineUserId: string, text: string): Promise<SendResult> {
+  return push(lineUserId, [{ type: 'text', text }]);
+}
+
+// Text reply + optional product photo (image follows the text in the same push).
+export async function sendLineReply(
+  lineUserId: string,
+  text: string,
+  imageUrl?: string,
+): Promise<SendResult> {
+  const messages: LineOutMessage[] = [{ type: 'text', text }];
+  if (imageUrl) messages.push({ type: 'image', originalContentUrl: imageUrl, previewImageUrl: imageUrl });
+  return push(lineUserId, messages);
 }
