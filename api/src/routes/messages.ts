@@ -12,12 +12,20 @@ import { hasNumbers } from '../llm/guardrails.js';
 import { embedMessage } from '../memory/embeddings.js';
 import { readImageContent } from '../line/contentStore.js';
 import { PRODUCT_PHOTO_DIR } from './content.js';
+import { saveStaffUpload, readStaffUploadMeta, UPLOAD_ID_RE } from '../line/staffUploads.js';
 import { pushToConsole } from '../ws/io.js';
 
 const replyBody = z.object({
   finalText: z.string().min(1),
   confirmNumbers: z.boolean().optional(),
   attachProductSku: z.string().optional(), // attach this product's catalog photo
+  uploadId: z.string().max(80).optional(), // attach a staff-uploaded photo/file
+});
+
+const uploadBody = z.object({
+  dataB64: z.string().min(1),
+  fileName: z.string().max(255).optional(),
+  contentType: z.string().max(120).optional(),
 });
 
 const rewriteBody = z.object({ text: z.string().min(1).max(4000) });
@@ -37,6 +45,20 @@ export async function messageRoutes(app: FastifyInstance) {
       reply.header('content-disposition', `attachment; filename*=UTF-8''${encodeURIComponent(message.attachmentName)}`);
     }
     return reply.send(buf);
+  });
+
+  // POST /api/uploads — staff upload a photo/file to attach to a reply. Stored on
+  // the volume + served publicly; returns an uploadId to pass to /reply.
+  app.post('/api/uploads', { bodyLimit: 20 * 1024 * 1024 }, async (req, reply) => {
+    const parsed = uploadBody.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'invalid_body' });
+    const out = await saveStaffUpload(
+      parsed.data.dataB64,
+      parsed.data.fileName ?? 'file',
+      parsed.data.contentType ?? 'application/octet-stream',
+    );
+    if (!out) return reply.code(413).send({ error: 'too_large_or_empty' });
+    return { uploadId: out.uploadId, kind: out.kind, fileName: parsed.data.fileName ?? 'file' };
   });
 
   // POST /api/messages/:id/draft — (re)generate the AI draft for a customer msg.
@@ -76,16 +98,34 @@ export async function messageRoutes(app: FastifyInstance) {
 
     const draft = await prisma.draft.findUnique({ where: { messageId: customerMsg.id } });
 
-    // Resolve an optional product photo to attach — only if the file really exists
-    // on the volume (a 404 image URL would make LINE reject the whole push).
-    // Resolved BEFORE the message is created so the sent photo is recorded on the
-    // reply and shows in the console conversation (not just delivered to LINE).
-    let photoSku: string | null = null;
-    if (parsed.data.attachProductSku) {
+    // Resolve an optional attachment to send + record — a staff upload (photo/file)
+    // OR a catalog product photo. Resolved BEFORE the message is created so the sent
+    // attachment shows in the console (not just delivered to LINE). Images go as a
+    // LINE image; files append a download link to the text (OAs can't attach files).
+    const base = `${(req.headers['x-forwarded-proto'] as string) || req.protocol}://${req.headers.host}`;
+    let attach: { attachmentType: string; attachmentRef: string; attachmentName?: string } | undefined;
+    let sendImageUrl: string | undefined;
+    let sendText = finalText;
+    if (parsed.data.uploadId && UPLOAD_ID_RE.test(parsed.data.uploadId)) {
+      const meta = await readStaffUploadMeta(parsed.data.uploadId);
+      if (meta) {
+        const url = `${base}/content/upload/${parsed.data.uploadId}`;
+        if (meta.kind === 'image') {
+          sendImageUrl = url;
+          attach = { attachmentType: 'image', attachmentRef: parsed.data.uploadId };
+        } else {
+          sendText = `${finalText}\n\n📎 ${meta.fileName}: ${url}`;
+          attach = { attachmentType: 'file', attachmentRef: parsed.data.uploadId, attachmentName: meta.fileName };
+        }
+      }
+    } else if (parsed.data.attachProductSku) {
       const prod = await prisma.product.findUnique({ where: { sku: parsed.data.attachProductSku } });
       if (prod?.photoSku) {
         const file = path.join(PRODUCT_PHOTO_DIR, `${prod.photoSku}.png`);
-        if (await fs.access(file).then(() => true).catch(() => false)) photoSku = prod.photoSku;
+        if (await fs.access(file).then(() => true).catch(() => false)) {
+          sendImageUrl = `${base}/content/product/${prod.photoSku}`;
+          attach = { attachmentType: 'product', attachmentRef: prod.photoSku };
+        }
       }
     }
 
@@ -103,7 +143,7 @@ export async function messageRoutes(app: FastifyInstance) {
           agentId: agent.id,
           kbIds: draft?.usedKb ?? [],
           answersMessageId: customerMsg.id,
-          ...(photoSku ? { attachmentType: 'product', attachmentRef: photoSku } : {}),
+          ...(attach ?? {}),
         },
       });
     } catch (err) {
@@ -114,12 +154,9 @@ export async function messageRoutes(app: FastifyInstance) {
     }
 
     // Send via LINE (or dry-run). On failure, release the claim so it can retry.
-    const imageUrl = photoSku
-      ? `${(req.headers['x-forwarded-proto'] as string) || req.protocol}://${req.headers.host}/content/product/${photoSku}`
-      : undefined;
     let sendResult;
     try {
-      sendResult = await sendLineReply(customer.lineUserId, finalText, imageUrl);
+      sendResult = await sendLineReply(customer.lineUserId, sendText, sendImageUrl);
     } catch (err) {
       req.log.error({ err }, 'LINE send failed');
       await prisma.message.delete({ where: { id: agentMessage.id } }).catch(() => undefined);

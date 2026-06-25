@@ -162,17 +162,30 @@ export async function sendReply(
   finalText: string,
   confirmNumbers?: boolean,
   attachProductSku?: string,
+  uploadId?: string,
 ): Promise<ReplyResult | { needsConfirm: true }> {
   const token = getToken();
   const res = await fetch(`${API_URL}/api/messages/${messageId}/reply`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
-    body: JSON.stringify({ finalText, confirmNumbers, attachProductSku }),
+    body: JSON.stringify({ finalText, confirmNumbers, attachProductSku, uploadId }),
   });
   if (res.status === 409) return { needsConfirm: true };
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json() as Promise<ReplyResult>;
 }
+
+export interface UploadResult {
+  uploadId: string;
+  kind: 'image' | 'file';
+  fileName: string;
+}
+// Upload a staff photo/file (base64) to attach to a reply → returns an uploadId.
+export const uploadAttachment = (dataB64: string, fileName: string, contentType: string) =>
+  authed<UploadResult>('/api/uploads', {
+    method: 'POST',
+    body: JSON.stringify({ dataB64, fileName, contentType }),
+  });
 
 export const endSession = (customerId: string) =>
   authed<{ ok: boolean; summary: string | null }>(`/api/customers/${customerId}/end-session`, { method: 'POST' });

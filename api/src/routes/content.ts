@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { UPLOAD_DIR } from '../line/contentStore.js';
+import { readStaffUploadMeta, readStaffUploadFile } from '../line/staffUploads.js';
 
 // SKU path segment whitelist — blocks path traversal on the public route.
 const SKU_RE = /^[A-Za-z0-9_-]+$/;
@@ -24,5 +25,18 @@ export async function contentRoutes(app: FastifyInstance) {
     } catch {
       return reply.code(404).send({ error: 'not_found' });
     }
+  });
+
+  // PUBLIC — a staff-uploaded attachment sent to a customer (LINE fetches images;
+  // customers download files). Unguessable UUID path; files download with their name.
+  app.get<{ Params: { id: string } }>('/content/upload/:id', async (req, reply) => {
+    const meta = await readStaffUploadMeta(req.params.id);
+    const buf = await readStaffUploadFile(req.params.id);
+    if (!meta || !buf) return reply.code(404).send({ error: 'not_found' });
+    reply.header('content-type', meta.contentType).header('cache-control', 'public, max-age=86400');
+    if (meta.kind === 'file') {
+      reply.header('content-disposition', `attachment; filename*=UTF-8''${encodeURIComponent(meta.fileName)}`);
+    }
+    return reply.send(buf);
   });
 }

@@ -2,11 +2,11 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import {
   Bot, User, LogOut, Clock, Inbox, Wifi, WifiOff, Loader2, ShieldCheck, MessageSquare,
   Send, Check, CheckCircle2, RefreshCw, Brain, GraduationCap, Wand2, Pencil, AlertTriangle, Search,
-  Download,
+  Download, Paperclip, X,
 } from 'lucide-react';
 import {
   getQueue, getCustomers, getCustomer, searchCustomers, clearSession, regenerateDraft, rewriteText, sendReply, setNickname,
-  getLearned, promoteLearned, rejectLearned, endSession, API_URL, getToken,
+  uploadAttachment, getLearned, promoteLearned, rejectLearned, endSession, API_URL, getToken,
   type Agent, type CustomerLite, type CustomerDetail, type Message, type DraftType, type LearnedAnswer,
 } from './lib/api';
 import { getSocket, disconnectSocket } from './lib/socket';
@@ -73,10 +73,32 @@ function StickerImage({ refStr }: { refStr: string }) {
 }
 
 function MessageBody({ m }: { m: Message }) {
-  if (m.attachmentType === 'image') return <AuthedAttachment messageId={m.id} kind="image" />;
+  const agentUp = m.role === 'agent'; // staff-sent uploads are served publicly
+  if (m.attachmentType === 'image')
+    return agentUp ? (
+      <div className="space-y-1.5">
+        {m.text && <div>{m.text}</div>}
+        <img src={`${API_URL}/content/upload/${m.attachmentRef}`} alt="รูปที่ส่ง"
+          className="max-w-[220px] max-h-[260px] rounded-lg block"
+          onError={(e) => { e.currentTarget.style.display = 'none'; }} />
+      </div>
+    ) : (
+      <AuthedAttachment messageId={m.id} kind="image" />
+    );
   if (m.attachmentType === 'video') return <AuthedAttachment messageId={m.id} kind="video" />;
   if (m.attachmentType === 'audio') return <AuthedAttachment messageId={m.id} kind="audio" />;
-  if (m.attachmentType === 'file') return <AuthedAttachment messageId={m.id} kind="file" fileName={m.attachmentName} />;
+  if (m.attachmentType === 'file')
+    return agentUp ? (
+      <div className="space-y-1.5">
+        {m.text && <div>{m.text}</div>}
+        <a href={`${API_URL}/content/upload/${m.attachmentRef}`} target="_blank" rel="noreferrer"
+          className="inline-flex items-center gap-1.5 text-sm underline break-all">
+          <Download size={14} className="shrink-0" /> {m.attachmentName ?? 'ไฟล์'}
+        </a>
+      </div>
+    ) : (
+      <AuthedAttachment messageId={m.id} kind="file" fileName={m.attachmentName} />
+    );
   if (m.attachmentType === 'sticker') return <StickerImage refStr={m.attachmentRef ?? ''} />;
   // Agent reply that included a catalog product photo — show text + the photo.
   if (m.attachmentType === 'product' && m.attachmentRef)
@@ -110,6 +132,8 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
   const [ending, setEnding] = useState(false);
   const [needsConfirm, setNeedsConfirm] = useState(false);
   const [selectedProductSku, setSelectedProductSku] = useState<string | null>(null);
+  const [upload, setUpload] = useState<{ uploadId: string; kind: string; fileName: string; previewUrl: string } | null>(null);
+  const [uploading, setUploading] = useState(false);
   const [toast, setToast] = useState('');
   const [error, setError] = useState('');
 
@@ -117,6 +141,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
 
   const selectedRef = useRef<string | null>(null);
   const endRef = useRef<HTMLDivElement | null>(null);
+  const fileRef = useRef<HTMLInputElement | null>(null);
 
   const refreshLists = useCallback(async () => {
     const [{ customers: cs }, { queue }] = await Promise.all([getCustomers(), getQueue()]);
@@ -133,6 +158,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
       setNeedsConfirm(false);
       setRewriteNote(null);
       setSelectedProductSku(d.pendingProduct?.photoSku ? d.pendingProduct.sku : null);
+      setUpload(null);
     } finally {
       setLoadingDetail(false);
     }
@@ -230,7 +256,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
     setSending(true);
     setError('');
     try {
-      const res = await sendReply(msgId, editText.trim(), needsConfirm, selectedProductSku ?? undefined);
+      const res = await sendReply(msgId, editText.trim(), needsConfirm, selectedProductSku ?? undefined, upload?.uploadId);
       if ('needsConfirm' in res) {
         setNeedsConfirm(true);
         setError('คำตอบมีตัวเลข — โปรดตรวจสอบแล้วกด "ยืนยันส่ง" อีกครั้ง');
@@ -264,6 +290,30 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
       setError('เรียบเรียงใหม่ไม่สำเร็จ: ' + (e as Error).message);
     } finally {
       setRewriting(false);
+    }
+  }
+
+  // Staff upload a photo/file to attach to the reply.
+  async function onPickFile(file?: File) {
+    if (!file) return;
+    if (file.size > 25 * 1024 * 1024) { setError('ไฟล์ใหญ่เกิน 25MB'); return; }
+    setUploading(true);
+    setError('');
+    try {
+      const dataUrl: string = await new Promise((res, rej) => {
+        const r = new FileReader();
+        r.onload = () => res(r.result as string);
+        r.onerror = () => rej(new Error('read failed'));
+        r.readAsDataURL(file);
+      });
+      const b64 = dataUrl.split(',')[1] ?? '';
+      const out = await uploadAttachment(b64, file.name, file.type || 'application/octet-stream');
+      setUpload({ uploadId: out.uploadId, kind: out.kind, fileName: out.fileName, previewUrl: file.type.startsWith('image/') ? dataUrl : '' });
+      setSelectedProductSku(null); // a staff upload replaces a catalog photo choice
+    } catch (err) {
+      setError('อัปโหลดไม่สำเร็จ: ' + (err as Error).message);
+    } finally {
+      setUploading(false);
     }
   }
 
@@ -514,6 +564,23 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                         </div>
                       )}
                       {error && <div className="text-xs text-rose-600 bg-rose-50 border border-rose-200 rounded-lg p-2">{error}</div>}
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <input ref={fileRef} type="file" className="hidden"
+                          onChange={(e) => { void onPickFile(e.target.files?.[0] ?? undefined); e.currentTarget.value = ''; }} />
+                        <button type="button" onClick={() => fileRef.current?.click()} disabled={uploading || sending || rewriting}
+                          className="px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-medium flex items-center gap-1 disabled:opacity-50">
+                          {uploading ? <Loader2 size={14} className="animate-spin" /> : <Paperclip size={14} />} แนบรูป/ไฟล์
+                        </button>
+                        {upload && (
+                          <div className="flex items-center gap-2 bg-teal-50 border border-teal-200 rounded-lg pl-1 pr-2 py-1 text-xs">
+                            {upload.previewUrl
+                              ? <img src={upload.previewUrl} alt="" className="w-8 h-8 object-cover rounded" />
+                              : <Paperclip size={14} className="text-teal-700" />}
+                            <span className="truncate max-w-[150px] text-teal-800">{upload.fileName}</span>
+                            <button type="button" onClick={() => setUpload(null)} className="text-slate-400 hover:text-rose-500"><X size={14} /></button>
+                          </div>
+                        )}
+                      </div>
                       <div className="grid grid-cols-3 gap-2">
                         <button onClick={approve} disabled={sending || rewriting || !editText.trim()}
                           title={needsConfirm ? 'ยืนยันส่ง (คำตอบมีตัวเลข)' : 'อนุมัติและส่งให้ลูกค้า'}
