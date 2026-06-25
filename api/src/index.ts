@@ -18,6 +18,7 @@ import { initIo } from './ws/io.js';
 import { sweepIdleSessions } from './memory/summarize.js';
 import { ensureSeeded } from './db/ensureSeeded.js';
 import { ensureCatalog } from './db/ensureCatalog.js';
+import { ensureStock } from './db/ensureStock.js';
 import { ensureQuickReplies } from './db/ensureQuickReplies.js';
 
 // Raw body is needed to verify the LINE webhook signature.
@@ -81,6 +82,8 @@ async function main() {
   await ensureSeeded().catch((err) => app.log.error({ err }, 'ensureSeeded failed'));
   // Seed the product catalog (price/name) on first boot.
   await ensureCatalog().catch((err) => app.log.error({ err }, 'ensureCatalog failed'));
+  // Apply the stock snapshot to the catalog (once per snapshot date).
+  await ensureStock().catch((err) => app.log.error({ err }, 'ensureStock failed'));
   // Seed the starter quick-reply templates on first boot.
   await ensureQuickReplies().catch((err) => app.log.error({ err }, 'ensureQuickReplies failed'));
 

@@ -54,6 +54,8 @@ export interface PendingProduct {
   nameTh: string;
   price: number;
   photoSku: string | null;
+  stock: number | null; // remaining qty from the latest snapshot (null = unknown)
+  stockAt: string | null; // ISO date the stock figure is as-of
 }
 export interface CustomerDetail {
   customer: CustomerLite & { firstSeen: string };

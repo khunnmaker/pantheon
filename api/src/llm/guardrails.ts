@@ -102,6 +102,7 @@ export function applyGuardrails(
   question: string,
   citedKb: KbEntry[],
   groundedPriceText = '', // matched catalog product prices (M4) — trusted like KB
+  groundedStock = false, // a matched product carries stock data → availability is grounded (M5)
 ): GuardrailOutcome {
   const sens = citedKb.map((k) => k.sensitivity);
   const kbClinical = sens.includes('clinical');
@@ -134,10 +135,11 @@ export function applyGuardrails(
   if (kbClinical || qReason === 'clinical' || dReason === 'clinical') return escalate('clinical');
   // 2. A KB topic a supervisor marked no_auto always escalates.
   if (kbNoAuto) return escalate('price_stock');
-  // 3. Price/stock: a grounded price answer (KB or catalog) is trusted and passes;
-  //    anything else price/stock-looking (incl. stock/availability) defers to staff.
+  // 3. Price/stock: a grounded price answer (KB or catalog) OR an availability answer
+  //    backed by real stock data passes — provided any price quoted is grounded (no
+  //    invented numbers). Anything else price/stock-looking defers to staff.
   if (kbPriceStock || qReason === 'price_stock' || dReason === 'price_stock') {
-    if (statesGroundedPrice) return { result, triggered: false, reason: null };
+    if (grounded && (statesGroundedPrice || groundedStock)) return { result, triggered: false, reason: null };
     return escalate('price_stock');
   }
   return { result, triggered: false, reason: null };

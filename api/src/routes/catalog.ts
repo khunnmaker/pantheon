@@ -40,12 +40,13 @@ export async function catalogRoutes(app: FastifyInstance) {
     const kb = await prisma.kbEntry.findMany({ where: { status: 'active' } });
     const products = await findProducts(q);
     const grounded = products.filter((p) => p.price > 0).map((p) => `${p.price}บาท`).join(' ');
+    const groundedStock = products.some((p) => p.stock != null);
     const { system, user } = buildDraftPrompt({ question: q, kb, products });
     const parsed = parseDraft(await callClaude(user, system));
     const citedKb = kb.filter((k) =>
       parsed.used_kb.map((s) => s.toLowerCase()).includes(k.id.toLowerCase()),
     );
-    const guarded = applyGuardrails(parsed, q, citedKb, grounded);
+    const guarded = applyGuardrails(parsed, q, citedKb, grounded, groundedStock);
     return { matched: products, result: guarded.result, reason: guarded.reason };
   });
 

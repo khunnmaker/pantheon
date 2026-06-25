@@ -132,7 +132,8 @@ function PhotoStrip({ direct, cross, selected, onToggle }: {
     const sel = selected.includes(p.sku);
     return (
       <button key={p.sku} type="button" onClick={() => onToggle(p.sku)}
-        title={(isCross ? '💡 มักซื้อคู่กัน — ' : '') + [p.nameEn, p.nameTh].filter(Boolean).join(' / ')}
+        title={(isCross ? '💡 มักซื้อคู่กัน — ' : '') + ([p.nameEn, p.nameTh].filter(Boolean).join(' / ')) +
+          (p.stock != null ? `\nคงเหลือ ${p.stock.toLocaleString()} ชิ้น${p.stockAt ? ' (ณ ' + new Date(p.stockAt).toLocaleDateString('th-TH') + ')' : ''}` : '')}
         className={'shrink-0 w-[88px] rounded-lg border p-1 text-left transition ' + (sel ? 'border-teal-500 ring-2 ring-teal-400 bg-white' : 'border-teal-100 bg-white/60 hover:border-teal-300')}>
         <div className="relative h-[68px] flex items-center justify-center bg-white rounded">
           {p.photoSku && <img src={`${API_URL}/content/product/${p.photoSku}`} alt=""
@@ -144,6 +145,11 @@ function PhotoStrip({ direct, cross, selected, onToggle }: {
         <div className="text-[10px] mt-1 leading-tight">
           <div className="font-semibold text-teal-800 truncate">{[p.nameEn, p.nameTh].filter(Boolean).join(' / ') || p.sku}</div>
           <div className="text-teal-600">{p.price > 0 ? `${p.price.toLocaleString()} บาท` : '—'}</div>
+          {p.stock != null && (
+            <div className={'font-medium ' + (p.stock <= 0 ? 'text-rose-600' : p.stock <= 5 ? 'text-amber-600' : 'text-emerald-600')}>
+              {p.stock <= 0 ? '● หมด' : `● คงเหลือ ${p.stock.toLocaleString()}`}
+            </div>
+          )}
         </div>
       </button>
     );

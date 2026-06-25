@@ -103,12 +103,16 @@ export async function generateDraftForMessage(
     const sp = await prisma.product.findMany({ where: { sku: { in: opts.suggestSkus } } });
     suggestProducts = sp.map((p) => ({
       sku: p.sku, nameEn: p.nameEn, nameTh: p.nameTh, price: p.price, promo: p.promo, note: p.note, photoSku: p.photoSku,
+      stock: p.stock, stockAt: p.stockAt,
     }));
   }
   const groundedPriceText = [...products, ...suggestProducts]
     .filter((p) => p.price > 0)
     .map((p) => `${p.price}บาท`)
     .join(' ');
+  // A matched/suggested product carrying stock data lets the AI state availability
+  // (in/out) without it being treated as an ungrounded stock claim by the guardrail.
+  const groundedStock = [...products, ...suggestProducts].some((p) => p.stock != null);
 
   let result: DraftResult;
   try {
@@ -135,7 +139,7 @@ export async function generateDraftForMessage(
   const citedKb = kb.filter((k) =>
     result.used_kb.map((s) => s.toLowerCase()).includes(k.id.toLowerCase()),
   );
-  const guarded = applyGuardrails(result, questionText, citedKb, groundedPriceText);
+  const guarded = applyGuardrails(result, questionText, citedKb, groundedPriceText, groundedStock);
 
   // Attach the catalog product (for its photo on send) only when the answer is
   // sendable. Prefer the SKU the model cited; else fall back to a matched product

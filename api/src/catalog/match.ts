@@ -8,6 +8,8 @@ export interface ProductMatch {
   promo: string;
   note: string;
   photoSku: string | null;
+  stock: number | null; // remaining qty from the snapshot (null = unknown)
+  stockAt: Date | null;
 }
 
 // Tokenize a customer query into searchable terms (alnum + Thai, length >= 2).
@@ -64,5 +66,7 @@ export async function findProducts(query: string, limit = 5): Promise<ProductMat
       promo: p.promo,
       note: p.note,
       photoSku: p.photoSku,
+      stock: p.stock,
+      stockAt: p.stockAt,
     }));
 }

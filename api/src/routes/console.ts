@@ -8,7 +8,7 @@ import { pushToConsole } from '../ws/io.js';
 
 const RECENT_MESSAGES = 50;
 
-type ProductCard = { sku: string; nameEn: string; nameTh: string; price: number; photoSku: string | null };
+type ProductCard = { sku: string; nameEn: string; nameTh: string; price: number; photoSku: string | null; stock: number | null; stockAt: Date | null };
 
 export async function consoleRoutes(app: FastifyInstance) {
   // Everything here requires a logged-in agent.
@@ -113,7 +113,7 @@ export async function consoleRoutes(app: FastifyInstance) {
     if (pendingDraft?.productSku) {
       const p = await prisma.product.findUnique({ where: { sku: pendingDraft.productSku } });
       if (p) {
-        pendingProduct = { sku: p.sku, nameEn: p.nameEn, nameTh: p.nameTh, price: p.price, photoSku: p.photoSku };
+        pendingProduct = { sku: p.sku, nameEn: p.nameEn, nameTh: p.nameTh, price: p.price, photoSku: p.photoSku, stock: p.stock, stockAt: p.stockAt };
       }
     }
 
@@ -132,7 +132,7 @@ export async function consoleRoutes(app: FastifyInstance) {
           seenPhoto.add(p.photoSku as string);
           return true;
         })
-        .map((p) => ({ sku: p.sku, nameEn: p.nameEn, nameTh: p.nameTh, price: p.price, photoSku: p.photoSku }));
+        .map((p) => ({ sku: p.sku, nameEn: p.nameEn, nameTh: p.nameTh, price: p.price, photoSku: p.photoSku, stock: p.stock, stockAt: p.stockAt }));
     }
 
     // AI cross-sell candidates — complementary products; skip any photo already
@@ -150,7 +150,7 @@ export async function consoleRoutes(app: FastifyInstance) {
           seenPhoto.add(p.photoSku as string);
           return true;
         })
-        .map((p) => ({ sku: p.sku, nameEn: p.nameEn, nameTh: p.nameTh, price: p.price, photoSku: p.photoSku }));
+        .map((p) => ({ sku: p.sku, nameEn: p.nameEn, nameTh: p.nameTh, price: p.price, photoSku: p.photoSku, stock: p.stock, stockAt: p.stockAt }));
     }
 
     return {
