@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { verifyLineSignature } from '../line/signature.js';
 import { ingestCustomerText } from '../line/ingest.js';
-import { saveImageContent } from '../line/contentStore.js';
+import { saveLineContent } from '../line/contentStore.js';
 import { generateDraftForMessage, generateImageDraft, generateStickerDraft } from '../llm/draft.js';
 import { prisma } from '../db/prisma.js';
 import { pushToConsole } from '../ws/io.js';
@@ -16,6 +16,8 @@ interface LineMessage {
   packageId?: string;
   stickerId?: string;
   keywords?: string[]; // LINE-supplied words describing a sticker (e.g. "Thank you")
+  fileName?: string; // for "file" messages
+  fileSize?: number;
 }
 interface LineEvent {
   type: string;
@@ -143,7 +145,7 @@ export async function webhookRoutes(app: FastifyInstance) {
           });
           let message = result.message;
           if (channelMsgId) {
-            const contentType = await saveImageContent(message.id, channelMsgId);
+            const contentType = await saveLineContent(message.id, channelMsgId);
             if (contentType) {
               message = await prisma.message.update({
                 where: { id: message.id },
@@ -172,18 +174,31 @@ export async function webhookRoutes(app: FastifyInstance) {
 
         // video / audio / file / location / other
         const label = KIND_LABEL[mtype] ?? 'ข้อความ';
+        const fileName = ev.message.fileName;
         const result = await ingestCustomerText({
           lineUserId,
-          text: `[${label}]`,
+          text: fileName ? `[${label}] ${fileName}` : `[${label}]`,
           channelMsgId,
           attachmentType: mtype,
         });
+        let message = result.message;
+        // Download video/audio/file binaries so staff can view/download them in
+        // the console (location has no content; others are markers only).
+        if (channelMsgId && (mtype === 'video' || mtype === 'audio' || mtype === 'file')) {
+          const contentType = await saveLineContent(message.id, channelMsgId);
+          if (contentType) {
+            message = await prisma.message.update({
+              where: { id: message.id },
+              data: { attachmentRef: contentType, ...(fileName ? { attachmentName: fileName } : {}) },
+            });
+          }
+        }
         pushToConsole('message:new', {
           customer: result.customer,
-          message: result.message,
+          message,
           isNewCustomer: result.isNewCustomer,
         });
-        await nonTextNeedsHuman(result.message.id, mtype);
+        await nonTextNeedsHuman(message.id, mtype);
       } catch (err) {
         req.log.error({ err }, 'failed to ingest LINE event');
       }

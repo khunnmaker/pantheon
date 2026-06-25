@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import {
   Bot, User, LogOut, Clock, Inbox, Wifi, WifiOff, Loader2, ShieldCheck, MessageSquare,
   Send, Check, CheckCircle2, RefreshCw, Brain, GraduationCap, Wand2, Pencil, AlertTriangle, Search,
+  Download,
 } from 'lucide-react';
 import {
   getQueue, getCustomers, getCustomer, searchCustomers, clearSession, regenerateDraft, rewriteText, sendReply, setNickname,
@@ -28,23 +29,33 @@ const TYPE_META: Record<DraftType, { label: string; cls: string }> = {
   out_of_scope: { label: 'นอกขอบเขต', cls: 'bg-slate-100 text-slate-600 border-slate-300' },
 };
 
-// Customer image: fetched with the JWT (so the endpoint stays auth-protected),
-// shown via an object URL.
-function AuthedImage({ messageId }: { messageId: string }) {
+// A stored attachment (image/video/audio/file) fetched with the JWT (the content
+// endpoint stays auth-protected) and shown via an object URL: image/video/audio
+// inline, files as a download link.
+function AuthedAttachment({ messageId, kind, fileName }: { messageId: string; kind: string; fileName?: string | null }) {
   const [url, setUrl] = useState('');
   const [failed, setFailed] = useState(false);
   useEffect(() => {
     let obj = '';
     setFailed(false);
+    setUrl('');
     fetch(`${API_URL}/api/messages/${messageId}/content`, { headers: { authorization: `Bearer ${getToken() ?? ''}` } })
       .then((r) => (r.ok ? r.blob() : Promise.reject(new Error('no content'))))
       .then((b) => { obj = URL.createObjectURL(b); setUrl(obj); })
       .catch(() => setFailed(true));
     return () => { if (obj) URL.revokeObjectURL(obj); };
   }, [messageId]);
-  if (failed) return <span className="text-xs text-slate-400">โหลดรูปไม่ได้ (รูปอาจหมดอายุ)</span>;
-  if (!url) return <span className="text-xs text-slate-400">กำลังโหลดรูป…</span>;
-  return <img src={url} alt="รูปจากลูกค้า" className="max-w-[220px] max-h-[260px] rounded-lg block" />;
+  if (failed)
+    return <span className="text-xs text-slate-400">{kind === 'file' && fileName ? `${fileName} — ` : ''}โหลดไฟล์ไม่ได้ (อาจหมดอายุ)</span>;
+  if (!url) return <span className="text-xs text-slate-400">กำลังโหลด…</span>;
+  if (kind === 'image') return <img src={url} alt="รูปจากลูกค้า" className="max-w-[220px] max-h-[260px] rounded-lg block" />;
+  if (kind === 'video') return <video src={url} controls className="max-w-[260px] max-h-[300px] rounded-lg block" />;
+  if (kind === 'audio') return <audio src={url} controls className="max-w-[260px]" />;
+  return (
+    <a href={url} download={fileName ?? 'file'} className="inline-flex items-center gap-1.5 text-sm text-teal-700 underline break-all">
+      <Download size={14} className="shrink-0" /> {fileName ?? 'ดาวน์โหลดไฟล์'}
+    </a>
+  );
 }
 
 function StickerImage({ refStr }: { refStr: string }) {
@@ -62,7 +73,10 @@ function StickerImage({ refStr }: { refStr: string }) {
 }
 
 function MessageBody({ m }: { m: Message }) {
-  if (m.attachmentType === 'image') return <AuthedImage messageId={m.id} />;
+  if (m.attachmentType === 'image') return <AuthedAttachment messageId={m.id} kind="image" />;
+  if (m.attachmentType === 'video') return <AuthedAttachment messageId={m.id} kind="video" />;
+  if (m.attachmentType === 'audio') return <AuthedAttachment messageId={m.id} kind="audio" />;
+  if (m.attachmentType === 'file') return <AuthedAttachment messageId={m.id} kind="file" fileName={m.attachmentName} />;
   if (m.attachmentType === 'sticker') return <StickerImage refStr={m.attachmentRef ?? ''} />;
   // Agent reply that included a catalog product photo — show text + the photo.
   if (m.attachmentType === 'product' && m.attachmentRef)

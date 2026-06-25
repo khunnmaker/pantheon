@@ -19,8 +19,9 @@ export interface Message {
   agentId: string | null;
   kbIds: string[];
   channelMsgId: string | null;
-  attachmentType: string | null; // image | sticker | video | audio | file | location
+  attachmentType: string | null; // image | sticker | video | audio | file | location | product
   attachmentRef: string | null;
+  attachmentName: string | null; // original filename for received files
   createdAt: string;
 }
 export interface CustomerLite {

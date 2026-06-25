@@ -25,15 +25,18 @@ const rewriteBody = z.object({ text: z.string().min(1).max(4000) });
 export async function messageRoutes(app: FastifyInstance) {
   app.addHook('preHandler', requireAuth);
 
-  // GET /api/messages/:id/content — stream a stored image message (auth required).
+  // GET /api/messages/:id/content — stream a stored attachment (image/video/audio/
+  // file) for a message (auth required). Files download with their original name.
   app.get<{ Params: { id: string } }>('/api/messages/:id/content', async (req, reply) => {
     const message = await prisma.message.findUnique({ where: { id: req.params.id } });
-    if (!message || message.attachmentType !== 'image') {
-      return reply.code(404).send({ error: 'not_found' });
-    }
+    if (!message) return reply.code(404).send({ error: 'not_found' });
     const buf = await readImageContent(message.id);
     if (!buf) return reply.code(404).send({ error: 'content_unavailable' });
-    return reply.header('content-type', message.attachmentRef ?? 'application/octet-stream').send(buf);
+    reply.header('content-type', message.attachmentRef || 'application/octet-stream');
+    if (message.attachmentType === 'file' && message.attachmentName) {
+      reply.header('content-disposition', `attachment; filename*=UTF-8''${encodeURIComponent(message.attachmentName)}`);
+    }
+    return reply.send(buf);
   });
 
   // POST /api/messages/:id/draft — (re)generate the AI draft for a customer msg.
