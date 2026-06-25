@@ -31,6 +31,7 @@ export async function consoleRoutes(app: FastifyInstance) {
           lineUserId: c.lineUserId,
           displayName: c.displayName,
           nickname: c.nickname,
+          category: c.category,
           lastSeen: c.lastSeen,
         },
         lastMessage: c.messages[0],
@@ -44,7 +45,7 @@ export async function consoleRoutes(app: FastifyInstance) {
     const customers = await prisma.customer.findMany({
       where: { active: true },
       orderBy: { lastSeen: 'desc' },
-      select: { id: true, lineUserId: true, displayName: true, nickname: true, firstSeen: true, lastSeen: true },
+      select: { id: true, lineUserId: true, displayName: true, nickname: true, category: true, firstSeen: true, lastSeen: true },
     });
     return { customers };
   });
@@ -65,7 +66,7 @@ export async function consoleRoutes(app: FastifyInstance) {
       },
       orderBy: { lastSeen: 'desc' },
       take: 30,
-      select: { id: true, lineUserId: true, displayName: true, nickname: true, firstSeen: true, lastSeen: true },
+      select: { id: true, lineUserId: true, displayName: true, nickname: true, category: true, firstSeen: true, lastSeen: true },
     });
     return { customers };
   });
@@ -191,6 +192,20 @@ export async function consoleRoutes(app: FastifyInstance) {
     if (!customer) return reply.code(404).send({ error: 'not_found' });
     pushToConsole('conversation:update', { customerId: req.params.id });
     return { ok: true, nickname };
+  });
+
+  // POST /api/customers/:id/category — set (or clear) the staff-assigned area/type
+  // category. Free string (≤20 chars) so the team can add zones without a deploy.
+  app.post<{ Params: { id: string } }>('/api/customers/:id/category', async (req, reply) => {
+    const parsed = z.object({ category: z.string().max(20) }).safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'invalid_body' });
+    const category = parsed.data.category.trim() || null;
+    const customer = await prisma.customer
+      .update({ where: { id: req.params.id }, data: { category } })
+      .catch(() => null);
+    if (!customer) return reply.code(404).send({ error: 'not_found' });
+    pushToConsole('conversation:update', { customerId: req.params.id });
+    return { ok: true, category };
   });
 
   // POST /api/customers/:id/quick-reply — send a saved quick-reply template to the

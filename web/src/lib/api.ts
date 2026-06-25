@@ -29,6 +29,7 @@ export interface CustomerLite {
   lineUserId: string;
   displayName: string | null;
   nickname: string | null;
+  category: string | null;
   firstSeen?: string;
   lastSeen: string;
 }
@@ -142,6 +143,12 @@ export const setNickname = (customerId: string, nickname: string) =>
   authed<{ ok: boolean; nickname: string | null }>(`/api/customers/${customerId}/nickname`, {
     method: 'POST',
     body: JSON.stringify({ nickname }),
+  });
+
+export const setCategory = (customerId: string, category: string) =>
+  authed<{ ok: boolean; category: string | null }>(`/api/customers/${customerId}/category`, {
+    method: 'POST',
+    body: JSON.stringify({ category }),
   });
 
 export const regenerateDraft = (messageId: string) =>

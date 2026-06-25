@@ -5,7 +5,7 @@ import {
   Download, Paperclip, X, ChevronDown, ChevronUp,
 } from 'lucide-react';
 import {
-  getQueue, getCustomers, getCustomer, searchCustomers, clearSession, regenerateDraft, rewriteText, sendReply, setNickname,
+  getQueue, getCustomers, getCustomer, searchCustomers, clearSession, regenerateDraft, rewriteText, sendReply, setNickname, setCategory,
   uploadAttachment, getLearned, promoteLearned, rejectLearned, endSession, API_URL, getToken,
   getQuickReplies, addQuickReply, deleteQuickReply, sendQuickReply,
   type Agent, type CustomerLite, type CustomerDetail, type Message, type DraftType, type LearnedAnswer, type PendingProduct, type QuickReply,
@@ -23,6 +23,7 @@ function fmtTime(t?: string) {
   }
 }
 const nameOf = (c: CustomerLite) => c.nickname || c.displayName || c.lineUserId;
+const CATEGORIES = ['C.1', 'C.2', 'C.3', 'C.4', 'C.5', 'C.6', 'Lab'];
 
 const TYPE_META: Record<DraftType, { label: string; cls: string }> = {
   draft: { label: 'ร่างพร้อมส่ง', cls: 'bg-emerald-100 text-emerald-700 border-emerald-300' },
@@ -176,6 +177,8 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
   const [rewriteNote, setRewriteNote] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [searchResults, setSearchResults] = useState<CustomerLite[] | null>(null);
+  const [categoryFilter, setCategoryFilter] = useState<string | null>(null);
+  const [catOpen, setCatOpen] = useState(false);
   const [ending, setEnding] = useState(false);
   const [needsConfirm, setNeedsConfirm] = useState(false);
   const [selectedProductSkus, setSelectedProductSkus] = useState<string[]>([]);
@@ -450,6 +453,18 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
     }
   }
 
+  async function chooseCategory(cat: string) {
+    if (!selectedId) return;
+    setCatOpen(false);
+    try {
+      await setCategory(selectedId, cat);
+      setDetail((d) => (d ? { ...d, customer: { ...d.customer, category: cat || null } } : d));
+      await refreshLists();
+    } catch {
+      setError('ตั้งหมวดหมู่ไม่สำเร็จ');
+    }
+  }
+
   async function endChat() {
     if (!selectedId || ending) return;
     setEnding(true);
@@ -477,7 +492,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
   }
 
   const draft = detail?.pendingDraft ?? null;
-  const displayList = searchResults ?? customers;
+  const displayList = searchResults ?? customers.filter((c) => !categoryFilter || c.category === categoryFilter);
 
   return (
     <div className="min-h-screen bg-slate-100 p-3 sm:p-5 font-sans text-slate-800">
@@ -521,6 +536,18 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                     className="w-full pl-8 pr-2 py-1.5 rounded-lg border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-teal-400" />
                 </div>
               </div>
+              <div className="px-2 pb-1 shrink-0 flex flex-wrap gap-1">
+                <button onClick={() => setCategoryFilter(null)}
+                  className={'text-[10px] px-1.5 py-0.5 rounded-full border ' + (!categoryFilter ? 'bg-teal-600 text-white border-teal-600' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50')}>
+                  ทั้งหมด
+                </button>
+                {CATEGORIES.map((cat) => (
+                  <button key={cat} onClick={() => setCategoryFilter((f) => (f === cat ? null : cat))}
+                    className={'text-[10px] px-1.5 py-0.5 rounded-full border ' + (categoryFilter === cat ? 'bg-teal-600 text-white border-teal-600' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50')}>
+                    {cat}
+                  </button>
+                ))}
+              </div>
               <div className="flex-1 overflow-y-auto p-2 space-y-1">
                 {searchResults !== null && searchResults.length > 0 && (
                   <div className="px-1 pb-1 text-[11px] text-slate-400">ผลค้นหา {searchResults.length} ราย (รวมแชทที่จบแล้ว)</div>
@@ -544,6 +571,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                           <div className="flex items-center gap-1">
                             <span className="font-medium text-sm truncate">{nameOf(c)}</span>
                             {waiting && <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0" title="รอตอบ" />}
+                            {c.category && <span className="text-[9px] px-1 py-0.5 rounded bg-teal-100 text-teal-700 shrink-0 ml-auto">{c.category}</span>}
                           </div>
                           <div className="text-[11px] text-slate-400 flex items-center gap-1"><Clock size={10} /> {fmtTime(c.lastSeen)}</div>
                         </div>
@@ -573,6 +601,29 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                     <>
                       <span className="shrink-0">{detail ? nameOf(detail.customer) : 'บทสนทนา'}</span>
                       {detail && <button onClick={() => setNickEdit(detail.customer.nickname ?? '')} title="ตั้งชื่อเล่น" className="opacity-80 hover:opacity-100 shrink-0"><Pencil size={13} /></button>}
+                      {detail && (
+                        <div className="relative shrink-0">
+                          <button type="button" onClick={() => setCatOpen((v) => !v)}
+                            className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-white/20 hover:bg-white/30 text-white flex items-center gap-0.5">
+                            {detail.customer.category || 'หมวด'} <ChevronDown size={10} />
+                          </button>
+                          {catOpen && (
+                            <>
+                              <div className="fixed inset-0 z-20" onClick={() => setCatOpen(false)} />
+                              <div className="absolute top-full mt-1 left-0 z-30 w-24 bg-white border border-slate-200 rounded-lg shadow-lg p-1 text-slate-700">
+                                {CATEGORIES.map((cat) => (
+                                  <button key={cat} type="button" onClick={() => chooseCategory(cat)}
+                                    className={'w-full text-left text-xs px-2 py-1 rounded hover:bg-teal-50 ' + (detail.customer.category === cat ? 'bg-teal-50 font-semibold' : '')}>
+                                    {cat}
+                                  </button>
+                                ))}
+                                <button type="button" onClick={() => chooseCategory('')}
+                                  className="w-full text-left text-xs px-2 py-1 rounded hover:bg-slate-50 text-slate-400">ไม่ระบุ</button>
+                              </div>
+                            </>
+                          )}
+                        </div>
+                      )}
                       {detail && <span className="text-[11px] font-normal text-green-100 truncate min-w-0">· {detail.customer.lineUserId}</span>}
                       {detail && <span className="text-[11px] font-normal text-green-100 shrink-0">· ถาม {detail.stats.questions} · ตอบ {detail.stats.replies}</span>}
                     </>
