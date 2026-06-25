@@ -58,6 +58,12 @@ function priceTokens(s: string): string[] {
   return normalize(s).replace(/,/g, '').match(/[0-9๐-๙]+(?:\.[0-9๐-๙]+)?(?:บาท|baht|thb|฿)/g) || [];
 }
 
+// True if the text quotes a PRICE (a number next to a currency unit). Gates the
+// send-time confirm so non-price numbers (dates, times, phone, quantities) don't nag.
+export function hasPrice(text: string): boolean {
+  return priceTokens(text).length > 0;
+}
+
 // True if every price the draft states also appears in a cited KB answer OR in
 // the matched catalog products (extraGroundedText) — i.e. the number was copied
 // from approved content / the price list, not invented. No price tokens = grounded.

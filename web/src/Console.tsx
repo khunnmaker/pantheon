@@ -327,7 +327,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
       const res = await sendReply(msgId, editText.trim(), needsConfirm, selectedProductSkus.length ? selectedProductSkus : undefined, upload?.uploadId);
       if ('needsConfirm' in res) {
         setNeedsConfirm(true);
-        setError('คำตอบมีตัวเลข — โปรดตรวจสอบแล้วกด "ยืนยันส่ง" อีกครั้ง');
+        setError('คำตอบมีราคา — โปรดตรวจสอบตัวเลขแล้วกด "ยืนยันส่ง" อีกครั้ง');
         return;
       }
       flashToast(res.dryRun ? 'บันทึกแล้ว (โหมดทดสอบ — ยังไม่ส่งจริงไป LINE)' : 'ส่งคำตอบไปยังลูกค้าแล้ว ✓');
@@ -756,7 +756,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                           )}
                         </div>
                         <button onClick={approve} disabled={sending || rewriting || !editText.trim()}
-                          title={needsConfirm ? 'ยืนยันส่ง (คำตอบมีตัวเลข)' : 'อนุมัติและส่งให้ลูกค้า'}
+                          title={needsConfirm ? 'ยืนยันส่ง (คำตอบมีราคา)' : 'อนุมัติและส่งให้ลูกค้า'}
                           className={'min-w-0 px-2 py-2 rounded-xl text-white text-sm font-semibold flex items-center justify-center gap-1 disabled:opacity-50 ' + (needsConfirm ? 'bg-amber-600 hover:bg-amber-700' : 'bg-emerald-600 hover:bg-emerald-700')}>
                           {sending ? <Loader2 size={16} className="animate-spin" /> : <Send size={15} />} <span className="truncate">{needsConfirm ? 'ยืนยันส่ง' : 'อนุมัติ & ส่ง'}</span>
                         </button>

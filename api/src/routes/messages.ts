@@ -8,7 +8,7 @@ import { requireAuth } from '../auth/middleware.js';
 import { sendLineReply } from '../line/send.js';
 import { generateDraftForMessage } from '../llm/draft.js';
 import { rewriteText } from '../llm/rewrite.js';
-import { hasNumbers } from '../llm/guardrails.js';
+import { hasPrice } from '../llm/guardrails.js';
 import { embedMessage } from '../memory/embeddings.js';
 import { readImageContent } from '../line/contentStore.js';
 import { PRODUCT_PHOTO_DIR } from './content.js';
@@ -92,9 +92,10 @@ export async function messageRoutes(app: FastifyInstance) {
     const customer = await prisma.customer.findUnique({ where: { id: customerMsg.customerId } });
     if (!customer) return reply.code(404).send({ error: 'customer_not_found' });
 
-    // Any reply containing numbers (price/qty/date) needs an explicit confirm.
-    if (hasNumbers(finalText) && !confirmNumbers) {
-      return reply.code(409).send({ error: 'needs_confirm', reason: 'contains_numbers' });
+    // A reply that quotes a PRICE needs an explicit confirm (dates/times/phone/qty
+    // no longer nag — staff review every draft before approving anyway).
+    if (hasPrice(finalText) && !confirmNumbers) {
+      return reply.code(409).send({ error: 'needs_confirm', reason: 'contains_price' });
     }
 
     const draft = await prisma.draft.findUnique({ where: { messageId: customerMsg.id } });
