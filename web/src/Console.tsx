@@ -509,8 +509,8 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
               <LearningView learned={learned} isSupervisor={agent.role === 'supervisor'} onPromote={promote} onReject={reject} />
             ) : (
             <div className="bg-white rounded-2xl shadow-sm border border-slate-200 flex flex-col h-full">
-              <div className="px-4 py-3 bg-green-600 text-white rounded-t-2xl font-semibold flex items-center justify-between gap-2">
-                <div className="flex items-center gap-2 min-w-0">
+              <div className="px-4 py-2.5 bg-green-600 text-white rounded-t-2xl font-semibold flex items-center gap-2">
+                <div className="flex items-center gap-2 min-w-0 flex-1">
                   <MessageSquare size={18} className="shrink-0" />
                   {nickEdit !== null ? (
                     <input autoFocus value={nickEdit} onChange={(e) => setNickEdit(e.target.value)}
@@ -519,11 +519,20 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                       className="text-slate-800 bg-white text-sm rounded-md px-2 py-0.5 w-40 outline-none" />
                   ) : (
                     <>
-                      <span className="truncate">{detail ? nameOf(detail.customer) : 'บทสนทนา'}</span>
+                      <span className="shrink-0">{detail ? nameOf(detail.customer) : 'บทสนทนา'}</span>
                       {detail && <button onClick={() => setNickEdit(detail.customer.nickname ?? '')} title="ตั้งชื่อเล่น" className="opacity-80 hover:opacity-100 shrink-0"><Pencil size={13} /></button>}
+                      {detail && <span className="text-[11px] font-normal text-green-100 truncate min-w-0">· {detail.customer.lineUserId}</span>}
+                      {detail && <span className="text-[11px] font-normal text-green-100 shrink-0">· ถาม {detail.stats.questions} · ตอบ {detail.stats.replies}</span>}
                     </>
                   )}
                 </div>
+                {detail && (
+                  <button onClick={endChat} disabled={ending}
+                    className="shrink-0 text-[11px] font-medium px-2 py-1 rounded-lg bg-white/15 hover:bg-white/25 text-white flex items-center gap-1 disabled:opacity-50"
+                    title="จบบทสนทนาแล้วสรุปความจำระยะยาว">
+                    {ending ? <Loader2 size={12} className="animate-spin" /> : <CheckCircle2 size={12} />} จบแชท
+                  </button>
+                )}
               </div>
 
               {!selectedId ? (
@@ -532,24 +541,12 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                 </div>
               ) : (
                 <>
-                  {detail && (
-                    <div className="border-b border-slate-100 bg-slate-50">
-                      <div className="px-4 py-2 text-xs text-slate-500 flex items-center gap-2">
-                        <b className="text-slate-700 shrink-0">{nameOf(detail.customer)}</b>
-                        <span className="truncate min-w-0">· LINE: {detail.customer.lineUserId}</span>
-                        <span className="shrink-0">· ถาม {detail.stats.questions} · ตอบ {detail.stats.replies}</span>
-                        <button onClick={endChat} disabled={ending}
-                          className="ml-auto text-[11px] px-2 py-1 rounded-lg bg-white border border-slate-200 hover:bg-slate-100 text-slate-600 flex items-center gap-1 disabled:opacity-50"
-                          title="จบบทสนทนาแล้วสรุปความจำระยะยาว">
-                          {ending ? <Loader2 size={12} className="animate-spin" /> : <CheckCircle2 size={12} />} จบแชท
-                        </button>
+                  {detail?.memory?.summary && (
+                    <div className="border-b border-slate-100 bg-slate-50 pt-2">
+                      <div className="mx-4 mb-2 text-[11px] text-teal-800 bg-teal-50 border border-teal-200 rounded-lg p-2">
+                        <span className="font-bold flex items-center gap-1 mb-0.5"><Brain size={12} /> ความจำระยะยาว</span>
+                        {detail.memory.summary}
                       </div>
-                      {detail.memory?.summary && (
-                        <div className="mx-4 mb-2 text-[11px] text-teal-800 bg-teal-50 border border-teal-200 rounded-lg p-2">
-                          <span className="font-bold flex items-center gap-1 mb-0.5"><Brain size={12} /> ความจำระยะยาว</span>
-                          {detail.memory.summary}
-                        </div>
-                      )}
                     </div>
                   )}
                   <div className="flex-1 overflow-y-auto p-3 space-y-2 bg-green-50">
