@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import {
   Bot, User, LogOut, Clock, Inbox, Wifi, WifiOff, Loader2, ShieldCheck, MessageSquare,
   Send, Check, CheckCircle2, RefreshCw, Brain, GraduationCap, Wand2, Pencil, AlertTriangle, Search,
-  Download, Paperclip, X,
+  Download, Paperclip, X, ChevronDown, ChevronUp,
 } from 'lucide-react';
 import {
   getQueue, getCustomers, getCustomer, searchCustomers, clearSession, regenerateDraft, rewriteText, sendReply, setNickname,
@@ -134,6 +134,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
   const [selectedProductSku, setSelectedProductSku] = useState<string | null>(null);
   const [upload, setUpload] = useState<{ uploadId: string; kind: string; fileName: string; previewUrl: string } | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [detailsOpen, setDetailsOpen] = useState(true); // show/hide draft note + photo picker
   const [toast, setToast] = useState('');
   const [error, setError] = useState('');
 
@@ -519,9 +520,14 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                     <div className="border-t border-slate-200 p-3 space-y-2 bg-white">
                       <div className="flex items-start gap-2">
                         <span className={'shrink-0 text-xs font-semibold px-2 py-1 rounded-full border ' + TYPE_META[draft.type].cls}>{TYPE_META[draft.type].label}</span>
-                        {draft.note && <span className="text-xs text-slate-500 leading-relaxed pt-1">{draft.note}</span>}
+                        {draft.note && detailsOpen && <span className="text-xs text-slate-500 leading-relaxed pt-1">{draft.note}</span>}
+                        <button type="button" onClick={() => setDetailsOpen((v) => !v)}
+                          title={detailsOpen ? 'ซ่อนรายละเอียด (ดูบทสนทนามากขึ้น)' : 'แสดงรายละเอียด'}
+                          className="ml-auto shrink-0 p-1 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600">
+                          {detailsOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                        </button>
                       </div>
-                      {detail?.productCandidates && detail.productCandidates.length > 0 && (
+                      {detailsOpen && detail?.productCandidates && detail.productCandidates.length > 0 && (
                         <div className="bg-teal-50 border border-teal-200 rounded-xl p-2 space-y-1.5">
                           <div className="text-[11px] text-teal-700 font-medium">
                             {detail.productCandidates.length === 1
