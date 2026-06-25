@@ -517,10 +517,10 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                   {/* draft composer */}
                   {draft ? (
                     <div className="border-t border-slate-200 p-3 space-y-2 bg-white">
-                      <div>
-                        <span className={'text-xs font-semibold px-2 py-1 rounded-full border ' + TYPE_META[draft.type].cls}>{TYPE_META[draft.type].label}</span>
+                      <div className="flex items-start gap-2">
+                        <span className={'shrink-0 text-xs font-semibold px-2 py-1 rounded-full border ' + TYPE_META[draft.type].cls}>{TYPE_META[draft.type].label}</span>
+                        {draft.note && <span className="text-xs text-slate-500 leading-relaxed pt-1">{draft.note}</span>}
                       </div>
-                      {draft.note && <div className="text-xs text-slate-500 bg-slate-50 rounded-lg p-2 border border-slate-200">{draft.note}</div>}
                       {detail?.productCandidates && detail.productCandidates.length > 0 && (
                         <div className="bg-teal-50 border border-teal-200 rounded-xl p-2 space-y-1.5">
                           <div className="text-[11px] text-teal-700 font-medium">
