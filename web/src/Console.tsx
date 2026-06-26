@@ -610,13 +610,17 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
     if (!msgId || sending) return;
     setSending(true);
     setError('');
-    // Cross-sell products the staff selected → ask the AI to weave an offer for them.
+    // Selected products by role: cross-sells → upsell hint; direct picks → "this IS the
+    // product the customer wants" hint, so the AI writes the reply about them (e.g. when
+    // it couldn't read an image and the team identified the items).
     const crossSet = new Set((detail?.crossSellCandidates ?? []).map((p) => p.sku));
+    const directSet = new Set((detail?.productCandidates ?? []).map((p) => p.sku));
     const suggestSkus = selectedProductSkus.filter((s) => crossSet.has(s));
+    const mainSkus = selectedProductSkus.filter((s) => directSet.has(s));
     try {
-      await regenerateDraft(msgId, suggestSkus.length ? suggestSkus : undefined);
+      await regenerateDraft(msgId, suggestSkus.length ? suggestSkus : undefined, mainSkus.length ? mainSkus : undefined);
       if (selectedId) await loadDetail(selectedId); // loadDetail preserves the selection
-      flashToast(suggestSkus.length ? 'ร่างใหม่แล้ว — รวมการเสนอสินค้าขายคู่' : 'ร่างใหม่แล้ว');
+      flashToast(suggestSkus.length || mainSkus.length ? 'ร่างใหม่แล้ว — ใช้สินค้าที่เลือก' : 'ร่างใหม่แล้ว');
     } catch (e) {
       setError('ร่างใหม่ไม่สำเร็จ: ' + (e as Error).message);
     } finally {

@@ -66,7 +66,10 @@ export async function messageRoutes(app: FastifyInstance) {
   // cross-sell products the staff picked → the new draft mentions/offers them.
   app.post<{ Params: { id: string } }>('/api/messages/:id/draft', async (req, reply) => {
     const sp = z.array(z.string()).max(8).safeParse((req.body as { suggestSkus?: unknown })?.suggestSkus);
-    const opts = sp.success && sp.data.length ? { suggestSkus: sp.data } : undefined;
+    const mp = z.array(z.string()).max(8).safeParse((req.body as { mainSkus?: unknown })?.mainSkus);
+    const suggestSkus = sp.success && sp.data.length ? sp.data : undefined;
+    const mainSkus = mp.success && mp.data.length ? mp.data : undefined;
+    const opts = suggestSkus || mainSkus ? { suggestSkus, mainSkus } : undefined;
     try {
       const out = await generateDraftForMessage(req.params.id, opts);
       pushToConsole('draft:new', {

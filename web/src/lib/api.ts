@@ -153,10 +153,10 @@ export const setCategory = (customerId: string, category: string) =>
     body: JSON.stringify({ category }),
   });
 
-export const regenerateDraft = (messageId: string, suggestSkus?: string[]) =>
+export const regenerateDraft = (messageId: string, suggestSkus?: string[], mainSkus?: string[]) =>
   authed<{ draft: Draft }>(`/api/messages/${messageId}/draft`, {
     method: 'POST',
-    body: JSON.stringify({ suggestSkus }),
+    body: JSON.stringify({ suggestSkus, mainSkus }),
   });
 
 // Manual catalog search by NAME or SKU — for the "add product yourself" picker.

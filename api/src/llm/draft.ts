@@ -13,6 +13,16 @@ import { embeddingsAvailable, embedMessage, embedOne, retrieveSimilarMessages } 
 const histLine = (role: string, text: string) =>
   `${role === 'customer' ? 'ลูกค้า' : 'ร้าน'}: ${text}`;
 
+// Resolve SKUs (staff-chosen cross-sell / confirmed products) to the ProductMatch shape.
+async function resolveProducts(skus?: string[]): Promise<ProductMatch[]> {
+  if (!skus?.length) return [];
+  const rows = await prisma.product.findMany({ where: { sku: { in: skus } } });
+  return rows.map((p) => ({
+    sku: p.sku, nameEn: p.nameEn, nameTh: p.nameTh, price: p.price, promo: p.promo, note: p.note,
+    photoSku: p.photoSku, stock: p.stock, stockAt: p.stockAt,
+  }));
+}
+
 export interface DraftOutcome {
   draft: Draft;
   result: DraftResult;
@@ -24,7 +34,7 @@ export interface DraftOutcome {
 // guardrails → store Draft. Safe-defaults to needs_human on any error.
 export async function generateDraftForMessage(
   messageId: string,
-  opts?: { suggestSkus?: string[] },
+  opts?: { suggestSkus?: string[]; mainSkus?: string[] },
 ): Promise<DraftOutcome> {
   const message = await prisma.message.findUnique({ where: { id: messageId } });
   if (!message || message.role !== 'customer') {
@@ -33,7 +43,7 @@ export async function generateDraftForMessage(
 
   // Non-text messages have dedicated draft paths (sticker = LINE keywords, image = vision).
   if (message.attachmentType === 'sticker') return generateStickerDraft(messageId);
-  if (message.attachmentType === 'image') return generateImageDraft(messageId);
+  if (message.attachmentType === 'image') return generateImageDraft(messageId, opts?.mainSkus);
 
   const kb = await prisma.kbEntry.findMany({ where: { status: 'active' } });
 
@@ -98,21 +108,17 @@ export async function generateDraftForMessage(
   const products = await findProducts(questionText);
   // Cross-sell products the staff explicitly chose to upsell (passed on regenerate) —
   // the draft should mention/offer these; their prices are trusted too.
-  let suggestProducts: ProductMatch[] = [];
-  if (opts?.suggestSkus?.length) {
-    const sp = await prisma.product.findMany({ where: { sku: { in: opts.suggestSkus } } });
-    suggestProducts = sp.map((p) => ({
-      sku: p.sku, nameEn: p.nameEn, nameTh: p.nameTh, price: p.price, promo: p.promo, note: p.note, photoSku: p.photoSku,
-      stock: p.stock, stockAt: p.stockAt,
-    }));
-  }
-  const groundedPriceText = [...products, ...suggestProducts]
+  const suggestProducts = await resolveProducts(opts?.suggestSkus);
+  // Products staff manually identified as the answer (e.g. picked because the AI's match
+  // was wrong) — the draft should be written ABOUT these, with name/price/stock.
+  const confirmedProducts = await resolveProducts(opts?.mainSkus);
+  const groundedPriceText = [...products, ...suggestProducts, ...confirmedProducts]
     .filter((p) => p.price > 0)
     .map((p) => `${p.price}บาท`)
     .join(' ');
-  // A matched/suggested product carrying stock data lets the AI state availability
-  // (in/out) without it being treated as an ungrounded stock claim by the guardrail.
-  const groundedStock = [...products, ...suggestProducts].some((p) => p.stock != null);
+  // A matched/suggested/confirmed product carrying stock data lets the AI state
+  // availability (in/out) without it being treated as an ungrounded stock claim.
+  const groundedStock = [...products, ...suggestProducts, ...confirmedProducts].some((p) => p.stock != null);
 
   let result: DraftResult;
   try {
@@ -127,6 +133,7 @@ export async function generateDraftForMessage(
         retrievedMessages,
         products,
         suggestProducts,
+        confirmedProducts,
       });
       const raw = await callClaude(user, system);
       result = parseDraft(raw);
@@ -156,7 +163,7 @@ export async function generateDraftForMessage(
   // On a cross-sell regenerate (suggestSkus given) the staff already picked photos from
   // the shown picker — keep it STABLE so their selection can't vanish: reuse the existing
   // draft's candidates + cross-sells, only the TEXT changes. Fresh drafts compute them.
-  const existing = opts?.suggestSkus?.length
+  const existing = (opts?.suggestSkus?.length || opts?.mainSkus?.length)
     ? await prisma.draft.findUnique({ where: { messageId }, select: { candidateSkus: true, crossSellSkus: true } })
     : null;
 
@@ -212,7 +219,7 @@ const IMAGE_FALLBACK: DraftResult = {
 
 // Vision draft for an image message: send the stored image + context to Claude,
 // parse, run the same guardrails, store the Draft. Safe-defaults to needs_human.
-export async function generateImageDraft(messageId: string): Promise<DraftOutcome> {
+export async function generateImageDraft(messageId: string, mainSkus?: string[]): Promise<DraftOutcome> {
   const message = await prisma.message.findUnique({ where: { id: messageId } });
   if (!message || message.role !== 'customer' || message.attachmentType !== 'image') {
     throw new Error('image message not found');
@@ -227,6 +234,9 @@ export async function generateImageDraft(messageId: string): Promise<DraftOutcom
   const recentWindow = recentRows.reverse().map((m) => histLine(m.role, m.text)).join('\n');
   const memory = await prisma.customerMemory.findUnique({ where: { customerId: message.customerId } });
   const summary = memory?.summary || undefined;
+  // Products staff manually identified in the image (when vision can't read it) — the
+  // reply should be written about these instead of deferring to a human.
+  const confirmedProducts = await resolveProducts(mainSkus);
 
   let result: DraftResult;
   try {
@@ -234,7 +244,7 @@ export async function generateImageDraft(messageId: string): Promise<DraftOutcom
     if (!llmAvailable() || !buf) {
       result = IMAGE_FALLBACK;
     } else {
-      const { system, user } = buildImagePrompt({ kb, recentWindow, summary });
+      const { system, user } = buildImagePrompt({ kb, recentWindow, summary, confirmedProducts });
       const raw = await callClaudeWithImage(user, system, {
         base64: buf.toString('base64'),
         mediaType: message.attachmentRef || 'image/jpeg',
@@ -245,11 +255,14 @@ export async function generateImageDraft(messageId: string): Promise<DraftOutcom
     result = IMAGE_FALLBACK;
   }
 
-  // Same guardrails — scans the AI's draft text for price/clinical claims.
+  // Same guardrails — scans the AI's draft text for price/clinical claims. Confirmed
+  // products' prices/stock are grounded so the AI may quote them.
   const citedKb = kb.filter((k) =>
     result.used_kb.map((s) => s.toLowerCase()).includes(k.id.toLowerCase()),
   );
-  const guarded = applyGuardrails(result, message.text, citedKb);
+  const groundedPriceText = confirmedProducts.filter((p) => p.price > 0).map((p) => `${p.price}บาท`).join(' ');
+  const groundedStock = confirmedProducts.some((p) => p.stock != null);
+  const guarded = applyGuardrails(result, message.text, citedKb, groundedPriceText, groundedStock);
 
   const draft = await prisma.draft.upsert({
     where: { messageId },
