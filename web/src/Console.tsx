@@ -270,7 +270,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
   const [searchResults, setSearchResults] = useState<CustomerLite[] | null>(null);
   const [categoryFilters, setCategoryFilters] = useState<string[]>([]);
   const [catOpen, setCatOpen] = useState(false);
-  const [stageFilters, setStageFilters] = useState<string[]>([]);
+  const [stageFilters, setStageFilters] = useState<string[]>(() => [...STAGES]); // all selected = show all
   const [stageOpen, setStageOpen] = useState(false);
   const [ending, setEnding] = useState(false);
   const [needsConfirm, setNeedsConfirm] = useState(false);
@@ -696,7 +696,9 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
   const draft = detail?.pendingDraft ?? null;
   const displayList = searchResults ?? customers.filter((c) =>
     (categoryFilters.length === 0 || (c.category != null && categoryFilters.includes(c.category))) &&
-    (stageFilters.length === 0 || (c.stage != null && stageFilters.includes(c.stage))),
+    // Stage filter is "exclude" style: deselecting a stage hides only that stage's
+    // customers; unstaged customers always show. (All selected = everyone shows.)
+    (c.stage == null || stageFilters.includes(c.stage)),
   );
 
   return (
@@ -754,8 +756,8 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                 ))}
               </div>
               <div className="px-2 pb-1 shrink-0 flex flex-wrap gap-1">
-                <button onClick={() => setStageFilters([])}
-                  className={'text-[10px] px-1.5 py-0.5 rounded-full border ' + (stageFilters.length === 0 ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50')}>
+                <button onClick={() => setStageFilters([...STAGES])}
+                  className={'text-[10px] px-1.5 py-0.5 rounded-full border ' + (stageFilters.length === STAGES.length ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50')}>
                   ทุกขั้นตอน
                 </button>
                 {STAGES.map((st) => (
