@@ -34,6 +34,22 @@ export async function sendLineText(lineUserId: string, text: string): Promise<Se
   return push(lineUserId, [{ type: 'text', text }]);
 }
 
+// Image(s) only — no text bubble (LINE rejects empty text). For an instant photo send.
+export async function sendLineImages(lineUserId: string, imageUrls: string[]): Promise<SendResult> {
+  const messages: LineOutMessage[] = imageUrls.map((url) => ({
+    type: 'image',
+    originalContentUrl: url,
+    previewImageUrl: url,
+  }));
+  if (!messages.length) return { sent: false, dryRun: true };
+  let first: SendResult | undefined;
+  for (let i = 0; i < messages.length; i += 5) {
+    const res = await push(lineUserId, messages.slice(i, i + 5));
+    first ??= res;
+  }
+  return first as SendResult;
+}
+
 // Text reply + optional product photo(s). LINE allows at most 5 messages per push,
 // so a text + many images is sent in chunks; returns the first push's result.
 export async function sendLineReply(

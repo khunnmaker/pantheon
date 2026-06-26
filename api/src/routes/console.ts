@@ -3,7 +3,8 @@ import { z } from 'zod';
 import { prisma } from '../db/prisma.js';
 import { requireAuth } from '../auth/middleware.js';
 import { endSession } from '../memory/summarize.js';
-import { sendLineText } from '../line/send.js';
+import { sendLineText, sendLineImages } from '../line/send.js';
+import { readStaffUploadMeta, UPLOAD_ID_RE } from '../line/staffUploads.js';
 import { pushToConsole } from '../ws/io.js';
 
 const RECENT_MESSAGES = 50;
@@ -264,6 +265,43 @@ export async function consoleRoutes(app: FastifyInstance) {
         text,
         agentId: req.agent!.id,
         kbIds: [],
+        ...(sendResult.channelMsgId ? { channelMsgId: sendResult.channelMsgId } : {}),
+      },
+    });
+    await prisma.customer.update({ where: { id: customer.id }, data: { lastSeen: new Date() } });
+    pushToConsole('conversation:update', { customerId: customer.id, message });
+    return { ok: true, message, dryRun: sendResult.dryRun };
+  });
+
+  // POST /api/customers/:id/photo — send a staff photo to the customer IMMEDIATELY
+  // (camera capture). Standalone image message — no text bubble, answersMessageId null.
+  app.post<{ Params: { id: string } }>('/api/customers/:id/photo', async (req, reply) => {
+    const uploadId = (req.body as { uploadId?: unknown })?.uploadId;
+    if (typeof uploadId !== 'string' || !UPLOAD_ID_RE.test(uploadId)) {
+      return reply.code(400).send({ error: 'invalid_upload' });
+    }
+    const meta = await readStaffUploadMeta(uploadId);
+    if (!meta || meta.kind !== 'image') return reply.code(400).send({ error: 'not_an_image' });
+    const customer = await prisma.customer.findUnique({ where: { id: req.params.id } });
+    if (!customer) return reply.code(404).send({ error: 'not_found' });
+    const base = `${(req.headers['x-forwarded-proto'] as string) || req.protocol}://${req.headers.host}`;
+    const url = `${base}/content/upload/${uploadId}`;
+    let sendResult;
+    try {
+      sendResult = await sendLineImages(customer.lineUserId, [url]);
+    } catch (err) {
+      req.log.error({ err }, 'photo send failed');
+      return reply.code(502).send({ error: 'line_send_failed' });
+    }
+    const message = await prisma.message.create({
+      data: {
+        customerId: customer.id,
+        role: 'agent',
+        text: '',
+        agentId: req.agent!.id,
+        kbIds: [],
+        attachmentType: 'image',
+        attachmentRef: uploadId,
         ...(sendResult.channelMsgId ? { channelMsgId: sendResult.channelMsgId } : {}),
       },
     });

@@ -7,10 +7,20 @@ import {
 import {
   getQueue, getCustomers, getCustomer, searchCustomers, clearSession, regenerateDraft, rewriteText, sendReply, setNickname, setCategory,
   uploadAttachment, getLearned, promoteLearned, rejectLearned, endSession, API_URL, getToken,
-  getQuickReplies, addQuickReply, deleteQuickReply, sendQuickReply, sendMessage,
+  getQuickReplies, addQuickReply, deleteQuickReply, sendQuickReply, sendMessage, sendPhotoNow,
   type Agent, type CustomerLite, type CustomerDetail, type Message, type DraftType, type LearnedAnswer, type PendingProduct, type QuickReply,
 } from './lib/api';
 import { getSocket, disconnectSocket } from './lib/socket';
+
+// Read a File as a base64 data URL (for upload).
+function fileToDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result as string);
+    r.onerror = () => reject(new Error('read failed'));
+    r.readAsDataURL(file);
+  });
+}
 
 function fmtTime(t?: string) {
   if (!t) return '';
@@ -467,25 +477,40 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
     setUpload(null); // a catalog photo choice replaces a staff upload
   };
 
-  // Staff upload a photo/file to attach to the reply.
+  // Staff upload a photo/file to ATTACH to the reply (sent together on อนุมัติ & ส่ง).
   async function onPickFile(file?: File) {
     if (!file) return;
     if (file.size > 25 * 1024 * 1024) { setError('ไฟล์ใหญ่เกิน 25MB'); return; }
     setUploading(true);
     setError('');
     try {
-      const dataUrl: string = await new Promise((res, rej) => {
-        const r = new FileReader();
-        r.onload = () => res(r.result as string);
-        r.onerror = () => rej(new Error('read failed'));
-        r.readAsDataURL(file);
-      });
+      const dataUrl = await fileToDataUrl(file);
       const b64 = dataUrl.split(',')[1] ?? '';
       const out = await uploadAttachment(b64, file.name, file.type || 'application/octet-stream');
       setUpload({ uploadId: out.uploadId, kind: out.kind, fileName: out.fileName, previewUrl: file.type.startsWith('image/') ? dataUrl : '' });
       setSelectedProductSkus([]); // a staff upload replaces catalog photo choices
     } catch (err) {
       setError('อัปโหลดไม่สำเร็จ: ' + (err as Error).message);
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  // Camera capture → upload + send the photo to the customer IMMEDIATELY (standalone,
+  // no text). Does NOT queue onto the draft; the composer text is left untouched.
+  async function captureAndSend(file?: File) {
+    if (!file || !selectedId) return;
+    if (file.size > 25 * 1024 * 1024) { setError('ไฟล์ใหญ่เกิน 25MB'); return; }
+    setUploading(true);
+    setError('');
+    try {
+      const dataUrl = await fileToDataUrl(file);
+      const b64 = dataUrl.split(',')[1] ?? '';
+      const out = await uploadAttachment(b64, file.name, file.type || 'image/jpeg');
+      const res = await sendPhotoNow(selectedId, out.uploadId);
+      flashToast(res.dryRun ? 'ถ่ายรูปแล้ว (โหมดทดสอบ — ยังไม่ส่งจริง)' : 'ส่งรูปให้ลูกค้าแล้ว ✓');
+    } catch (err) {
+      setError('ส่งรูปไม่สำเร็จ: ' + (err as Error).message);
     } finally {
       setUploading(false);
     }
@@ -832,13 +857,13 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                       )}
                       {cameraOpen && (
                         <CameraCapture
-                          onCapture={(f) => { setCameraOpen(false); void onPickFile(f); }}
+                          onCapture={(f) => { setCameraOpen(false); void captureAndSend(f); }}
                           onClose={() => setCameraOpen(false)}
                         />
                       )}
                       <div className="grid grid-cols-[auto_auto_auto_1fr_1fr_1fr] gap-2">
                         <input ref={cameraRef} type="file" accept="image/*" capture="environment" className="hidden"
-                          onChange={(e) => { void onPickFile(e.target.files?.[0] ?? undefined); e.currentTarget.value = ''; }} />
+                          onChange={(e) => { void captureAndSend(e.target.files?.[0] ?? undefined); e.currentTarget.value = ''; }} />
                         <button type="button" disabled={uploading || sending || rewriting}
                           onClick={() => {
                             // Touch devices (phone/iPad) → native camera via <input capture>;

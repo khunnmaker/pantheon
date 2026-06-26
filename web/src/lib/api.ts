@@ -223,6 +223,13 @@ export const sendQuickReply = (customerId: string, quickReplyId: string) =>
     body: JSON.stringify({ quickReplyId }),
   });
 
+// Send a staff photo to the customer IMMEDIATELY (camera) — standalone image message.
+export const sendPhotoNow = (customerId: string, uploadId: string) =>
+  authed<{ ok: boolean; message: Message; dryRun: boolean }>(`/api/customers/${customerId}/photo`, {
+    method: 'POST',
+    body: JSON.stringify({ uploadId }),
+  });
+
 // Send a free-form message to the customer (correction/addition after answering).
 export async function sendMessage(
   customerId: string,
