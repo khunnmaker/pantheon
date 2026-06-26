@@ -38,17 +38,26 @@ export async function catalogRoutes(app: FastifyInstance) {
   app.post('/api/catalog/test-draft', async (req, reply) => {
     const q = String((req.body as { q?: string }).q ?? '').trim();
     if (!q) return reply.code(400).send({ error: 'missing_q' });
+    const mainRaw = (req.body as { mainSkus?: unknown }).mainSkus;
+    const mainSkus = Array.isArray(mainRaw) ? mainRaw.filter((s): s is string => typeof s === 'string') : [];
     const kb = await prisma.kbEntry.findMany({ where: { status: 'active' } });
     const products = await findProducts(q);
-    const grounded = products.filter((p) => p.price > 0).map((p) => `${p.price}บาท`).join(' ');
-    const groundedStock = products.some((p) => p.stock != null);
-    const { system, user } = buildDraftPrompt({ question: q, kb, products });
+    const confirmedProducts = mainSkus.length
+      ? (await prisma.product.findMany({ where: { sku: { in: mainSkus } } })).map((p) => ({
+          sku: p.sku, nameEn: p.nameEn, nameTh: p.nameTh, price: p.price, promo: p.promo, note: p.note,
+          photoSku: p.photoSku, stock: p.stock, stockAt: p.stockAt,
+        }))
+      : [];
+    const all = [...products, ...confirmedProducts];
+    const grounded = all.filter((p) => p.price > 0).map((p) => `${p.price}บาท`).join(' ');
+    const groundedStock = all.some((p) => p.stock != null);
+    const { system, user } = buildDraftPrompt({ question: q, kb, products, confirmedProducts });
     const parsed = parseDraft(await callClaude(user, system));
     const citedKb = kb.filter((k) =>
       parsed.used_kb.map((s) => s.toLowerCase()).includes(k.id.toLowerCase()),
     );
     const guarded = applyGuardrails(parsed, q, citedKb, grounded, groundedStock);
-    return { matched: products, result: guarded.result, reason: guarded.reason };
+    return { matched: products, confirmed: confirmedProducts, result: guarded.result, reason: guarded.reason };
   });
 
   // Quick health/visibility of the imported catalog.
