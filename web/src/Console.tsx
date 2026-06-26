@@ -897,6 +897,9 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                 </div>
               ) : (
                 <>
+                  <div className="flex flex-1 min-h-0">
+                    {/* LEFT: conversation history (full height) */}
+                    <div className="flex flex-col flex-1 min-w-0 border-r border-slate-200">
                   {detail?.memory?.summary && (
                     <div className="border-b border-slate-100 bg-slate-50 pt-2">
                       <div className="mx-4 mb-2 text-[11px] text-teal-800 bg-teal-50 border border-teal-200 rounded-lg p-2">
@@ -918,6 +921,9 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                     ))}
                     <div ref={endRef} />
                   </div>
+                    </div>{/* /LEFT column */}
+                    {/* RIGHT: drafting / composer (full height, scrolls if tall) */}
+                    <div className="flex flex-col w-[42%] min-w-[360px] min-h-0 overflow-y-auto">
 
                   {/* shared photo inputs + desktop webcam modal (used by both composers) */}
                   <input ref={cameraRef} type="file" accept="image/*" capture="environment" className="hidden"
@@ -988,7 +994,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                               </div>
                             </div>
                       )}
-                      <textarea value={editText} onChange={(e) => { setEditText(e.target.value); setNeedsConfirm(false); setRewriteNote(null); }} rows={3}
+                      <textarea value={editText} onChange={(e) => { setEditText(e.target.value); setNeedsConfirm(false); setRewriteNote(null); }} rows={7}
                         className="w-full p-3 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-teal-400 resize-none" placeholder="พิมพ์/แก้คำตอบก่อนส่ง…" />
                       {rewriteNote && (
                         <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-2 flex items-start gap-1.5">
@@ -1090,7 +1096,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                           <button type="button" onClick={() => setUpload(null)} className="text-slate-400 hover:text-rose-500"><X size={14} /></button>
                         </div>
                       )}
-                      <textarea value={freeText} onChange={(e) => setFreeText(e.target.value)} rows={2}
+                      <textarea value={freeText} onChange={(e) => setFreeText(e.target.value)} rows={4}
                         className="w-full p-3 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-teal-400 resize-none" placeholder="พิมพ์ข้อความถึงลูกค้า…" />
                       <div className="grid grid-cols-[auto_auto_1fr] gap-2">
                         <button type="button" disabled={uploading || freeSending} onClick={openCamera}
@@ -1115,6 +1121,8 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                       รอคำถามจากลูกค้า…
                     </div>
                   )}
+                    </div>{/* /RIGHT column */}
+                  </div>{/* /side-by-side */}
                 </>
               )}
             </div>
