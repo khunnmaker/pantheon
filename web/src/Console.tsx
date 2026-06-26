@@ -227,7 +227,20 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
       setEditText(d.pendingDraft?.draftText ?? '');
       setNeedsConfirm(false);
       setRewriteNote(null);
-      setSelectedProductSkus(d.pendingProduct?.photoSku ? [d.pendingProduct.sku] : []);
+      // Preserve the staff's photo selection across reloads (their own ร่างใหม่ AND the
+      // live draft:new socket push that follows): keep any selected SKU still present in
+      // the new picker; only fall back to the AI's default pick when none survive (i.e.
+      // switching to a different customer, whose picker shares none of the old SKUs).
+      const validSkus = new Set<string>([
+        ...d.productCandidates.map((p) => p.sku),
+        ...d.crossSellCandidates.map((p) => p.sku),
+        ...(d.pendingProduct?.photoSku ? [d.pendingProduct.sku] : []),
+      ]);
+      const defaultSel = d.pendingProduct?.photoSku ? [d.pendingProduct.sku] : [];
+      setSelectedProductSkus((prev) => {
+        const kept = prev.filter((s) => validSkus.has(s));
+        return kept.length ? kept : defaultSel;
+      });
       setUpload(null);
       setFreeText('');
       setFreeNeedsConfirm(false);
@@ -468,11 +481,9 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
     // Cross-sell products the staff selected → ask the AI to weave an offer for them.
     const crossSet = new Set((detail?.crossSellCandidates ?? []).map((p) => p.sku));
     const suggestSkus = selectedProductSkus.filter((s) => crossSet.has(s));
-    const keep = [...selectedProductSkus];
     try {
       await regenerateDraft(msgId, suggestSkus.length ? suggestSkus : undefined);
-      if (selectedId) await loadDetail(selectedId);
-      setSelectedProductSkus(keep); // keep the staff's photo selection after reload
+      if (selectedId) await loadDetail(selectedId); // loadDetail preserves the selection
       flashToast(suggestSkus.length ? 'ร่างใหม่แล้ว — รวมการเสนอสินค้าขายคู่' : 'ร่างใหม่แล้ว');
     } catch (e) {
       setError('ร่างใหม่ไม่สำเร็จ: ' + (e as Error).message);
