@@ -37,7 +37,7 @@ export interface CustomerLite {
 }
 
 // Sales-pipeline stages (mirror of api/src/stages.ts). AI suggests, staff confirm.
-export const STAGES = ['สอบถาม', 'สั่งซื้อ', 'รอชำระเงิน', 'จัดส่ง', 'หลังการขาย', 'ยกเลิก'];
+export const STAGES = ['ถาม', 'สั่งซื้อ', 'จัดส่ง', 'หลังการขาย', 'ยกเลิก'];
 export interface QueueItem {
   customer: CustomerLite;
   lastMessage: Message;

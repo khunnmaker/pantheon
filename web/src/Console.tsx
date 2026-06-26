@@ -758,7 +758,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
               <div className="px-2 pb-1 shrink-0 flex flex-wrap gap-1">
                 <button onClick={() => setStageFilters((fs) => (fs.length === STAGES.length ? [] : [...STAGES]))}
                   className={'text-[10px] px-1.5 py-0.5 rounded-full border ' + (stageFilters.length === STAGES.length ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50')}>
-                  ทุกขั้นตอน
+                  ทั้งหมด
                 </button>
                 {STAGES.map((st) => (
                   <button key={st} onClick={() => setStageFilters((fs) => (fs.includes(st) ? fs.filter((f) => f !== st) : [...fs, st]))}
