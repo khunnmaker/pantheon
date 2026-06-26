@@ -743,7 +743,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                     className="w-full pl-8 pr-2 py-1.5 rounded-lg border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-teal-400" />
                 </div>
               </div>
-              <div className="px-2 pb-1 shrink-0 flex flex-wrap gap-1">
+              <div className="px-2 pt-2 pb-1 shrink-0 flex flex-wrap gap-1">
                 <button onClick={() => setCategoryFilters((fs) => (fs.length === CATEGORIES.length ? [] : [...CATEGORIES]))}
                   className={'text-[10px] px-1.5 py-0.5 rounded-full border ' + (categoryFilters.length === CATEGORIES.length ? 'bg-teal-600 text-white border-teal-600' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50')}>
                   ทั้งหมด
