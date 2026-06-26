@@ -8,7 +8,7 @@ import {
   getQueue, getCustomers, getCustomer, searchCustomers, clearSession, regenerateDraft, rewriteText, sendReply, setNickname, setCategory, setStage, STAGES,
   uploadAttachment, getLearned, promoteLearned, rejectLearned, endSession, API_URL, getToken,
   getQuickReplies, addQuickReply, deleteQuickReply, sendQuickReply, sendMessage, sendPhotoNow, searchCatalog, addProductToDraft,
-  type Agent, type CustomerLite, type CustomerDetail, type Message, type DraftType, type LearnedAnswer, type PendingProduct, type QuickReply,
+  type Agent, type CustomerLite, type CustomerDetail, type Message, type LearnedAnswer, type PendingProduct, type QuickReply,
 } from './lib/api';
 import { getSocket, disconnectSocket } from './lib/socket';
 
@@ -34,12 +34,6 @@ function fmtTime(t?: string) {
 }
 const nameOf = (c: CustomerLite) => c.nickname || c.displayName || c.lineUserId;
 const CATEGORIES = ['C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'Lab'];
-
-const TYPE_META: Record<DraftType, { label: string; cls: string }> = {
-  draft: { label: 'ร่างพร้อมส่ง', cls: 'bg-emerald-100 text-emerald-700 border-emerald-300' },
-  needs_human: { label: 'ต้องให้คนตอบ', cls: 'bg-amber-100 text-amber-700 border-amber-300' },
-  out_of_scope: { label: 'นอกขอบเขต', cls: 'bg-slate-100 text-slate-600 border-slate-300' },
-};
 
 // A stored attachment (image/video/audio/file) fetched with the JWT (the content
 // endpoint stays auth-protected) and shown via an object URL: image/video/audio
@@ -941,7 +935,6 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                   {draft ? (
                     <div className="border-t border-slate-200 p-3 space-y-2 bg-white flex flex-col flex-1 min-h-0">
                       <div className="flex items-start gap-2">
-                        <span className={'shrink-0 text-xs font-semibold px-2 py-1 rounded-full border ' + TYPE_META[draft.type].cls}>{TYPE_META[draft.type].label}</span>
                         {draft.note && detailsOpen && <span className="text-xs text-slate-500 leading-relaxed pt-1">{draft.note}</span>}
                         <button type="button" onClick={() => setProdSearchOpen((v) => !v)}
                           title="ค้นหา / เพิ่มสินค้าเอง" aria-label="ค้นหา / เพิ่มสินค้าเอง"
@@ -1069,17 +1062,17 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                         <button onClick={approve} disabled={sending || rewriting || !editText.trim()}
                           title={needsConfirm ? 'ยืนยันส่ง (คำตอบมีราคา)' : 'อนุมัติและส่งให้ลูกค้า'}
                           className={'min-w-0 px-2 py-2 rounded-xl text-white text-sm font-semibold flex items-center justify-center gap-1 disabled:opacity-50 ' + (needsConfirm ? 'bg-amber-600 hover:bg-amber-700' : 'bg-emerald-600 hover:bg-emerald-700')}>
-                          {sending ? <Loader2 size={16} className="animate-spin" /> : <Send size={15} />} <span className="truncate">{needsConfirm ? 'ยืนยันส่ง' : 'อนุมัติ & ส่ง'}</span>
+                          {sending ? <Loader2 size={17} className="animate-spin" /> : <Send size={17} />}
                         </button>
                         <button onClick={rewrite} disabled={rewriting || sending || !editText.trim()}
                           title="ให้ AI ช่วยแก้ไวยากรณ์และเรียบเรียงข้อความที่คุณพิมพ์ใหม่ (ไม่เปลี่ยนความหมายหรือตัวเลข)"
                           className="min-w-0 px-2 py-2 rounded-xl bg-indigo-100 hover:bg-indigo-200 text-indigo-700 text-sm font-semibold flex items-center justify-center gap-1 disabled:opacity-50">
-                          {rewriting ? <Loader2 size={15} className="animate-spin" /> : <Wand2 size={15} />} <span className="truncate">เรียบเรียงใหม่</span>
+                          {rewriting ? <Loader2 size={17} className="animate-spin" /> : <Wand2 size={17} />}
                         </button>
                         <button onClick={regenerate} disabled={sending || rewriting}
                           title="ให้ AI ร่างคำตอบใหม่จาก KB (ทิ้งข้อความที่แก้)"
                           className="min-w-0 px-2 py-2 rounded-xl bg-slate-200 hover:bg-slate-300 text-slate-700 text-sm font-semibold flex items-center justify-center gap-1 disabled:opacity-50">
-                          <RefreshCw size={15} /> <span className="truncate">ร่างใหม่</span>
+                          <RefreshCw size={17} />
                         </button>
                       </div>
                     </div>
