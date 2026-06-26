@@ -900,14 +900,6 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                   <div className="flex flex-1 min-h-0">
                     {/* LEFT: conversation history (full height) */}
                     <div className="flex flex-col flex-1 min-w-0 border-r border-slate-200">
-                  {detail?.memory?.summary && (
-                    <div className="border-b border-slate-100 bg-slate-50 pt-2">
-                      <div className="mx-4 mb-2 text-[11px] text-teal-800 bg-teal-50 border border-teal-200 rounded-lg p-2">
-                        <span className="font-bold flex items-center gap-1 mb-0.5"><Brain size={12} /> ความจำระยะยาว</span>
-                        {detail.memory.summary}
-                      </div>
-                    </div>
-                  )}
                   <div className="flex-1 overflow-y-auto p-3 space-y-2 bg-green-50">
                     {loadingDetail && !detail && <div className="flex justify-center py-8 text-slate-400"><Loader2 size={18} className="animate-spin" /></div>}
                     {detail?.messages.map((m: Message) => (
@@ -922,8 +914,16 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                     <div ref={endRef} />
                   </div>
                     </div>{/* /LEFT column */}
-                    {/* RIGHT: drafting / composer (full height, scrolls if tall) */}
+                    {/* RIGHT: drafting / composer (full height) */}
                     <div className="flex flex-col w-[42%] min-w-[360px] min-h-0 overflow-y-auto">
+                  {detail?.memory?.summary && (
+                    <div className="shrink-0 bg-slate-50 border-b border-slate-100 p-2">
+                      <div className="text-[11px] text-teal-800 bg-teal-50 border border-teal-200 rounded-lg p-2">
+                        <span className="font-bold flex items-center gap-1 mb-0.5"><Brain size={12} /> ความจำระยะยาว</span>
+                        {detail.memory.summary}
+                      </div>
+                    </div>
+                  )}
 
                   {/* shared photo inputs + desktop webcam modal (used by both composers) */}
                   <input ref={cameraRef} type="file" accept="image/*" capture="environment" className="hidden"
@@ -939,7 +939,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
 
                   {/* draft composer */}
                   {draft ? (
-                    <div className="border-t border-slate-200 p-3 space-y-2 bg-white">
+                    <div className="border-t border-slate-200 p-3 space-y-2 bg-white flex flex-col flex-1 min-h-0">
                       <div className="flex items-start gap-2">
                         <span className={'shrink-0 text-xs font-semibold px-2 py-1 rounded-full border ' + TYPE_META[draft.type].cls}>{TYPE_META[draft.type].label}</span>
                         {draft.note && detailsOpen && <span className="text-xs text-slate-500 leading-relaxed pt-1">{draft.note}</span>}
@@ -994,8 +994,8 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                               </div>
                             </div>
                       )}
-                      <textarea value={editText} onChange={(e) => { setEditText(e.target.value); setNeedsConfirm(false); setRewriteNote(null); }} rows={7}
-                        className="w-full p-3 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-teal-400 resize-none" placeholder="พิมพ์/แก้คำตอบก่อนส่ง…" />
+                      <textarea value={editText} onChange={(e) => { setEditText(e.target.value); setNeedsConfirm(false); setRewriteNote(null); }} rows={4}
+                        className="w-full flex-1 min-h-[120px] p-3 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-teal-400 resize-none" placeholder="พิมพ์/แก้คำตอบก่อนส่ง…" />
                       {rewriteNote && (
                         <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-2 flex items-start gap-1.5">
                           <AlertTriangle size={14} className="shrink-0 mt-0.5" />
@@ -1084,7 +1084,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                       </div>
                     </div>
                   ) : detail && detail.messages.length > 0 ? (
-                    <div className="border-t border-slate-200 p-3 space-y-2 bg-white">
+                    <div className="border-t border-slate-200 p-3 space-y-2 bg-white flex flex-col flex-1 min-h-0">
                       <div className="text-[11px] text-slate-400">ลูกค้าได้รับคำตอบล่าสุดแล้ว — พิมพ์เพื่อส่งข้อความเพิ่มเติม / แก้ไขได้</div>
                       {error && <div className="text-xs text-rose-600 bg-rose-50 border border-rose-200 rounded-lg p-2">{error}</div>}
                       {upload && (
@@ -1096,8 +1096,8 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                           <button type="button" onClick={() => setUpload(null)} className="text-slate-400 hover:text-rose-500"><X size={14} /></button>
                         </div>
                       )}
-                      <textarea value={freeText} onChange={(e) => setFreeText(e.target.value)} rows={4}
-                        className="w-full p-3 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-teal-400 resize-none" placeholder="พิมพ์ข้อความถึงลูกค้า…" />
+                      <textarea value={freeText} onChange={(e) => setFreeText(e.target.value)} rows={3}
+                        className="w-full flex-1 min-h-[100px] p-3 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-teal-400 resize-none" placeholder="พิมพ์ข้อความถึงลูกค้า…" />
                       <div className="grid grid-cols-[auto_auto_1fr] gap-2">
                         <button type="button" disabled={uploading || freeSending} onClick={openCamera}
                           title="ถ่ายรูปแล้วส่งทันที" aria-label="ถ่ายรูปแล้วส่งทันที"
@@ -1117,7 +1117,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                       </div>
                     </div>
                   ) : (
-                    <div className="px-4 py-3 border-t border-slate-200 text-xs text-slate-400 text-center">
+                    <div className="flex-1 flex items-center justify-center p-4 border-t border-slate-200 text-xs text-slate-400 text-center">
                       รอคำถามจากลูกค้า…
                     </div>
                   )}
