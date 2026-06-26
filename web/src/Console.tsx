@@ -285,7 +285,6 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
   const [qrSending, setQrSending] = useState(false);
   const [freeText, setFreeText] = useState('');
   const [freeSending, setFreeSending] = useState(false);
-  const [freeNeedsConfirm, setFreeNeedsConfirm] = useState(false);
   const [toast, setToast] = useState('');
   const [cameraOpen, setCameraOpen] = useState(false);
   const [error, setError] = useState('');
@@ -327,7 +326,6 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
       });
       setUpload(null);
       setFreeText('');
-      setFreeNeedsConfirm(false);
     } finally {
       setLoadingDetail(false);
     }
@@ -531,26 +529,28 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
     }
   }
 
-  // Free-form message (correction/addition) when there's no pending question.
+  // Free-form message (text and/or an attached photo/file) when there's no pending question.
   async function freeSend() {
-    if (!selectedId || !freeText.trim() || freeSending) return;
+    if (!selectedId || (!freeText.trim() && !upload) || freeSending) return;
     setFreeSending(true);
     setError('');
     try {
-      const res = await sendMessage(selectedId, freeText.trim(), freeNeedsConfirm);
-      if ('needsConfirm' in res) {
-        setFreeNeedsConfirm(true);
-        setError('ข้อความมีราคา — โปรดตรวจสอบแล้วกด "ยืนยันส่ง" อีกครั้ง');
-        return;
-      }
+      const res = await sendMessage(selectedId, freeText.trim(), upload?.uploadId);
       setFreeText('');
-      setFreeNeedsConfirm(false);
+      setUpload(null);
       flashToast(res.dryRun ? 'บันทึกแล้ว (โหมดทดสอบ)' : 'ส่งข้อความให้ลูกค้าแล้ว ✓');
     } catch {
       setError('ส่งข้อความไม่สำเร็จ');
     } finally {
       setFreeSending(false);
     }
+  }
+
+  // Camera button → native camera on touch devices, webcam modal on desktop.
+  function openCamera() {
+    const touch = (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) || navigator.maxTouchPoints > 0;
+    if (touch) cameraRef.current?.click();
+    else setCameraOpen(true);
   }
   async function saveQuickReply() {
     if (!qrLabel.trim() || !qrBody.trim() || qrSaving) return;
@@ -817,6 +817,18 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                     <div ref={endRef} />
                   </div>
 
+                  {/* shared photo inputs + desktop webcam modal (used by both composers) */}
+                  <input ref={cameraRef} type="file" accept="image/*" capture="environment" className="hidden"
+                    onChange={(e) => { void captureAndSend(e.target.files?.[0] ?? undefined); e.currentTarget.value = ''; }} />
+                  <input ref={fileRef} type="file" className="hidden"
+                    onChange={(e) => { void onPickFile(e.target.files?.[0] ?? undefined); e.currentTarget.value = ''; }} />
+                  {cameraOpen && (
+                    <CameraCapture
+                      onCapture={(f) => { setCameraOpen(false); void captureAndSend(f); }}
+                      onClose={() => setCameraOpen(false)}
+                    />
+                  )}
+
                   {/* draft composer */}
                   {draft ? (
                     <div className="border-t border-slate-200 p-3 space-y-2 bg-white">
@@ -855,28 +867,12 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                           <button type="button" onClick={() => setUpload(null)} className="text-slate-400 hover:text-rose-500"><X size={14} /></button>
                         </div>
                       )}
-                      {cameraOpen && (
-                        <CameraCapture
-                          onCapture={(f) => { setCameraOpen(false); void captureAndSend(f); }}
-                          onClose={() => setCameraOpen(false)}
-                        />
-                      )}
                       <div className="grid grid-cols-[auto_auto_auto_1fr_1fr_1fr] gap-2">
-                        <input ref={cameraRef} type="file" accept="image/*" capture="environment" className="hidden"
-                          onChange={(e) => { void captureAndSend(e.target.files?.[0] ?? undefined); e.currentTarget.value = ''; }} />
-                        <button type="button" disabled={uploading || sending || rewriting}
-                          onClick={() => {
-                            // Touch devices (phone/iPad) → native camera via <input capture>;
-                            // desktop ignores `capture`, so open the live webcam modal instead.
-                            const touch = (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) || navigator.maxTouchPoints > 0;
-                            if (touch) cameraRef.current?.click(); else setCameraOpen(true);
-                          }}
+                        <button type="button" disabled={uploading || sending || rewriting} onClick={openCamera}
                           title="ถ่ายรูปแล้วส่ง" aria-label="ถ่ายรูปแล้วส่ง"
                           className="px-2.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 flex items-center justify-center disabled:opacity-50">
                           {uploading ? <Loader2 size={16} className="animate-spin" /> : <Camera size={16} />}
                         </button>
-                        <input ref={fileRef} type="file" className="hidden"
-                          onChange={(e) => { void onPickFile(e.target.files?.[0] ?? undefined); e.currentTarget.value = ''; }} />
                         <button type="button" onClick={() => fileRef.current?.click()} disabled={uploading || sending || rewriting}
                           title="แนบรูป/ไฟล์" aria-label="แนบรูป/ไฟล์"
                           className="px-2.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 flex items-center justify-center disabled:opacity-50">
@@ -946,13 +942,34 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                     <div className="border-t border-slate-200 p-3 space-y-2 bg-white">
                       <div className="text-[11px] text-slate-400">ลูกค้าได้รับคำตอบล่าสุดแล้ว — พิมพ์เพื่อส่งข้อความเพิ่มเติม / แก้ไขได้</div>
                       {error && <div className="text-xs text-rose-600 bg-rose-50 border border-rose-200 rounded-lg p-2">{error}</div>}
-                      <textarea value={freeText} onChange={(e) => { setFreeText(e.target.value); setFreeNeedsConfirm(false); }} rows={2}
+                      {upload && (
+                        <div className="flex items-center gap-2 bg-teal-50 border border-teal-200 rounded-lg pl-1 pr-2 py-1 text-xs w-fit">
+                          {upload.previewUrl
+                            ? <img src={upload.previewUrl} alt="" className="w-8 h-8 object-cover rounded" />
+                            : <Paperclip size={14} className="text-teal-700" />}
+                          <span className="truncate max-w-[180px] text-teal-800">{upload.fileName}</span>
+                          <button type="button" onClick={() => setUpload(null)} className="text-slate-400 hover:text-rose-500"><X size={14} /></button>
+                        </div>
+                      )}
+                      <textarea value={freeText} onChange={(e) => setFreeText(e.target.value)} rows={2}
                         className="w-full p-3 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-teal-400 resize-none" placeholder="พิมพ์ข้อความถึงลูกค้า…" />
-                      <button onClick={freeSend} disabled={!freeText.trim() || freeSending}
-                        title={freeNeedsConfirm ? 'ยืนยันส่ง (ข้อความมีราคา)' : 'ส่งข้อความให้ลูกค้า'}
-                        className={'w-full px-2 py-2 rounded-xl text-white text-sm font-semibold flex items-center justify-center gap-1 disabled:opacity-50 ' + (freeNeedsConfirm ? 'bg-amber-600 hover:bg-amber-700' : 'bg-emerald-600 hover:bg-emerald-700')}>
-                        {freeSending ? <Loader2 size={16} className="animate-spin" /> : <Send size={15} />} {freeNeedsConfirm ? 'ยืนยันส่ง' : 'ส่งข้อความ'}
-                      </button>
+                      <div className="grid grid-cols-[auto_auto_1fr] gap-2">
+                        <button type="button" disabled={uploading || freeSending} onClick={openCamera}
+                          title="ถ่ายรูปแล้วส่งทันที" aria-label="ถ่ายรูปแล้วส่งทันที"
+                          className="px-2.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 flex items-center justify-center disabled:opacity-50">
+                          {uploading ? <Loader2 size={16} className="animate-spin" /> : <Camera size={16} />}
+                        </button>
+                        <button type="button" onClick={() => fileRef.current?.click()} disabled={uploading || freeSending}
+                          title="แนบรูป/ไฟล์" aria-label="แนบรูป/ไฟล์"
+                          className="px-2.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 flex items-center justify-center disabled:opacity-50">
+                          {uploading ? <Loader2 size={16} className="animate-spin" /> : <Paperclip size={16} />}
+                        </button>
+                        <button onClick={freeSend} disabled={(!freeText.trim() && !upload) || freeSending}
+                          title="ส่งข้อความให้ลูกค้า"
+                          className="px-2 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold flex items-center justify-center gap-1 disabled:opacity-50">
+                          {freeSending ? <Loader2 size={16} className="animate-spin" /> : <Send size={15} />} ส่งข้อความ
+                        </button>
+                      </div>
                     </div>
                   ) : (
                     <div className="px-4 py-3 border-t border-slate-200 text-xs text-slate-400 text-center">

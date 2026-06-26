@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { prisma } from '../db/prisma.js';
 import { requireAuth } from '../auth/middleware.js';
 import { endSession } from '../memory/summarize.js';
-import { sendLineText, sendLineImages } from '../line/send.js';
+import { sendLineText, sendLineImages, sendLineReply } from '../line/send.js';
 import { readStaffUploadMeta, UPLOAD_ID_RE } from '../line/staffUploads.js';
 import { pushToConsole } from '../ws/io.js';
 
@@ -246,14 +246,41 @@ export async function consoleRoutes(app: FastifyInstance) {
   // (e.g. a correction/addition after the question was already answered). Standalone
   // (answersMessageId null); same price-confirm as a normal reply.
   app.post<{ Params: { id: string } }>('/api/customers/:id/message', async (req, reply) => {
-    const parsed = z.object({ text: z.string().min(1).max(4000), confirmNumbers: z.boolean().optional() }).safeParse(req.body);
+    const parsed = z.object({
+      text: z.string().max(4000).optional(),
+      uploadId: z.string().max(80).optional(), // optional staff photo/file attachment
+    }).safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: 'invalid_body' });
-    const { text } = parsed.data;
+    const text = (parsed.data.text ?? '').trim();
+    const { uploadId } = parsed.data;
+    if (!text && !uploadId) return reply.code(400).send({ error: 'empty' });
     const customer = await prisma.customer.findUnique({ where: { id: req.params.id } });
     if (!customer) return reply.code(404).send({ error: 'not_found' });
+
+    // Resolve an optional attachment: image → sent as a LINE image; file → download link.
+    let attach: { attachmentType: string; attachmentRef: string; attachmentName?: string } | undefined;
+    let imageUrls: string[] = [];
+    let sendText = text;
+    if (uploadId && UPLOAD_ID_RE.test(uploadId)) {
+      const meta = await readStaffUploadMeta(uploadId);
+      if (meta) {
+        const base = `${(req.headers['x-forwarded-proto'] as string) || req.protocol}://${req.headers.host}`;
+        const url = `${base}/content/upload/${uploadId}`;
+        if (meta.kind === 'image') {
+          imageUrls = [url];
+          attach = { attachmentType: 'image', attachmentRef: uploadId };
+        } else {
+          sendText = text ? `${text}\n\n📎 ${meta.fileName}: ${url}` : `📎 ${meta.fileName}: ${url}`;
+          attach = { attachmentType: 'file', attachmentRef: uploadId, attachmentName: meta.fileName };
+        }
+      }
+    }
+
     let sendResult;
     try {
-      sendResult = await sendLineText(customer.lineUserId, text);
+      if (imageUrls.length && !sendText) sendResult = await sendLineImages(customer.lineUserId, imageUrls);
+      else if (imageUrls.length) sendResult = await sendLineReply(customer.lineUserId, sendText, imageUrls);
+      else sendResult = await sendLineText(customer.lineUserId, sendText);
     } catch (err) {
       req.log.error({ err }, 'free message send failed');
       return reply.code(502).send({ error: 'line_send_failed' });
@@ -265,6 +292,7 @@ export async function consoleRoutes(app: FastifyInstance) {
         text,
         agentId: req.agent!.id,
         kbIds: [],
+        ...(attach ?? {}),
         ...(sendResult.channelMsgId ? { channelMsgId: sendResult.channelMsgId } : {}),
       },
     });

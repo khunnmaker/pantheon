@@ -231,18 +231,18 @@ export const sendPhotoNow = (customerId: string, uploadId: string) =>
   });
 
 // Send a free-form message to the customer (correction/addition after answering).
+// Optional uploadId attaches a staff photo/file to that standalone message.
 export async function sendMessage(
   customerId: string,
   text: string,
-  confirmNumbers?: boolean,
-): Promise<{ message: Message; dryRun: boolean } | { needsConfirm: true }> {
+  uploadId?: string,
+): Promise<{ message: Message; dryRun: boolean }> {
   const token = getToken();
   const res = await fetch(`${API_URL}/api/customers/${customerId}/message`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
-    body: JSON.stringify({ text, confirmNumbers }),
+    body: JSON.stringify({ text, uploadId }),
   });
-  if (res.status === 409) return { needsConfirm: true };
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json() as Promise<{ message: Message; dryRun: boolean }>;
 }
