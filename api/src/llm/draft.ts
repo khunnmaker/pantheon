@@ -152,15 +152,29 @@ export async function generateDraftForMessage(
     matchedSku = products.find((p) => p.price > 0 && flat.includes(`${p.price}บาท`))?.sku;
   }
   const productSku = guarded.result.type === 'draft' ? matchedSku ?? null : null;
-  // Candidate photos for staff to choose from when the match is uncertain — the
-  // matched products that actually have a photo (the AI's pick is among them).
-  const candidateSkus = products.filter((p) => p.photoSku).slice(0, 6).map((p) => p.sku);
 
-  // Cross-sell: learned-good pairings (from past staff choices) first, then fresh
-  // AI suggestions — excluding the direct matches and demoted pairings. Targets ~5.
-  const anchorSku = productSku ?? candidateSkus[0] ?? null;
-  const excludeSkus = new Set([...products.map((p) => p.sku), ...candidateSkus]);
-  const crossSellSkus = await buildCrossSell(anchorSku, result.cross_sell_terms ?? [], excludeSkus);
+  // On a cross-sell regenerate (suggestSkus given) the staff already picked photos from
+  // the shown picker — keep it STABLE so their selection can't vanish: reuse the existing
+  // draft's candidates + cross-sells, only the TEXT changes. Fresh drafts compute them.
+  const existing = opts?.suggestSkus?.length
+    ? await prisma.draft.findUnique({ where: { messageId }, select: { candidateSkus: true, crossSellSkus: true } })
+    : null;
+
+  let candidateSkus: string[];
+  let crossSellSkus: string[];
+  if (existing) {
+    candidateSkus = existing.candidateSkus;
+    crossSellSkus = existing.crossSellSkus;
+  } else {
+    // Candidate photos for staff to choose from when the match is uncertain — the
+    // matched products that actually have a photo (the AI's pick is among them).
+    candidateSkus = products.filter((p) => p.photoSku).slice(0, 6).map((p) => p.sku);
+    // Cross-sell: learned-good pairings (from past staff choices) first, then fresh
+    // AI suggestions — excluding the direct matches and demoted pairings. Targets ~5.
+    const anchorSku = productSku ?? candidateSkus[0] ?? null;
+    const excludeSkus = new Set([...products.map((p) => p.sku), ...candidateSkus]);
+    crossSellSkus = await buildCrossSell(anchorSku, result.cross_sell_terms ?? [], excludeSkus);
+  }
 
   const draft = await prisma.draft.upsert({
     where: { messageId },
