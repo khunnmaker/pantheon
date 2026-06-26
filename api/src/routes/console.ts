@@ -276,6 +276,9 @@ export async function consoleRoutes(app: FastifyInstance) {
       }
     }
 
+    // Nothing resolved to send (e.g. an unresolvable uploadId with no text) — don't push an empty bubble.
+    if (!imageUrls.length && !sendText) return reply.code(400).send({ error: 'empty' });
+
     let sendResult;
     try {
       if (imageUrls.length && !sendText) sendResult = await sendLineImages(customer.lineUserId, imageUrls);
