@@ -170,6 +170,78 @@ function PhotoStrip({ direct, cross, selected, onToggle }: {
   );
 }
 
+// Live webcam capture for desktop (where the <input capture> attribute is ignored and
+// only opens a file dialog). Streams the camera, snaps a frame to a JPEG File.
+function CameraCapture({ onCapture, onClose }: { onCapture: (file: File) => void; onClose: () => void }) {
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        setErr('เบราว์เซอร์นี้ไม่รองรับการเปิดกล้อง — ใช้ปุ่มแนบรูปแทนได้ค่ะ');
+        return;
+      }
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
+        if (cancelled) { stream.getTracks().forEach((t) => t.stop()); return; }
+        streamRef.current = stream;
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          videoRef.current.muted = true;
+          await videoRef.current.play().catch(() => undefined);
+        }
+        setReady(true);
+      } catch {
+        setErr('เปิดกล้องไม่ได้ — โปรดอนุญาตการใช้กล้องในเบราว์เซอร์ หรือใช้ปุ่มแนบรูปแทน');
+      }
+    })();
+    return () => { cancelled = true; streamRef.current?.getTracks().forEach((t) => t.stop()); };
+  }, []);
+
+  const snap = () => {
+    const v = videoRef.current;
+    if (!v || !v.videoWidth) return;
+    const canvas = document.createElement('canvas');
+    canvas.width = v.videoWidth;
+    canvas.height = v.videoHeight;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.drawImage(v, 0, 0);
+    canvas.toBlob((blob) => {
+      if (!blob) return;
+      onCapture(new File([blob], `photo-${blob.size}.jpg`, { type: 'image/jpeg' }));
+    }, 'image/jpeg', 0.9);
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl p-3 max-w-lg w-full" onClick={(e) => e.stopPropagation()}>
+        {err ? (
+          <div className="text-sm text-rose-600 p-6 text-center">{err}</div>
+        ) : (
+          <div className="relative bg-black rounded-xl overflow-hidden aspect-[4/3] flex items-center justify-center">
+            <video ref={videoRef} playsInline className="w-full h-full object-contain" />
+            {!ready && <Loader2 className="absolute text-white animate-spin" size={28} />}
+          </div>
+        )}
+        <div className="flex justify-between items-center mt-3">
+          <button type="button" onClick={onClose} className="px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 text-sm">ยกเลิก</button>
+          {!err && (
+            <button type="button" onClick={snap} disabled={!ready}
+              className="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold flex items-center gap-1.5 disabled:opacity-50">
+              <Camera size={16} /> ถ่ายรูป
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function Console({ agent, onLogout }: { agent: Agent; onLogout: () => void }) {
   const [view, setView] = useState<'console' | 'learning'>('console');
   const [customers, setCustomers] = useState<CustomerLite[]>([]);
@@ -205,6 +277,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
   const [freeSending, setFreeSending] = useState(false);
   const [freeNeedsConfirm, setFreeNeedsConfirm] = useState(false);
   const [toast, setToast] = useState('');
+  const [cameraOpen, setCameraOpen] = useState(false);
   const [error, setError] = useState('');
 
   const [learned, setLearned] = useState<LearnedAnswer[]>([]);
@@ -757,10 +830,22 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                           <button type="button" onClick={() => setUpload(null)} className="text-slate-400 hover:text-rose-500"><X size={14} /></button>
                         </div>
                       )}
+                      {cameraOpen && (
+                        <CameraCapture
+                          onCapture={(f) => { setCameraOpen(false); void onPickFile(f); }}
+                          onClose={() => setCameraOpen(false)}
+                        />
+                      )}
                       <div className="grid grid-cols-[auto_auto_auto_1fr_1fr_1fr] gap-2">
                         <input ref={cameraRef} type="file" accept="image/*" capture="environment" className="hidden"
                           onChange={(e) => { void onPickFile(e.target.files?.[0] ?? undefined); e.currentTarget.value = ''; }} />
-                        <button type="button" onClick={() => cameraRef.current?.click()} disabled={uploading || sending || rewriting}
+                        <button type="button" disabled={uploading || sending || rewriting}
+                          onClick={() => {
+                            // Touch devices (phone/iPad) → native camera via <input capture>;
+                            // desktop ignores `capture`, so open the live webcam modal instead.
+                            const touch = (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) || navigator.maxTouchPoints > 0;
+                            if (touch) cameraRef.current?.click(); else setCameraOpen(true);
+                          }}
                           title="ถ่ายรูปแล้วส่ง" aria-label="ถ่ายรูปแล้วส่ง"
                           className="px-2.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 flex items-center justify-center disabled:opacity-50">
                           {uploading ? <Loader2 size={16} className="animate-spin" /> : <Camera size={16} />}
