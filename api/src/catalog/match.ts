@@ -99,17 +99,21 @@ export async function searchProducts(query: string, limit = 12): Promise<Product
   if (!raw) return [];
   const tokens = questionKeywords(raw);
   const skuLike = raw.replace(/\s+/g, '');
+  // A pure digits/dashes query is a SKU lookup → match SKU only (skip name-token noise).
+  const isSkuQuery = /^[\d-]+$/.test(skuLike);
 
   const candidates = await prisma.product.findMany({
     where: {
       status: 'active',
       OR: [
         { sku: { contains: skuLike, mode: 'insensitive' as const } },
-        ...tokens.flatMap((t) => [
-          { nameEn: { contains: t, mode: 'insensitive' as const } },
-          { nameTh: { contains: t } },
-          { keywords: { has: t } },
-        ]),
+        ...(isSkuQuery
+          ? []
+          : tokens.flatMap((t) => [
+              { nameEn: { contains: t, mode: 'insensitive' as const } },
+              { nameTh: { contains: t } },
+              { keywords: { has: t } },
+            ])),
       ],
     },
     take: 80,
