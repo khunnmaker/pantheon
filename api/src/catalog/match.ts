@@ -85,7 +85,7 @@ export async function findProducts(query: string, limit = 5): Promise<ProductMat
 
   return candidates
     .map((p) => ({ p, s: score(p) }))
-    .filter((x) => x.s > 0)
+    .filter((x) => x.s > 0 && (x.p.nameEn || x.p.nameTh)) // skip nameless products (generic-keyword noise)
     .sort((a, b) => b.s - a.s || Number(b.p.price > 0) - Number(a.p.price > 0))
     .slice(0, limit)
     .map(({ p }) => toProductMatch(p));
