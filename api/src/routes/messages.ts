@@ -17,6 +17,7 @@ import { recordProductKeywords } from '../catalog/match.js';
 import { readSlip } from '../llm/readSlip.js';
 import { sendToFinance } from '../finance/sendToFinance.js';
 import { buildSlipUrl } from '../finance/slipLink.js';
+import { normalizeSlipDate, normalizeAmount } from '../finance/normalize.js';
 import { pushToConsole } from '../ws/io.js';
 
 const replyBody = z.object({
@@ -151,9 +152,9 @@ export async function messageRoutes(app: FastifyInstance) {
     const result = await sendToFinance({
       nickname: parsed.data.nickname ?? customer.nickname ?? customer.displayName ?? '',
       realName: parsed.data.realName ?? '',
-      amount: parsed.data.amount ?? '',
+      amount: normalizeAmount(parsed.data.amount ?? ''),
       bank: parsed.data.bank ?? '',
-      transferAt: parsed.data.transferAt ?? '',
+      transferAt: normalizeSlipDate(parsed.data.transferAt ?? ''),
       ref: parsed.data.ref ?? '',
       slipUrl: buildSlipUrl(base, msg.id),
       sales: req.agent?.name ?? '',
