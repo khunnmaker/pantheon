@@ -15,7 +15,7 @@ import { saveStaffUpload, readStaffUploadMeta, UPLOAD_ID_RE } from '../line/staf
 import { recordCrossSellOutcome } from '../catalog/crossSell.js';
 import { recordProductKeywords } from '../catalog/match.js';
 import { readSlip } from '../llm/readSlip.js';
-import { sendToFinance, sendFinanceAudit } from '../finance/sendToFinance.js';
+import { sendToFinance } from '../finance/sendToFinance.js';
 import { buildSlipUrl } from '../finance/slipLink.js';
 import { normalizeSlipDate, normalizeAmount } from '../finance/normalize.js';
 import { pushToConsole } from '../ws/io.js';
@@ -168,13 +168,20 @@ export async function messageRoutes(app: FastifyInstance) {
     });
     if (!result.ok) return reply.code(502).send({ error: 'finance_send_failed', detail: result.error });
 
-    // Anti-tamper audit: the OCR-read amount is server-stored (sales can't influence it).
-    // If the staff submitted a DIFFERENT amount, log it to the admin "ตรวจสอบยอด" tab.
+    // Anti-tamper audit: the OCR amount is server-stored (sales can't influence it). If the
+    // staff submitted a DIFFERENT amount, log it to Minerva's DB (NOT a sheet sales can edit)
+    // — surfaced only to supervisors for verification.
     const ocrAmount = msg.slipAmount ?? '';
     const corrected = !!ocrAmount && ocrAmount !== amount;
     if (corrected) {
       const diff = (parseFloat(amount || '0') - parseFloat(ocrAmount || '0')).toFixed(2);
-      void sendFinanceAudit({ nickname, realName, ocrAmount, amount, diff, slipUrl, sales }).catch(() => undefined);
+      await prisma.financeAudit.create({
+        data: {
+          messageId: msg.id, customerId: customer.id,
+          nickname, senderName: realName, ocrAmount, amount, diff,
+          salesName: sales, salesAgentId: req.agent?.id ?? null,
+        },
+      }).catch(() => undefined);
     }
 
     const updated = await prisma.message.update({ where: { id: msg.id }, data: { financeSentAt: new Date() } });

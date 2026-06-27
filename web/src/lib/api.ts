@@ -294,6 +294,26 @@ export async function sendToFinance(
   return res.json() as Promise<{ ok: boolean; financeSentAt?: string }>;
 }
 
+export interface FinanceAudit {
+  id: string;
+  messageId: string;
+  customerId: string;
+  nickname: string;
+  senderName: string;
+  ocrAmount: string;
+  amount: string;
+  diff: string;
+  salesName: string;
+  resolvedAt: string | null;
+  createdAt: string;
+  slipUrl: string;
+}
+// Supervisor-only: corrected-amount audit log + resolve.
+export const getFinanceAudits = (status = 'open') =>
+  authed<{ audits: FinanceAudit[] }>(`/api/finance/audits?status=${encodeURIComponent(status)}`);
+export const resolveFinanceAudit = (id: string) =>
+  authed<{ ok: boolean }>(`/api/finance/audits/${id}/resolve`, { method: 'POST' });
+
 export const getLearned = (status = 'pending') =>
   authed<{ learned: LearnedAnswer[] }>(`/api/learned?status=${status}`);
 export const promoteLearned = (id: string) =>

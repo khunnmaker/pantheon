@@ -7,6 +7,7 @@ import {
 import {
   getQueue, getCustomers, getCustomer, searchCustomers, clearSession, regenerateDraft, rewriteText, sendReply, setNickname, setCategory, setStage, STAGES,
   uploadAttachment, getLearned, promoteLearned, rejectLearned, endSession, API_URL, getToken,
+  getFinanceAudits, resolveFinanceAudit, type FinanceAudit,
   getQuickReplies, addQuickReply, deleteQuickReply, sendQuickReply, sendMessage, sendPhotoNow, searchCatalog, addProductToDraft, readSlip, sendToFinance,
   type Agent, type CustomerLite, type CustomerDetail, type Message, type LearnedAnswer, type PendingProduct, type QuickReply,
 } from './lib/api';
@@ -316,8 +317,44 @@ function FinanceModal({ messageId, onClose, onSent }: { messageId: string; onClo
   );
 }
 
+// Supervisor-only corrected-amount audit view (tamper-proof; sales have no access).
+function FinanceAuditView({ audits, onResolve, onRefresh }: { audits: FinanceAudit[]; onResolve: (id: string) => void; onRefresh: () => void }) {
+  return (
+    <div className="bg-white rounded-2xl shadow-sm border border-slate-200 flex flex-col h-full">
+      <div className="px-4 py-3 border-b border-slate-200 flex items-center gap-2 shrink-0">
+        <Banknote size={18} className="text-amber-600" />
+        <span className="font-semibold text-slate-800">ตรวจสอบยอด</span>
+        <span className="text-xs text-slate-400">รายการที่พนักงานแก้ยอดจากสลิป ({audits.length})</span>
+        <button onClick={onRefresh} className="ml-auto text-xs text-slate-500 hover:text-slate-700 flex items-center gap-1"><RefreshCw size={12} /> รีเฟรช</button>
+      </div>
+      <div className="flex-1 overflow-y-auto p-3 space-y-2">
+        {audits.length === 0 && <div className="text-center text-slate-400 text-sm py-12">ไม่มีรายการที่ต้องตรวจสอบ ✓</div>}
+        {audits.map((a) => (
+          <div key={a.id} className="border border-amber-200 bg-amber-50 rounded-xl p-3">
+            <div className="flex items-center gap-2 flex-wrap text-sm">
+              <span className="font-semibold text-slate-800">{a.nickname || a.senderName || '—'}</span>
+              {a.senderName && <span className="text-slate-500 text-xs">ผู้โอน: {a.senderName}</span>}
+              <span className="ml-auto text-[11px] text-slate-400">{fmtTime(a.createdAt)}</span>
+            </div>
+            <div className="mt-1.5 flex items-center gap-4 flex-wrap text-xs">
+              <span>อ่านจากสลิป <b className="text-slate-700">{a.ocrAmount}</b></span>
+              <span>กรอกส่ง <b className="text-rose-700">{a.amount}</b></span>
+              <span>ส่วนต่าง <b className={parseFloat(a.diff) < 0 ? 'text-rose-700' : 'text-emerald-700'}>{a.diff}</b></span>
+              <span className="text-slate-500">โดย {a.salesName || '—'}</span>
+            </div>
+            <div className="mt-2 flex items-center gap-2">
+              <a href={a.slipUrl} target="_blank" rel="noreferrer" className="text-xs text-teal-700 underline">ดูสลิป</a>
+              <button onClick={() => onResolve(a.id)} className="ml-auto text-xs px-3 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white flex items-center gap-1"><CheckCircle2 size={12} /> ตรวจแล้ว</button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function Console({ agent, onLogout }: { agent: Agent; onLogout: () => void }) {
-  const [view, setView] = useState<'console' | 'learning'>('console');
+  const [view, setView] = useState<'console' | 'learning' | 'audit'>('console');
   const [customers, setCustomers] = useState<CustomerLite[]>([]);
   const [waitingIds, setWaitingIds] = useState<Set<string>>(new Set());
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -361,6 +398,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
   const [error, setError] = useState('');
 
   const [learned, setLearned] = useState<LearnedAnswer[]>([]);
+  const [audits, setAudits] = useState<FinanceAudit[]>([]);
 
   const selectedRef = useRef<string | null>(null);
   const endRef = useRef<HTMLDivElement | null>(null);
@@ -407,9 +445,24 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
     setLearned(l);
   }, []);
 
+  const refreshAudits = useCallback(async () => {
+    if (agent.role !== 'supervisor') return;
+    try { setAudits((await getFinanceAudits('open')).audits); } catch { /* ignore */ }
+  }, [agent.role]);
+
+  async function doResolveAudit(id: string) {
+    try {
+      await resolveFinanceAudit(id);
+      setAudits((as) => as.filter((a) => a.id !== id));
+      flashToast('ทำเครื่องหมายตรวจแล้ว ✓');
+    } catch { setError('ทำเครื่องหมายไม่สำเร็จ'); }
+  }
+
   useEffect(() => {
     getQuickReplies().then(({ items }) => setQuickReplies(items)).catch(() => undefined);
   }, []);
+
+  useEffect(() => { refreshAudits().catch(() => undefined); }, [refreshAudits, view]);
 
   // initial load + live socket
   useEffect(() => {
@@ -794,6 +847,13 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                 <GraduationCap size={19} />
                 {learned.length > 0 && <span className="absolute -top-0.5 -right-0.5 text-[10px] bg-amber-400 text-white rounded-full px-1 leading-tight">{learned.length}</span>}
               </button>
+              {agent.role === 'supervisor' && (
+                <button onClick={() => setView('audit')} title="ตรวจสอบยอด (หัวหน้า)"
+                  className={'relative p-2 rounded-xl ' + (view === 'audit' ? 'bg-teal-600 text-white' : 'text-slate-500 hover:bg-slate-100')}>
+                  <Banknote size={19} />
+                  {audits.length > 0 && <span className="absolute -top-0.5 -right-0.5 text-[10px] bg-rose-500 text-white rounded-full px-1 leading-tight">{audits.length}</span>}
+                </button>
+              )}
               <div className="flex-1" />
               <span title={connected ? 'เชื่อมต่อสด' : 'ออฟไลน์'} className={'px-1 ' + (connected ? 'text-emerald-600' : 'text-slate-300')}>
                 {connected ? <Wifi size={17} /> : <WifiOff size={17} />}
@@ -884,7 +944,9 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
 
           {/* RIGHT: conversation (or learning) */}
           <div className="min-h-0 overflow-y-auto">
-            {view === 'learning' ? (
+            {view === 'audit' ? (
+              <FinanceAuditView audits={audits} onResolve={doResolveAudit} onRefresh={() => { void refreshAudits(); }} />
+            ) : view === 'learning' ? (
               <LearningView learned={learned} isSupervisor={agent.role === 'supervisor'} onPromote={promote} onReject={reject} />
             ) : (
             <div className="bg-white rounded-2xl shadow-sm border border-slate-200 flex flex-col h-full">

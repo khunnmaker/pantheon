@@ -14,6 +14,7 @@ import { messageRoutes } from './routes/messages.js';
 import { learningRoutes } from './routes/learning.js';
 import { catalogRoutes } from './routes/catalog.js';
 import { quickReplyRoutes } from './routes/quickReplies.js';
+import { financeRoutes } from './routes/finance.js';
 import { initIo } from './ws/io.js';
 import { sweepIdleSessions } from './memory/summarize.js';
 import { ensureSeeded } from './db/ensureSeeded.js';
@@ -71,6 +72,7 @@ async function buildServer() {
   await app.register(learningRoutes);
   await app.register(catalogRoutes);
   await app.register(quickReplyRoutes);
+  await app.register(financeRoutes);
 
   return app;
 }

@@ -33,23 +33,8 @@ export interface FinancePayload {
   sales: string;
 }
 
-// The payment row (main sheet).
+// The payment row (the finance sheet). The corrected-amount AUDIT does NOT go to any sheet
+// (sales could delete it) — it's logged to Minerva's DB and shown only to supervisors.
 export function sendToFinance(p: FinancePayload): Promise<{ ok: boolean; error?: string }> {
   return postToSheet({ kind: 'payment', ...p });
-}
-
-export interface FinanceAudit {
-  nickname: string;
-  realName: string;
-  ocrAmount: string; // what the AI read off the slip
-  amount: string; // what the staff actually submitted
-  diff: string;
-  slipUrl: string;
-  sales: string;
-}
-
-// The audit row (separate "ตรวจสอบยอด" tab) — logged when staff changed the amount, so an
-// admin can verify against the slip. Best-effort; failure must not block the payment row.
-export function sendFinanceAudit(a: FinanceAudit): Promise<{ ok: boolean; error?: string }> {
-  return postToSheet({ kind: 'audit', ...a });
 }

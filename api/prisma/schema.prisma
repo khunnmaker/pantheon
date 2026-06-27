@@ -171,6 +171,27 @@ model ProductKeyword {
   @@index([keyword])
 }
 
+// Tamper-proof audit of staff-CORRECTED payment amounts. The OCR amount is server-set;
+// when staff forward a different amount, a row is logged HERE (not a sheet sales can edit)
+// and shown only to supervisors for verification.
+model FinanceAudit {
+  id           String    @id @default(cuid())
+  messageId    String // the payment-slip message
+  customerId   String
+  nickname     String    @default("")
+  senderName   String    @default("") // name read off the slip
+  ocrAmount    String    @default("") // amount the AI read off the slip (server truth)
+  amount       String    @default("") // amount the staff actually submitted
+  diff         String    @default("")
+  salesName    String    @default("")
+  salesAgentId String?
+  resolvedAt   DateTime? // a supervisor marked it verified
+  resolvedById String?
+  createdAt    DateTime  @default(now())
+
+  @@index([resolvedAt])
+}
+
 // Staff quick-reply templates — canned messages (address, hours, payment, catalog,
 // shipping…) the team inserts with one click. Editable in the console.
 model QuickReply {
