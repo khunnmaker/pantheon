@@ -106,7 +106,17 @@ export async function generateDraftForMessage(
 
   // M4: find catalog products matching the question; their prices are trusted
   // grounding so the AI may quote them (still numbers-confirmed at send time).
-  const products = await findProducts(questionText);
+  // If the follow-up names no product (e.g. "จะสั่ง 500 กล่อง มีของครบไหม"), fall back to
+  // the recent CUSTOMER messages so the topic carries over from earlier in the chat.
+  let products = await findProducts(questionText);
+  if (!products.length) {
+    const recentCustomerText = recentRows
+      .filter((m) => m.role === 'customer')
+      .slice(-5)
+      .map((m) => m.text)
+      .join(' ');
+    if (recentCustomerText.trim()) products = await findProducts(recentCustomerText);
+  }
   // Cross-sell products the staff explicitly chose to upsell (passed on regenerate) —
   // the draft should mention/offer these; their prices are trusted too.
   const suggestProducts = await resolveProducts(opts?.suggestSkus);
