@@ -121,37 +121,40 @@ export async function consoleRoutes(app: FastifyInstance) {
       }
     }
 
-    // Candidate product photos for the team to choose from (match order preserved).
+    // Candidates for the team to choose from (match order preserved). Products WITHOUT a
+    // photo are kept too (shown as a "ไม่มีรูป" tile) so they can still be selected for
+    // ร่างใหม่ / cross-sell. Dedup by photo (variants share one) or by sku (no photo).
     let productCandidates: ProductCard[] = [];
     if (pendingDraft?.candidateSkus?.length) {
       const prods = await prisma.product.findMany({ where: { sku: { in: pendingDraft.candidateSkus } } });
       const bySku = new Map(prods.map((p) => [p.sku, p]));
-      const seenPhoto = new Set<string>();
+      const seen = new Set<string>();
       productCandidates = pendingDraft.candidateSkus
         .map((sku) => bySku.get(sku))
-        .filter((p): p is NonNullable<typeof p> => !!p && !!p.photoSku)
-        // variants share a photo — show each distinct image once.
+        .filter((p): p is NonNullable<typeof p> => !!p)
         .filter((p) => {
-          if (seenPhoto.has(p.photoSku as string)) return false;
-          seenPhoto.add(p.photoSku as string);
+          const key = p.photoSku ?? `sku:${p.sku}`;
+          if (seen.has(key)) return false;
+          seen.add(key);
           return true;
         })
         .map((p) => ({ sku: p.sku, nameEn: p.nameEn, nameTh: p.nameTh, price: p.price, photoSku: p.photoSku, stock: p.stock, stockAt: p.stockAt }));
     }
 
-    // AI cross-sell candidates — complementary products; skip any photo already
-    // shown as a direct match so the two rows don't repeat.
+    // AI cross-sell candidates — complementary products; skip any already shown as a direct
+    // match so the two rows don't repeat (no-photo products kept too).
     let crossSellCandidates: ProductCard[] = [];
     if (pendingDraft?.crossSellSkus?.length) {
       const prods = await prisma.product.findMany({ where: { sku: { in: pendingDraft.crossSellSkus } } });
       const bySku = new Map(prods.map((p) => [p.sku, p]));
-      const seenPhoto = new Set(productCandidates.map((c) => c.photoSku as string));
+      const seen = new Set<string>(productCandidates.map((c) => c.photoSku ?? `sku:${c.sku}`));
       crossSellCandidates = pendingDraft.crossSellSkus
         .map((sku) => bySku.get(sku))
-        .filter((p): p is NonNullable<typeof p> => !!p && !!p.photoSku)
+        .filter((p): p is NonNullable<typeof p> => !!p)
         .filter((p) => {
-          if (seenPhoto.has(p.photoSku as string)) return false;
-          seenPhoto.add(p.photoSku as string);
+          const key = p.photoSku ?? `sku:${p.sku}`;
+          if (seen.has(key)) return false;
+          seen.add(key);
           return true;
         })
         .map((p) => ({ sku: p.sku, nameEn: p.nameEn, nameTh: p.nameTh, price: p.price, photoSku: p.photoSku, stock: p.stock, stockAt: p.stockAt }));

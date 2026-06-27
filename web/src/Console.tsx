@@ -141,9 +141,11 @@ function PhotoStrip({ direct, cross, selected, onToggle }: {
           (p.stock != null ? `\nคงเหลือ ${p.stock.toLocaleString()} ชิ้น${p.stockAt ? ' (ณ ' + new Date(p.stockAt).toLocaleDateString('th-TH') + ')' : ''}` : '')}
         className={'shrink-0 w-[88px] rounded-lg border p-1 text-left transition ' + (sel ? 'border-teal-500 ring-2 ring-teal-400 bg-white' : 'border-teal-100 bg-white/60 hover:border-teal-300')}>
         <div className="relative h-[68px] flex items-center justify-center bg-white rounded">
-          {p.photoSku && <img src={`${API_URL}/content/product/${p.photoSku}`} alt=""
-            className="max-w-full max-h-full object-contain"
-            onError={(e) => { e.currentTarget.style.visibility = 'hidden'; }} />}
+          {p.photoSku
+            ? <img src={`${API_URL}/content/product/${p.photoSku}`} alt=""
+                className="max-w-full max-h-full object-contain"
+                onError={(e) => { e.currentTarget.style.visibility = 'hidden'; }} />
+            : <span className="text-[9px] text-slate-400 text-center leading-tight px-1">ไม่มีรูป</span>}
           {isCross && <span className="absolute top-0.5 left-0.5 text-[11px] leading-none">💡</span>}
           {sel && <span className="absolute top-0.5 right-0.5 bg-teal-600 text-white rounded-full p-0.5 flex"><Check size={11} /></span>}
         </div>
