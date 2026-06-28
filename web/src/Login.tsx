@@ -3,9 +3,10 @@ import { Bot, LogIn, Loader2, AlertTriangle } from 'lucide-react';
 import { login, setSession, type Agent } from './lib/api';
 
 const QUICK = [
-  { email: 'mind@prominent.local', label: 'คุณมายด์', role: 'agent' },
-  { email: 'fah@prominent.local', label: 'คุณฟ้า', role: 'agent' },
-  { email: 'nadeer@prominent.local', label: 'NaDeer', role: 'supervisor' },
+  { email: 'drm@prominent.local', label: 'Dr. M', role: 'supervisor' },
+  { email: 'nadeer@prominent.local', label: 'NaDeer', role: 'agent' },
+  { email: 'anny@prominent.local', label: 'Anny', role: 'agent' },
+  { email: 'noey@prominent.local', label: 'Noey', role: 'agent' },
 ];
 
 export default function Login({ onLogin }: { onLogin: (agent: Agent) => void }) {
