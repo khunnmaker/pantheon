@@ -256,7 +256,7 @@ function FinanceModal({ messageId, onClose, onSent }: { messageId: string; onClo
   const [sending, setSending] = useState(false);
   const [err, setErr] = useState('');
   const [ocrAmount, setOcrAmount] = useState(''); // server-truth amount read off the slip
-  const [f, setF] = useState({ nickname: '', realName: '', amount: '', bank: '', transferAt: '', ref: '' });
+  const [f, setF] = useState({ nickname: '', realName: '', amount: '', bank: '', transferAt: '', ref: '', taxInvoice: '', note: '' });
 
   useEffect(() => {
     let cancelled = false;
@@ -273,7 +273,7 @@ function FinanceModal({ messageId, onClose, onSent }: { messageId: string; onClo
     if (sending || !f.amount.trim()) return;
     setSending(true); setErr('');
     try {
-      const res = await sendToFinance(messageId, { amount: f.amount, bank: f.bank, transferAt: f.transferAt, ref: f.ref, nickname: f.nickname, realName: f.realName });
+      const res = await sendToFinance(messageId, { amount: f.amount, bank: f.bank, transferAt: f.transferAt, ref: f.ref, nickname: f.nickname, realName: f.realName, taxInvoice: f.taxInvoice, note: f.note });
       if (!res.ok) { setErr('ส่งให้การเงินไม่สำเร็จ: ' + (res.error ?? '')); return; }
       onSent(res.corrected ?? false);
     } catch { setErr('ส่งให้การเงินไม่สำเร็จ'); } finally { setSending(false); }
@@ -289,7 +289,7 @@ function FinanceModal({ messageId, onClose, onSent }: { messageId: string; onClo
 
   return (
     <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-white rounded-2xl p-4 w-full max-w-sm space-y-2.5" onClick={(e) => e.stopPropagation()}>
+      <div className="bg-white rounded-2xl p-4 w-full max-w-sm space-y-2.5 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
         <div className="font-semibold text-slate-800 flex items-center gap-1.5"><Banknote size={17} className="text-amber-600" /> แจ้งการเงิน</div>
         {loading && <div className="text-xs text-slate-400 flex items-center gap-1"><Loader2 size={13} className="animate-spin" /> กำลังอ่านสลิป…</div>}
         <div className="grid grid-cols-2 gap-2">
@@ -300,6 +300,18 @@ function FinanceModal({ messageId, onClose, onSent }: { messageId: string; onClo
           {field('วันเวลาโอน', 'transferAt', '27/06/2026 14:30')}
           {field('เลขอ้างอิง', 'ref', '')}
         </div>
+        <label className="block">
+          <span className="text-[11px] text-slate-500">ใบกำกับภาษี (ชื่อ / ที่อยู่ / เลขผู้เสียภาษี)</span>
+          <textarea value={f.taxInvoice} onChange={(e) => setF({ ...f, taxInvoice: e.target.value })} rows={3}
+            placeholder="ชื่อ / ที่อยู่ / เลขประจำตัวผู้เสียภาษี 13 หลัก (ถ้าลูกค้าขอ)"
+            className="w-full mt-0.5 px-2 py-1.5 rounded-lg border border-slate-300 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-amber-400" />
+        </label>
+        <label className="block">
+          <span className="text-[11px] text-slate-500">หมายเหตุ</span>
+          <textarea value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} rows={2}
+            placeholder="หมายเหตุเพิ่มเติม (ถ้ามี)"
+            className="w-full mt-0.5 px-2 py-1.5 rounded-lg border border-slate-300 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-amber-400" />
+        </label>
         {amountEdited && (
           <div className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-2 flex items-start gap-1.5">
             <AlertTriangle size={13} className="shrink-0 mt-0.5" />

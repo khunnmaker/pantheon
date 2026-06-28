@@ -143,6 +143,8 @@ export async function messageRoutes(app: FastifyInstance) {
       ref: z.string().max(80).optional(),
       nickname: z.string().max(80).optional(),
       realName: z.string().max(120).optional(), // staff-confirmed sender name from the slip
+      taxInvoice: z.string().max(600).optional(), // ใบกำกับภาษี: name / address / tax-ID (free text)
+      note: z.string().max(600).optional(), // หมายเหตุ
     }).safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: 'invalid_body' });
     const msg = await prisma.message.findUnique({ where: { id: req.params.id } });
@@ -163,6 +165,8 @@ export async function messageRoutes(app: FastifyInstance) {
       bank: parsed.data.bank ?? '',
       transferAt: normalizeSlipDate(parsed.data.transferAt ?? ''),
       ref: parsed.data.ref ?? '',
+      taxInvoice: parsed.data.taxInvoice ?? '',
+      note: parsed.data.note ?? '',
       slipUrl,
       sales,
     });

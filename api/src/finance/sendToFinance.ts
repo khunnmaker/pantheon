@@ -29,6 +29,8 @@ export interface FinancePayload {
   bank: string;
   transferAt: string;
   ref: string;
+  taxInvoice: string; // ใบกำกับภาษี: name / address / tax-ID (free text)
+  note: string; // หมายเหตุ
   slipUrl: string;
   sales: string;
 }

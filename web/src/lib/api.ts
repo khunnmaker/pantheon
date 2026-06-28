@@ -279,7 +279,7 @@ export const readSlip = (messageId: string) =>
 // Forward the confirmed slip details to the finance Google Sheet + mark it sent.
 export async function sendToFinance(
   messageId: string,
-  fields: { amount: string; bank: string; transferAt: string; ref: string; nickname: string; realName: string },
+  fields: { amount: string; bank: string; transferAt: string; ref: string; nickname: string; realName: string; taxInvoice?: string; note?: string },
 ): Promise<{ ok: boolean; error?: string; financeSentAt?: string; corrected?: boolean }> {
   const token = getToken();
   const res = await fetch(`${API_URL}/api/messages/${messageId}/to-finance`, {
