@@ -393,6 +393,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
   const [ending, setEnding] = useState(false);
   const [needsConfirm, setNeedsConfirm] = useState(false);
   const [selectedProductSkus, setSelectedProductSkus] = useState<string[]>([]);
+  const [selectionDirty, setSelectionDirty] = useState(false); // product selection changed since the last draft → ✨ re-drafts about it
   const [upload, setUpload] = useState<{ uploadId: string; kind: string; fileName: string; previewUrl: string } | null>(null);
   const [uploading, setUploading] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(true); // show/hide draft note + photo picker
@@ -450,6 +451,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
         const kept = prev.filter((s) => validSkus.has(s));
         return kept.length ? kept : defaultSel;
       });
+      setSelectionDirty(false); // a freshly loaded draft already reflects the current selection
       setUpload(null);
       setFreeText('');
     } finally {
@@ -592,9 +594,16 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
     }
   }
 
-  // Polish the agent's current text (grammar/wording) without changing meaning/numbers.
+  // ✨ button. If the staff changed the product selection (added/toggled products), re-draft
+  // the reply ABOUT the selected products — so they can add SEVERAL products first, then press
+  // once. Otherwise just polish the current text (grammar/wording) without changing meaning/numbers.
   async function rewrite() {
-    if (!editText.trim() || rewriting || sending) return;
+    if (rewriting || sending) return;
+    if (selectionDirty && selectedProductSkus.length) {
+      await regenerate(); // writes the reply about the selected products; clears the dirty flag
+      return;
+    }
+    if (!editText.trim()) return;
     setRewriting(true);
     setError('');
     setRewriteNote(null);
@@ -613,6 +622,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
 
   const toggleProductSku = (sku: string) => {
     setSelectedProductSkus((prev) => (prev.includes(sku) ? prev.filter((s) => s !== sku) : [...prev, sku]));
+    setSelectionDirty(true); // selection changed → next ✨ re-drafts about it
     setUpload(null); // a catalog photo choice replaces a staff upload
   };
 
@@ -707,26 +717,20 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
     };
   }
 
-  // Manually add a searched product (main candidate or cross-sell), select it, and
-  // immediately re-draft so the reply is written about it in one tap. The server also
-  // strengthens the learning link so the AI suggests it next time.
+  // Manually add a searched product (main candidate or cross-sell) and select it — no draft
+  // yet, so you can add SEVERAL first, then press ✨ to write the reply about them all. The
+  // server strengthens the learning link so the AI suggests it next time.
   async function addProduct(sku: string, role: 'main' | 'cross') {
     const msgId = detail?.pendingMessageId;
-    if (!msgId || sending) return;
-    setSending(true);
-    setError('');
+    if (!msgId) return;
     try {
       await addProductToDraft(msgId, sku, role);
-      const nextSel = selectedProductSkus.includes(sku) ? selectedProductSkus : [...selectedProductSkus, sku];
-      setSelectedProductSkus(nextSel); // so loadDetail's preserve keeps it selected
-      const { suggestSkus, mainSkus } = splitSelected(nextSel, { sku, role });
-      await regenerateDraft(msgId, suggestSkus.length ? suggestSkus : undefined, mainSkus.length ? mainSkus : undefined);
-      if (selectedId) await loadDetail(selectedId);
-      flashToast(role === 'main' ? 'เพิ่มสินค้าหลัก + ร่างใหม่แล้ว ✓' : 'เพิ่มสินค้าขายคู่ + ร่างใหม่แล้ว ✓');
+      if (selectedId) await loadDetail(selectedId); // reload to show it (preserves selection)
+      setSelectedProductSkus((prev) => (prev.includes(sku) ? prev : [...prev, sku]));
+      setSelectionDirty(true); // staff added a product → next ✨ re-drafts about the selection
+      flashToast(role === 'main' ? 'เพิ่มสินค้าหลักแล้ว — กด ✨ ให้ AI เรียบเรียง' : 'เพิ่มสินค้าขายคู่แล้ว — กด ✨ ให้ AI เรียบเรียง');
     } catch {
-      setError('เพิ่มสินค้า / ร่างใหม่ไม่สำเร็จ');
-    } finally {
-      setSending(false);
+      setError('เพิ่มสินค้าไม่สำเร็จ');
     }
   }
 
@@ -1255,8 +1259,8 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                           className={'min-w-0 px-2 py-2 rounded-xl text-white text-sm font-semibold flex items-center justify-center gap-1 disabled:opacity-50 ' + (needsConfirm ? 'bg-amber-600 hover:bg-amber-700' : 'bg-emerald-600 hover:bg-emerald-700')}>
                           {sending ? <Loader2 size={17} className="animate-spin" /> : <Send size={17} />}
                         </button>
-                        <button onClick={rewrite} disabled={rewriting || sending || !editText.trim()}
-                          title="ให้ AI ช่วยแก้ไวยากรณ์และเรียบเรียงข้อความที่คุณพิมพ์ใหม่ (ไม่เปลี่ยนความหมายหรือตัวเลข)"
+                        <button onClick={rewrite} disabled={rewriting || sending || (!editText.trim() && !(selectionDirty && selectedProductSkus.length))}
+                          title="ให้ AI ช่วยแก้ไวยากรณ์และเรียบเรียง — ถ้าเพิ่งเลือก/เพิ่มสินค้าไว้ จะร่างคำตอบใหม่เกี่ยวกับสินค้าที่เลือก (เพิ่มได้หลายชิ้นก่อนกด)"
                           className="min-w-0 px-2 py-2 rounded-xl bg-indigo-100 hover:bg-indigo-200 text-indigo-700 text-sm font-semibold flex items-center justify-center gap-1 disabled:opacity-50">
                           {rewriting ? <Loader2 size={17} className="animate-spin" /> : <Wand2 size={17} />}
                         </button>
