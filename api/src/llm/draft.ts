@@ -48,8 +48,25 @@ export async function generateDraftForMessage(
 
   const kb = await prisma.kbEntry.findMany({ where: { status: 'active' } });
 
+  // "ตอบแล้ว" cutoff: when set, the AI only considers messages created AFTER it (the earlier
+  // ones were handled elsewhere, e.g. answered on LINE OA directly).
+  const customerRec = await prisma.customer.findUnique({
+    where: { id: message.customerId },
+    select: { stage: true, answeredThroughAt: true },
+  });
+  const currentStage = customerRec?.stage ?? null;
+  const answeredThroughAt = customerRec?.answeredThroughAt ?? null;
+  // Guard: never (re)draft a message handled before the cutoff (e.g. a stray regenerate on an
+  // already-answered message). The webhook/UI never hit this; a raw API call just gets a 404.
+  if (answeredThroughAt && message.createdAt <= answeredThroughAt) {
+    throw new Error('message is before the answered cutoff');
+  }
+
   const recentRows = await prisma.message.findMany({
-    where: { customerId: message.customerId },
+    where: {
+      customerId: message.customerId,
+      ...(answeredThroughAt ? { createdAt: { gt: answeredThroughAt } } : {}),
+    },
     orderBy: { createdAt: 'desc' },
     take: env.RECENT_WINDOW,
   });
@@ -71,11 +88,14 @@ export async function generateDraftForMessage(
     orderBy: { createdAt: 'desc' },
     select: { createdAt: true },
   });
+  // Only answer messages after BOTH the last agent reply AND the ตอบแล้ว cutoff.
+  const sinceTimes = [lastAgent?.createdAt, answeredThroughAt].filter((d): d is Date => !!d);
+  const since = sinceTimes.length ? new Date(Math.max(...sinceTimes.map((d) => d.getTime()))) : null;
   const unanswered = await prisma.message.findMany({
     where: {
       customerId: message.customerId,
       role: 'customer',
-      ...(lastAgent ? { createdAt: { gt: lastAgent.createdAt } } : {}),
+      ...(since ? { createdAt: { gt: since } } : {}),
     },
     orderBy: { createdAt: 'asc' },
     take: 15,
@@ -94,7 +114,7 @@ export async function generateDraftForMessage(
     try {
       const qvec = await embedOne(questionText, 'query');
       const excludeIds = [message.id, ...recentRows.map((m) => m.id)];
-      const hits = await retrieveSimilarMessages(message.customerId, qvec, env.RETRIEVE_K, excludeIds);
+      const hits = await retrieveSimilarMessages(message.customerId, qvec, env.RETRIEVE_K, excludeIds, answeredThroughAt);
       if (hits.length) {
         retrievedMessages = hits.map((h) => histLine(h.role, h.text)).join('\n');
         retrievedIds = hits.map((h) => h.id);
@@ -128,9 +148,6 @@ export async function generateDraftForMessage(
   // A matched/suggested/confirmed product carrying stock data lets the AI state
   // availability (in/out) without it being treated as an ungrounded stock claim.
   const groundedStock = [...products, ...suggestProducts, ...confirmedProducts].some((p) => p.stock != null);
-
-  const customerRec = await prisma.customer.findUnique({ where: { id: message.customerId }, select: { stage: true } });
-  const currentStage = customerRec?.stage ?? null;
 
   let result: DraftResult;
   try {
@@ -248,8 +265,12 @@ export async function generateImageDraft(messageId: string, mainSkus?: string[],
   }
 
   const kb = await prisma.kbEntry.findMany({ where: { status: 'active' } });
+  const cust = await prisma.customer.findUnique({ where: { id: message.customerId }, select: { answeredThroughAt: true } });
   const recentRows = await prisma.message.findMany({
-    where: { customerId: message.customerId },
+    where: {
+      customerId: message.customerId,
+      ...(cust?.answeredThroughAt ? { createdAt: { gt: cust.answeredThroughAt } } : {}),
+    },
     orderBy: { createdAt: 'desc' },
     take: env.RECENT_WINDOW,
   });
@@ -323,8 +344,12 @@ export async function generateStickerDraft(messageId: string): Promise<DraftOutc
   }
   const meaning = message.text.replace(/^\[สติกเกอร์\]\s*/, '').trim();
 
+  const cust = await prisma.customer.findUnique({ where: { id: message.customerId }, select: { answeredThroughAt: true } });
   const recentRows = await prisma.message.findMany({
-    where: { customerId: message.customerId },
+    where: {
+      customerId: message.customerId,
+      ...(cust?.answeredThroughAt ? { createdAt: { gt: cust.answeredThroughAt } } : {}),
+    },
     orderBy: { createdAt: 'desc' },
     take: env.RECENT_WINDOW,
   });

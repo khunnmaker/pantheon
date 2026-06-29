@@ -101,7 +101,11 @@ export async function consoleRoutes(app: FastifyInstance) {
     const latestCustomer = [...ordered].reverse().find((m) => m.role === 'customer');
     let pendingMessageId: string | null = null;
     let pendingDraft = null;
-    if (latestCustomer) {
+    // A chat marked "ตอบแล้ว" has no pending question until the customer writes again
+    // (a message created after the cutoff).
+    const pastCutoff =
+      !customer.answeredThroughAt || (!!latestCustomer && latestCustomer.createdAt > customer.answeredThroughAt);
+    if (latestCustomer && pastCutoff) {
       const answered = await prisma.message.findFirst({
         where: { answersMessageId: latestCustomer.id },
         select: { id: true },
@@ -184,8 +188,22 @@ export async function consoleRoutes(app: FastifyInstance) {
     const customer = await prisma.customer.findUnique({ where: { id: req.params.id } });
     if (!customer) return reply.code(404).send({ error: 'not_found' });
     const summary = await endSession(req.params.id);
-    // Hide the ended chat from every console's queue (a new message reactivates it).
-    await prisma.customer.update({ where: { id: req.params.id }, data: { active: false } });
+    const stamp = new Date();
+    // "ตอบแล้ว": stamp the cutoff (AI then drafts only from later messages) and hide the chat
+    // from the queue (a new message reactivates it and drafts from that message onward).
+    await prisma.customer.update({
+      where: { id: req.params.id },
+      data: { active: false, answeredThroughAt: stamp },
+    });
+    // Drop pending AI drafts for the handled (pre-cutoff) messages so no orphaned answer
+    // can resurface — makes "the answer doesn't show here" structural, not gate-dependent.
+    const handled = await prisma.message.findMany({
+      where: { customerId: req.params.id, createdAt: { lte: stamp } },
+      select: { id: true },
+    });
+    if (handled.length) {
+      await prisma.draft.deleteMany({ where: { messageId: { in: handled.map((m) => m.id) } } });
+    }
     pushToConsole('conversation:update', { customerId: req.params.id, ended: true });
     return { ok: true, summary };
   });

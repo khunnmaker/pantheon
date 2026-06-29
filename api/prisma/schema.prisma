@@ -25,13 +25,16 @@ model Customer {
   code        String?
   // staff-assigned area/type category (e.g. C1–C6 by zone, Lab) — one per customer
   category    String?
-  // sales-pipeline stage (ถาม/สั่งซื้อ/จัดส่ง/หลังการขาย/ยกเลิก) — staff-confirmed
+  // sales-pipeline stage (ถาม/สั่งซื้อ/ส่ง/ดูแล/เสร็จ/ยกเลิก) — staff-confirmed
   stage          String?
   // the AI's pending stage suggestion; staff accept → stage. null = none/already accepted
   suggestedStage String?
+  // "ตอบแล้ว" cutoff: messages at/before this are handled (e.g. answered on LINE OA
+  // directly). The AI drafts only from messages AFTER it, and the chat is not "waiting".
+  answeredThroughAt DateTime?
   firstSeen   DateTime        @default(now())
   lastSeen    DateTime        @default(now())
-  // false once a staff member taps "จบแชท" — hides the chat from the console
+  // false once a staff member taps "ตอบแล้ว" — hides the chat from the console
   // queue. A new inbound message flips it back to true (returning customer).
   active      Boolean         @default(true)
   messages    Message[]

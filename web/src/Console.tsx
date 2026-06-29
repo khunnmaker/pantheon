@@ -828,12 +828,12 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
     setEnding(true);
     try {
       const res = await endSession(selectedId);
-      flashToast(res.summary ? 'จบแชทแล้ว — เก็บความจำและนำออกจากคิวแล้ว ✓' : 'จบแชทแล้ว — นำออกจากคิวแล้ว');
-      setSelectedId(null); // close + remove the ended chat from the queue
+      flashToast(res.summary ? 'ตอบแล้ว — นำออกจากคิวและเก็บความจำแล้ว ✓' : 'ตอบแล้ว — นำออกจากคิวแล้ว');
+      setSelectedId(null); // close + remove the answered chat from the queue
       setDetail(null);
       await refreshLists();
     } catch {
-      setError('จบแชทไม่สำเร็จ');
+      setError('ทำเครื่องหมายตอบแล้วไม่สำเร็จ');
     } finally {
       setEnding(false);
     }
@@ -1068,8 +1068,8 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                 {detail && (
                   <button onClick={endChat} disabled={ending}
                     className="shrink-0 text-[11px] font-medium px-2 py-1 rounded-lg bg-white/15 hover:bg-white/25 text-white flex items-center gap-1 disabled:opacity-50"
-                    title="จบบทสนทนาแล้วสรุปความจำระยะยาว">
-                    {ending ? <Loader2 size={12} className="animate-spin" /> : <CheckCircle2 size={12} />} จบแชท
+                    title="ลูกค้าได้รับคำตอบแล้ว (เช่น ตอบผ่าน LINE OA โดยตรง) — นำออกจากคิว และ AI จะตั้งต้นจากข้อความถัดไปเท่านั้น">
+                    {ending ? <Loader2 size={12} className="animate-spin" /> : <CheckCircle2 size={12} />} ตอบแล้ว
                   </button>
                 )}
               </div>

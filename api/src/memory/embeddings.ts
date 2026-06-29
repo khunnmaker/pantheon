@@ -71,15 +71,19 @@ export async function retrieveSimilarMessages(
   queryVec: number[],
   k: number,
   excludeIds: string[],
+  afterDate?: Date | null,
 ): Promise<RetrievedMessage[]> {
   const lit = toVectorLiteral(queryVec);
   const exclude = excludeIds.length ? excludeIds : ['']; // avoid empty NOT IN ()
+  // Respect the "ตอบแล้ว" cutoff: never retrieve messages handled before it.
+  const afterClause = afterDate ? Prisma.sql`AND m."createdAt" > ${afterDate}` : Prisma.empty;
   const rows = await prisma.$queryRaw<RetrievedMessage[]>`
     SELECT m.id, m.role, m.text
     FROM message_embedding me
     JOIN "Message" m ON m.id = me.message_id
     WHERE m."customerId" = ${customerId}
       AND m.id NOT IN (${Prisma.join(exclude)})
+      ${afterClause}
     ORDER BY me.embedding <=> ${lit}::vector
     LIMIT ${k}`;
   return rows;
