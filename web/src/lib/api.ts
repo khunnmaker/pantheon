@@ -63,6 +63,8 @@ export interface PendingProduct {
   photoSku: string | null;
   stock: number | null; // remaining qty from the latest snapshot (null = unknown)
   stockAt: string | null; // ISO date the stock figure is as-of
+  reorderPoint?: number | null; // Vulcan low-stock threshold (staff-only)
+  low?: boolean; // stock <= reorderPoint (staff-only; never shown to customers)
 }
 export interface CustomerDetail {
   customer: CustomerLite & { firstSeen: string };

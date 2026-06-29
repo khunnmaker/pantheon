@@ -7,10 +7,28 @@ import { sendLineText, sendLineImages, sendLineReply } from '../line/send.js';
 import { readStaffUploadMeta, UPLOAD_ID_RE } from '../line/staffUploads.js';
 import { isStage } from '../stages.js';
 import { pushToConsole } from '../ws/io.js';
+import { isLow } from '../stock/helpers.js';
 
 const RECENT_MESSAGES = 50;
 
-type ProductCard = { sku: string; nameEn: string; nameTh: string; price: number; photoSku: string | null; stock: number | null; stockAt: Date | null };
+type ProductCard = {
+  sku: string; nameEn: string; nameTh: string; price: number; photoSku: string | null;
+  stock: number | null; stockAt: Date | null;
+  // Vulcan low-stock surfacing for staff (NOT shown to customers): the threshold and a
+  // computed flag so the console can style a near-empty SKU.
+  reorderPoint: number | null; low: boolean;
+};
+
+function toProductCard(p: {
+  sku: string; nameEn: string; nameTh: string; price: number; photoSku: string | null;
+  stock: number | null; stockAt: Date | null; reorderPoint: number | null;
+}): ProductCard {
+  return {
+    sku: p.sku, nameEn: p.nameEn, nameTh: p.nameTh, price: p.price, photoSku: p.photoSku,
+    stock: p.stock, stockAt: p.stockAt, reorderPoint: p.reorderPoint,
+    low: isLow(p.stock, p.reorderPoint),
+  };
+}
 
 export async function consoleRoutes(app: FastifyInstance) {
   // Everything here requires a logged-in agent.
@@ -129,7 +147,7 @@ export async function consoleRoutes(app: FastifyInstance) {
     if (pendingDraft?.productSku) {
       const p = await prisma.product.findUnique({ where: { sku: pendingDraft.productSku } });
       if (p) {
-        pendingProduct = { sku: p.sku, nameEn: p.nameEn, nameTh: p.nameTh, price: p.price, photoSku: p.photoSku, stock: p.stock, stockAt: p.stockAt };
+        pendingProduct = toProductCard(p);
       }
     }
 
@@ -150,7 +168,7 @@ export async function consoleRoutes(app: FastifyInstance) {
           seen.add(key);
           return true;
         })
-        .map((p) => ({ sku: p.sku, nameEn: p.nameEn, nameTh: p.nameTh, price: p.price, photoSku: p.photoSku, stock: p.stock, stockAt: p.stockAt }));
+        .map(toProductCard);
     }
 
     // AI cross-sell candidates — complementary products; skip any already shown as a direct
@@ -169,7 +187,7 @@ export async function consoleRoutes(app: FastifyInstance) {
           seen.add(key);
           return true;
         })
-        .map((p) => ({ sku: p.sku, nameEn: p.nameEn, nameTh: p.nameTh, price: p.price, photoSku: p.photoSku, stock: p.stock, stockAt: p.stockAt }));
+        .map(toProductCard);
     }
 
     return {

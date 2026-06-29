@@ -223,9 +223,42 @@ model Product {
   status    String   @default("active") // active | archived
   stock     Int? // remaining quantity from the latest stock snapshot (null = unknown)
   stockAt   DateTime? // the date the stock figure is as-of (snapshot date)
+  // Vulcan low-stock threshold (null = no threshold set). Low = stock != null && stock <= reorderPoint.
+  reorderPoint Int?
   updatedAt DateTime @updatedAt
 
   @@index([status])
+}
+
+// ─── Vulcan (stock management) ───────────────────────────────────────────
+// Vulcan writes Product.stock/stockAt on each daily Express CSV import and on
+// manual corrections; Minerva reads those same rows. These two tables give
+// cheap accountability (who imported / who edited) without a full movements
+// ledger (deferred past v1). See docs/VULCAN_BRIEF.md.
+
+// Audit of each daily Express CSV import.
+model StockImport {
+  id            String   @id @default(cuid())
+  importedAt    DateTime @default(now())
+  importedBy    String? // agent id
+  fileName      String   @default("")
+  rowsParsed    Int      @default(0)
+  skusUpdated   Int      @default(0)
+  skusUnmatched Int      @default(0) // CSV SKUs not in the catalog
+  note          String   @default("")
+}
+
+// Audit of manual stock edits (mirrors Minerva's FinanceAudit pattern).
+model StockAdjustment {
+  id        String   @id @default(cuid())
+  sku       String
+  fromQty   Int?
+  toQty     Int?
+  reason    String   @default("")
+  byAgentId String?
+  at        DateTime @default(now())
+
+  @@index([sku])
 }
 
 // ─── DEFERRED TO M3: pgvector embedding tables (spec §5 note) ────────────

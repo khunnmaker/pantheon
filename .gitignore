@@ -20,6 +20,8 @@ api/dist/
 *.tsbuildinfo
 web/vite.config.js
 web/vite.config.d.ts
+vulcan/vite.config.js
+vulcan/vite.config.d.ts
 
 # downloaded LINE image content
 api/uploads/

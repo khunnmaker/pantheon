@@ -1,5 +1,6 @@
 import type { Product } from '@prisma/client';
 import { prisma } from '../db/prisma.js';
+import { isLow } from '../stock/helpers.js';
 
 export interface ProductMatch {
   sku: string;
@@ -11,6 +12,8 @@ export interface ProductMatch {
   photoSku: string | null;
   stock: number | null; // remaining qty from the snapshot (null = unknown)
   stockAt: Date | null;
+  reorderPoint?: number | null; // Vulcan low-stock threshold (staff-only)
+  low?: boolean; // stock <= reorderPoint (staff-only; never surfaced to customers)
 }
 
 // Tokenize a customer query into searchable terms (alnum + Thai, length >= 2).
@@ -40,6 +43,8 @@ function toProductMatch(p: Product): ProductMatch {
     photoSku: p.photoSku,
     stock: p.stock,
     stockAt: p.stockAt,
+    reorderPoint: p.reorderPoint,
+    low: isLow(p.stock, p.reorderPoint),
   };
 }
 

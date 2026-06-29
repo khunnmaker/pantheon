@@ -155,12 +155,26 @@ function PhotoStrip({ direct, cross, selected, onToggle }: {
         <div className="text-[10px] mt-1 leading-tight">
           <div className="font-semibold text-teal-800 truncate">{[p.nameEn, p.nameTh].filter(Boolean).join(' / ') || p.sku}</div>
           <div className="text-teal-600">{p.price > 0 ? `${p.price.toLocaleString()} บาท` : '—'}</div>
-          {p.stock != null ? (
-            <div className={'mt-0.5 rounded px-1 py-0.5 text-center text-[10px] font-bold ' +
-              (p.stock <= 0 ? 'bg-rose-100 text-rose-700' : p.stock <= 5 ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700')}>
-              {p.stock <= 0 ? 'หมด' : `คงเหลือ ${p.stock.toLocaleString()}`}
-            </div>
-          ) : (
+          {p.stock != null ? (() => {
+            const out = p.stock <= 0;
+            // Low = Vulcan reorderPoint reached (preferred); fall back to the ≤5 heuristic
+            // when no reorder point is configured for this SKU.
+            const lowFlag = !out && (p.low ?? (p.reorderPoint == null && p.stock <= 5));
+            const stale = p.stockAt ? Date.now() - new Date(p.stockAt).getTime() > 3 * 86400000 : false;
+            return (
+              <>
+                <div className={'mt-0.5 rounded px-1 py-0.5 text-center text-[10px] font-bold ' +
+                  (out ? 'bg-rose-100 text-rose-700' : lowFlag ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700')}>
+                  {out ? 'หมด' : `${lowFlag ? 'ใกล้หมด · ' : ''}คงเหลือ ${p.stock.toLocaleString()}`}
+                </div>
+                {p.stockAt && (
+                  <div className={'text-center text-[8px] ' + (stale ? 'text-amber-600' : 'text-slate-400')}>
+                    ณ {new Date(p.stockAt).toLocaleDateString('th-TH', { day: '2-digit', month: 'short' })}
+                  </div>
+                )}
+              </>
+            );
+          })() : (
             <div className="mt-0.5 text-center text-[9px] text-slate-400">ไม่มีข้อมูลสต็อก</div>
           )}
         </div>
@@ -1168,7 +1182,11 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                                       <div className="text-[11px] font-medium text-slate-800 truncate">{[p.nameEn, p.nameTh].filter(Boolean).join(' / ') || p.sku}</div>
                                       <div className="text-[10px] text-slate-500 truncate">
                                         {p.sku} · {p.price > 0 ? `${p.price.toLocaleString()} บาท` : '—'}
-                                        {p.stock != null && <span className={p.stock <= 0 ? 'text-rose-600' : p.stock <= 5 ? 'text-amber-600' : 'text-emerald-600'}> · {p.stock <= 0 ? 'หมด' : `คงเหลือ ${p.stock}`}</span>}
+                                        {p.stock != null && (() => {
+                                          const out = p.stock <= 0;
+                                          const lowFlag = !out && (p.low ?? (p.reorderPoint == null && p.stock <= 5));
+                                          return <span className={out ? 'text-rose-600' : lowFlag ? 'text-amber-600' : 'text-emerald-600'}> · {out ? 'หมด' : `${lowFlag ? 'ใกล้หมด ' : ''}คงเหลือ ${p.stock}`}</span>;
+                                        })()}
                                       </div>
                                     </div>
                                     <button type="button" onClick={() => addProduct(p.sku, 'main')} title="เพิ่มเป็นสินค้าหลัก"
