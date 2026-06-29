@@ -694,18 +694,39 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
     else setCameraOpen(true);
   }
 
-  // Manually add a searched product to the draft (main candidate or cross-sell) and
-  // select it. The server strengthens the learning link so the AI suggests it next time.
+  // Split selected SKUs by which picker row they sit in: cross-sells → upsell hint;
+  // direct picks → "this IS the product the customer wants" hint (the AI writes the reply
+  // about them). `extra` lets a just-added product be classified before the detail reloads.
+  function splitSelected(selected: string[], extra?: { sku: string; role: 'main' | 'cross' }) {
+    const crossSet = new Set((detail?.crossSellCandidates ?? []).map((p) => p.sku));
+    const directSet = new Set((detail?.productCandidates ?? []).map((p) => p.sku));
+    if (extra) (extra.role === 'main' ? directSet : crossSet).add(extra.sku);
+    return {
+      suggestSkus: selected.filter((s) => crossSet.has(s)),
+      mainSkus: selected.filter((s) => directSet.has(s)),
+    };
+  }
+
+  // Manually add a searched product (main candidate or cross-sell), select it, and
+  // immediately re-draft so the reply is written about it in one tap. The server also
+  // strengthens the learning link so the AI suggests it next time.
   async function addProduct(sku: string, role: 'main' | 'cross') {
     const msgId = detail?.pendingMessageId;
-    if (!msgId) return;
+    if (!msgId || sending) return;
+    setSending(true);
+    setError('');
     try {
       await addProductToDraft(msgId, sku, role);
-      if (selectedId) await loadDetail(selectedId); // reload to show it (preserves selection)
-      setSelectedProductSkus((prev) => (prev.includes(sku) ? prev : [...prev, sku]));
-      flashToast(role === 'main' ? 'เพิ่มเป็นสินค้าหลักแล้ว ✓' : 'เพิ่มเป็นสินค้าขายคู่แล้ว ✓');
+      const nextSel = selectedProductSkus.includes(sku) ? selectedProductSkus : [...selectedProductSkus, sku];
+      setSelectedProductSkus(nextSel); // so loadDetail's preserve keeps it selected
+      const { suggestSkus, mainSkus } = splitSelected(nextSel, { sku, role });
+      await regenerateDraft(msgId, suggestSkus.length ? suggestSkus : undefined, mainSkus.length ? mainSkus : undefined);
+      if (selectedId) await loadDetail(selectedId);
+      flashToast(role === 'main' ? 'เพิ่มสินค้าหลัก + ร่างใหม่แล้ว ✓' : 'เพิ่มสินค้าขายคู่ + ร่างใหม่แล้ว ✓');
     } catch {
-      setError('เพิ่มสินค้าไม่สำเร็จ');
+      setError('เพิ่มสินค้า / ร่างใหม่ไม่สำเร็จ');
+    } finally {
+      setSending(false);
     }
   }
 
@@ -747,13 +768,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
     if (!msgId || sending) return;
     setSending(true);
     setError('');
-    // Selected products by role: cross-sells → upsell hint; direct picks → "this IS the
-    // product the customer wants" hint, so the AI writes the reply about them (e.g. when
-    // it couldn't read an image and the team identified the items).
-    const crossSet = new Set((detail?.crossSellCandidates ?? []).map((p) => p.sku));
-    const directSet = new Set((detail?.productCandidates ?? []).map((p) => p.sku));
-    const suggestSkus = selectedProductSkus.filter((s) => crossSet.has(s));
-    const mainSkus = selectedProductSkus.filter((s) => directSet.has(s));
+    const { suggestSkus, mainSkus } = splitSelected(selectedProductSkus);
     try {
       await regenerateDraft(msgId, suggestSkus.length ? suggestSkus : undefined, mainSkus.length ? mainSkus : undefined);
       if (selectedId) await loadDetail(selectedId); // loadDetail preserves the selection
