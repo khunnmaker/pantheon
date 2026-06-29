@@ -71,9 +71,11 @@ export async function messageRoutes(app: FastifyInstance) {
   app.post<{ Params: { id: string } }>('/api/messages/:id/draft', async (req, reply) => {
     const sp = z.array(z.string()).max(8).safeParse((req.body as { suggestSkus?: unknown })?.suggestSkus);
     const mp = z.array(z.string()).max(8).safeParse((req.body as { mainSkus?: unknown })?.mainSkus);
+    const at = z.string().max(2000).safeParse((req.body as { agentText?: unknown })?.agentText);
     const suggestSkus = sp.success && sp.data.length ? sp.data : undefined;
     const mainSkus = mp.success && mp.data.length ? mp.data : undefined;
-    const opts = suggestSkus || mainSkus ? { suggestSkus, mainSkus } : undefined;
+    const agentText = at.success && at.data.trim() ? at.data : undefined;
+    const opts = suggestSkus || mainSkus || agentText ? { suggestSkus, mainSkus, agentText } : undefined;
     try {
       const out = await generateDraftForMessage(req.params.id, opts);
       pushToConsole('draft:new', {

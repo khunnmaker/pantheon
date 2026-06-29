@@ -35,7 +35,7 @@ export interface DraftOutcome {
 // guardrails → store Draft. Safe-defaults to needs_human on any error.
 export async function generateDraftForMessage(
   messageId: string,
-  opts?: { suggestSkus?: string[]; mainSkus?: string[] },
+  opts?: { suggestSkus?: string[]; mainSkus?: string[]; agentText?: string },
 ): Promise<DraftOutcome> {
   const message = await prisma.message.findUnique({ where: { id: messageId } });
   if (!message || message.role !== 'customer') {
@@ -44,7 +44,7 @@ export async function generateDraftForMessage(
 
   // Non-text messages have dedicated draft paths (sticker = LINE keywords, image = vision).
   if (message.attachmentType === 'sticker') return generateStickerDraft(messageId);
-  if (message.attachmentType === 'image') return generateImageDraft(messageId, opts?.mainSkus);
+  if (message.attachmentType === 'image') return generateImageDraft(messageId, opts?.mainSkus, opts?.agentText);
 
   const kb = await prisma.kbEntry.findMany({ where: { status: 'active' } });
 
@@ -147,6 +147,7 @@ export async function generateDraftForMessage(
         suggestProducts,
         confirmedProducts,
         currentStage,
+        agentText: opts?.agentText,
       });
       const raw = await callClaude(user, system);
       result = parseDraft(raw);
@@ -240,7 +241,7 @@ const IMAGE_FALLBACK: DraftResult = {
 
 // Vision draft for an image message: send the stored image + context to Claude,
 // parse, run the same guardrails, store the Draft. Safe-defaults to needs_human.
-export async function generateImageDraft(messageId: string, mainSkus?: string[]): Promise<DraftOutcome> {
+export async function generateImageDraft(messageId: string, mainSkus?: string[], agentText?: string): Promise<DraftOutcome> {
   const message = await prisma.message.findUnique({ where: { id: messageId } });
   if (!message || message.role !== 'customer' || message.attachmentType !== 'image') {
     throw new Error('image message not found');
@@ -265,7 +266,7 @@ export async function generateImageDraft(messageId: string, mainSkus?: string[])
     if (!llmAvailable() || !buf) {
       result = IMAGE_FALLBACK;
     } else {
-      const { system, user } = buildImagePrompt({ kb, recentWindow, summary, confirmedProducts });
+      const { system, user } = buildImagePrompt({ kb, recentWindow, summary, confirmedProducts, agentText });
       const raw = await callClaudeWithImage(user, system, {
         base64: buf.toString('base64'),
         mediaType: message.attachmentRef || 'image/jpeg',

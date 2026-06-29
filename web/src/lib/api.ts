@@ -167,10 +167,10 @@ export const setStage = (customerId: string, stage: string) =>
     body: JSON.stringify({ stage }),
   });
 
-export const regenerateDraft = (messageId: string, suggestSkus?: string[], mainSkus?: string[]) =>
+export const regenerateDraft = (messageId: string, suggestSkus?: string[], mainSkus?: string[], agentText?: string) =>
   authed<{ draft: Draft }>(`/api/messages/${messageId}/draft`, {
     method: 'POST',
-    body: JSON.stringify({ suggestSkus, mainSkus }),
+    body: JSON.stringify({ suggestSkus, mainSkus, agentText }),
   });
 
 // Manual catalog search by NAME or SKU — for the "add product yourself" picker.

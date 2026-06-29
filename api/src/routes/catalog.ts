@@ -40,6 +40,7 @@ export async function catalogRoutes(app: FastifyInstance) {
     if (!q) return reply.code(400).send({ error: 'missing_q' });
     const mainRaw = (req.body as { mainSkus?: unknown }).mainSkus;
     const mainSkus = Array.isArray(mainRaw) ? mainRaw.filter((s): s is string => typeof s === 'string') : [];
+    const agentText = String((req.body as { agentText?: string }).agentText ?? '').trim() || undefined;
     const kb = await prisma.kbEntry.findMany({ where: { status: 'active' } });
     const products = await findProducts(q);
     const confirmedProducts = mainSkus.length
@@ -51,7 +52,7 @@ export async function catalogRoutes(app: FastifyInstance) {
     const all = [...products, ...confirmedProducts];
     const grounded = all.filter((p) => p.price > 0).map((p) => `${p.price}บาท`).join(' ');
     const groundedStock = all.some((p) => p.stock != null);
-    const { system, user } = buildDraftPrompt({ question: q, kb, products, confirmedProducts });
+    const { system, user } = buildDraftPrompt({ question: q, kb, products, confirmedProducts, agentText });
     const parsed = parseDraft(await callClaude(user, system));
     const citedKb = kb.filter((k) =>
       parsed.used_kb.map((s) => s.toLowerCase()).includes(k.id.toLowerCase()),

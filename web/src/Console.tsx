@@ -600,7 +600,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
   async function rewrite() {
     if (rewriting || sending) return;
     if (selectionDirty && selectedProductSkus.length) {
-      await regenerate(); // writes the reply about the selected products; clears the dirty flag
+      await regenerate(editText); // re-draft about the selected products, building on the agent's typed text
       return;
     }
     if (!editText.trim()) return;
@@ -767,14 +767,16 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
     await deleteQuickReply(id).catch(() => undefined);
   }
 
-  async function regenerate() {
+  // agentText is passed only by the ✨ button (build on what the staff typed); ร่างใหม่ omits
+  // it for a fresh draft from conversation + selected products.
+  async function regenerate(agentText?: string) {
     const msgId = detail?.pendingMessageId;
     if (!msgId || sending) return;
     setSending(true);
     setError('');
     const { suggestSkus, mainSkus } = splitSelected(selectedProductSkus);
     try {
-      await regenerateDraft(msgId, suggestSkus.length ? suggestSkus : undefined, mainSkus.length ? mainSkus : undefined);
+      await regenerateDraft(msgId, suggestSkus.length ? suggestSkus : undefined, mainSkus.length ? mainSkus : undefined, agentText?.trim() || undefined);
       if (selectedId) await loadDetail(selectedId); // loadDetail preserves the selection
       flashToast(suggestSkus.length || mainSkus.length ? 'ร่างใหม่แล้ว — ใช้สินค้าที่เลือก' : 'ร่างใหม่แล้ว');
     } catch (e) {
@@ -1260,12 +1262,12 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                           {sending ? <Loader2 size={17} className="animate-spin" /> : <Send size={17} />}
                         </button>
                         <button onClick={rewrite} disabled={rewriting || sending || (!editText.trim() && !(selectionDirty && selectedProductSkus.length))}
-                          title="ให้ AI ช่วยแก้ไวยากรณ์และเรียบเรียง — ถ้าเพิ่งเลือก/เพิ่มสินค้าไว้ จะร่างคำตอบใหม่เกี่ยวกับสินค้าที่เลือก (เพิ่มได้หลายชิ้นก่อนกด)"
+                          title="ให้ AI ช่วยแก้ไวยากรณ์/เรียบเรียง โดยใช้ข้อความที่พิมพ์ + สินค้าที่เลือก + บทสนทนา (ถ้าเพิ่งเลือกสินค้า จะร่างใหม่โดยรวมข้อมูลสินค้าเข้ากับข้อความที่พิมพ์)"
                           className="min-w-0 px-2 py-2 rounded-xl bg-indigo-100 hover:bg-indigo-200 text-indigo-700 text-sm font-semibold flex items-center justify-center gap-1 disabled:opacity-50">
                           {rewriting ? <Loader2 size={17} className="animate-spin" /> : <Wand2 size={17} />}
                         </button>
-                        <button onClick={regenerate} disabled={sending || rewriting}
-                          title="ให้ AI ร่างคำตอบใหม่จาก KB (ทิ้งข้อความที่แก้)"
+                        <button onClick={() => regenerate()} disabled={sending || rewriting}
+                          title="ร่างคำตอบใหม่จากบทสนทนา + สินค้าที่เลือก (ไม่ใช้ข้อความที่พิมพ์ในกล่อง)"
                           className="min-w-0 px-2 py-2 rounded-xl bg-slate-200 hover:bg-slate-300 text-slate-700 text-sm font-semibold flex items-center justify-center gap-1 disabled:opacity-50">
                           <RefreshCw size={17} />
                         </button>
