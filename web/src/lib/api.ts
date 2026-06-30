@@ -327,3 +327,18 @@ export const promoteLearned = (id: string) =>
   authed<{ ok: boolean }>(`/api/learned/${id}/promote`, { method: 'POST' });
 export const rejectLearned = (id: string) =>
   authed<{ ok: boolean }>(`/api/learned/${id}/reject`, { method: 'POST' });
+
+// AI-accuracy metrics (supervisor only) — Stage-1 learning dashboard.
+export interface MetricsBucket {
+  accepted: number;
+  edited: number;
+  escalated: number;
+  total: number;
+  acceptRate: number | null; // accepted / (accepted + edited); null when none attempted
+}
+export interface LearnedMetrics {
+  overall: MetricsBucket;
+  byCategory: (MetricsBucket & { category: string })[];
+  byWeek: (MetricsBucket & { week: string })[];
+}
+export const getLearnedMetrics = () => authed<LearnedMetrics>('/api/learned/metrics');

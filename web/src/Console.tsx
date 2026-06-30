@@ -6,10 +6,10 @@ import {
 } from 'lucide-react';
 import {
   getQueue, getCustomers, getCustomer, searchCustomers, clearSession, regenerateDraft, rewriteText, sendReply, setNickname, setCategory, setStage, STAGES,
-  uploadAttachment, getLearned, promoteLearned, rejectLearned, endSession, API_URL, flatSku, getToken,
+  uploadAttachment, getLearned, getLearnedMetrics, promoteLearned, rejectLearned, endSession, API_URL, flatSku, getToken,
   getFinanceAudits, resolveFinanceAudit, type FinanceAudit,
   getQuickReplies, addQuickReply, deleteQuickReply, sendQuickReply, sendMessage, sendPhotoNow, searchCatalog, addProductToDraft, readSlip, sendToFinance,
-  type Agent, type CustomerLite, type CustomerDetail, type Message, type LearnedAnswer, type PendingProduct, type QuickReply,
+  type Agent, type CustomerLite, type CustomerDetail, type Message, type LearnedAnswer, type LearnedMetrics, type PendingProduct, type QuickReply,
 } from './lib/api';
 import { getSocket, disconnectSocket } from './lib/socket';
 
@@ -1375,6 +1375,69 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
   );
 }
 
+// Stage-1b dashboard: AI accuracy from /api/learned/metrics (supervisor only).
+function LearningMetrics() {
+  const [m, setM] = useState<LearnedMetrics | null>(null);
+  const [loading, setLoading] = useState(true);
+  const load = useCallback(() => {
+    setLoading(true);
+    getLearnedMetrics().then(setM).catch(() => setM(null)).finally(() => setLoading(false));
+  }, []);
+  useEffect(() => { load(); }, [load]);
+  const pct = (r: number | null) => (r == null ? '—' : Math.round(r * 100) + '%');
+  const CAT_TH: Record<string, string> = { general: 'ทั่วไป', product: 'สินค้า', kb: 'คลังความรู้', price_stock: 'ราคา/สต็อก', clinical: 'คลินิก' };
+  return (
+    <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-4">
+      <div className="flex items-center justify-between mb-3">
+        <span className="font-bold text-slate-700 flex items-center gap-2"><GraduationCap size={18} className="text-sky-600" /> ความแม่นยำของ AI</span>
+        <button onClick={load} className="text-xs text-slate-500 hover:text-slate-700 flex items-center gap-1"><RefreshCw size={12} /> รีเฟรช</button>
+      </div>
+      {loading && !m ? (
+        <div className="flex justify-center py-6 text-slate-400"><Loader2 size={18} className="animate-spin" /></div>
+      ) : !m || m.overall.total === 0 ? (
+        <p className="text-sm text-slate-400 py-6 text-center">ยังไม่มีข้อมูล — ระบบเริ่มเก็บผลทุกครั้งที่ทีมส่งคำตอบ (เริ่มนับจากนี้เป็นต้นไป)</p>
+      ) : (
+        <div className="space-y-4">
+          <div className="flex items-end gap-4">
+            <div>
+              <div className="text-3xl font-bold text-sky-700 leading-none">{pct(m.overall.acceptRate)}</div>
+              <div className="text-[11px] text-slate-400 mt-1">ส่งเลยโดยไม่แก้</div>
+            </div>
+            <div className="text-xs text-slate-500 pb-1">จาก {m.overall.total} ดราฟ · ส่งเอง {m.overall.accepted} · แก้ {m.overall.edited} · ให้คนตอบ {m.overall.escalated}</div>
+          </div>
+          <div className="space-y-1.5">
+            <div className="text-[11px] font-semibold text-slate-500">แยกตามหมวด (อัตราส่งโดยไม่แก้)</div>
+            {m.byCategory.map((c) => (
+              <div key={c.category} className="flex items-center gap-2 text-xs">
+                <div className="w-16 shrink-0 text-slate-600 truncate">{CAT_TH[c.category] ?? c.category}</div>
+                <div className="flex-1 h-2.5 bg-slate-100 rounded-full overflow-hidden">
+                  <div className="h-full bg-sky-500 rounded-full" style={{ width: `${(c.acceptRate ?? 0) * 100}%` }} />
+                </div>
+                <div className="w-9 text-right text-slate-700 font-medium">{pct(c.acceptRate)}</div>
+                <div className="hidden sm:block w-36 shrink-0 text-[10px] text-slate-400">ส่งเอง {c.accepted}·แก้ {c.edited}·คน {c.escalated}</div>
+              </div>
+            ))}
+          </div>
+          {m.byWeek.length > 0 && (
+            <div>
+              <div className="text-[11px] font-semibold text-slate-500 mb-1">แนวโน้มรายสัปดาห์ (อัตราส่งโดยไม่แก้)</div>
+              <div className="flex items-end gap-1 h-16">
+                {m.byWeek.map((w) => (
+                  <div key={w.week} className="flex-1 flex flex-col items-center justify-end" title={`สัปดาห์ ${w.week}: ${pct(w.acceptRate)} (${w.total} ดราฟ)`}>
+                    <div className="w-full bg-sky-400 rounded-t" style={{ height: `${Math.max((w.acceptRate ?? 0) * 100, 3)}%` }} />
+                    <div className="text-[8px] text-slate-400 mt-0.5">{w.week.slice(5)}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          <div className="text-[10px] text-slate-400 leading-snug">ส่งเลยโดยไม่แก้ = AI ถูกต้อง · แก้ = ต้องปรับก่อนส่ง · ให้คนตอบ = AI ส่งต่อให้คน (ราคา/สต็อก/คลินิก)</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function LearningView({ learned, isSupervisor, onPromote, onReject }: {
   learned: LearnedAnswer[];
   isSupervisor: boolean;
@@ -1382,33 +1445,36 @@ function LearningView({ learned, isSupervisor, onPromote, onReject }: {
   onReject: (id: string) => void;
 }) {
   return (
-    <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-4">
-      <div className="flex items-center justify-between mb-3">
-        <span className="font-bold text-slate-700 flex items-center gap-2"><Brain size={18} className="text-sky-600" /> คลังการเรียนรู้ — คำตอบที่พนักงานแก้</span>
-        <span className="text-xs text-slate-500">รออนุมัติ: <b className="text-sky-700">{learned.length}</b></span>
-      </div>
-      {!isSupervisor && <div className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-lg p-2 mb-3">เฉพาะหัวหน้าเท่านั้นที่อนุมัติเข้า KB ได้ (คุณดูได้อย่างเดียว)</div>}
-      {learned.length === 0 ? (
-        <p className="text-sm text-slate-400 py-6 text-center">ยังไม่มี — เมื่อพนักงานแก้ร่างของ AI แล้วส่ง ระบบจะเก็บคำตอบไว้ที่นี่เพื่อให้หัวหน้าอนุมัติเข้า KB</p>
-      ) : (
-        <div className="space-y-2">
-          {learned.map((rec) => (
-            <div key={rec.id} className="border border-slate-200 rounded-xl p-3 text-sm">
-              <div className="text-slate-500 text-xs mb-2">ถาม: <span className="text-slate-700">{rec.customerQuestion}</span></div>
-              <div className="grid sm:grid-cols-2 gap-2 mb-2">
-                <div className="bg-slate-50 rounded-lg p-2 text-xs text-slate-500"><b className="text-slate-400">ร่างเดิมของ AI:</b><br />{rec.aiDraft || '—'}</div>
-                <div className="bg-sky-50 rounded-lg p-2 text-xs text-sky-800"><b className="text-sky-600">คำตอบที่พนักงานปรับ:</b><br />{rec.finalAnswer}</div>
-              </div>
-              {isSupervisor && (
-                <div className="flex gap-2">
-                  <button onClick={() => onPromote(rec.id)} className="text-xs px-3 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-700 text-white flex items-center gap-1"><Check size={13} /> เพิ่มเข้า KB (สอน AI)</button>
-                  <button onClick={() => onReject(rec.id)} className="text-xs px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600">ไม่ใช้</button>
-                </div>
-              )}
-            </div>
-          ))}
+    <div className="space-y-3">
+      {isSupervisor && <LearningMetrics />}
+      <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-4">
+        <div className="flex items-center justify-between mb-3">
+          <span className="font-bold text-slate-700 flex items-center gap-2"><Brain size={18} className="text-sky-600" /> คลังการเรียนรู้ — คำตอบที่พนักงานแก้</span>
+          <span className="text-xs text-slate-500">รออนุมัติ: <b className="text-sky-700">{learned.length}</b></span>
         </div>
-      )}
+        {!isSupervisor && <div className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-lg p-2 mb-3">เฉพาะหัวหน้าเท่านั้นที่อนุมัติเข้า KB ได้ (คุณดูได้อย่างเดียว)</div>}
+        {learned.length === 0 ? (
+          <p className="text-sm text-slate-400 py-6 text-center">ยังไม่มี — เมื่อพนักงานแก้ร่างของ AI แล้วส่ง ระบบจะเก็บคำตอบไว้ที่นี่เพื่อให้หัวหน้าอนุมัติเข้า KB</p>
+        ) : (
+          <div className="space-y-2">
+            {learned.map((rec) => (
+              <div key={rec.id} className="border border-slate-200 rounded-xl p-3 text-sm">
+                <div className="text-slate-500 text-xs mb-2">ถาม: <span className="text-slate-700">{rec.customerQuestion}</span></div>
+                <div className="grid sm:grid-cols-2 gap-2 mb-2">
+                  <div className="bg-slate-50 rounded-lg p-2 text-xs text-slate-500"><b className="text-slate-400">ร่างเดิมของ AI:</b><br />{rec.aiDraft || '—'}</div>
+                  <div className="bg-sky-50 rounded-lg p-2 text-xs text-sky-800"><b className="text-sky-600">คำตอบที่พนักงานปรับ:</b><br />{rec.finalAnswer}</div>
+                </div>
+                {isSupervisor && (
+                  <div className="flex gap-2">
+                    <button onClick={() => onPromote(rec.id)} className="text-xs px-3 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-700 text-white flex items-center gap-1"><Check size={13} /> เพิ่มเข้า KB (สอน AI)</button>
+                    <button onClick={() => onReject(rec.id)} className="text-xs px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600">ไม่ใช้</button>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
