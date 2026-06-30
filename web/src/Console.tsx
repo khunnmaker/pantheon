@@ -58,7 +58,7 @@ function AuthedAttachment({ messageId, kind, fileName }: { messageId: string; ki
   if (failed)
     return <span className="text-xs text-slate-400">{kind === 'file' && fileName ? `${fileName} — ` : ''}โหลดไฟล์ไม่ได้ (อาจหมดอายุ)</span>;
   if (!url) return <span className="text-xs text-slate-400">กำลังโหลด…</span>;
-  if (kind === 'image') return <img src={url} alt="รูปจากลูกค้า" className="max-w-[220px] max-h-[260px] rounded-lg block" />;
+  if (kind === 'image') return <img src={url} alt="รูปจากลูกค้า" data-zoom className="max-w-[220px] max-h-[260px] rounded-lg block cursor-zoom-in" />;
   if (kind === 'video') return <video src={url} controls className="max-w-[260px] max-h-[300px] rounded-lg block" />;
   if (kind === 'audio') return <audio src={url} controls className="max-w-[260px]" />;
   return (
@@ -88,8 +88,8 @@ function MessageBody({ m }: { m: Message }) {
     return agentUp ? (
       <div className="space-y-1.5">
         {m.text && <div>{m.text}</div>}
-        <img src={`${API_URL}/content/upload/${m.attachmentRef}`} alt="รูปที่ส่ง"
-          className="max-w-[220px] max-h-[260px] rounded-lg block"
+        <img src={`${API_URL}/content/upload/${m.attachmentRef}`} alt="รูปที่ส่ง" data-zoom
+          className="max-w-[220px] max-h-[260px] rounded-lg block cursor-zoom-in"
           onError={(e) => { e.currentTarget.style.display = 'none'; }} />
       </div>
     ) : (
@@ -117,8 +117,8 @@ function MessageBody({ m }: { m: Message }) {
         {m.text && <div>{m.text}</div>}
         <div className="flex flex-wrap gap-1.5">
           {m.attachmentRef.split(',').filter(Boolean).map((sku) => (
-            <img key={sku} src={`${API_URL}/content/product/${sku}`} alt="รูปสินค้า"
-              className="max-w-[150px] max-h-[150px] rounded-lg bg-white block"
+            <img key={sku} src={`${API_URL}/content/product/${sku}`} alt="รูปสินค้า" data-zoom
+              className="max-w-[150px] max-h-[150px] rounded-lg bg-white block cursor-zoom-in"
               onError={(e) => { e.currentTarget.style.display = 'none'; }} />
           ))}
         </div>
@@ -408,6 +408,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
   const [needsConfirm, setNeedsConfirm] = useState(false);
   const [selectedProductSkus, setSelectedProductSkus] = useState<string[]>([]);
   const [selectionDirty, setSelectionDirty] = useState(false); // product selection changed since the last draft → ✨ re-drafts about it
+  const [lightbox, setLightbox] = useState<string | null>(null); // enlarged image src (click a picture to zoom)
   const [upload, setUpload] = useState<{ uploadId: string; kind: string; fileName: string; previewUrl: string } | null>(null);
   const [uploading, setUploading] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(true); // show/hide draft note + photo picker
@@ -769,6 +770,14 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
     setProdSearchResults([]);
     setProdSearchOpen(false);
   }, [selectedId]);
+
+  // Esc closes the image lightbox.
+  useEffect(() => {
+    if (!lightbox) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setLightbox(null); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [lightbox]);
   async function saveQuickReply() {
     if (!qrLabel.trim() || !qrBody.trim() || qrSaving) return;
     setQrSaving(true);
@@ -882,6 +891,14 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
     <div className="min-h-screen bg-slate-100 p-3 sm:p-5 font-sans text-slate-800">
       <div className="max-w-6xl mx-auto">
         {toast && <div className="mb-3 text-sm bg-emerald-50 border border-emerald-200 text-emerald-700 rounded-xl px-3 py-2 flex items-center gap-2"><Check size={15} /> {toast}</div>}
+        {lightbox && (
+          <div className="fixed inset-0 z-[60] bg-black/80 flex items-center justify-center p-4 cursor-zoom-out"
+            onClick={() => setLightbox(null)}>
+            <img src={lightbox} alt="รูปขยาย" className="max-w-full max-h-full object-contain rounded-lg shadow-2xl" />
+            <button type="button" onClick={() => setLightbox(null)} aria-label="ปิด"
+              className="absolute top-3 right-3 text-white/80 hover:text-white"><X size={30} /></button>
+          </div>
+        )}
         {financeMsg && (
           <FinanceModal
             messageId={financeMsg}
@@ -1104,7 +1121,8 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                   <div className="flex flex-1 min-h-0">
                     {/* LEFT: conversation history (full height) */}
                     <div className="flex flex-col flex-1 min-w-0 border-r border-slate-200">
-                  <div className="flex-1 overflow-y-auto p-3 space-y-2 bg-green-50">
+                  <div className="flex-1 overflow-y-auto p-3 space-y-2 bg-green-50"
+                    onClick={(e) => { const img = (e.target as HTMLElement).closest('img[data-zoom]') as HTMLImageElement | null; if (img) setLightbox(img.currentSrc || img.src); }}>
                     {loadingDetail && !detail && <div className="flex justify-center py-8 text-slate-400"><Loader2 size={18} className="animate-spin" /></div>}
                     {detail?.messages.map((m: Message) => (
                       <div key={m.id} className={m.role === 'customer' ? 'flex justify-start' : 'flex justify-end'}>
