@@ -62,7 +62,7 @@ function AuthedAttachment({ messageId, kind, fileName }: { messageId: string; ki
   if (kind === 'video') return <video src={url} controls className="max-w-[260px] max-h-[300px] rounded-lg block" />;
   if (kind === 'audio') return <audio src={url} controls className="max-w-[260px]" />;
   return (
-    <a href={url} download={fileName ?? 'file'} className="inline-flex items-center gap-1.5 text-sm text-teal-700 underline break-all">
+    <a href={url} download={fileName ?? 'file'} className="inline-flex items-center gap-1.5 text-sm text-sky-700 underline break-all">
       <Download size={14} className="shrink-0" /> {fileName ?? 'ดาวน์โหลดไฟล์'}
     </a>
   );
@@ -142,7 +142,7 @@ function PhotoStrip({ direct, cross, selected, onToggle }: {
       <button key={p.sku} type="button" onClick={() => onToggle(p.sku)}
         title={(isCross ? '💡 มักซื้อคู่กัน — ' : '') + ([p.nameEn, p.nameTh].filter(Boolean).join(' / ')) +
           (p.stock != null ? `\nคงเหลือ ${p.stock.toLocaleString()} ชิ้น${p.stockAt ? ' (ณ ' + new Date(p.stockAt).toLocaleDateString('th-TH') + ')' : ''}` : '')}
-        className={'shrink-0 w-[88px] rounded-lg border p-1 text-left transition ' + (sel ? 'border-teal-500 ring-2 ring-teal-400 bg-white' : 'border-teal-100 bg-white/60 hover:border-teal-300')}>
+        className={'shrink-0 w-[88px] rounded-lg border p-1 text-left transition ' + (sel ? 'border-sky-500 ring-2 ring-sky-400 bg-white' : 'border-sky-100 bg-white/60 hover:border-sky-300')}>
         <div className="relative h-[68px] flex items-center justify-center bg-white rounded">
           {p.photoSku
             ? <img src={`${API_URL}/content/product/${p.photoSku}`} alt=""
@@ -150,11 +150,11 @@ function PhotoStrip({ direct, cross, selected, onToggle }: {
                 onError={(e) => { e.currentTarget.style.visibility = 'hidden'; }} />
             : <span className="text-[9px] text-slate-400 text-center leading-tight px-1">ไม่มีรูป</span>}
           {isCross && <span className="absolute top-0.5 left-0.5 text-[11px] leading-none">💡</span>}
-          {sel && <span className="absolute top-0.5 right-0.5 bg-teal-600 text-white rounded-full p-0.5 flex"><Check size={11} /></span>}
+          {sel && <span className="absolute top-0.5 right-0.5 bg-sky-600 text-white rounded-full p-0.5 flex"><Check size={11} /></span>}
         </div>
         <div className="text-[10px] mt-1 leading-tight">
-          <div className="font-semibold text-teal-800 truncate">{[p.nameEn, p.nameTh].filter(Boolean).join(' / ') || flatSku(p.sku)}</div>
-          <div className="text-teal-600">{p.price > 0 ? `${p.price.toLocaleString()} บาท` : '—'}</div>
+          <div className="font-semibold text-sky-800 truncate">{[p.nameEn, p.nameTh].filter(Boolean).join(' / ') || flatSku(p.sku)}</div>
+          <div className="text-sky-600">{p.price > 0 ? `${p.price.toLocaleString()} บาท` : '—'}</div>
           {p.stock != null ? (() => {
             const out = p.stock <= 0;
             // Low = Vulcan reorderPoint reached (preferred); fall back to the ≤5 heuristic
@@ -164,7 +164,7 @@ function PhotoStrip({ direct, cross, selected, onToggle }: {
             return (
               <>
                 <div className={'mt-0.5 rounded px-1 py-0.5 text-center text-[10px] font-bold ' +
-                  (out ? 'bg-rose-100 text-rose-700' : lowFlag ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700')}>
+                  (out ? 'bg-rose-100 text-rose-700' : lowFlag ? 'bg-amber-100 text-amber-700' : 'bg-sky-100 text-sky-700')}>
                   {out ? 'หมด' : `${lowFlag ? 'ใกล้หมด · ' : ''}คงเหลือ ${p.stock.toLocaleString()}`}
                 </div>
                 {p.stockAt && (
@@ -182,11 +182,11 @@ function PhotoStrip({ direct, cross, selected, onToggle }: {
     );
   };
   return (
-    <div className="bg-teal-50 border border-teal-200 rounded-xl p-2">
+    <div className="bg-sky-50 border border-sky-200 rounded-xl p-2">
       <div className="flex gap-2 overflow-x-auto pb-1 items-stretch">
         {direct.map((p) => thumb(p, false))}
         {direct.length > 0 && cross.length > 0 && (
-          <div className="shrink-0 self-stretch w-px bg-teal-300 mx-1" />
+          <div className="shrink-0 self-stretch w-px bg-sky-300 mx-1" />
         )}
         {cross.map((p) => thumb(p, true))}
       </div>
@@ -256,7 +256,7 @@ function CameraCapture({ onCapture, onClose }: { onCapture: (file: File) => void
           <button type="button" onClick={onClose} className="px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 text-sm">ยกเลิก</button>
           {!err && (
             <button type="button" onClick={snap} disabled={!ready}
-              className="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold flex items-center gap-1.5 disabled:opacity-50">
+              className="px-5 py-2 rounded-xl bg-sky-600 hover:bg-sky-700 text-white text-sm font-semibold flex items-center gap-1.5 disabled:opacity-50">
               <Camera size={16} /> ถ่ายรูป
             </button>
           )}
@@ -370,12 +370,12 @@ function FinanceAuditView({ audits, onResolve, onRefresh }: { audits: FinanceAud
             <div className="mt-1.5 flex items-center gap-4 flex-wrap text-xs">
               <span>อ่านจากสลิป <b className="text-slate-700">{a.ocrAmount}</b></span>
               <span>กรอกส่ง <b className="text-rose-700">{a.amount}</b></span>
-              <span>ส่วนต่าง <b className={parseFloat(a.diff) < 0 ? 'text-rose-700' : 'text-emerald-700'}>{a.diff}</b></span>
+              <span>ส่วนต่าง <b className={parseFloat(a.diff) < 0 ? 'text-rose-700' : 'text-sky-700'}>{a.diff}</b></span>
               <span className="text-slate-500">โดย {a.salesName || '—'}</span>
             </div>
             <div className="mt-2 flex items-center gap-2">
-              <a href={a.slipUrl} target="_blank" rel="noreferrer" className="text-xs text-teal-700 underline">ดูสลิป</a>
-              <button onClick={() => onResolve(a.id)} className="ml-auto text-xs px-3 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white flex items-center gap-1"><CheckCircle2 size={12} /> ตรวจแล้ว</button>
+              <a href={a.slipUrl} target="_blank" rel="noreferrer" className="text-xs text-sky-700 underline">ดูสลิป</a>
+              <button onClick={() => onResolve(a.id)} className="ml-auto text-xs px-3 py-1 rounded-lg bg-sky-600 hover:bg-sky-700 text-white flex items-center gap-1"><CheckCircle2 size={12} /> ตรวจแล้ว</button>
             </div>
           </div>
         ))}
@@ -890,7 +890,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
   return (
     <div className="min-h-screen bg-slate-100 p-3 sm:p-5 font-sans text-slate-800">
       <div className="max-w-6xl mx-auto">
-        {toast && <div className="mb-3 text-sm bg-emerald-50 border border-emerald-200 text-emerald-700 rounded-xl px-3 py-2 flex items-center gap-2"><Check size={15} /> {toast}</div>}
+        {toast && <div className="mb-3 text-sm bg-sky-50 border border-sky-200 text-sky-700 rounded-xl px-3 py-2 flex items-center gap-2"><Check size={15} /> {toast}</div>}
         {lightbox && (
           <div className="fixed inset-0 z-[60] bg-black/80 flex items-center justify-center p-4 cursor-zoom-out"
             onClick={() => setLightbox(null)}>
@@ -915,54 +915,54 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
           <div className="flex flex-col gap-3 min-h-0">
             {/* icon bar */}
             <div className="bg-white rounded-2xl shadow-sm border border-slate-200 flex items-center gap-1 px-2 py-2 shrink-0">
-              <div className="text-teal-700 px-1" title="Minerva"><Bot size={22} /></div>
+              <div className="text-sky-700 px-1" title="Minerva"><Bot size={22} /></div>
               <button onClick={() => setView('console')} title="คอนโซล"
-                className={'p-2 rounded-xl ' + (view === 'console' ? 'bg-teal-600 text-white' : 'text-slate-500 hover:bg-slate-100')}><MessageSquare size={19} /></button>
+                className={'p-2 rounded-xl ' + (view === 'console' ? 'bg-sky-600 text-white' : 'text-slate-500 hover:bg-slate-100')}><MessageSquare size={19} /></button>
               <button onClick={() => setView('learning')} title="การเรียนรู้"
-                className={'relative p-2 rounded-xl ' + (view === 'learning' ? 'bg-teal-600 text-white' : 'text-slate-500 hover:bg-slate-100')}>
+                className={'relative p-2 rounded-xl ' + (view === 'learning' ? 'bg-sky-600 text-white' : 'text-slate-500 hover:bg-slate-100')}>
                 <GraduationCap size={19} />
                 {learned.length > 0 && <span className="absolute -top-0.5 -right-0.5 text-[10px] bg-amber-400 text-white rounded-full px-1 leading-tight">{learned.length}</span>}
               </button>
               {agent.role === 'supervisor' && (
                 <button onClick={() => setView('audit')} title="ตรวจสอบยอด (หัวหน้า)"
-                  className={'relative p-2 rounded-xl ' + (view === 'audit' ? 'bg-teal-600 text-white' : 'text-slate-500 hover:bg-slate-100')}>
+                  className={'relative p-2 rounded-xl ' + (view === 'audit' ? 'bg-sky-600 text-white' : 'text-slate-500 hover:bg-slate-100')}>
                   <Banknote size={19} />
                   {audits.length > 0 && <span className="absolute -top-0.5 -right-0.5 text-[10px] bg-rose-500 text-white rounded-full px-1 leading-tight">{audits.length}</span>}
                 </button>
               )}
               <div className="flex-1" />
-              <span title={connected ? 'เชื่อมต่อสด' : 'ออฟไลน์'} className={'px-1 ' + (connected ? 'text-emerald-600' : 'text-slate-300')}>
+              <span title={connected ? 'เชื่อมต่อสด' : 'ออฟไลน์'} className={'px-1 ' + (connected ? 'text-sky-600' : 'text-slate-300')}>
                 {connected ? <Wifi size={17} /> : <WifiOff size={17} />}
               </span>
               <span title={agent.name + (agent.role === 'supervisor' ? ' (หัวหน้า)' : '')}
-                className="relative w-8 h-8 rounded-full bg-teal-600 text-white flex items-center justify-center text-xs font-bold shrink-0">
+                className="relative w-8 h-8 rounded-full bg-sky-600 text-white flex items-center justify-center text-xs font-bold shrink-0">
                 {agent.name.replace(/^คุณ/, '').charAt(0)}
-                {agent.role === 'supervisor' && <span className="absolute -bottom-1 -right-1 bg-white rounded-full text-teal-600 flex"><ShieldCheck size={12} /></span>}
+                {agent.role === 'supervisor' && <span className="absolute -bottom-1 -right-1 bg-white rounded-full text-sky-600 flex"><ShieldCheck size={12} /></span>}
               </span>
               <button onClick={logout} title="ออกจากระบบ" className="p-2 rounded-xl text-slate-400 hover:text-rose-500 hover:bg-slate-100"><LogOut size={17} /></button>
             </div>
             {/* queue */}
             <div className="bg-white rounded-2xl shadow-sm border border-slate-200 flex flex-col flex-1 min-h-0">
-              <div className="px-4 py-3 bg-teal-700 text-white rounded-t-2xl font-semibold flex items-center gap-2">
+              <div className="px-4 py-3 bg-sky-700 text-white rounded-t-2xl font-semibold flex items-center gap-2">
                 <Inbox size={18} /> คิวลูกค้า
-                <span className="ml-auto text-xs bg-teal-800 px-2 py-0.5 rounded-full">{waitingIds.size} รอตอบ</span>
+                <span className="ml-auto text-xs bg-sky-800 px-2 py-0.5 rounded-full">{waitingIds.size} รอตอบ</span>
               </div>
               <div className="px-2 pt-2 shrink-0">
                 <div className="relative">
                   <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
                   <input value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)}
                     placeholder="ค้นหาชื่อเล่น / ชื่อลูกค้า…"
-                    className="w-full pl-8 pr-2 py-1.5 rounded-lg border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-teal-400" />
+                    className="w-full pl-8 pr-2 py-1.5 rounded-lg border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-sky-400" />
                 </div>
               </div>
               <div className="px-2 pt-2 pb-1 shrink-0 flex flex-wrap gap-1">
                 <button onClick={() => setCategoryFilters((fs) => (fs.length === CATEGORIES.length ? [] : [...CATEGORIES]))}
-                  className={'text-[10px] px-1.5 py-0.5 rounded-full border ' + (categoryFilters.length === CATEGORIES.length ? 'bg-teal-600 text-white border-teal-600' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50')}>
+                  className={'text-[10px] px-1.5 py-0.5 rounded-full border ' + (categoryFilters.length === CATEGORIES.length ? 'bg-sky-600 text-white border-sky-600' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50')}>
                   ทั้งหมด
                 </button>
                 {CATEGORIES.map((cat) => (
                   <button key={cat} onClick={() => setCategoryFilters((fs) => (fs.includes(cat) ? fs.filter((f) => f !== cat) : [...fs, cat]))}
-                    className={'text-[10px] px-1.5 py-0.5 rounded-full border ' + (categoryFilters.includes(cat) ? 'bg-teal-600 text-white border-teal-600' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50')}>
+                    className={'text-[10px] px-1.5 py-0.5 rounded-full border ' + (categoryFilters.includes(cat) ? 'bg-sky-600 text-white border-sky-600' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50')}>
                     {cat}
                   </button>
                 ))}
@@ -995,7 +995,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                   const active = selectedId === c.id;
                   return (
                     <button key={c.id} onClick={() => setSelectedId(c.id)}
-                      className={'w-full text-left px-3 py-2 rounded-xl border transition ' + (active ? 'bg-teal-50 border-teal-300' : 'bg-white border-slate-100 hover:bg-slate-50')}>
+                      className={'w-full text-left px-3 py-2 rounded-xl border transition ' + (active ? 'bg-sky-50 border-sky-300' : 'bg-white border-slate-100 hover:bg-slate-50')}>
                       <div className="flex items-center gap-2">
                         <span className="w-8 h-8 rounded-full bg-slate-200 text-slate-600 flex items-center justify-center shrink-0"><User size={15} /></span>
                         <div className="min-w-0 flex-1">
@@ -1005,7 +1005,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                             <span className="ml-auto flex items-center gap-1 shrink-0">
                               {c.suggestedStage && c.suggestedStage !== c.stage && <span className="w-1.5 h-1.5 rounded-full bg-amber-400" title={'AI แนะนำ: ' + c.suggestedStage} />}
                               {c.stage && <span className="text-[9px] px-1 py-0.5 rounded bg-indigo-100 text-indigo-700">{c.stage}</span>}
-                              {c.category && <span className="text-[9px] px-1 py-0.5 rounded bg-teal-100 text-teal-700">{c.category}</span>}
+                              {c.category && <span className="text-[9px] px-1 py-0.5 rounded bg-sky-100 text-sky-700">{c.category}</span>}
                             </span>
                           </div>
                           <div className="text-[11px] text-slate-400 flex items-center gap-1"><Clock size={10} /> {fmtTime(c.lastSeen)}</div>
@@ -1026,7 +1026,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
               <LearningView learned={learned} isSupervisor={agent.role === 'supervisor'} onPromote={promote} onReject={reject} />
             ) : (
             <div className="bg-white rounded-2xl shadow-sm border border-slate-200 flex flex-col h-full">
-              <div className="px-4 py-2.5 bg-green-600 text-white rounded-t-2xl font-semibold flex items-center gap-2">
+              <div className="px-4 py-2.5 bg-sky-600 text-white rounded-t-2xl font-semibold flex items-center gap-2">
                 <div className="flex items-center gap-2 min-w-0 flex-1">
                   <MessageSquare size={18} className="shrink-0" />
                   {nickEdit !== null ? (
@@ -1057,7 +1057,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                               <div className="absolute top-full mt-1 left-0 z-30 w-24 bg-white border border-slate-200 rounded-lg shadow-lg p-1 text-slate-700">
                                 {CATEGORIES.map((cat) => (
                                   <button key={cat} type="button" onClick={() => chooseCategory(cat)}
-                                    className={'w-full text-left text-xs px-2 py-1 rounded hover:bg-teal-50 ' + (detail.customer.category === cat ? 'bg-teal-50 font-semibold' : '')}>
+                                    className={'w-full text-left text-xs px-2 py-1 rounded hover:bg-sky-50 ' + (detail.customer.category === cat ? 'bg-sky-50 font-semibold' : '')}>
                                     {cat}
                                   </button>
                                 ))}
@@ -1098,8 +1098,8 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                           💡 {detail.customer.suggestedStage} ✓
                         </button>
                       )}
-                      {detail && <span className="text-[11px] font-normal text-green-100 truncate min-w-0">· {detail.customer.lineUserId}</span>}
-                      {detail && <span className="text-[11px] font-normal text-green-100 shrink-0">· ถาม {detail.stats.questions} · ตอบ {detail.stats.replies}</span>}
+                      {detail && <span className="text-[11px] font-normal text-sky-100 truncate min-w-0">· {detail.customer.lineUserId}</span>}
+                      {detail && <span className="text-[11px] font-normal text-sky-100 shrink-0">· ถาม {detail.stats.questions} · ตอบ {detail.stats.replies}</span>}
                     </>
                   )}
                 </div>
@@ -1121,18 +1121,18 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                   <div className="flex flex-1 min-h-0">
                     {/* LEFT: conversation history (full height) */}
                     <div className="flex flex-col flex-1 min-w-0 border-r border-slate-200">
-                  <div className="flex-1 overflow-y-auto p-3 space-y-2 bg-green-50"
+                  <div className="flex-1 overflow-y-auto p-3 space-y-2 bg-sky-50"
                     onClick={(e) => { const img = (e.target as HTMLElement).closest('img[data-zoom]') as HTMLImageElement | null; if (img) setLightbox(img.currentSrc || img.src); }}>
                     {loadingDetail && !detail && <div className="flex justify-center py-8 text-slate-400"><Loader2 size={18} className="animate-spin" /></div>}
                     {detail?.messages.map((m: Message) => (
                       <div key={m.id} className={m.role === 'customer' ? 'flex justify-start' : 'flex justify-end'}>
                         <div className={'max-w-[78%] px-3 py-2 rounded-2xl text-sm whitespace-pre-wrap ' +
-                          (m.role === 'customer' ? 'bg-white border border-slate-200 rounded-tl-sm' : 'bg-teal-600 text-white rounded-tr-sm')}>
+                          (m.role === 'customer' ? 'bg-white border border-slate-200 rounded-tl-sm' : 'bg-sky-600 text-white rounded-tr-sm')}>
                           <MessageBody m={m} />
-                          <div className={'text-[10px] mt-0.5 ' + (m.role === 'customer' ? 'text-slate-400' : 'text-teal-100')}>{fmtTime(m.createdAt)}</div>
+                          <div className={'text-[10px] mt-0.5 ' + (m.role === 'customer' ? 'text-slate-400' : 'text-sky-100')}>{fmtTime(m.createdAt)}</div>
                           {m.role === 'customer' && m.attachmentType === 'image' && (
                             m.financeSentAt
-                              ? <div className="mt-1 text-[10px] text-emerald-600 font-medium flex items-center gap-1"><CheckCircle2 size={11} /> ส่งการเงินแล้ว</div>
+                              ? <div className="mt-1 text-[10px] text-sky-600 font-medium flex items-center gap-1"><CheckCircle2 size={11} /> ส่งการเงินแล้ว</div>
                               : <button type="button" onClick={() => setFinanceMsg(m.id)}
                                   className="mt-1 text-[10px] px-2 py-1 rounded-lg bg-amber-100 hover:bg-amber-200 text-amber-800 font-medium flex items-center gap-1">
                                   <Banknote size={12} /> แจ้งการเงิน
@@ -1148,7 +1148,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                     <div className="flex flex-col w-[42%] min-w-[360px] min-h-0 overflow-y-auto">
                   {detail?.memory?.summary && (
                     <div className="shrink-0 bg-slate-50 border-b border-slate-100 p-2">
-                      <div className="text-[11px] text-teal-800 bg-teal-50 border border-teal-200 rounded-lg p-2">
+                      <div className="text-[11px] text-sky-800 bg-sky-50 border border-sky-200 rounded-lg p-2">
                         <span className="font-bold flex items-center gap-1 mb-0.5"><Brain size={12} /> ความจำระยะยาว</span>
                         {detail.memory.summary}
                       </div>
@@ -1174,7 +1174,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                         {draft.note && detailsOpen && <span className="text-xs text-slate-500 leading-relaxed pt-1">{draft.note}</span>}
                         <button type="button" onClick={() => setProdSearchOpen((v) => !v)}
                           title="ค้นหา / เพิ่มสินค้าเอง" aria-label="ค้นหา / เพิ่มสินค้าเอง"
-                          className={'ml-auto shrink-0 p-1 rounded-lg hover:bg-slate-100 ' + (prodSearchOpen ? 'text-teal-600 bg-teal-50' : 'text-slate-400 hover:text-slate-600')}>
+                          className={'ml-auto shrink-0 p-1 rounded-lg hover:bg-slate-100 ' + (prodSearchOpen ? 'text-sky-600 bg-sky-50' : 'text-slate-400 hover:text-slate-600')}>
                           <Search size={16} />
                         </button>
                         <button type="button" onClick={() => setDetailsOpen((v) => !v)}
@@ -1196,7 +1196,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                               <div className="relative">
                                 <input value={prodSearchQ} onChange={(e) => setProdSearchQ(e.target.value)}
                                   placeholder="พิมพ์ชื่อสินค้า หรือ SKU…"
-                                  className="w-full px-2 py-1.5 pr-7 rounded-lg border border-slate-300 text-xs focus:outline-none focus:ring-2 focus:ring-teal-400" />
+                                  className="w-full px-2 py-1.5 pr-7 rounded-lg border border-slate-300 text-xs focus:outline-none focus:ring-2 focus:ring-sky-400" />
                                 {prodSearchQ && (
                                   <button type="button" onClick={() => setProdSearchQ('')} title="ล้าง" aria-label="ล้างคำค้นหา"
                                     className="absolute right-1.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
@@ -1219,12 +1219,12 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                                         {p.stock != null && (() => {
                                           const out = p.stock <= 0;
                                           const lowFlag = !out && (p.low ?? (p.reorderPoint == null && p.stock <= 5));
-                                          return <span className={out ? 'text-rose-600' : lowFlag ? 'text-amber-600' : 'text-emerald-600'}> · {out ? 'หมด' : `${lowFlag ? 'ใกล้หมด ' : ''}คงเหลือ ${p.stock}`}</span>;
+                                          return <span className={out ? 'text-rose-600' : lowFlag ? 'text-amber-600' : 'text-sky-600'}> · {out ? 'หมด' : `${lowFlag ? 'ใกล้หมด ' : ''}คงเหลือ ${p.stock}`}</span>;
                                         })()}
                                       </div>
                                     </div>
                                     <button type="button" onClick={() => addProduct(p.sku, 'main')} title="เพิ่มเป็นสินค้าหลัก"
-                                      className="shrink-0 text-[10px] px-2 py-1 rounded-lg bg-teal-600 hover:bg-teal-700 text-white">หลัก</button>
+                                      className="shrink-0 text-[10px] px-2 py-1 rounded-lg bg-sky-600 hover:bg-sky-700 text-white">หลัก</button>
                                     <button type="button" onClick={() => addProduct(p.sku, 'cross')} title="เพิ่มเป็นสินค้าขายคู่"
                                       className="shrink-0 text-[10px] px-2 py-1 rounded-lg bg-amber-500 hover:bg-amber-600 text-white">ขายคู่</button>
                                   </div>
@@ -1236,7 +1236,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                             </div>
                       )}
                       <textarea value={editText} onChange={(e) => { setEditText(e.target.value); setNeedsConfirm(false); setRewriteNote(null); }} rows={4}
-                        className="w-full flex-1 min-h-[120px] p-3 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-teal-400 resize-none" placeholder="พิมพ์/แก้คำตอบก่อนส่ง…" />
+                        className="w-full flex-1 min-h-[120px] p-3 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-sky-400 resize-none" placeholder="พิมพ์/แก้คำตอบก่อนส่ง…" />
                       {rewriteNote && (
                         <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-2 flex items-start gap-1.5">
                           <AlertTriangle size={14} className="shrink-0 mt-0.5" />
@@ -1245,11 +1245,11 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                       )}
                       {error && <div className="text-xs text-rose-600 bg-rose-50 border border-rose-200 rounded-lg p-2">{error}</div>}
                       {upload && (
-                        <div className="flex items-center gap-2 bg-teal-50 border border-teal-200 rounded-lg pl-1 pr-2 py-1 text-xs w-fit">
+                        <div className="flex items-center gap-2 bg-sky-50 border border-sky-200 rounded-lg pl-1 pr-2 py-1 text-xs w-fit">
                           {upload.previewUrl
                             ? <img src={upload.previewUrl} alt="" className="w-8 h-8 object-cover rounded" />
-                            : <Paperclip size={14} className="text-teal-700" />}
-                          <span className="truncate max-w-[180px] text-teal-800">{upload.fileName}</span>
+                            : <Paperclip size={14} className="text-sky-700" />}
+                          <span className="truncate max-w-[180px] text-sky-800">{upload.fileName}</span>
                           <button type="button" onClick={() => setUpload(null)} className="text-slate-400 hover:text-rose-500"><X size={14} /></button>
                         </div>
                       )}
@@ -1279,7 +1279,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                                 {quickReplies.map((q) => (
                                   <div key={q.id} className="flex items-center gap-1">
                                     <button type="button" onClick={() => quickSend(q)} disabled={qrSending}
-                                      className="flex-1 text-left text-xs px-2 py-1.5 rounded-lg hover:bg-teal-50 text-slate-700 truncate disabled:opacity-50" title={q.body}>
+                                      className="flex-1 text-left text-xs px-2 py-1.5 rounded-lg hover:bg-sky-50 text-slate-700 truncate disabled:opacity-50" title={q.body}>
                                       {q.label}
                                     </button>
                                     {qrManage && <button type="button" onClick={() => removeQuickReply(q.id)} title="ลบ" className="text-rose-400 hover:text-rose-600 px-1"><X size={12} /></button>}
@@ -1293,11 +1293,11 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                                   {qrManage && (
                                     <div className="flex flex-col gap-1 p-1">
                                       <input value={qrLabel} onChange={(e) => setQrLabel(e.target.value)} placeholder="ชื่อปุ่ม"
-                                        className="text-xs px-2 py-1 rounded border border-slate-200 focus:outline-none focus:ring-1 focus:ring-teal-400" />
+                                        className="text-xs px-2 py-1 rounded border border-slate-200 focus:outline-none focus:ring-1 focus:ring-sky-400" />
                                       <textarea value={qrBody} onChange={(e) => setQrBody(e.target.value)} rows={3} placeholder="ข้อความที่จะส่ง…"
-                                        className="text-xs px-2 py-1 rounded border border-slate-200 resize-none focus:outline-none focus:ring-1 focus:ring-teal-400" />
+                                        className="text-xs px-2 py-1 rounded border border-slate-200 resize-none focus:outline-none focus:ring-1 focus:ring-sky-400" />
                                       <button type="button" onClick={saveQuickReply} disabled={qrSaving || !qrLabel.trim() || !qrBody.trim()}
-                                        className="self-start text-xs px-3 py-1 rounded-lg bg-teal-600 hover:bg-teal-700 text-white disabled:opacity-50">
+                                        className="self-start text-xs px-3 py-1 rounded-lg bg-sky-600 hover:bg-sky-700 text-white disabled:opacity-50">
                                         {qrSaving ? 'กำลังบันทึก…' : 'เพิ่ม'}
                                       </button>
                                     </div>
@@ -1307,20 +1307,20 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                             </>
                           )}
                         </div>
-                        <button onClick={approve} disabled={sending || rewriting || !editText.trim()}
-                          title={needsConfirm ? 'ยืนยันส่ง (คำตอบมีราคา)' : 'อนุมัติและส่งให้ลูกค้า'}
-                          className={'min-w-0 px-2 py-2 rounded-xl text-white text-sm font-semibold flex items-center justify-center gap-1 disabled:opacity-50 ' + (needsConfirm ? 'bg-amber-600 hover:bg-amber-700' : 'bg-emerald-600 hover:bg-emerald-700')}>
-                          {sending ? <Loader2 size={17} className="animate-spin" /> : <Send size={17} />}
+                        <button onClick={() => regenerate()} disabled={sending || rewriting}
+                          title="ร่างคำตอบใหม่จากบทสนทนา + สินค้าที่เลือก (ไม่ใช้ข้อความที่พิมพ์ในกล่อง)"
+                          className="min-w-0 px-2 py-2 rounded-xl bg-slate-200 hover:bg-slate-300 text-slate-700 text-sm font-semibold flex items-center justify-center gap-1 disabled:opacity-50">
+                          <RefreshCw size={17} />
                         </button>
                         <button onClick={rewrite} disabled={rewriting || sending || (!editText.trim() && !(selectionDirty && selectedProductSkus.length))}
                           title="ให้ AI ช่วยแก้ไวยากรณ์/เรียบเรียง โดยใช้ข้อความที่พิมพ์ + สินค้าที่เลือก + บทสนทนา (ถ้าเพิ่งเลือกสินค้า จะร่างใหม่โดยรวมข้อมูลสินค้าเข้ากับข้อความที่พิมพ์)"
                           className="min-w-0 px-2 py-2 rounded-xl bg-indigo-100 hover:bg-indigo-200 text-indigo-700 text-sm font-semibold flex items-center justify-center gap-1 disabled:opacity-50">
                           {rewriting ? <Loader2 size={17} className="animate-spin" /> : <Wand2 size={17} />}
                         </button>
-                        <button onClick={() => regenerate()} disabled={sending || rewriting}
-                          title="ร่างคำตอบใหม่จากบทสนทนา + สินค้าที่เลือก (ไม่ใช้ข้อความที่พิมพ์ในกล่อง)"
-                          className="min-w-0 px-2 py-2 rounded-xl bg-slate-200 hover:bg-slate-300 text-slate-700 text-sm font-semibold flex items-center justify-center gap-1 disabled:opacity-50">
-                          <RefreshCw size={17} />
+                        <button onClick={approve} disabled={sending || rewriting || !editText.trim()}
+                          title={needsConfirm ? 'ยืนยันส่ง (คำตอบมีราคา)' : 'อนุมัติและส่งให้ลูกค้า'}
+                          className={'min-w-0 px-2 py-2 rounded-xl text-white text-sm font-semibold flex items-center justify-center gap-1 disabled:opacity-50 ' + (needsConfirm ? 'bg-amber-600 hover:bg-amber-700' : 'bg-sky-600 hover:bg-sky-700')}>
+                          {sending ? <Loader2 size={17} className="animate-spin" /> : <Send size={17} />}
                         </button>
                       </div>
                     </div>
@@ -1329,16 +1329,16 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                       <div className="text-[11px] text-slate-400">ลูกค้าได้รับคำตอบล่าสุดแล้ว — พิมพ์เพื่อส่งข้อความเพิ่มเติม / แก้ไขได้</div>
                       {error && <div className="text-xs text-rose-600 bg-rose-50 border border-rose-200 rounded-lg p-2">{error}</div>}
                       {upload && (
-                        <div className="flex items-center gap-2 bg-teal-50 border border-teal-200 rounded-lg pl-1 pr-2 py-1 text-xs w-fit">
+                        <div className="flex items-center gap-2 bg-sky-50 border border-sky-200 rounded-lg pl-1 pr-2 py-1 text-xs w-fit">
                           {upload.previewUrl
                             ? <img src={upload.previewUrl} alt="" className="w-8 h-8 object-cover rounded" />
-                            : <Paperclip size={14} className="text-teal-700" />}
-                          <span className="truncate max-w-[180px] text-teal-800">{upload.fileName}</span>
+                            : <Paperclip size={14} className="text-sky-700" />}
+                          <span className="truncate max-w-[180px] text-sky-800">{upload.fileName}</span>
                           <button type="button" onClick={() => setUpload(null)} className="text-slate-400 hover:text-rose-500"><X size={14} /></button>
                         </div>
                       )}
                       <textarea value={freeText} onChange={(e) => setFreeText(e.target.value)} rows={3}
-                        className="w-full flex-1 min-h-[100px] p-3 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-teal-400 resize-none" placeholder="พิมพ์ข้อความถึงลูกค้า…" />
+                        className="w-full flex-1 min-h-[100px] p-3 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-sky-400 resize-none" placeholder="พิมพ์ข้อความถึงลูกค้า…" />
                       <div className="grid grid-cols-[auto_auto_1fr] gap-2">
                         <button type="button" disabled={uploading || freeSending} onClick={openCamera}
                           title="ถ่ายรูปแล้วส่งทันที" aria-label="ถ่ายรูปแล้วส่งทันที"
@@ -1352,7 +1352,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                         </button>
                         <button onClick={freeSend} disabled={(!freeText.trim() && !upload) || freeSending}
                           title="ส่งข้อความให้ลูกค้า"
-                          className="px-2 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold flex items-center justify-center gap-1 disabled:opacity-50">
+                          className="px-2 py-2 rounded-xl bg-sky-600 hover:bg-sky-700 text-white text-sm font-semibold flex items-center justify-center gap-1 disabled:opacity-50">
                           {freeSending ? <Loader2 size={16} className="animate-spin" /> : <Send size={15} />} ส่งข้อความ
                         </button>
                       </div>
@@ -1384,8 +1384,8 @@ function LearningView({ learned, isSupervisor, onPromote, onReject }: {
   return (
     <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-4">
       <div className="flex items-center justify-between mb-3">
-        <span className="font-bold text-slate-700 flex items-center gap-2"><Brain size={18} className="text-teal-600" /> คลังการเรียนรู้ — คำตอบที่พนักงานแก้</span>
-        <span className="text-xs text-slate-500">รออนุมัติ: <b className="text-teal-700">{learned.length}</b></span>
+        <span className="font-bold text-slate-700 flex items-center gap-2"><Brain size={18} className="text-sky-600" /> คลังการเรียนรู้ — คำตอบที่พนักงานแก้</span>
+        <span className="text-xs text-slate-500">รออนุมัติ: <b className="text-sky-700">{learned.length}</b></span>
       </div>
       {!isSupervisor && <div className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-lg p-2 mb-3">เฉพาะหัวหน้าเท่านั้นที่อนุมัติเข้า KB ได้ (คุณดูได้อย่างเดียว)</div>}
       {learned.length === 0 ? (
@@ -1397,11 +1397,11 @@ function LearningView({ learned, isSupervisor, onPromote, onReject }: {
               <div className="text-slate-500 text-xs mb-2">ถาม: <span className="text-slate-700">{rec.customerQuestion}</span></div>
               <div className="grid sm:grid-cols-2 gap-2 mb-2">
                 <div className="bg-slate-50 rounded-lg p-2 text-xs text-slate-500"><b className="text-slate-400">ร่างเดิมของ AI:</b><br />{rec.aiDraft || '—'}</div>
-                <div className="bg-emerald-50 rounded-lg p-2 text-xs text-emerald-800"><b className="text-emerald-600">คำตอบที่พนักงานปรับ:</b><br />{rec.finalAnswer}</div>
+                <div className="bg-sky-50 rounded-lg p-2 text-xs text-sky-800"><b className="text-sky-600">คำตอบที่พนักงานปรับ:</b><br />{rec.finalAnswer}</div>
               </div>
               {isSupervisor && (
                 <div className="flex gap-2">
-                  <button onClick={() => onPromote(rec.id)} className="text-xs px-3 py-1.5 rounded-lg bg-teal-600 hover:bg-teal-700 text-white flex items-center gap-1"><Check size={13} /> เพิ่มเข้า KB (สอน AI)</button>
+                  <button onClick={() => onPromote(rec.id)} className="text-xs px-3 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-700 text-white flex items-center gap-1"><Check size={13} /> เพิ่มเข้า KB (สอน AI)</button>
                   <button onClick={() => onReject(rec.id)} className="text-xs px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600">ไม่ใช้</button>
                 </div>
               )}
