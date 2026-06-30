@@ -52,10 +52,13 @@ export async function generateDraftForMessage(
   // ones were handled elsewhere, e.g. answered on LINE OA directly).
   const customerRec = await prisma.customer.findUnique({
     where: { id: message.customerId },
-    select: { stage: true, answeredThroughAt: true },
+    select: { stage: true, answeredThroughAt: true, code: true },
   });
   const currentStage = customerRec?.stage ?? null;
   const answeredThroughAt = customerRec?.answeredThroughAt ?? null;
+  // A customer with a code (e.g. ร001) is an existing/known customer — confirm their existing
+  // delivery/billing details rather than asking for them from scratch.
+  const existingCustomer = !!customerRec?.code;
   // Guard: never (re)draft a message handled before the cutoff (e.g. a stray regenerate on an
   // already-answered message). The webhook/UI never hit this; a raw API call just gets a 404.
   if (answeredThroughAt && message.createdAt <= answeredThroughAt) {
@@ -164,6 +167,7 @@ export async function generateDraftForMessage(
         suggestProducts,
         confirmedProducts,
         currentStage,
+        existingCustomer,
         agentText: opts?.agentText,
       });
       const raw = await callClaude(user, system);

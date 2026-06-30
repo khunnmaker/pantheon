@@ -11,6 +11,7 @@ export interface PromptContext {
   suggestProducts?: ProductMatch[]; // cross-sell products the staff chose to upsell (mention these)
   confirmedProducts?: ProductMatch[]; // products staff manually identified as the answer (e.g. from an image the AI couldn't read) — write the reply about these
   currentStage?: string | null; // the customer's current pipeline stage (context only)
+  existingCustomer?: boolean; // has a staff/Express code (ร001…) → confirm existing address/tax, don't ask fresh
   agentText?: string; // the agent's current draft text — the ✨ button refines/builds on it, incorporating selected products
 }
 
@@ -52,7 +53,7 @@ function renderProducts(products: ProductMatch[]): string {
 // (trusted); the customer message is passed in the USER turn, fenced and labelled
 // as DATA (untrusted) so it cannot redefine the rules or the JSON envelope.
 export function buildDraftPrompt(ctx: PromptContext): DraftPrompt {
-  const { question, kb, recentWindow, summary, retrievedMessages, products, suggestProducts, confirmedProducts, currentStage, agentText } = ctx;
+  const { question, kb, recentWindow, summary, retrievedMessages, products, suggestProducts, confirmedProducts, currentStage, existingCustomer, agentText } = ctx;
 
   const system = `คุณคือผู้ช่วย "ร่าง" คำตอบให้ลูกค้าของบริษัท Prominent (จำหน่ายอุปกรณ์ทันตกรรม) ผ่าน LINE
 คำตอบจะถูกพนักงานตรวจก่อนส่งจริงเสมอ
@@ -86,6 +87,7 @@ ${renderKb(kb)}
 
   const parts: string[] = [];
   if (currentStage) parts.push(`ขั้นตอนปัจจุบันของลูกค้าใน pipeline: ${currentStage} (ใช้ปรับโทน/บริบทคำตอบให้เหมาะ)`);
+  if (existingCustomer) parts.push('ลูกค้าคนนี้เป็น "ลูกค้าเดิม" ที่มีข้อมูลในระบบแล้ว — ถ้าต้องใช้ที่อยู่จัดส่ง/ข้อมูลออกบิล/เลขผู้เสียภาษี ให้ "ยืนยันของเดิม" เช่น "ใช้ที่อยู่จัดส่งเดิมไหมคะ" แทนการถามรายละเอียดใหม่ทั้งหมด');
   if (summary) parts.push(`สรุป/ความจำระยะยาวของลูกค้าคนนี้:\n${summary}`);
   if (retrievedMessages) parts.push(`ข้อความเก่าที่เกี่ยวข้อง (retrieval):\n${retrievedMessages}`);
   if (products && products.length) {

@@ -1167,9 +1167,17 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                       )}
                       {prodSearchOpen && (
                             <div className="space-y-1.5 border border-slate-200 rounded-xl p-2 bg-slate-50">
-                              <input value={prodSearchQ} onChange={(e) => setProdSearchQ(e.target.value)}
-                                placeholder="พิมพ์ชื่อสินค้า หรือ SKU…"
-                                className="w-full px-2 py-1.5 rounded-lg border border-slate-300 text-xs focus:outline-none focus:ring-2 focus:ring-teal-400" />
+                              <div className="relative">
+                                <input value={prodSearchQ} onChange={(e) => setProdSearchQ(e.target.value)}
+                                  placeholder="พิมพ์ชื่อสินค้า หรือ SKU…"
+                                  className="w-full px-2 py-1.5 pr-7 rounded-lg border border-slate-300 text-xs focus:outline-none focus:ring-2 focus:ring-teal-400" />
+                                {prodSearchQ && (
+                                  <button type="button" onClick={() => setProdSearchQ('')} title="ล้าง" aria-label="ล้างคำค้นหา"
+                                    className="absolute right-1.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
+                                    <X size={14} />
+                                  </button>
+                                )}
+                              </div>
                               {prodSearching && <div className="text-[11px] text-slate-400 flex items-center gap-1"><Loader2 size={12} className="animate-spin" /> กำลังค้นหา…</div>}
                               <div className="max-h-56 overflow-y-auto space-y-1">
                                 {prodSearchResults.map((p) => (
