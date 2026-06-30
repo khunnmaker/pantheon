@@ -35,9 +35,11 @@ export async function stockRoutes(app: FastifyInstance) {
 
   // GET /api/stock/summary — headline counts for the Vulcan dashboard / login landing.
   app.get('/api/stock/summary', async () => {
-    const [total, withStock, lastImport] = await Promise.all([
+    const [total, withStock, outOfStock, unknown, lastImport] = await Promise.all([
       prisma.product.count({ where: { status: 'active' } }),
       prisma.product.count({ where: { status: 'active', stock: { not: null } } }),
+      prisma.product.count({ where: { status: 'active', stock: 0 } }),
+      prisma.product.count({ where: { status: 'active', stock: null } }),
       prisma.stockImport.findFirst({ orderBy: { importedAt: 'desc' } }),
     ]);
     // Low count needs a column-vs-column compare (stock <= reorderPoint) → raw SQL.
@@ -46,12 +48,14 @@ export async function stockRoutes(app: FastifyInstance) {
       WHERE status = 'active' AND stock IS NOT NULL AND "reorderPoint" IS NOT NULL
         AND stock <= "reorderPoint"`;
     const low = Number(lowRows[0]?.n ?? 0);
-    return { total, withStock, low, lastImport };
+    return { total, withStock, outOfStock, unknown, low, lastImport };
   });
 
   // GET /api/stock/list?q=&filter=all|low|unknown&limit= — the searchable stock table.
   // Empty q + filter=all returns the most-recently-updated products (a sensible default
-  // landing list); filter=low returns only low-stock SKUs; unknown = stock IS NULL.
+  // landing list). filter=low|out|unknown query the WHOLE catalog (not just a page) so the
+  // counts the dashboard shows and the rows here always agree. A search query (q) takes
+  // precedence and is then narrowed by the filter.
   app.get('/api/stock/list', async (req) => {
     const { q, filter, limit } = req.query as { q?: string; filter?: string; limit?: string };
     const take = Math.min(Math.max(Number(limit) || 100, 1), 500);
@@ -68,6 +72,36 @@ export async function stockRoutes(app: FastifyInstance) {
       // Preserve search ranking order.
       const order = new Map(skus.map((s, i) => [s, i]));
       products.sort((a, b) => (order.get(a.sku) ?? 0) - (order.get(b.sku) ?? 0));
+      let rows = products.map(toStockRow);
+      if (filter === 'low') rows = rows.filter((r) => r.low);
+      else if (filter === 'out') rows = rows.filter((r) => r.stock === 0);
+      else if (filter === 'unknown') rows = rows.filter((r) => r.stock == null);
+      return { products: rows };
+    }
+
+    if (filter === 'low') {
+      // Column-vs-column compare → raw SQL for the SKUs, then fetch full rows.
+      const lowSkus = await prisma.$queryRaw<{ sku: string }[]>`
+        SELECT sku FROM "Product"
+        WHERE status = 'active' AND stock IS NOT NULL AND "reorderPoint" IS NOT NULL
+          AND stock <= "reorderPoint"
+        ORDER BY (stock::float / NULLIF("reorderPoint", 0)) ASC NULLS FIRST, stock ASC
+        LIMIT ${take}`;
+      products = await prisma.product.findMany({ where: { sku: { in: lowSkus.map((r) => r.sku) } } });
+      const ord = new Map(lowSkus.map((r, i) => [r.sku, i]));
+      products.sort((a, b) => (ord.get(a.sku) ?? 0) - (ord.get(b.sku) ?? 0));
+    } else if (filter === 'out') {
+      products = await prisma.product.findMany({
+        where: { status: 'active', stock: 0 },
+        orderBy: { sku: 'asc' },
+        take,
+      });
+    } else if (filter === 'unknown') {
+      products = await prisma.product.findMany({
+        where: { status: 'active', stock: null },
+        orderBy: { sku: 'asc' },
+        take,
+      });
     } else {
       products = await prisma.product.findMany({
         where: { status: 'active' },
@@ -76,10 +110,7 @@ export async function stockRoutes(app: FastifyInstance) {
       });
     }
 
-    let rows = products.map(toStockRow);
-    if (filter === 'low') rows = rows.filter((r) => r.low);
-    else if (filter === 'unknown') rows = rows.filter((r) => r.stock == null);
-    return { products: rows };
+    return { products: products.map(toStockRow) };
   });
 
   // POST /api/stock/adjust { sku, toQty, reason } — manual correction between imports.

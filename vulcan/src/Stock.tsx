@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   Boxes, Search, Upload, History, LogOut, AlertTriangle, Check, Loader2,
-  Package, RefreshCw, ChevronRight, X,
+  Package, RefreshCw, ChevronRight, X, LayoutDashboard, PackageX, PackageCheck,
+  HelpCircle, Clock, ArrowRight,
 } from 'lucide-react';
 import {
   type Agent, type StockRow, type StockSummary, type StockImportRow,
@@ -10,7 +11,8 @@ import {
   previewImport, applyImport, clearSession, API_URL,
 } from './lib/api';
 
-type Tab = 'stock' | 'import' | 'history';
+type Tab = 'dashboard' | 'stock' | 'import' | 'history';
+type StockFilter = 'all' | 'low' | 'out' | 'unknown';
 
 // Product photo thumbnail (served public from the shared api). photoSku is the catalog
 // photo key (variants share a lead photo); hides itself if the image is missing.
@@ -55,13 +57,20 @@ function isStale(iso: string | null): boolean {
 }
 
 export default function Stock({ agent, onLogout }: { agent: Agent; onLogout: () => void }) {
-  const [tab, setTab] = useState<Tab>('stock');
+  const [tab, setTab] = useState<Tab>('dashboard');
   const [summary, setSummary] = useState<StockSummary | null>(null);
+  // Stock-tab filter lifted here so the dashboard cards can deep-link into a filtered view.
+  const [stockFilter, setStockFilter] = useState<StockFilter>('all');
 
   const loadSummary = useCallback(() => {
     getSummary().then(setSummary).catch(() => {});
   }, []);
   useEffect(() => loadSummary(), [loadSummary]);
+
+  function goToStock(filter: StockFilter) {
+    setStockFilter(filter);
+    setTab('stock');
+  }
 
   function logout() {
     clearSession();
@@ -76,6 +85,9 @@ export default function Stock({ agent, onLogout }: { agent: Agent; onLogout: () 
             <Boxes size={22} /> Vulcan
           </div>
           <nav className="flex gap-1 text-sm">
+            <TabBtn active={tab === 'dashboard'} onClick={() => setTab('dashboard')} icon={<LayoutDashboard size={15} />}>
+              ภาพรวม
+            </TabBtn>
             <TabBtn active={tab === 'stock'} onClick={() => setTab('stock')} icon={<Package size={15} />}>
               สต็อก
             </TabBtn>
@@ -104,7 +116,16 @@ export default function Stock({ agent, onLogout }: { agent: Agent; onLogout: () 
       </header>
 
       <main className="max-w-6xl mx-auto px-4 py-5">
-        {tab === 'stock' && <StockTab onChanged={loadSummary} />}
+        {tab === 'dashboard' && (
+          <DashboardTab
+            summary={summary}
+            onGoStock={goToStock}
+            onGoImport={() => setTab('import')}
+          />
+        )}
+        {tab === 'stock' && (
+          <StockTab filter={stockFilter} setFilter={setStockFilter} onChanged={loadSummary} />
+        )}
         {tab === 'import' && (
           <ImportTab
             onApplied={() => {
@@ -134,10 +155,206 @@ function TabBtn({
   );
 }
 
+// ── Dashboard (landing) ─────────────────────────────────────────────────
+function relTime(iso: string): string {
+  const ms = Date.now() - new Date(iso).getTime();
+  const h = Math.floor(ms / 3600000);
+  if (h < 1) return 'เมื่อสักครู่';
+  if (h < 24) return `${h} ชั่วโมงที่แล้ว`;
+  const d = Math.floor(h / 24);
+  return `${d} วันที่แล้ว`;
+}
+
+function MetricCard({
+  label, value, tone, icon, onClick,
+}: {
+  label: string; value: number | string; tone: 'slate' | 'emerald' | 'amber' | 'rose' | 'indigo';
+  icon: ReactNode; onClick?: () => void;
+}) {
+  const tones: Record<string, string> = {
+    slate: 'text-slate-700 bg-slate-100',
+    emerald: 'text-emerald-700 bg-emerald-100',
+    amber: 'text-amber-700 bg-amber-100',
+    rose: 'text-rose-700 bg-rose-100',
+    indigo: 'text-indigo-700 bg-indigo-100',
+  };
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={!onClick}
+      className={`text-left bg-white rounded-2xl border border-slate-200 p-4 flex items-center gap-3 transition ${
+        onClick ? 'hover:border-indigo-300 hover:shadow-sm cursor-pointer' : 'cursor-default'
+      }`}
+    >
+      <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${tones[tone]}`}>{icon}</div>
+      <div className="min-w-0">
+        <div className="text-2xl font-bold text-slate-800 leading-tight">{value}</div>
+        <div className="text-xs text-slate-500 flex items-center gap-1">
+          {label}
+          {onClick && <ArrowRight size={11} className="text-slate-300" />}
+        </div>
+      </div>
+    </button>
+  );
+}
+
+function DashboardTab({
+  summary, onGoStock, onGoImport,
+}: {
+  summary: StockSummary | null;
+  onGoStock: (f: StockFilter) => void;
+  onGoImport: () => void;
+}) {
+  const [low, setLow] = useState<StockRow[]>([]);
+  const [imports, setImports] = useState<StockImportRow[]>([]);
+  const [adjustments, setAdjustments] = useState<StockAdjustmentRow[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    Promise.all([getStockList('', 'low'), getImports(), getAdjustments()])
+      .then(([l, i, a]) => {
+        setLow(l.products);
+        setImports(i.imports);
+        setAdjustments(a.adjustments);
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  const lastImport = summary?.lastImport ?? null;
+  const stale = lastImport ? isStale(lastImport.importedAt) : true;
+
+  return (
+    <div className="space-y-5">
+      {/* metric cards */}
+      <div className="grid gap-3 grid-cols-2 lg:grid-cols-5">
+        <MetricCard label="สินค้าทั้งหมด" value={summary?.total ?? '—'} tone="slate"
+          icon={<Boxes size={20} />} onClick={() => onGoStock('all')} />
+        <MetricCard label="มีสต็อก" value={summary?.withStock ?? '—'} tone="emerald"
+          icon={<PackageCheck size={20} />} onClick={() => onGoStock('all')} />
+        <MetricCard label="ใกล้หมด" value={summary?.low ?? '—'} tone="amber"
+          icon={<AlertTriangle size={20} />} onClick={() => onGoStock('low')} />
+        <MetricCard label="หมด" value={summary?.outOfStock ?? '—'} tone="rose"
+          icon={<PackageX size={20} />} onClick={() => onGoStock('out')} />
+        <MetricCard label="ไม่ทราบสต็อก" value={summary?.unknown ?? '—'} tone="slate"
+          icon={<HelpCircle size={20} />} onClick={() => onGoStock('unknown')} />
+      </div>
+
+      {/* last import status */}
+      <div className={`rounded-2xl border p-4 flex flex-wrap items-center gap-x-6 gap-y-2 ${
+        stale ? 'bg-amber-50 border-amber-200' : 'bg-white border-slate-200'
+      }`}>
+        <div className="flex items-center gap-2 font-semibold text-slate-700">
+          <Clock size={16} className={stale ? 'text-amber-600' : 'text-slate-400'} />
+          สถานะข้อมูลสต็อก
+        </div>
+        {lastImport ? (
+          <>
+            <div className="text-sm">
+              <span className="text-slate-500">นำเข้าล่าสุด: </span>
+              <span className={`font-medium ${stale ? 'text-amber-700' : 'text-slate-700'}`}>
+                {relTime(lastImport.importedAt)}
+              </span>
+              <span className="text-slate-400"> ({fmtDateTime(lastImport.importedAt)})</span>
+            </div>
+            <div className="text-sm text-slate-500">
+              อัปเดต {lastImport.skusUpdated}
+              {lastImport.skusUnmatched > 0 && ` · ไม่พบ ${lastImport.skusUnmatched}`}
+              {lastImport.fileName && ` · ${lastImport.fileName}`}
+            </div>
+            {stale && <span className="text-xs text-amber-700 font-medium">⚠ ข้อมูลอาจไม่เป็นปัจจุบัน — นำเข้าไฟล์ล่าสุด</span>}
+          </>
+        ) : (
+          <div className="text-sm text-slate-500">ยังไม่เคยนำเข้าไฟล์สต็อก</div>
+        )}
+        <button
+          onClick={onGoImport}
+          className="ml-auto px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium flex items-center gap-1"
+        >
+          <Upload size={14} /> นำเข้า CSV
+        </button>
+      </div>
+
+      <div className="grid gap-5 lg:grid-cols-2">
+        {/* low-stock action list */}
+        <div className="bg-white rounded-2xl border border-slate-200 p-4">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="font-semibold text-slate-800 flex items-center gap-2">
+              <AlertTriangle size={16} className="text-amber-500" /> ต้องสั่งซื้อ (ใกล้หมด)
+            </h2>
+            {low.length > 0 && (
+              <button onClick={() => onGoStock('low')} className="text-xs text-indigo-600 hover:underline flex items-center gap-0.5">
+                ดูทั้งหมด <ArrowRight size={12} />
+              </button>
+            )}
+          </div>
+          {loading ? (
+            <div className="text-slate-400 text-sm py-4 text-center"><Loader2 size={16} className="animate-spin inline" /></div>
+          ) : low.length === 0 ? (
+            <p className="text-sm text-slate-400 py-2">ไม่มีสินค้าใกล้หมด 👍</p>
+          ) : (
+            <ul className="divide-y divide-slate-100">
+              {low.slice(0, 8).map((r) => (
+                <li key={r.sku} className="flex items-center gap-2.5 py-1.5">
+                  <Thumb photoSku={r.photoSku} size={30} />
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm text-slate-700 truncate">{r.nameTh || r.nameEn || r.sku}</div>
+                    <div className="text-[10px] text-slate-400 font-mono">{r.sku}</div>
+                  </div>
+                  <div className="text-right shrink-0">
+                    <span className="text-sm font-bold text-rose-600">{r.stock}</span>
+                    <span className="text-[10px] text-slate-400"> / {r.reorderPoint}</span>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        {/* recent activity */}
+        <div className="bg-white rounded-2xl border border-slate-200 p-4">
+          <h2 className="font-semibold text-slate-800 flex items-center gap-2 mb-3">
+            <History size={16} className="text-indigo-600" /> ความเคลื่อนไหวล่าสุด
+          </h2>
+          {loading ? (
+            <div className="text-slate-400 text-sm py-4 text-center"><Loader2 size={16} className="animate-spin inline" /></div>
+          ) : imports.length === 0 && adjustments.length === 0 ? (
+            <p className="text-sm text-slate-400 py-2">ยังไม่มีความเคลื่อนไหว</p>
+          ) : (
+            <ul className="space-y-1.5 text-sm">
+              {imports.slice(0, 3).map((im) => (
+                <li key={im.id} className="flex items-center gap-2">
+                  <Upload size={13} className="text-indigo-500 shrink-0" />
+                  <span className="text-slate-600 flex-1 min-w-0 truncate">
+                    นำเข้า · อัปเดต {im.skusUpdated} รายการ
+                  </span>
+                  <span className="text-[11px] text-slate-400 shrink-0">{relTime(im.importedAt)}</span>
+                </li>
+              ))}
+              {adjustments.slice(0, 5).map((a) => (
+                <li key={a.id} className="flex items-center gap-2">
+                  <Package size={13} className="text-slate-400 shrink-0" />
+                  <span className="text-slate-600 flex-1 min-w-0 truncate">
+                    <span className="font-mono text-xs">{a.sku}</span> {a.fromQty ?? '—'} → <b>{a.toQty ?? '—'}</b>
+                    {a.reason ? ` · ${a.reason}` : ''}
+                  </span>
+                  <span className="text-[11px] text-slate-400 shrink-0">{relTime(a.at)}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Stock list + manual adjust + reorder point ──────────────────────────
-function StockTab({ onChanged }: { onChanged: () => void }) {
+function StockTab({
+  filter, setFilter, onChanged,
+}: { filter: StockFilter; setFilter: (f: StockFilter) => void; onChanged: () => void }) {
   const [q, setQ] = useState('');
-  const [filter, setFilter] = useState<'all' | 'low' | 'unknown'>('all');
   const [rows, setRows] = useState<StockRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -178,7 +395,7 @@ function StockTab({ onChanged }: { onChanged: () => void }) {
           />
         </div>
         <div className="flex gap-1">
-          {(['all', 'low', 'unknown'] as const).map((f) => (
+          {(['all', 'low', 'out', 'unknown'] as const).map((f) => (
             <button
               key={f}
               onClick={() => setFilter(f)}
@@ -188,7 +405,7 @@ function StockTab({ onChanged }: { onChanged: () => void }) {
                   : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'
               }`}
             >
-              {f === 'all' ? 'ทั้งหมด' : f === 'low' ? 'ใกล้หมด' : 'ไม่ทราบสต็อก'}
+              {f === 'all' ? 'ทั้งหมด' : f === 'low' ? 'ใกล้หมด' : f === 'out' ? 'หมด' : 'ไม่ทราบสต็อก'}
             </button>
           ))}
         </div>

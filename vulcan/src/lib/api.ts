@@ -27,6 +27,8 @@ export interface StockRow {
 export interface StockSummary {
   total: number;
   withStock: number;
+  outOfStock: number;
+  unknown: number;
   low: number;
   lastImport: StockImportRow | null;
 }
@@ -137,7 +139,7 @@ export async function login(email: string, password: string): Promise<{ token: s
 
 export const getSummary = () => authed<StockSummary>('/api/stock/summary');
 
-export const getStockList = (q: string, filter: 'all' | 'low' | 'unknown') =>
+export const getStockList = (q: string, filter: 'all' | 'low' | 'out' | 'unknown') =>
   authed<{ products: StockRow[] }>(
     `/api/stock/list?q=${encodeURIComponent(q)}&filter=${filter}`,
   );
