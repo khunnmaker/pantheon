@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { prisma } from '../db/prisma.js';
 import { requireAuth, requireRole } from '../auth/middleware.js';
+import { distillKnowledge } from '../llm/distill.js';
 
 export async function learningRoutes(app: FastifyInstance) {
   app.addHook('preHandler', requireAuth);
@@ -22,14 +23,30 @@ export async function learningRoutes(app: FastifyInstance) {
     if (!rec) return reply.code(404).send({ error: 'not_found' });
     if (rec.status === 'approved') return reply.code(409).send({ error: 'already_promoted' });
 
+    // Distill the staff's approved reply into reusable knowledge (facts only — no tone, no
+    // greeting/closing, no customer-specific details) BEFORE it enters the KB. The draft
+    // pipeline rephrases KB facts in Minerva's own voice. [[kb-learn-knowledge-not-tone]]
+    const distilled = await distillKnowledge(rec.customerQuestion, rec.finalAnswer);
+    if (!distilled.generalizable || !distilled.fact) {
+      // Too customer-specific to be general knowledge — don't pollute the KB. Resolve the
+      // queued item so it doesn't linger, and tell the supervisor why nothing was added.
+      await prisma.learnedAnswer.update({ where: { id: rec.id }, data: { status: 'rejected' } });
+      return { ok: true, kb: null, skipped: true, reason: 'not_generalizable' };
+    }
+
+    // Index by the real question plus the model's paraphrases (deduped, non-empty).
+    const questionVariants = Array.from(
+      new Set([rec.customerQuestion, ...distilled.questionVariants].map((v) => v.trim()).filter(Boolean)),
+    );
     const kb = await prisma.kbEntry.create({
       data: {
         category: 'เรียนรู้จากพนักงาน',
-        questionVariants: [rec.customerQuestion],
-        answer: rec.finalAnswer,
+        questionVariants,
+        answer: distilled.fact,
         sensitivity: 'normal',
         source: 'learned',
         status: 'active',
+        lastVerifiedAt: new Date(),
         ownerAgentId: req.agent?.id,
       },
     });

@@ -324,7 +324,10 @@ export const resolveFinanceAudit = (id: string) =>
 export const getLearned = (status = 'pending') =>
   authed<{ learned: LearnedAnswer[] }>(`/api/learned?status=${status}`);
 export const promoteLearned = (id: string) =>
-  authed<{ ok: boolean }>(`/api/learned/${id}/promote`, { method: 'POST' });
+  authed<{ ok: boolean; kb?: { answer: string } | null; skipped?: boolean; reason?: string }>(
+    `/api/learned/${id}/promote`,
+    { method: 'POST' },
+  );
 export const rejectLearned = (id: string) =>
   authed<{ ok: boolean }>(`/api/learned/${id}/reject`, { method: 'POST' });
 

@@ -870,9 +870,16 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
   }
 
   async function promote(id: string) {
-    await promoteLearned(id).catch(() => undefined);
+    const res = await promoteLearned(id).catch(() => null);
     await refreshLearned();
-    flashToast('เพิ่มเข้า KB แล้ว — AI จะใช้ครั้งต่อไป');
+    if (res?.skipped) {
+      flashToast('คำตอบนี้เฉพาะลูกค้ารายนี้ — ไม่ได้เพิ่มเป็นความรู้ทั่วไป');
+    } else if (res?.kb?.answer) {
+      const f = res.kb.answer;
+      flashToast('เพิ่มเข้า KB แล้ว (สรุปเป็นความรู้): ' + (f.length > 70 ? f.slice(0, 70) + '…' : f));
+    } else {
+      flashToast('เพิ่มเข้า KB แล้ว — AI จะใช้ครั้งต่อไป');
+    }
   }
   async function reject(id: string) {
     await rejectLearned(id).catch(() => undefined);
