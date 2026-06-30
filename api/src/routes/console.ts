@@ -8,6 +8,7 @@ import { readStaffUploadMeta, UPLOAD_ID_RE } from '../line/staffUploads.js';
 import { isStage } from '../stages.js';
 import { pushToConsole } from '../ws/io.js';
 import { isLow } from '../stock/helpers.js';
+import { hasPrice } from '../llm/guardrails.js';
 
 const RECENT_MESSAGES = 50;
 
@@ -315,11 +316,17 @@ export async function consoleRoutes(app: FastifyInstance) {
     const parsed = z.object({
       text: z.string().max(4000).optional(),
       uploadId: z.string().max(80).optional(), // optional staff photo/file attachment
+      confirmNumbers: z.boolean().optional(),
     }).safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: 'invalid_body' });
     const text = (parsed.data.text ?? '').trim();
     const { uploadId } = parsed.data;
     if (!text && !uploadId) return reply.code(400).send({ error: 'empty' });
+    // Same server-enforced price-confirm as /reply: a free-form message that quotes a price must
+    // be confirmed (428) before it sends, so a typed price can't reach a customer unchecked.
+    if (!parsed.data.confirmNumbers && hasPrice(text)) {
+      return reply.code(428).send({ error: 'needs_confirm' });
+    }
     const customer = await prisma.customer.findUnique({ where: { id: req.params.id } });
     if (!customer) return reply.code(404).send({ error: 'not_found' });
 

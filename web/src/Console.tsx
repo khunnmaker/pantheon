@@ -420,6 +420,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
   const [qrOpen, setQrOpen] = useState(false);
   const [qrSending, setQrSending] = useState(false);
   const [freeText, setFreeText] = useState('');
+  const [freeNeedsConfirm, setFreeNeedsConfirm] = useState(false);
   const [freeSending, setFreeSending] = useState(false);
   const [prodSearchOpen, setProdSearchOpen] = useState(false);
   const [prodSearchQ, setProdSearchQ] = useState('');
@@ -597,6 +598,12 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
         setError('คำตอบมีราคา — โปรดตรวจสอบตัวเลขแล้วกด "ยืนยันส่ง" อีกครั้ง');
         return;
       }
+      if ('alreadyReplied' in res) {
+        setError('ข้อความนี้ถูกตอบไปแล้ว');
+        await refreshLists();
+        if (selectedId) await loadDetail(selectedId);
+        return;
+      }
       flashToast(res.dryRun ? 'บันทึกแล้ว (โหมดทดสอบ — ยังไม่ส่งจริงไป LINE)' : 'ส่งคำตอบไปยังลูกค้าแล้ว ✓');
       if (res.learnedCaptured) flashToast('ส่งแล้ว — คำตอบที่แก้ถูกเก็บเข้าคลังการเรียนรู้');
       await refreshLists();
@@ -701,9 +708,15 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
     setFreeSending(true);
     setError('');
     try {
-      const res = await sendMessage(selectedId, freeText.trim(), upload?.uploadId);
+      const res = await sendMessage(selectedId, freeText.trim(), upload?.uploadId, freeNeedsConfirm);
+      if ('needsConfirm' in res) {
+        setFreeNeedsConfirm(true);
+        setError('ข้อความมีราคา — โปรดตรวจสอบตัวเลขแล้วกดส่งอีกครั้งเพื่อยืนยัน');
+        return;
+      }
       setFreeText('');
       setUpload(null);
+      setFreeNeedsConfirm(false);
       flashToast(res.dryRun ? 'บันทึกแล้ว (โหมดทดสอบ)' : 'ส่งข้อความให้ลูกค้าแล้ว ✓');
     } catch {
       setError('ส่งข้อความไม่สำเร็จ');
@@ -1344,7 +1357,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                           <button type="button" onClick={() => setUpload(null)} className="text-slate-400 hover:text-rose-500"><X size={14} /></button>
                         </div>
                       )}
-                      <textarea value={freeText} onChange={(e) => setFreeText(e.target.value)} rows={3}
+                      <textarea value={freeText} onChange={(e) => { setFreeText(e.target.value); setFreeNeedsConfirm(false); }} rows={3}
                         className="w-full flex-1 min-h-[100px] p-3 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-sky-400 resize-none" placeholder="พิมพ์ข้อความถึงลูกค้า…" />
                       <div className="grid grid-cols-[auto_auto_1fr] gap-2">
                         <button type="button" disabled={uploading || freeSending} onClick={openCamera}
@@ -1392,7 +1405,7 @@ function LearningMetrics() {
   }, []);
   useEffect(() => { load(); }, [load]);
   const pct = (r: number | null) => (r == null ? '—' : Math.round(r * 100) + '%');
-  const CAT_TH: Record<string, string> = { general: 'ทั่วไป', product: 'สินค้า', kb: 'คลังความรู้', price_stock: 'ราคา/สต็อก', clinical: 'คลินิก' };
+  const CAT_TH: Record<string, string> = { general: 'ทั่วไป', product: 'สินค้า', kb: 'คลังความรู้', price_stock: 'ราคา/สต็อก', clinical: 'คลินิก', payment: 'การชำระเงิน' };
   return (
     <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-4">
       <div className="flex items-center justify-between mb-3">

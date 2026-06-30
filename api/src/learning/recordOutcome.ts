@@ -66,7 +66,7 @@ export async function recordReplyOutcome(opts: {
       ratio = editRatio(draft.draftText, finalText);
     }
 
-    const sensitive = detectSensitiveIntent(customerQuestion); // price_stock | clinical | null
+    const sensitive = detectSensitiveIntent(customerQuestion); // price_stock | payment | clinical | null
     const category =
       sensitive ??
       (draft.productSku || draft.candidateSkus.length ? 'product' : draft.usedKb.length ? 'kb' : 'general');

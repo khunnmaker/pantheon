@@ -8,6 +8,7 @@ import { requireAuth } from '../auth/middleware.js';
 import { sendLineReply } from '../line/send.js';
 import { generateDraftForMessage } from '../llm/draft.js';
 import { rewriteText } from '../llm/rewrite.js';
+import { hasPrice } from '../llm/guardrails.js';
 import { embedMessage } from '../memory/embeddings.js';
 import { readImageContent } from '../line/contentStore.js';
 import { PRODUCT_PHOTO_DIR } from './content.js';
@@ -200,7 +201,7 @@ export async function messageRoutes(app: FastifyInstance) {
   app.post<{ Params: { id: string } }>('/api/messages/:id/reply', async (req, reply) => {
     const parsed = replyBody.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: 'invalid_body' });
-    const { finalText } = parsed.data;
+    const { finalText, confirmNumbers } = parsed.data;
     const agent = req.agent!;
 
     const customerMsg = await prisma.message.findUnique({ where: { id: req.params.id } });
@@ -209,6 +210,14 @@ export async function messageRoutes(app: FastifyInstance) {
     }
     const customer = await prisma.customer.findUnique({ where: { id: customerMsg.customerId } });
     if (!customer) return reply.code(404).send({ error: 'customer_not_found' });
+
+    // Server-enforced numbers-confirm (defense in depth, spec §8): a reply that quotes a price
+    // (a number next to a currency unit — bare-number prices like "250 ค่ะ" are NOT caught) must
+    // be explicitly confirmed before it can send — enforced HERE, not just in the console. 428
+    // (vs the 409 already-replied claim) tells the console to ask the staff to verify and resend.
+    if (!confirmNumbers && hasPrice(finalText)) {
+      return reply.code(428).send({ error: 'needs_confirm' });
+    }
 
     const draft = await prisma.draft.findUnique({ where: { messageId: customerMsg.id } });
 

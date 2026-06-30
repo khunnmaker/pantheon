@@ -1,7 +1,7 @@
 import type { KbEntry } from '@prisma/client';
 import type { DraftResult } from './parser.js';
 
-export type SensitiveIntent = 'price_stock' | 'clinical' | null;
+export type SensitiveIntent = 'price_stock' | 'clinical' | 'payment' | null;
 
 // Defense-in-depth ON TOP of the prompt rules. Thai + English/romanized terms,
 // matched after normalization so spacing/zero-width/case tricks can't evade.
@@ -21,6 +21,23 @@ const CLINICAL = [
   'pain', 'symptom', 'treat', 'diagnos', 'infect', 'swollen', 'cavity', 'gum', 'bleeding',
   'abscess', 'toothache',
 ];
+// Payment/transfer/account questions — the AI must never quote a bank account or confirm a
+// payment itself; these always go to staff (the owner's "payment stays human" lane).
+const PAYMENT = [
+  // Thai — transfer / account / methods
+  'โอน', 'สลิป', 'ชำระ', 'จ่ายเงิน', 'เงินสด', 'เลขบัญชี', 'เลขที่บัญชี', 'บัญชีธนาคาร', 'โอนเข้าบัญชี',
+  'พร้อมเพย์', 'เก็บเงินปลายทาง', 'เก็บปลายทาง', 'มัดจำ', 'หลักฐานการโอน', 'ยอดชำระ',
+  'บัตรเครดิต', 'บัตรเดบิต', 'รับบัตร', 'สแกนจ่าย', 'คิวอาร์',
+  // English / romanized
+  'promptpay', 'transfer', 'payment', 'bankaccount', 'qrcode', 'creditcard', 'debitcard', 'cod', 'cashondelivery',
+];
+// Payment ACTIONS the AI must never originate even inside an otherwise-answerable payment topic:
+// disclosing a bank/PromptPay number, or confirming a transfer was received. These stay human.
+const PAY_CONFIRM = [
+  'ยอดเข้า', 'เงินเข้า', 'ได้รับเงิน', 'ได้รับยอด', 'ได้รับการชำระ', 'โอนเข้าเรียบร้อย',
+  'ชำระเรียบร้อย', 'ตรวจสอบยอด', 'เช็กยอด', 'เช็คยอด',
+];
+const ACCOUNT_NUMBER = /[0-9๐-๙]{6,}/; // account / PromptPay length run (only consulted in payment context)
 
 // Lowercase, strip zero-width chars and ALL whitespace so spaced/zero-width/case
 // tricks all collapse to a matchable form.
@@ -42,6 +59,8 @@ function matches(text: string, words: string[]): boolean {
 export function detectSensitiveIntent(text: string): SensitiveIntent {
   // Clinical first — a medical question must always reach a professional.
   if (matches(text, CLINICAL)) return 'clinical';
+  // Payment before price: "โอนเงินค่าสินค้า" is a payment matter, not a price quote.
+  if (matches(text, PAYMENT)) return 'payment';
   if (matches(text, PRICE_STOCK) || PRICE_PATTERN.test(normalize(text))) return 'price_stock';
   return null;
 }
@@ -77,7 +96,13 @@ function pricesGrounded(draftText: string, citedKb: KbEntry[], extraGroundedText
   return tokens.every((t) => grounded.has(t));
 }
 
-const OVERRIDE: Record<'price_stock' | 'clinical', { draft: string; note: string }> = {
+// True if a (payment-context) draft originates a bank/PromptPay number or confirms a transfer.
+function originatesPaymentAction(text: string): boolean {
+  const t = normalize(text).replace(/[,.\-]/g, '');
+  return ACCOUNT_NUMBER.test(t) || PAY_CONFIRM.some((w) => t.includes(normalize(w)));
+}
+
+const OVERRIDE: Record<'price_stock' | 'clinical' | 'payment', { draft: string; note: string }> = {
   price_stock: {
     draft: 'ขอเช็กข้อมูลให้สักครู่นะคะ เดี๋ยวเจ้าหน้าที่ยืนยันให้อีกครั้งค่ะ 😊',
     note: 'คำถามเกี่ยวกับราคา/สต็อก — ต้องให้เจ้าหน้าที่ยืนยันข้อมูลปัจจุบัน (ห้ามเดาตัวเลข)',
@@ -85,6 +110,10 @@ const OVERRIDE: Record<'price_stock' | 'clinical', { draft: string; note: string
   clinical: {
     draft: 'เรื่องนี้ขอให้ทันตแพทย์/ผู้เชี่ยวชาญดูแลให้นะคะ เดี๋ยวเจ้าหน้าที่ติดต่อกลับค่ะ',
     note: 'คำถามเชิงคลินิก/การรักษา — ต้องให้ทันตแพทย์หรือผู้เชี่ยวชาญตอบ',
+  },
+  payment: {
+    draft: 'เรื่องการชำระเงิน/โอนเงิน ขอเจ้าหน้าที่ยืนยันรายละเอียดให้นะคะ เดี๋ยวติดต่อกลับค่ะ',
+    note: 'คำถามเกี่ยวกับการชำระเงิน/โอน/เลขบัญชี — ต้องให้เจ้าหน้าที่ยืนยัน (ห้าม AI ให้เลขบัญชีหรือยืนยันการชำระเอง)',
   },
 };
 
@@ -119,11 +148,12 @@ export function applyGuardrails(
   // answer (allowed) from a stock/availability reply that only defers (escalate).
   const statesGroundedPrice = priceTokens(result.draft).length > 0 && grounded;
 
-  const escalate = (reason: 'price_stock' | 'clinical'): GuardrailOutcome => {
+  const escalate = (reason: 'price_stock' | 'clinical' | 'payment'): GuardrailOutcome => {
     const o = OVERRIDE[reason];
-    // Keep the model's text only if it invents no price (grounded) and isn't
-    // clinical — so a polite "we'll check" and answerable parts survive.
-    const keep = reason !== 'clinical' && !!result.draft && grounded;
+    // Keep the model's text only if it invents no price (grounded) and isn't clinical or
+    // payment — so a polite "we'll check" and answerable parts survive, but the AI never
+    // originates a bank account / payment confirmation or a clinical answer.
+    const keep = reason !== 'clinical' && reason !== 'payment' && !!result.draft && grounded;
     return {
       result: { type: 'needs_human', draft: keep ? result.draft : o.draft, used_kb: result.used_kb, note: o.note },
       triggered: true,
@@ -133,7 +163,16 @@ export function applyGuardrails(
 
   // 1. Clinical always reaches a professional — no exceptions.
   if (kbClinical || qReason === 'clinical' || dReason === 'clinical') return escalate('clinical');
-  // 2. A KB topic a supervisor marked no_auto always escalates.
+  // 2. Payment: the AI MAY answer payment-method policy that's grounded in approved KB (how to
+  //    pay / cards / COD — the team marks those entries 'normal' on purpose), but must NEVER
+  //    originate a bank/PromptPay number or confirm a transfer was received — those stay human,
+  //    even when KB-grounded. Any price quoted must still be grounded (no invented numbers).
+  if (qReason === 'payment' || dReason === 'payment') {
+    if (result.type === 'draft' && originatesPaymentAction(result.draft)) return escalate('payment');
+    if (citedKb.length > 0 && grounded) return { result, triggered: false, reason: null };
+    return escalate('payment');
+  }
+  // 3. A KB topic a supervisor marked no_auto always escalates.
   if (kbNoAuto) return escalate('price_stock');
   // 3. Price/stock: a grounded price answer (KB or catalog) OR an availability answer
   //    backed by real stock data passes — provided any price quoted is grounded (no

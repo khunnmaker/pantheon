@@ -200,21 +200,23 @@ export interface ReplyResult {
   dryRun: boolean;
   learnedCaptured: boolean;
 }
-// Returns { needsConfirm: true } when the reply has numbers and confirm wasn't set.
+// Returns { needsConfirm: true } when the reply quotes a price and confirm wasn't set (428),
+// or { alreadyReplied: true } when this message was already answered (409 atomic claim).
 export async function sendReply(
   messageId: string,
   finalText: string,
   confirmNumbers?: boolean,
   attachProductSkus?: string[],
   uploadId?: string,
-): Promise<ReplyResult | { needsConfirm: true }> {
+): Promise<ReplyResult | { needsConfirm: true } | { alreadyReplied: true }> {
   const token = getToken();
   const res = await fetch(`${API_URL}/api/messages/${messageId}/reply`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
     body: JSON.stringify({ finalText, confirmNumbers, attachProductSkus, uploadId }),
   });
-  if (res.status === 409) return { needsConfirm: true };
+  if (res.status === 428) return { needsConfirm: true }; // reply has a price; staff must confirm
+  if (res.status === 409) return { alreadyReplied: true }; // someone already answered this one
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json() as Promise<ReplyResult>;
 }
@@ -267,13 +269,15 @@ export async function sendMessage(
   customerId: string,
   text: string,
   uploadId?: string,
-): Promise<{ message: Message; dryRun: boolean }> {
+  confirmNumbers?: boolean,
+): Promise<{ message: Message; dryRun: boolean } | { needsConfirm: true }> {
   const token = getToken();
   const res = await fetch(`${API_URL}/api/customers/${customerId}/message`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
-    body: JSON.stringify({ text, uploadId }),
+    body: JSON.stringify({ text, uploadId, confirmNumbers }),
   });
+  if (res.status === 428) return { needsConfirm: true }; // message has a price; staff must confirm
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json() as Promise<{ message: Message; dryRun: boolean }>;
 }
