@@ -13,6 +13,7 @@ import { readImageContent } from '../line/contentStore.js';
 import { PRODUCT_PHOTO_DIR } from './content.js';
 import { saveStaffUpload, readStaffUploadMeta, UPLOAD_ID_RE } from '../line/staffUploads.js';
 import { recordCrossSellOutcome } from '../catalog/crossSell.js';
+import { recordReplyOutcome } from '../learning/recordOutcome.js';
 import { recordProductKeywords } from '../catalog/match.js';
 import { readSlip } from '../llm/readSlip.js';
 import { sendToFinance } from '../finance/sendToFinance.js';
@@ -313,6 +314,10 @@ export async function messageRoutes(app: FastifyInstance) {
       });
       learnedCaptured = true;
     }
+
+    // Stage-1 learning instrumentation: record EVERY drafted send's outcome (accepted_verbatim
+    // / edited / escalated) so per-category AI-accuracy becomes measurable. Best-effort.
+    void recordReplyOutcome({ customerMessageId: customerMsg.id, customerQuestion: customerMsg.text, draft: draft ?? null, finalText, agentId: agent.id });
 
     await prisma.customer.update({ where: { id: customer.id }, data: { lastSeen: new Date() } });
 
