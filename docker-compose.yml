@@ -56,5 +56,20 @@ services:
     ports:
       - "5173:5173"
 
+  # Diana — the B2B website (prominentdental.com). Static bundle; talks to the
+  # shared api (catalog + photos + Diana routes). VITE_API_URL is baked at build.
+  diana:
+    build:
+      context: ./diana
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: ${DIANA_API_URL:-http://localhost:3000}
+    container_name: minerva-diana
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "5175:5175"
+
 volumes:
   minerva_pgdata:
