@@ -16,30 +16,30 @@ datasource db {
 }
 
 model Customer {
-  id          String          @id @default(cuid())
-  lineUserId  String          @unique
-  displayName String?
+  id                String          @id @default(cuid())
+  lineUserId        String          @unique
+  displayName       String?
   // staff-assigned nickname (shown in the console in preference to the LINE name)
-  nickname    String?
+  nickname          String?
   // staff-assigned customer code from the Express system (shown before the name, e.g. ร103)
-  code        String?
+  code              String?
   // staff-assigned area/type category (e.g. C1–C6 by zone, Lab) — one per customer
-  category    String?
+  category          String?
   // sales-pipeline stage (ถาม/สั่งซื้อ/ส่ง/ดูแล/เสร็จ/ยกเลิก) — staff-confirmed
-  stage          String?
+  stage             String?
   // the AI's pending stage suggestion; staff accept → stage. null = none/already accepted
-  suggestedStage String?
+  suggestedStage    String?
   // "ตอบแล้ว" cutoff: messages at/before this are handled (e.g. answered on LINE OA
   // directly). The AI drafts only from messages AFTER it, and the chat is not "waiting".
   answeredThroughAt DateTime?
-  firstSeen   DateTime        @default(now())
-  lastSeen    DateTime        @default(now())
+  firstSeen         DateTime        @default(now())
+  lastSeen          DateTime        @default(now())
   // legacy hide flag (the old "จบแชท" set it false). "ตอบแล้ว" no longer hides — chats stay
   // visible and just leave the waiting queue via answeredThroughAt. New messages set it true.
-  active      Boolean         @default(true)
-  messages    Message[]
-  memory      CustomerMemory?
-  sessions    Session[]
+  active            Boolean         @default(true)
+  messages          Message[]
+  memory            CustomerMemory?
+  sessions          Session[]
 }
 
 model Session {
@@ -53,17 +53,17 @@ model Session {
 }
 
 model Message {
-  id           String   @id @default(cuid())
-  customerId   String
-  sessionId    String?
-  role         String // customer | agent
-  text         String
-  agentId      String? // who sent (if agent)
-  kbIds        String[] // KB entries used
-  channelMsgId String? // LINE message id
+  id               String    @id @default(cuid())
+  customerId       String
+  sessionId        String?
+  role             String // customer | agent
+  text             String
+  agentId          String? // who sent (if agent)
+  kbIds            String[] // KB entries used
+  channelMsgId     String? // LINE message id
   // For agent replies: the customer message this answers. Unique → a customer
   // message can be answered exactly once (idempotent/replay-safe send).
-  answersMessageId String?  @unique
+  answersMessageId String?   @unique
   // Non-text messages: "image" | "sticker" | "video" | "audio" | "file" | "location" | "product".
   // attachmentRef holds the stored content-type, "packageId/stickerId" for stickers,
   // or the catalog photoSku for an agent "product" reply.
@@ -76,7 +76,7 @@ model Message {
   // the amount the AI OCR read off the slip (server-set, tamper-proof) — compared to the
   // staff-entered amount on forward; a mismatch is logged to the admin audit report.
   slipAmount       String?
-  createdAt        DateTime @default(now())
+  createdAt        DateTime  @default(now())
 
   customer Customer @relation(fields: [customerId], references: [id])
   session  Session? @relation(fields: [sessionId], references: [id])
@@ -211,21 +211,21 @@ model QuickReply {
 // price=0 means "unknown" (the AI must NOT quote it; defer to staff). Variant
 // SKUs (color/size) share a photo via photoSku (resolved to the cell's lead SKU).
 model Product {
-  sku       String   @id // e.g. "07-10-09"
-  nameEn    String   @default("")
-  nameTh    String   @default("")
-  price     Int      @default(0) // baht; 0 = unknown
-  promo     String   @default("") // e.g. "ซื้อ 9 แถม 1"
-  note      String   @default("") // pack/size/weight
-  page      Int? // catalog page
-  photoSku  String? // SKU whose photo file represents this product (self or lead variant)
-  keywords  String[] // search terms (tokenized names) for matching
-  status    String   @default("active") // active | archived
-  stock     Int? // remaining quantity from the latest stock snapshot (null = unknown)
-  stockAt   DateTime? // the date the stock figure is as-of (snapshot date)
+  sku          String    @id // e.g. "07-10-09"
+  nameEn       String    @default("")
+  nameTh       String    @default("")
+  price        Int       @default(0) // baht; 0 = unknown
+  promo        String    @default("") // e.g. "ซื้อ 9 แถม 1"
+  note         String    @default("") // pack/size/weight
+  page         Int? // catalog page
+  photoSku     String? // SKU whose photo file represents this product (self or lead variant)
+  keywords     String[] // search terms (tokenized names) for matching
+  status       String    @default("active") // active | archived
+  stock        Int? // remaining quantity from the latest stock snapshot (null = unknown)
+  stockAt      DateTime? // the date the stock figure is as-of (snapshot date)
   // Vulcan low-stock threshold (null = no threshold set). Low = stock != null && stock <= reorderPoint.
   reorderPoint Int?
-  updatedAt DateTime @updatedAt
+  updatedAt    DateTime  @updatedAt
 
   @@index([status])
 }
@@ -259,6 +259,106 @@ model StockAdjustment {
   at        DateTime @default(now())
 
   @@index([sku])
+}
+
+// ─── Diana (B2B website — prominentdental.com) ───────────────────────────
+// Diana is a 3rd reader of the shared catalog. It READS Product (name/price/
+// stock/photo) and NEVER writes it — these tables are Diana-owned and additive
+// only (guardrail: ADD only, never alter Minerva/Vulcan columns). There are
+// deliberately NO Prisma relations into Product/Customer: a relation would force
+// a back-reference field onto those Minerva-owned models. Instead Diana stores
+// `sku` and the Express customer `code` as plain strings. See docs/DIANA_BRIEF.md.
+
+// A clinic/lab web login. Registration is open; Prominent approves manually.
+// Prices, live stock, and the cart are gated behind status == "approved".
+model ClinicAccount {
+  id            String     @id @default(cuid())
+  email         String     @unique
+  passwordHash  String
+  // clinic/lab identity for approval review + invoicing
+  clinicName    String     @default("")
+  contactName   String     @default("")
+  phone         String     @default("")
+  // approval gate: pending → approved (can see prices/order) | rejected
+  status        String     @default("pending") // pending | approved | rejected
+  approvedAt    DateTime?
+  approvedBy    String? // agent id who approved/rejected
+  rejectNote    String     @default("")
+  // optional soft link to a Minerva/Express customer (e.g. "ร103"). Plain string,
+  // not a relation — Diana web identity is separate from LINE identity in v1;
+  // reconcile (same clinic, two channels) later. null = unlinked.
+  customerCode  String?
+  // PDPA: explicit consent captured at registration (Thailand compliance).
+  pdpaConsentAt DateTime?
+  createdAt     DateTime   @default(now())
+  lastLoginAt   DateTime?
+  orders        WebOrder[]
+
+  @@index([status])
+}
+
+// An order-REQUEST (v1 has no online payment): the clinic submits a cart,
+// Prominent confirms price + stock, then invoices and hands off to Express.
+model WebOrder {
+  id              String         @id @default(cuid())
+  clinicAccountId String
+  clinicAccount   ClinicAccount  @relation(fields: [clinicAccountId], references: [id])
+  // submitted → confirmed (price/stock checked) → invoiced (Express) | cancelled
+  status          String         @default("submitted") // submitted | confirmed | invoiced | cancelled
+  note            String         @default("") // free-text request note from the clinic
+  // Tax-invoice (ใบกำกับภาษี) capture — mirrors Minerva's finance flow. Filled at
+  // request time or on confirm; flows to Express (no live API → file import).
+  taxName         String         @default("")
+  taxAddress      String         @default("")
+  taxId           String         @default("")
+  confirmedAt     DateTime?
+  confirmedBy     String? // agent id
+  invoicedAt      DateTime?
+  createdAt       DateTime       @default(now())
+  lines           WebOrderLine[]
+
+  @@index([clinicAccountId])
+  @@index([status])
+}
+
+// One requested product line. unitPrice is SNAPSHOTTED from Product.price at
+// submission time (baht) — this is what makes tiered pricing a pure phase-2 add:
+// orders already record "the price this customer saw", so a future CustomerPrice
+// layer changes how the snapshot is computed, not the order schema. nameSnapshot
+// preserves the catalog name as ordered, even if the catalog later changes.
+model WebOrderLine {
+  id           String   @id @default(cuid())
+  orderId      String
+  order        WebOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  sku          String // references Product.sku (no FK — see section note)
+  nameSnapshot String   @default("")
+  qty          Int      @default(1)
+  unitPrice    Int      @default(0) // baht, snapshot of Product.price at submission (0 = was unknown)
+
+  @@index([orderId])
+  @@index([sku])
+}
+
+// SEO/credibility enrichment for the PUBLIC catalog — brand, category, and richer
+// copy that the shared Product table doesn't carry. Diana-owned and keyed by sku
+// (plain string, no FK into Product — same reasoning as the section note above).
+// Diana LEFT-JOINs this onto Product by sku; a missing row just means "not enriched
+// yet". `source` distinguishes the bulk keyword-derived pass from staff hand-edits
+// so a re-derive never clobbers manual work.
+model ProductEnrichment {
+  sku           String   @id // references Product.sku
+  brand         String   @default("")
+  category      String   @default("") // Thai category label (facet/filter)
+  categoryEn    String   @default("") // English category (SEO/URLs)
+  descriptionTh String   @default("")
+  descriptionEn String   @default("")
+  specs         String[] // bullet-point specs
+  source        String   @default("derived") // derived | manual
+  updatedBy     String? // agent id who last edited (manual)
+  updatedAt     DateTime @updatedAt
+
+  @@index([brand])
+  @@index([category])
 }
 
 // ─── DEFERRED TO M3: pgvector embedding tables (spec §5 note) ────────────

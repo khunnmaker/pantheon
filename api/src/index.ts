@@ -16,6 +16,7 @@ import { catalogRoutes } from './routes/catalog.js';
 import { quickReplyRoutes } from './routes/quickReplies.js';
 import { financeRoutes } from './routes/finance.js';
 import { stockRoutes } from './routes/stock.js';
+import { dianaRoutes } from './routes/diana.js';
 import { initIo } from './ws/io.js';
 import { sweepIdleSessions } from './memory/summarize.js';
 import { ensureSeeded } from './db/ensureSeeded.js';
@@ -75,6 +76,7 @@ async function buildServer() {
   await app.register(quickReplyRoutes);
   await app.register(financeRoutes);
   await app.register(stockRoutes);
+  await app.register(dianaRoutes);
 
   return app;
 }
