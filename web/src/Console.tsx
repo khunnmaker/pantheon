@@ -761,6 +761,14 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
     }, 300);
     return () => clearTimeout(t);
   }, [prodSearchQ]);
+
+  // Clear the manual product search when switching to a different customer (so one
+  // customer's search text/results don't carry over to the next).
+  useEffect(() => {
+    setProdSearchQ('');
+    setProdSearchResults([]);
+    setProdSearchOpen(false);
+  }, [selectedId]);
   async function saveQuickReply() {
     if (!qrLabel.trim() || !qrBody.trim() || qrSaving) return;
     setQrSaving(true);
