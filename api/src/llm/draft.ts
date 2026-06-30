@@ -10,6 +10,7 @@ import { isStage } from '../stages.js';
 import { callClaude, callClaudeWithImage, llmAvailable } from './anthropic.js';
 import { readImageContent } from '../line/contentStore.js';
 import { embeddingsAvailable, embedMessage, embedOne, retrieveSimilarMessages } from '../memory/embeddings.js';
+import { selectRelevantKb } from '../memory/kbRetrieval.js';
 
 const histLine = (role: string, text: string) =>
   `${role === 'customer' ? 'ลูกค้า' : 'ร้าน'}: ${text}`;
@@ -45,8 +46,6 @@ export async function generateDraftForMessage(
   // Non-text messages have dedicated draft paths (sticker = LINE keywords, image = vision).
   if (message.attachmentType === 'sticker') return generateStickerDraft(messageId);
   if (message.attachmentType === 'image') return generateImageDraft(messageId, opts?.mainSkus, opts?.agentText);
-
-  const kb = await prisma.kbEntry.findMany({ where: { status: 'active' } });
 
   // "ตอบแล้ว" cutoff: when set, the AI only considers messages created AFTER it (the earlier
   // ones were handled elsewhere, e.g. answered on LINE OA directly).
@@ -107,6 +106,12 @@ export async function generateDraftForMessage(
     unanswered.length > 1
       ? unanswered.map((m, i) => `${i + 1}. ${m.text}`).join('\n')
       : message.text;
+
+  // KB selection: the whole KB while it's small, else the entries most relevant to the
+  // question(s) (+ policy/sensitive entries always) so the prompt stays bounded as it grows.
+  // Pass each unanswered question separately so a burst retrieves per-question, not averaged.
+  const kbQueries = unanswered.length > 1 ? unanswered.map((m) => m.text) : [message.text];
+  const kb = await selectRelevantKb(kbQueries);
 
   // Retrieval (M3 layer 2): embed this message for future recall, then pull the
   // top-K most relevant OLDER messages (excluding the recent window already shown).

@@ -1,6 +1,7 @@
 import { prisma } from './prisma.js';
 import { hashPassword, verifyPassword } from '../auth/password.js';
 import { HISTORY_KB } from '../kb/historyKb.js';
+import { embed, embeddingsAvailable, storeKbEmbedding, kbEmbeddingText } from '../memory/embeddings.js';
 
 // Canonical staff list — the single source of truth for who can log in.
 // Synced on every boot (see syncStaff): names/roles come from here, passwords
@@ -61,6 +62,43 @@ async function syncStaff(): Promise<void> {
 
 // Populate an EMPTY production database on boot so a fresh cloud deploy is usable
 // without a manual seed step. KB loads only when empty; staff are reconciled to
+// Backfill missing KB embeddings (best-effort, batched). The kb_embedding table exists from
+// the M3 pgvector migration but was never populated; semantic retrieval needs it. Idempotent:
+// only embeds active entries that have no row yet, so it's a near no-op after the first run.
+async function backfillKbEmbeddings(): Promise<void> {
+  if (!embeddingsAvailable()) return;
+  try {
+    const missing = await prisma.$queryRaw<{ id: string; questionVariants: string[]; answer: string }[]>`
+      SELECT k.id, k."questionVariants", k.answer
+      FROM "KbEntry" k
+      LEFT JOIN kb_embedding ke ON ke.kb_id = k.id
+      WHERE k.status = 'active' AND ke.kb_id IS NULL`;
+    if (!missing.length) return;
+    const CHUNK = 64; // bound the Voyage request payload
+    let done = 0;
+    for (let i = 0; i < missing.length; i += CHUNK) {
+      const batch = missing.slice(i, i + CHUNK);
+      try {
+        const vecs = await embed(batch.map((m) => kbEmbeddingText(m)), 'document');
+        // allSettled + the vecs[j] guard so one bad row/store never aborts the whole run;
+        // anything left unembedded is just retried on the next boot.
+        const results = await Promise.allSettled(
+          batch.map((m, j) => (vecs[j] ? storeKbEmbedding(m.id, vecs[j]) : Promise.reject(new Error('no vector')))),
+        );
+        done += results.filter((r) => r.status === 'fulfilled').length;
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error('[seed] KB embedding chunk failed (will retry next boot)', err);
+      }
+    }
+    // eslint-disable-next-line no-console
+    console.log(`[seed] backfilled ${done}/${missing.length} KB embeddings`);
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('[seed] KB embedding backfill failed', err);
+  }
+}
+
 // the canonical list every boot (see syncStaff).
 export async function ensureSeeded(): Promise<void> {
   try {
@@ -85,6 +123,8 @@ export async function ensureSeeded(): Promise<void> {
     }
 
     await syncStaff();
+    // Populate any missing KB embeddings in the background (never blocks boot/readiness).
+    void backfillKbEmbeddings();
   } catch (err) {
     // eslint-disable-next-line no-console
     console.error('[seed] ensureSeeded failed', err);

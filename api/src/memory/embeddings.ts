@@ -53,8 +53,10 @@ export async function embedMessage(messageId: string, text: string): Promise<voi
   try {
     const [vec] = await embed([text], 'document');
     await storeMessageEmbedding(messageId, vec);
-  } catch {
-    /* best-effort: a missing embedding only means this message won't be retrieved */
+  } catch (err) {
+    // best-effort: a missing embedding only means this message won't be retrieved
+    // eslint-disable-next-line no-console
+    console.warn('[embed] message embed failed for', messageId, err);
   }
 }
 
@@ -87,4 +89,71 @@ export async function retrieveSimilarMessages(
     ORDER BY me.embedding <=> ${lit}::vector
     LIMIT ${k}`;
   return rows;
+}
+
+// ── KB embeddings (kb_embedding table exists from the M3 pgvector migration) ──
+
+// Text that represents a KB entry in the vector space: the questions it answers plus
+// the fact/answer, so both question-phrased and topic-phrased queries can retrieve it.
+export function kbEmbeddingText(entry: { questionVariants: string[]; answer: string }): string {
+  return [entry.questionVariants.join('\n'), entry.answer].filter(Boolean).join('\n');
+}
+
+export async function storeKbEmbedding(kbId: string, vec: number[]): Promise<void> {
+  const lit = toVectorLiteral(vec);
+  await prisma.$executeRaw`
+    INSERT INTO kb_embedding (kb_id, embedding)
+    VALUES (${kbId}, ${lit}::vector)
+    ON CONFLICT (kb_id) DO UPDATE SET embedding = EXCLUDED.embedding`;
+}
+
+// Embed + store one KB entry; best-effort (never throws — retrieval just falls back to
+// the full KB if an entry is missing its embedding).
+export async function embedKbEntry(kbId: string, text: string): Promise<void> {
+  if (!embeddingsAvailable()) return;
+  try {
+    const [vec] = await embed([text], 'document');
+    await storeKbEmbedding(kbId, vec);
+  } catch (err) {
+    // Couldn't (re)embed — drop any existing row so we never serve a STALE vector for an
+    // edited entry. Retrieval then falls back to the full KB for it, and the next boot's
+    // backfill (which targets rows with no embedding) re-embeds it.
+    await deleteKbEmbedding(kbId);
+    // eslint-disable-next-line no-console
+    console.warn('[kb] embed failed for', kbId, err);
+  }
+}
+
+export async function deleteKbEmbedding(kbId: string): Promise<void> {
+  try {
+    await prisma.$executeRaw`DELETE FROM kb_embedding WHERE kb_id = ${kbId}`;
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn('[kb] delete embedding failed for', kbId, err);
+  }
+}
+
+// Top-K active KB entry IDs most similar to the query vector (cosine distance).
+export async function retrieveRelevantKbIds(queryVec: number[], k: number): Promise<string[]> {
+  const lit = toVectorLiteral(queryVec);
+  const rows = await prisma.$queryRaw<{ kb_id: string }[]>`
+    SELECT ke.kb_id
+    FROM kb_embedding ke
+    JOIN "KbEntry" k ON k.id = ke.kb_id
+    WHERE k.status = 'active'
+    ORDER BY ke.embedding <=> ${lit}::vector
+    LIMIT ${k}`;
+  return rows.map((r) => r.kb_id);
+}
+
+// How many ACTIVE KB entries currently have an embedding row. Lets retrieval detect a
+// not-yet-warm index (boot backfill mid-run, or a write whose re-embed failed) and fall
+// back to the full KB rather than search a half-populated index.
+export async function countActiveKbEmbeddings(): Promise<number> {
+  const rows = await prisma.$queryRaw<{ n: number }[]>`
+    SELECT count(*)::int AS n
+    FROM kb_embedding ke
+    JOIN "KbEntry" k ON k.id = ke.kb_id
+    WHERE k.status = 'active'`;
+  return rows[0]?.n ?? 0;
 }

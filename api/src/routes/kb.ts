@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { prisma } from '../db/prisma.js';
 import { requireAuth, requireRole } from '../auth/middleware.js';
+import { embedKbEntry, kbEmbeddingText, deleteKbEmbedding } from '../memory/embeddings.js';
 
 const sensitivity = z.enum(['normal', 'price_stock', 'clinical', 'no_auto']);
 
@@ -37,6 +38,7 @@ export async function kbRoutes(app: FastifyInstance) {
     const kb = await prisma.kbEntry.create({
       data: { ...parsed.data, source: 'manual', status: 'active', ownerAgentId: req.agent?.id },
     });
+    void embedKbEntry(kb.id, kbEmbeddingText(kb));
     return reply.code(201).send({ kb });
   });
 
@@ -47,6 +49,9 @@ export async function kbRoutes(app: FastifyInstance) {
     const existing = await prisma.kbEntry.findUnique({ where: { id: req.params.id } });
     if (!existing) return reply.code(404).send({ error: 'not_found' });
     const kb = await prisma.kbEntry.update({ where: { id: req.params.id }, data: parsed.data });
+    // Re-embed on edit; drop the embedding if it was archived/deactivated.
+    if (kb.status === 'active') void embedKbEntry(kb.id, kbEmbeddingText(kb));
+    else void deleteKbEmbedding(kb.id);
     return { kb };
   });
 
@@ -55,6 +60,7 @@ export async function kbRoutes(app: FastifyInstance) {
     const existing = await prisma.kbEntry.findUnique({ where: { id: req.params.id } });
     if (!existing) return reply.code(404).send({ error: 'not_found' });
     await prisma.kbEntry.update({ where: { id: req.params.id }, data: { status: 'archived' } });
+    void deleteKbEmbedding(req.params.id);
     return { ok: true };
   });
 }

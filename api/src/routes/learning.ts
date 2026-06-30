@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { prisma } from '../db/prisma.js';
 import { requireAuth, requireRole } from '../auth/middleware.js';
 import { distillKnowledge } from '../llm/distill.js';
+import { embedKbEntry, kbEmbeddingText } from '../memory/embeddings.js';
 
 export async function learningRoutes(app: FastifyInstance) {
   app.addHook('preHandler', requireAuth);
@@ -50,6 +51,8 @@ export async function learningRoutes(app: FastifyInstance) {
         ownerAgentId: req.agent?.id,
       },
     });
+    // Index the new fact for semantic retrieval (best-effort).
+    void embedKbEntry(kb.id, kbEmbeddingText(kb));
     await prisma.learnedAnswer.update({
       where: { id: rec.id },
       data: { status: 'approved', promotedKbId: kb.id },
