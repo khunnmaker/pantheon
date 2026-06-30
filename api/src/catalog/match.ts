@@ -61,7 +61,15 @@ export async function findProducts(query: string, limit = 5): Promise<ProductMat
   if (!tokens.length) return [];
 
   // Learned associations: products staff manually picked for similar-keyword questions.
-  const learned = await prisma.productKeyword.findMany({ where: { keyword: { in: tokens } } });
+  // Trust GATE (anti-poisoning): only links reinforced at least TRUST_MIN_SCORE times count,
+  // so a single wrong pick can never surface a product; and only links reinforced within
+  // FRESH_DAYS count, so a stale/one-off association decays out instead of poisoning forever.
+  const TRUST_MIN_SCORE = 2;
+  const FRESH_DAYS = 180;
+  const freshCutoff = new Date(Date.now() - FRESH_DAYS * 24 * 60 * 60 * 1000);
+  const learned = await prisma.productKeyword.findMany({
+    where: { keyword: { in: tokens }, score: { gte: TRUST_MIN_SCORE }, updatedAt: { gt: freshCutoff } },
+  });
   const learnedScore = new Map<string, number>();
   for (const l of learned) learnedScore.set(l.sku, (learnedScore.get(l.sku) ?? 0) + l.score);
 
