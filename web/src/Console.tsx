@@ -310,7 +310,7 @@ function FinanceModal({ messageId, onClose, onSent }: { messageId: string; onClo
         <div className="font-semibold text-slate-800 flex items-center gap-1.5"><Banknote size={17} className="text-amber-600" /> แจ้งการเงิน</div>
         {loading && <div className="text-xs text-slate-400 flex items-center gap-1"><Loader2 size={13} className="animate-spin" /> กำลังอ่านสลิป…</div>}
         <div className="grid grid-cols-2 gap-2">
-          {field('ชื่อเล่น', 'nickname', '', true)}
+          {field('ชื่อ', 'nickname', '', true)}
           {field('ชื่อผู้โอน', 'realName', 'ชื่อผู้โอน')}
           {field('จำนวนเงิน', 'amount', 'เช่น 1500')}
           {field('บัญชีที่รับเงิน', 'bank', 'กสิกร / ไทยพาณิชย์')}

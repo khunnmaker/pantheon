@@ -157,7 +157,9 @@ export async function messageRoutes(app: FastifyInstance) {
     if (!customer) return reply.code(404).send({ error: 'customer_not_found' });
 
     const base = `${(req.headers['x-forwarded-proto'] as string) || req.protocol}://${req.headers.host}`;
-    const nickname = parsed.data.nickname ?? customer.nickname ?? customer.displayName ?? '';
+    // Customer name for the sheet ("ชื่อ"): our assigned nickname if set, otherwise the LINE
+    // app display name. `||` (not `??`) so a blank nickname falls through to the LINE name.
+    const nickname = customer.nickname?.trim() || customer.displayName?.trim() || '';
     const realName = parsed.data.realName ?? '';
     const amount = normalizeAmount(parsed.data.amount ?? '');
     const slipUrl = buildSlipUrl(base, msg.id);
