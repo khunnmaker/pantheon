@@ -888,8 +888,12 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
     if (res?.skipped) {
       flashToast('คำตอบนี้เฉพาะลูกค้ารายนี้ — ไม่ได้เพิ่มเป็นความรู้ทั่วไป');
     } else if (res?.kb?.answer) {
-      const f = res.kb.answer;
-      flashToast('เพิ่มเข้า KB แล้ว (สรุปเป็นความรู้): ' + (f.length > 70 ? f.slice(0, 70) + '…' : f));
+      if (res.similarTo) {
+        flashToast(`เพิ่มเข้า KB แล้ว ⚠️ แต่คล้ายของเดิม (${res.similarTo.similarityPct}%): "${res.similarTo.answerPreview}" — ลองตรวจสอบว่าซ้ำ/ขัดแย้งไหม`);
+      } else {
+        const f = res.kb.answer;
+        flashToast('เพิ่มเข้า KB แล้ว (สรุปเป็นความรู้): ' + (f.length > 70 ? f.slice(0, 70) + '…' : f));
+      }
     } else {
       flashToast('เพิ่มเข้า KB แล้ว — AI จะใช้ครั้งต่อไป');
     }

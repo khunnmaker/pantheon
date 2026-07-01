@@ -157,3 +157,26 @@ export async function countActiveKbEmbeddings(): Promise<number> {
     WHERE k.status = 'active'`;
   return rows[0]?.n ?? 0;
 }
+
+// The single most-similar EXISTING active KB entry to `text` (cosine), with its similarity in
+// [0,1]. Used at promote time to flag a near-duplicate / possible conflict to the supervisor.
+// Best-effort: returns null if embeddings are unavailable or the query fails.
+export async function findSimilarKb(
+  text: string,
+): Promise<{ id: string; category: string; answer: string; similarity: number } | null> {
+  if (!embeddingsAvailable()) return null;
+  try {
+    const vec = await embedOne(text, 'document');
+    const lit = toVectorLiteral(vec);
+    const rows = await prisma.$queryRaw<{ id: string; category: string; answer: string; similarity: number }[]>`
+      SELECT k.id, k.category, k.answer, 1 - (ke.embedding <=> ${lit}::vector) AS similarity
+      FROM kb_embedding ke
+      JOIN "KbEntry" k ON k.id = ke.kb_id
+      WHERE k.status = 'active'
+      ORDER BY ke.embedding <=> ${lit}::vector
+      LIMIT 1`;
+    return rows[0] ?? null;
+  } catch {
+    return null;
+  }
+}

@@ -2,7 +2,11 @@ import type { FastifyInstance } from 'fastify';
 import { prisma } from '../db/prisma.js';
 import { requireAuth, requireRole } from '../auth/middleware.js';
 import { distillKnowledge } from '../llm/distill.js';
-import { embedKbEntry, kbEmbeddingText } from '../memory/embeddings.js';
+import { embedKbEntry, kbEmbeddingText, findSimilarKb } from '../memory/embeddings.js';
+
+// Cosine similarity at/above which a newly-promoted fact is flagged (non-blocking) as a likely
+// near-duplicate or conflict with an existing KB entry, for the supervisor to reconcile. Tunable.
+const KB_SIMILAR_FLAG = 0.82;
 
 export async function learningRoutes(app: FastifyInstance) {
   app.addHook('preHandler', requireAuth);
@@ -39,6 +43,14 @@ export async function learningRoutes(app: FastifyInstance) {
     const questionVariants = Array.from(
       new Set([rec.customerQuestion, ...distilled.questionVariants].map((v) => v.trim()).filter(Boolean)),
     );
+    const candidateText = kbEmbeddingText({ questionVariants, answer: distilled.fact });
+
+    // Dedup/conflict: find the most-similar EXISTING entry BEFORE creating this one, so we can
+    // warn the supervisor about a near-duplicate or a possible contradiction. Non-destructive —
+    // we still add the entry (never silently fold a corrected fact into the wrong answer); the
+    // supervisor reconciles via the KB editor.
+    const similar = await findSimilarKb(candidateText);
+
     const kb = await prisma.kbEntry.create({
       data: {
         category: 'เรียนรู้จากพนักงาน',
@@ -52,12 +64,21 @@ export async function learningRoutes(app: FastifyInstance) {
       },
     });
     // Index the new fact for semantic retrieval (best-effort).
-    void embedKbEntry(kb.id, kbEmbeddingText(kb));
+    void embedKbEntry(kb.id, candidateText);
     await prisma.learnedAnswer.update({
       where: { id: rec.id },
       data: { status: 'approved', promotedKbId: kb.id },
     });
-    return { ok: true, kb };
+    const similarTo =
+      similar && similar.similarity >= KB_SIMILAR_FLAG
+        ? {
+            id: similar.id,
+            category: similar.category,
+            answerPreview: similar.answer.slice(0, 140),
+            similarityPct: Math.round(similar.similarity * 100),
+          }
+        : undefined;
+    return { ok: true, kb, similarTo };
   });
 
   // POST /api/learned/:id/reject — supervisor discards a captured edit.
