@@ -6,6 +6,7 @@ import { Prisma } from '@prisma/client';
 import { prisma } from '../db/prisma.js';
 import { requireAuth } from '../auth/middleware.js';
 import { sendLineReply } from '../line/send.js';
+import { fetchDisplayName, fetchGroupName } from '../line/client.js';
 import { generateDraftForMessage } from '../llm/draft.js';
 import { rewriteText } from '../llm/rewrite.js';
 import { hasPrice } from '../llm/guardrails.js';
@@ -21,6 +22,26 @@ import { sendToFinance } from '../finance/sendToFinance.js';
 import { buildSlipUrl } from '../finance/slipLink.js';
 import { normalizeSlipDate, normalizeAmount } from '../finance/normalize.js';
 import { pushToConsole } from '../ws/io.js';
+
+// The customer's name for finance/display: assigned nickname if set, else the LINE app name.
+// If NEITHER is stored (e.g. a customer imported with only a code, or a failed profile lookup
+// at first contact), fetch the live LINE name and cache it — so the name is never blank.
+async function resolveCustomerName(customer: {
+  id: string;
+  nickname: string | null;
+  displayName: string | null;
+  lineUserId: string;
+}): Promise<string> {
+  const stored = customer.nickname?.trim() || customer.displayName?.trim();
+  if (stored) return stored;
+  const id = customer.lineUserId;
+  const live = id.startsWith('C') ? await fetchGroupName(id) : id.startsWith('R') ? null : await fetchDisplayName(id);
+  const name = live?.trim() || '';
+  if (name) {
+    await prisma.customer.update({ where: { id: customer.id }, data: { displayName: name } }).catch(() => undefined);
+  }
+  return name;
+}
 
 const replyBody = z.object({
   finalText: z.string().min(1),
@@ -132,7 +153,7 @@ export async function messageRoutes(app: FastifyInstance) {
     if (fields.amount) await prisma.message.update({ where: { id: msg.id }, data: { slipAmount: fields.amount } }).catch(() => undefined);
     return {
       amount: fields.amount, bank: fields.bank, transferAt: fields.transferAt, ref: fields.ref,
-      nickname: customer?.nickname ?? customer?.displayName ?? '',
+      nickname: customer ? await resolveCustomerName(customer) : '',
       realName: fields.senderName, // from the SLIP (sender), not the random LINE name
     };
   });
@@ -157,9 +178,9 @@ export async function messageRoutes(app: FastifyInstance) {
     if (!customer) return reply.code(404).send({ error: 'customer_not_found' });
 
     const base = `${(req.headers['x-forwarded-proto'] as string) || req.protocol}://${req.headers.host}`;
-    // Customer name for the sheet ("ชื่อ"): our assigned nickname if set, otherwise the LINE
-    // app display name. `||` (not `??`) so a blank nickname falls through to the LINE name.
-    const nickname = customer.nickname?.trim() || customer.displayName?.trim() || '';
+    // Customer name for the sheet ("ชื่อ"): assigned nickname if set, else the LINE app name;
+    // if neither is stored (e.g. imported with only a code) fetch the live LINE name + cache it.
+    const nickname = await resolveCustomerName(customer);
     const realName = parsed.data.realName ?? '';
     const amount = normalizeAmount(parsed.data.amount ?? '');
     const slipUrl = buildSlipUrl(base, msg.id);
