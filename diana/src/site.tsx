@@ -80,8 +80,7 @@ function SiteHeader() {
     <header className="site">
       <div className="wrap nav">
         <a className="brand" href="#/">
-          <span className="blogo">P</span>
-          <span className="bt"><b>Prominent</b><span>Dental Supply</span></span>
+          <img src="/logo.png" alt="Prominent — Premium Dental Solutions" style={{ height: 34, width: 'auto' }} />
         </a>
 
         <nav className="nav-links">
@@ -136,7 +135,7 @@ function SiteFooter() {
     <footer className="site">
       <div className="wrap fmain">
         <div className="fabout">
-          <div className="fbword">Prominent</div>
+          <img src="/logo-white.png" alt="Prominent" style={{ height: 40, width: 'auto', marginBottom: 14 }} />
           <p>{pick(COMPANY.introTh, COMPANY.introEn)}</p>
           <div className="fsoc">
             <a href={COMPANY.social.facebook} target="_blank" rel="noreferrer" aria-label="Facebook"><Facebook size={17} /></a>

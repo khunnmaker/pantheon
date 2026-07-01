@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import {
   Truck, FlaskConical, Factory, Stethoscope, ScanLine, Anchor, CircleDot, Wrench,
-  ArrowUpRight, ArrowRight, Search, ShieldCheck, CheckCircle2, Clock, Boxes,
+  ArrowRight, Search, ShieldCheck, CheckCircle2, Clock, Boxes,
   Phone, Mail, MapPin, Send,
 } from 'lucide-react';
 import { useStore } from './store';
@@ -17,13 +17,10 @@ const Ic = ({ name, size = 24 }: { name: string; size?: number }) => {
   return <C size={size} />;
 };
 
-const CAT_COLOR: Record<string, { color: string; bg: string }> = {
-  clinic: { color: '#1B92D1', bg: '#E6F3FB' },
-  lab: { color: '#F0613C', bg: '#FFEDE6' },
-  machine: { color: '#2f86c4', bg: '#E4F1F4' },
-  implant: { color: '#6b54b8', bg: '#ECE7FA' },
-  burs: { color: '#c08a2e', bg: '#F7EEDA' },
-  handpiece: { color: '#4a76b8', bg: '#EAF0FA' },
+// Real category banners from prominent-dental.com (self-labelled promo images).
+const CAT_IMG: Record<string, string> = {
+  clinic: '/cat-clinic.png', lab: '/cat-lab.png', machine: '/cat-machine.jpg',
+  implant: '/cat-implant.png', burs: '/cat-burs.png', handpiece: '/cat-handpiece.png',
 };
 const ARM_BG: Record<string, string> = {
   distribution: 'linear-gradient(135deg,var(--teal),var(--teal-d))',
@@ -152,19 +149,12 @@ export function HomePage() {
 function CatGrid() {
   const { pick } = useStore();
   return (
-    <div className="cat-grid">
-      {CATEGORIES.map((c) => {
-        const cc = CAT_COLOR[c.key] ?? CAT_COLOR.clinic;
-        return (
-          <a key={c.key} className="cat-card" href={`#${catHref(c)}`}>
-            <span className="cc-go"><ArrowUpRight size={22} /></span>
-            <div className="cc-ic" style={{ background: cc.bg, color: cc.color }}><Ic name={c.icon} size={27} /></div>
-            <h3>{pick(c.nameTh, c.nameEn)}</h3>
-            <p>{pick(c.desc, c.descEn)}</p>
-            <div className="cc-sub"><span>{pick(c.nameEn, c.nameTh)}</span></div>
-          </a>
-        );
-      })}
+    <div className="catbanners">
+      {CATEGORIES.map((c) => (
+        <a key={c.key} className="catbanner" href={`#${catHref(c)}`} aria-label={pick(c.nameTh, c.nameEn)}>
+          <img src={CAT_IMG[c.key]} alt={pick(c.nameTh, c.nameEn)} loading="lazy" />
+        </a>
+      ))}
     </div>
   );
 }

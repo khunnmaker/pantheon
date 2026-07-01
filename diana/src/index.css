@@ -112,6 +112,13 @@ header.site{position:sticky;top:0;z-index:60;background:rgba(251,247,241,.85);ba
 .cat-card .cc-go{position:absolute;top:24px;right:24px;color:var(--muted);transition:.22s}
 .cat-card:hover .cc-go{color:var(--coral);transform:translate(3px,-3px)}
 
+.catbanners{display:grid;grid-template-columns:repeat(2,1fr);gap:16px}
+.catbanner{border-radius:var(--r-md);overflow:hidden;border:1px solid var(--line);background:#fff;transition:.22s;display:block;line-height:0}
+.catbanner:hover{transform:translateY(-5px);box-shadow:var(--shadow);border-color:transparent}
+.catbanner img{width:100%;height:auto;display:block;transition:.35s}
+.catbanner:hover img{transform:scale(1.03)}
+@media(max-width:640px){.catbanners{grid-template-columns:1fr}}
+
 .prod-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:20px}
 .pcard{background:#fff;border:1px solid var(--line);border-radius:var(--r-md);overflow:hidden;transition:.22s;display:flex;flex-direction:column}
 .pcard:hover{transform:translateY(-5px);box-shadow:var(--shadow);border-color:transparent}
