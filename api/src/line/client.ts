@@ -27,6 +27,18 @@ export async function fetchDisplayName(lineUserId: string): Promise<string | nul
   }
 }
 
+// Best-effort GROUP name lookup (the OA must be a member). null if no client/name or it fails.
+export async function fetchGroupName(groupId: string): Promise<string | null> {
+  const c = getLineClient();
+  if (!c) return null;
+  try {
+    const summary = await c.getGroupSummary(groupId);
+    return summary.groupName ?? null;
+  } catch {
+    return null;
+  }
+}
+
 // Download the binary content of an image/file message via the LINE content API.
 // Returns null if no token or the fetch fails.
 export async function fetchMessageContent(

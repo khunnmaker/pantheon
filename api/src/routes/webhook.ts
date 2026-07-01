@@ -22,7 +22,7 @@ interface LineMessage {
 interface LineEvent {
   type: string;
   message?: LineMessage;
-  source?: { type: string; userId?: string };
+  source?: { type: string; userId?: string; groupId?: string; roomId?: string };
 }
 interface LineWebhookBody {
   events?: LineEvent[];
@@ -71,7 +71,11 @@ export async function webhookRoutes(app: FastifyInstance) {
     for (const ev of events) {
       try {
         if (ev.type !== 'message' || !ev.message) continue;
-        const lineUserId = ev.source?.userId;
+        // Conversation target = the GROUP/ROOM when the message came from one, else the 1-on-1
+        // user. So a reply to a group message is pushed back to the GROUP (LINE routes by
+        // groupId), not DM'd to the individual sender. LINE ids are globally unique (U…/C…/R…),
+        // so keying the Customer by this target never collides a group with a user.
+        const lineUserId = ev.source?.groupId ?? ev.source?.roomId ?? ev.source?.userId;
         if (!lineUserId) continue;
 
         // Dedup LINE's at-least-once delivery retries.

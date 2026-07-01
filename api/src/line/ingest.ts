@@ -1,6 +1,6 @@
 import type { Customer, Message, Session } from '@prisma/client';
 import { prisma } from '../db/prisma.js';
-import { fetchDisplayName } from './client.js';
+import { fetchDisplayName, fetchGroupName } from './client.js';
 
 export interface IngestInput {
   lineUserId: string;
@@ -26,7 +26,13 @@ export async function ingestCustomerText(input: IngestInput): Promise<IngestResu
   const isNewCustomer = !customer;
 
   if (!customer) {
-    const displayName = await fetchDisplayName(lineUserId);
+    // Group/room conversations are keyed by their C…/R… id (not a user id): fetch the group
+    // name for those (fall back to a label); 1-on-1s use the sender's profile name.
+    const displayName = lineUserId.startsWith('C')
+      ? ((await fetchGroupName(lineUserId)) ?? 'กลุ่มลูกค้า')
+      : lineUserId.startsWith('R')
+        ? 'ห้องแชท'
+        : ((await fetchDisplayName(lineUserId)) ?? undefined);
     customer = await prisma.customer.create({
       data: { lineUserId, displayName: displayName ?? undefined },
     });
