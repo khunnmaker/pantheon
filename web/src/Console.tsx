@@ -667,6 +667,33 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
     }
   }
 
+  // Paste an image with Ctrl+V (e.g. a Snipping Tool capture) to attach it to the reply, then
+  // send with the normal button. A document-level listener so it works regardless of focus; it
+  // only acts on an IMAGE in the clipboard, so pasting text into a box still works as usual.
+  const onPickFileRef = useRef(onPickFile);
+  onPickFileRef.current = onPickFile;
+  useEffect(() => {
+    if (!selectedId) return;
+    const onPaste = (e: ClipboardEvent) => {
+      const items = e.clipboardData?.items;
+      if (!items) return;
+      for (let i = 0; i < items.length; i++) {
+        const it = items[i];
+        if (it.kind === 'file' && it.type.startsWith('image/')) {
+          const raw = it.getAsFile();
+          if (raw) {
+            e.preventDefault();
+            const file = raw.name ? raw : new File([raw], `snip-${Date.now()}.png`, { type: raw.type || 'image/png' });
+            void onPickFileRef.current(file);
+          }
+          return;
+        }
+      }
+    };
+    document.addEventListener('paste', onPaste);
+    return () => document.removeEventListener('paste', onPaste);
+  }, [selectedId]);
+
   // Camera capture → upload + send the photo to the customer IMMEDIATELY (standalone,
   // no text). Does NOT queue onto the draft; the composer text is left untouched.
   async function captureAndSend(file?: File) {
@@ -1260,7 +1287,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                             </div>
                       )}
                       <textarea value={editText} onChange={(e) => { setEditText(e.target.value); setNeedsConfirm(false); setRewriteNote(null); }} rows={4}
-                        className="w-full flex-1 min-h-[120px] p-3 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-sky-400 resize-none" placeholder="พิมพ์/แก้คำตอบก่อนส่ง…" />
+                        className="w-full flex-1 min-h-[120px] p-3 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-sky-400 resize-none" placeholder="พิมพ์/แก้คำตอบก่อนส่ง… (วางรูป Ctrl+V ได้)" />
                       {rewriteNote && (
                         <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-2 flex items-start gap-1.5">
                           <AlertTriangle size={14} className="shrink-0 mt-0.5" />
@@ -1362,7 +1389,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                         </div>
                       )}
                       <textarea value={freeText} onChange={(e) => { setFreeText(e.target.value); setFreeNeedsConfirm(false); }} rows={3}
-                        className="w-full flex-1 min-h-[100px] p-3 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-sky-400 resize-none" placeholder="พิมพ์ข้อความถึงลูกค้า…" />
+                        className="w-full flex-1 min-h-[100px] p-3 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-sky-400 resize-none" placeholder="พิมพ์ข้อความถึงลูกค้า… (วางรูป Ctrl+V ได้)" />
                       <div className="grid grid-cols-[auto_auto_1fr] gap-2">
                         <button type="button" disabled={uploading || freeSending} onClick={openCamera}
                           title="ถ่ายรูปแล้วส่งทันที" aria-label="ถ่ายรูปแล้วส่งทันที"
