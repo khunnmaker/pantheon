@@ -197,6 +197,48 @@ model FinanceAudit {
   @@index([resolvedAt])
 }
 
+// Juno (finance) — the structured record of every INCOMING LINE-slip payment. Written by
+// Minerva's /to-finance hook (mirrors the Google-Sheet forward); the finance department
+// works off THIS table via the Juno app, never the sheet. INCOME only for now; manual/cash
+// entry, expenses, and Express/Odoo sync are deliberately out of scope (future, same table).
+// Customer name/code are SNAPSHOT here so history stays stable if the Customer is renamed.
+model Payment {
+  id            String    @id @default(cuid())
+  // link + snapshot
+  customerId    String?
+  customerCode  String    @default("") // e.g. ร001 (join key across the Deities)
+  customerName  String    @default("") // "ชื่อ": assigned nickname else LINE name, at time of payment
+  senderName    String    @default("") // "ชื่อผู้โอน": the name parsed off the slip
+  // money (String to match the free-text OCR/entry flow; sums parse on read)
+  amount        String    @default("") // confirmed baht amount (staff-entered)
+  ocrAmount     String    @default("") // what the OCR read (for the mismatch flag)
+  bank          String    @default("") // account received into
+  transferAt    String    @default("") // when the customer transferred (as-shown on slip)
+  ref           String    @default("") // transfer reference no.
+  // the slip itself
+  slipMessageId String? // the Minerva Message (image) this came from
+  slipUrl       String    @default("") // tokenized public link to the slip image (Minerva hosts it)
+  // tax invoice
+  taxInvoice       String @default("") // ใบกำกับภาษี: name / address / tax-id (free text), blank if not requested
+  taxInvoiceStatus String @default("none") // none | requested | issued
+  // who forwarded it (sales)
+  salesAgentId String?
+  salesName    String    @default("")
+  note         String    @default("") // หมายเหตุ
+  // finance lifecycle (Juno owns this)
+  status       String    @default("received") // received | verified | recorded | void
+  flagged      Boolean   @default(false) // true when ocrAmount != amount, or raised by finance
+  verifiedById String? // finance user who last advanced it
+  verifiedAt   DateTime?
+  createdAt    DateTime  @default(now()) // when Minerva forwarded it
+
+  @@index([status])
+  @@index([flagged])
+  @@index([taxInvoiceStatus])
+  @@index([customerCode])
+  @@index([createdAt])
+}
+
 // Staff quick-reply templates — canned messages (address, hours, payment, catalog,
 // shipping…) the team inserts with one click. Editable in the console.
 model QuickReply {

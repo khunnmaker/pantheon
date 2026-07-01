@@ -71,5 +71,20 @@ services:
     ports:
       - "5175:5175"
 
+  # Juno — the finance app. Static bundle; talks to the shared api (the /api/juno/*
+  # routes over the Payment table Minerva writes on /to-finance). VITE_API_URL baked at build.
+  juno:
+    build:
+      context: ./juno
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: ${JUNO_API_URL:-http://localhost:3000}
+    container_name: minerva-juno
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "5176:5176"
+
 volumes:
   minerva_pgdata:

@@ -183,6 +183,11 @@ export async function messageRoutes(app: FastifyInstance) {
     const nickname = await resolveCustomerName(customer);
     const realName = parsed.data.realName ?? '';
     const amount = normalizeAmount(parsed.data.amount ?? '');
+    const bank = parsed.data.bank ?? '';
+    const transferAt = normalizeSlipDate(parsed.data.transferAt ?? '');
+    const ref = parsed.data.ref ?? '';
+    const taxInvoice = parsed.data.taxInvoice ?? '';
+    const note = parsed.data.note ?? '';
     const slipUrl = buildSlipUrl(base, msg.id);
     const sales = req.agent?.name ?? '';
     const result = await sendToFinance({
@@ -190,11 +195,11 @@ export async function messageRoutes(app: FastifyInstance) {
       nickname,
       realName,
       amount,
-      bank: parsed.data.bank ?? '',
-      transferAt: normalizeSlipDate(parsed.data.transferAt ?? ''),
-      ref: parsed.data.ref ?? '',
-      taxInvoice: parsed.data.taxInvoice ?? '',
-      note: parsed.data.note ?? '',
+      bank,
+      transferAt,
+      ref,
+      taxInvoice,
+      note,
       slipUrl,
       sales,
     });
@@ -215,6 +220,36 @@ export async function messageRoutes(app: FastifyInstance) {
         },
       }).catch(() => undefined);
     }
+
+    // Juno: also write the structured Payment row (finance's record of truth — the sheet
+    // above is now just a mirror). Best-effort so a Payment-write hiccup never blocks the
+    // slip forward, but loud (not silent) so a persistent failure is visible in the logs.
+    // `flagged` mirrors the anti-tamper check; taxInvoiceStatus derives from the request text.
+    await prisma.payment.create({
+      data: {
+        customerId: customer.id,
+        customerCode: customer.code ?? '',
+        customerName: nickname,
+        senderName: realName,
+        amount,
+        ocrAmount,
+        bank,
+        transferAt,
+        ref,
+        slipMessageId: msg.id,
+        slipUrl,
+        taxInvoice,
+        taxInvoiceStatus: taxInvoice ? 'requested' : 'none',
+        salesAgentId: req.agent?.id ?? null,
+        salesName: sales,
+        note,
+        status: 'received',
+        flagged: corrected,
+      },
+    }).catch((err) => {
+      // eslint-disable-next-line no-console
+      console.error('[juno] failed to write Payment row for message', msg.id, err);
+    });
 
     const updated = await prisma.message.update({ where: { id: msg.id }, data: { financeSentAt: new Date() } });
     return { ok: true, financeSentAt: updated.financeSentAt, corrected };
