@@ -21,6 +21,7 @@ import { initIo } from './ws/io.js';
 import { sweepIdleSessions } from './memory/summarize.js';
 import { ensureSeeded } from './db/ensureSeeded.js';
 import { ensureCatalog } from './db/ensureCatalog.js';
+import { ensureEnrichment } from './db/ensureEnrichment.js';
 import { ensureStock } from './db/ensureStock.js';
 import { ensureQuickReplies } from './db/ensureQuickReplies.js';
 
@@ -88,6 +89,8 @@ async function main() {
   await ensureSeeded().catch((err) => app.log.error({ err }, 'ensureSeeded failed'));
   // Seed the product catalog (price/name) on first boot.
   await ensureCatalog().catch((err) => app.log.error({ err }, 'ensureCatalog failed'));
+  // Derive Diana brand/category facets on first boot (once the catalog exists).
+  await ensureEnrichment().catch((err) => app.log.error({ err }, 'ensureEnrichment failed'));
   // Apply the stock snapshot to the catalog (once per snapshot date).
   await ensureStock().catch((err) => app.log.error({ err }, 'ensureStock failed'));
   // Seed the starter quick-reply templates on first boot.
