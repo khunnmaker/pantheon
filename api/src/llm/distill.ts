@@ -24,11 +24,13 @@ export interface DistilledKnowledge {
 }
 
 // Distill a supervisor-approved reply into reusable KB knowledge: facts only, no tone/PII.
-// Falls back to the verbatim answer if the LLM is unavailable or returns nothing parseable,
-// so promotion never breaks (matches the loop's safe-default discipline).
-export async function distillKnowledge(question: string, answer: string): Promise<DistilledKnowledge> {
-  const fallback: DistilledKnowledge = { fact: answer.trim(), questionVariants: [], generalizable: true };
-  if (!llmAvailable()) return fallback;
+// Promotion is NOT time-critical — the supervisor can just try again — so an LLM outage or
+// an unparseable reply must surface as a failure (null), never silently fall back to the
+// staff member's verbatim answer. Falling back would violate the facts-only KB rule
+// [[kb-learn-knowledge-not-tone]]: verbatim staff text can carry tone, greetings, or
+// customer-specific details straight into the KB.
+export async function distillKnowledge(question: string, answer: string): Promise<DistilledKnowledge | null> {
+  if (!llmAvailable()) return null;
   try {
     const raw = await callClaude(
       `คำถามลูกค้า:\n"""\n${question}\n"""\n\nคำตอบที่พนักงานอนุมัติ:\n"""\n${answer}\n"""`,
@@ -36,7 +38,7 @@ export async function distillKnowledge(question: string, answer: string): Promis
       700,
     );
     const m = raw.match(/\{[\s\S]*\}/);
-    if (!m) return fallback;
+    if (!m) return null;
     const o = JSON.parse(m[0]) as { fact?: unknown; questionVariants?: unknown; generalizable?: unknown };
     const fact = typeof o.fact === 'string' ? o.fact.trim() : '';
     const questionVariants = Array.isArray(o.questionVariants)
@@ -44,12 +46,13 @@ export async function distillKnowledge(question: string, answer: string): Promis
       : [];
     const generalizable = o.generalizable !== false; // default true unless explicitly false
     if (!fact) {
-      // No fact extracted: if the model still thinks it's generalizable, fall back to the
-      // verbatim answer (preserve prior behavior); otherwise signal "skip" to the caller.
-      return generalizable ? fallback : { fact: '', questionVariants, generalizable: false };
+      // No fact extracted: if the model still thinks it's generalizable, that's a distillation
+      // failure (produced nothing usable) — signal null so the caller retries, never fall back
+      // to verbatim. Otherwise it's a genuine "not generalizable" skip.
+      return generalizable ? null : { fact: '', questionVariants, generalizable: false };
     }
     return { fact, questionVariants, generalizable };
   } catch {
-    return fallback;
+    return null;
   }
 }

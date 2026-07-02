@@ -123,6 +123,16 @@ export async function ensureSeeded(): Promise<void> {
     }
 
     await syncStaff();
+
+    // Release orphaned promote claims: a row stuck at 'promoting' at BOOT can only be a leftover
+    // from a crash mid-promote (no request can still be in flight at boot) — reset it to
+    // 'pending' so the item reappears in the supervisor queue instead of vanishing forever.
+    const stuck = await prisma.learnedAnswer.updateMany({ where: { status: 'promoting' }, data: { status: 'pending' } });
+    if (stuck.count > 0) {
+      // eslint-disable-next-line no-console
+      console.log(`[seed] released ${stuck.count} stuck promote claim(s)`);
+    }
+
     // Populate any missing KB embeddings in the background (never blocks boot/readiness).
     void backfillKbEmbeddings();
   } catch (err) {

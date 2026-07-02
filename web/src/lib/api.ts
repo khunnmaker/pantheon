@@ -250,11 +250,22 @@ export const deleteQuickReply = (id: string) =>
   authed<{ ok: boolean }>(`/api/quick-replies/${id}`, { method: 'DELETE' });
 // Send a quick-reply template to the customer as a standalone message (does not
 // touch the pending question or the draft composer).
-export const sendQuickReply = (customerId: string, quickReplyId: string) =>
-  authed<{ ok: boolean; message: Message; dryRun: boolean }>(`/api/customers/${customerId}/quick-reply`, {
+// Returns { needsConfirm: true } when the template quotes a price and confirm wasn't set (428).
+export async function sendQuickReply(
+  customerId: string,
+  quickReplyId: string,
+  confirmNumbers?: boolean,
+): Promise<{ ok: boolean; message: Message; dryRun: boolean } | { needsConfirm: true }> {
+  const token = getToken();
+  const res = await fetch(`${API_URL}/api/customers/${customerId}/quick-reply`, {
     method: 'POST',
-    body: JSON.stringify({ quickReplyId }),
+    headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
+    body: JSON.stringify({ quickReplyId, confirmNumbers }),
   });
+  if (res.status === 428) return { needsConfirm: true }; // template has a price; staff must confirm
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json() as Promise<{ ok: boolean; message: Message; dryRun: boolean }>;
+}
 
 // Send a staff photo to the customer IMMEDIATELY (camera) — standalone image message.
 export const sendPhotoNow = (customerId: string, uploadId: string) =>
@@ -328,14 +339,31 @@ export const resolveFinanceAudit = (id: string) =>
 
 export const getLearned = (status = 'pending') =>
   authed<{ learned: LearnedAnswer[] }>(`/api/learned?status=${status}`);
-export const promoteLearned = (id: string) =>
-  authed<{
-    ok: boolean;
-    kb?: { answer: string } | null;
-    skipped?: boolean;
-    reason?: string;
-    similarTo?: { id: string; category: string; answerPreview: string; similarityPct: number };
-  }>(`/api/learned/${id}/promote`, { method: 'POST' });
+
+// Promote a learned answer into the KB. 503 = distillation temporarily unavailable (retry);
+// 409 = already promoted or another promote is in flight.
+export async function promoteLearned(id: string): Promise<
+  | {
+      ok: boolean;
+      kb?: { answer: string } | null;
+      skipped?: boolean;
+      reason?: string;
+      similarTo?: { id: string; category: string; answerPreview: string; similarityPct: number };
+    }
+  | { unavailable: true }
+  | { conflict: true }
+> {
+  const token = getToken();
+  const res = await fetch(`${API_URL}/api/learned/${id}/promote`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
+  });
+  if (res.status === 503) return { unavailable: true }; // LLM distill unavailable — retry later
+  if (res.status === 409) return { conflict: true }; // already promoted or a promote is in flight
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
 export const rejectLearned = (id: string) =>
   authed<{ ok: boolean }>(`/api/learned/${id}/reject`, { method: 'POST' });
 

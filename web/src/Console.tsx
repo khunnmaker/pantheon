@@ -420,6 +420,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
   const [qrSaving, setQrSaving] = useState(false);
   const [qrOpen, setQrOpen] = useState(false);
   const [qrSending, setQrSending] = useState(false);
+  const [qrConfirmId, setQrConfirmId] = useState<string | null>(null);
   const [freeText, setFreeText] = useState('');
   const [freeNeedsConfirm, setFreeNeedsConfirm] = useState(false);
   const [freeSending, setFreeSending] = useState(false);
@@ -434,11 +435,14 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
 
   const [learned, setLearned] = useState<LearnedAnswer[]>([]);
   const [audits, setAudits] = useState<FinanceAudit[]>([]);
+  const [promotingId, setPromotingId] = useState<string | null>(null);
+  const [learnNotice, setLearnNotice] = useState<{ kind: 'warn' | 'error'; text: string } | null>(null);
 
   const selectedRef = useRef<string | null>(null);
   const endRef = useRef<HTMLDivElement | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
   const cameraRef = useRef<HTMLInputElement | null>(null);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const refreshLists = useCallback(async () => {
     const [{ customers: cs }, { queue }] = await Promise.all([getCustomers(), getQueue()]);
@@ -453,6 +457,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
       setDetail(d);
       setEditText(d.pendingDraft?.draftText ?? '');
       setNeedsConfirm(false);
+      setQrConfirmId(null);
       setRewriteNote(null);
       // Preserve the staff's photo selection across reloads (their own ร่างใหม่ AND the
       // live draft:new socket push that follows): keep any selected SKU still present in
@@ -576,8 +581,9 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
   }, [searchTerm]);
 
   function flashToast(msg: string) {
+    if (toastTimer.current) clearTimeout(toastTimer.current);
     setToast(msg);
-    setTimeout(() => setToast(''), 2600);
+    toastTimer.current = setTimeout(() => setToast(''), 2600);
   }
 
   function logout() {
@@ -720,7 +726,13 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
     setQrSending(true);
     setError('');
     try {
-      const res = await sendQuickReply(selectedId, q.id);
+      const res = await sendQuickReply(selectedId, q.id, qrConfirmId === q.id);
+      if ('needsConfirm' in res) {
+        setQrConfirmId(q.id);
+        setError('ข้อความด่วนนี้มีราคา — กดอีกครั้งเพื่อยืนยันส่ง');
+        return;
+      }
+      setQrConfirmId(null);
       setQrOpen(false);
       flashToast(res.dryRun ? `บันทึก "${q.label}" (โหมดทดสอบ)` : `ส่ง "${q.label}" ให้ลูกค้าแล้ว ✓`);
     } catch {
@@ -911,19 +923,37 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
   }
 
   async function promote(id: string) {
-    const res = await promoteLearned(id).catch(() => null);
-    await refreshLearned();
-    if (res?.skipped) {
-      flashToast('คำตอบนี้เฉพาะลูกค้ารายนี้ — ไม่ได้เพิ่มเป็นความรู้ทั่วไป');
-    } else if (res?.kb?.answer) {
-      if (res.similarTo) {
-        flashToast(`เพิ่มเข้า KB แล้ว ⚠️ แต่คล้ายของเดิม (${res.similarTo.similarityPct}%): "${res.similarTo.answerPreview}" — ลองตรวจสอบว่าซ้ำ/ขัดแย้งไหม`);
-      } else {
-        const f = res.kb.answer;
-        flashToast('เพิ่มเข้า KB แล้ว (สรุปเป็นความรู้): ' + (f.length > 70 ? f.slice(0, 70) + '…' : f));
+    if (promotingId) return; // ignore clicks while another promote is in flight
+    setPromotingId(id);
+    try {
+      const res = await promoteLearned(id).catch(() => null);
+      if (res && 'unavailable' in res) {
+        setLearnNotice({ kind: 'error', text: 'ระบบสรุปความรู้ไม่พร้อมใช้งานชั่วคราว — รายการยังอยู่ในคิว ลองใหม่อีกครั้งค่ะ' });
+        return;
       }
-    } else {
-      flashToast('เพิ่มเข้า KB แล้ว — AI จะใช้ครั้งต่อไป');
+      if (res && 'conflict' in res) {
+        flashToast('รายการนี้ถูกดำเนินการไปแล้ว');
+        await refreshLearned();
+        return;
+      }
+      await refreshLearned();
+      if (res?.skipped) {
+        flashToast('คำตอบนี้เฉพาะลูกค้ารายนี้ — ไม่ได้เพิ่มเป็นความรู้ทั่วไป');
+      } else if (res?.kb?.answer) {
+        if (res.similarTo) {
+          setLearnNotice({
+            kind: 'warn',
+            text: `เพิ่มเข้า KB แล้ว แต่คล้ายความรู้เดิม (${res.similarTo.similarityPct}%) หมวด "${res.similarTo.category}": "${res.similarTo.answerPreview}" — โปรดตรวจสอบใน KB ว่าซ้ำ/ขัดแย้งกันไหม`,
+          });
+        } else {
+          const f = res.kb.answer;
+          flashToast('เพิ่มเข้า KB แล้ว (สรุปเป็นความรู้): ' + (f.length > 70 ? f.slice(0, 70) + '…' : f));
+        }
+      } else {
+        flashToast('เพิ่มเข้า KB แล้ว — AI จะใช้ครั้งต่อไป');
+      }
+    } finally {
+      setPromotingId(null);
     }
   }
   async function reject(id: string) {
@@ -1075,7 +1105,15 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
             {view === 'audit' ? (
               <FinanceAuditView audits={audits} onResolve={doResolveAudit} onRefresh={() => { void refreshAudits(); }} />
             ) : view === 'learning' ? (
-              <LearningView learned={learned} isSupervisor={agent.role === 'supervisor'} onPromote={promote} onReject={reject} />
+              <LearningView
+                learned={learned}
+                isSupervisor={agent.role === 'supervisor'}
+                onPromote={promote}
+                onReject={reject}
+                promotingId={promotingId}
+                notice={learnNotice}
+                onDismissNotice={() => setLearnNotice(null)}
+              />
             ) : (
             <div className="bg-white rounded-2xl shadow-sm border border-slate-200 flex flex-col h-full">
               <div className="px-4 py-2.5 bg-sky-600 text-white rounded-t-2xl font-semibold flex items-center gap-2">
@@ -1490,14 +1528,30 @@ function LearningMetrics() {
   );
 }
 
-function LearningView({ learned, isSupervisor, onPromote, onReject }: {
+function LearningView({ learned, isSupervisor, onPromote, onReject, promotingId, notice, onDismissNotice }: {
   learned: LearnedAnswer[];
   isSupervisor: boolean;
   onPromote: (id: string) => void;
   onReject: (id: string) => void;
+  promotingId: string | null;
+  notice: { kind: 'warn' | 'error'; text: string } | null;
+  onDismissNotice: () => void;
 }) {
+  const busy = promotingId !== null;
   return (
     <div className="space-y-3">
+      {notice && (
+        <div
+          className={`w-full rounded-xl px-3 py-2 flex items-start gap-2 text-sm border ${
+            notice.kind === 'warn' ? 'bg-amber-50 border-amber-200 text-amber-800' : 'bg-rose-50 border-rose-200 text-rose-700'
+          }`}
+        >
+          <span className="flex-1">{notice.text}</span>
+          <button type="button" onClick={onDismissNotice} aria-label="ปิด" className="shrink-0 opacity-70 hover:opacity-100">
+            <X size={15} />
+          </button>
+        </div>
+      )}
       {isSupervisor && <LearningMetrics />}
       <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-4">
         <div className="flex items-center justify-between mb-3">
@@ -1509,21 +1563,36 @@ function LearningView({ learned, isSupervisor, onPromote, onReject }: {
           <p className="text-sm text-slate-400 py-6 text-center">ยังไม่มี — เมื่อพนักงานแก้ร่างของ AI แล้วส่ง ระบบจะเก็บคำตอบไว้ที่นี่เพื่อให้หัวหน้าอนุมัติเข้า KB</p>
         ) : (
           <div className="space-y-2">
-            {learned.map((rec) => (
-              <div key={rec.id} className="border border-slate-200 rounded-xl p-3 text-sm">
-                <div className="text-slate-500 text-xs mb-2">ถาม: <span className="text-slate-700">{rec.customerQuestion}</span></div>
-                <div className="grid sm:grid-cols-2 gap-2 mb-2">
-                  <div className="bg-slate-50 rounded-lg p-2 text-xs text-slate-500"><b className="text-slate-400">ร่างเดิมของ AI:</b><br />{rec.aiDraft || '—'}</div>
-                  <div className="bg-sky-50 rounded-lg p-2 text-xs text-sky-800"><b className="text-sky-600">คำตอบที่พนักงานปรับ:</b><br />{rec.finalAnswer}</div>
-                </div>
-                {isSupervisor && (
-                  <div className="flex gap-2">
-                    <button onClick={() => onPromote(rec.id)} className="text-xs px-3 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-700 text-white flex items-center gap-1"><Check size={13} /> เพิ่มเข้า KB (สอน AI)</button>
-                    <button onClick={() => onReject(rec.id)} className="text-xs px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600">ไม่ใช้</button>
+            {learned.map((rec) => {
+              const isPromoting = promotingId === rec.id;
+              return (
+                <div key={rec.id} className="border border-slate-200 rounded-xl p-3 text-sm">
+                  <div className="text-slate-500 text-xs mb-2">ถาม: <span className="text-slate-700">{rec.customerQuestion}</span></div>
+                  <div className="grid sm:grid-cols-2 gap-2 mb-2">
+                    <div className="bg-slate-50 rounded-lg p-2 text-xs text-slate-500"><b className="text-slate-400">ร่างเดิมของ AI:</b><br />{rec.aiDraft || '—'}</div>
+                    <div className="bg-sky-50 rounded-lg p-2 text-xs text-sky-800"><b className="text-sky-600">คำตอบที่พนักงานปรับ:</b><br />{rec.finalAnswer}</div>
                   </div>
-                )}
-              </div>
-            ))}
+                  {isSupervisor && (
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => onPromote(rec.id)}
+                        disabled={busy}
+                        className={`text-xs px-3 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-700 text-white flex items-center gap-1 ${busy ? 'opacity-50 cursor-not-allowed' : ''}`}
+                      >
+                        {isPromoting ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} เพิ่มเข้า KB (สอน AI)
+                      </button>
+                      <button
+                        onClick={() => onReject(rec.id)}
+                        disabled={busy}
+                        className={`text-xs px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 ${busy ? 'opacity-50 cursor-not-allowed' : ''}`}
+                      >
+                        ไม่ใช้
+                      </button>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         )}
       </div>

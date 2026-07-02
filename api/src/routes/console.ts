@@ -280,12 +280,18 @@ export async function consoleRoutes(app: FastifyInstance) {
   // customer as a STANDALONE message (answersMessageId stays null, so it does NOT
   // consume the pending question — the team keeps composing their main reply).
   app.post<{ Params: { id: string } }>('/api/customers/:id/quick-reply', async (req, reply) => {
-    const parsed = z.object({ quickReplyId: z.string() }).safeParse(req.body);
+    const parsed = z.object({ quickReplyId: z.string(), confirmNumbers: z.boolean().optional() }).safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: 'invalid_body' });
     const customer = await prisma.customer.findUnique({ where: { id: req.params.id } });
     if (!customer) return reply.code(404).send({ error: 'not_found' });
     const qr = await prisma.quickReply.findUnique({ where: { id: parsed.data.quickReplyId } });
     if (!qr) return reply.code(404).send({ error: 'quick_reply_not_found' });
+
+    // Same server-enforced price-confirm as /reply and /message: a priced template must be
+    // explicitly confirmed (428) — a stale price in a template is one click from the customer.
+    if (!parsed.data.confirmNumbers && hasPrice(qr.body)) {
+      return reply.code(428).send({ error: 'needs_confirm' });
+    }
 
     let sendResult;
     try {
@@ -322,11 +328,6 @@ export async function consoleRoutes(app: FastifyInstance) {
     const text = (parsed.data.text ?? '').trim();
     const { uploadId } = parsed.data;
     if (!text && !uploadId) return reply.code(400).send({ error: 'empty' });
-    // Same server-enforced price-confirm as /reply: a free-form message that quotes a price must
-    // be confirmed (428) before it sends, so a typed price can't reach a customer unchecked.
-    if (!parsed.data.confirmNumbers && hasPrice(text)) {
-      return reply.code(428).send({ error: 'needs_confirm' });
-    }
     const customer = await prisma.customer.findUnique({ where: { id: req.params.id } });
     if (!customer) return reply.code(404).send({ error: 'not_found' });
 
@@ -351,6 +352,14 @@ export async function consoleRoutes(app: FastifyInstance) {
 
     // Nothing resolved to send (e.g. an unresolvable uploadId with no text) — don't push an empty bubble.
     if (!imageUrls.length && !sendText) return reply.code(400).send({ error: 'empty' });
+
+    // Same server-enforced price-confirm as /reply: a free-form message that quotes a price must
+    // be confirmed (428) before it sends, so a typed price can't reach a customer unchecked — gated
+    // on the FINAL composed sendText (including an appended attachment filename) so a price hiding
+    // in the filename isn't missed. Everything above this point is read-only, no side effects yet.
+    if (!parsed.data.confirmNumbers && hasPrice(sendText)) {
+      return reply.code(428).send({ error: 'needs_confirm' });
+    }
 
     let sendResult;
     try {
