@@ -291,6 +291,7 @@ function FinanceModal({ messageId, onClose, onSent }: { messageId: string; onClo
     setSending(true); setErr('');
     try {
       const res = await sendToFinance(messageId, { amount: f.amount, bank: f.bank, transferAt: f.transferAt, ref: f.ref, nickname: f.nickname, realName: f.realName, taxInvoice: f.taxInvoice, note: f.note });
+      if (res.alreadySent) { setErr('ส่งให้การเงินไปแล้ว'); onSent(false); return; }
       if (!res.ok) { setErr('ส่งให้การเงินไม่สำเร็จ: ' + (res.error ?? '')); return; }
       onSent(res.corrected ?? false);
     } catch { setErr('ส่งให้การเงินไม่สำเร็จ'); } finally { setSending(false); }

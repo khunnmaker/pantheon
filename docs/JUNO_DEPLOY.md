@@ -46,7 +46,9 @@ Add ONE new web service for `juno/` alongside the existing `api` / `web` / `dian
 2. Build arg / env **`VITE_API_URL`** = the public URL of the Minerva **api** service (baked
    at build time, same as `web` / `diana` / `vulcan`).
 3. The api's **`WEB_ORIGIN`** env must include the Juno web origin (comma-separated with the
-   existing console / Vulcan / Diana origins) so CORS allows the browser calls.
+   existing console / Vulcan / Diana origins) so CORS allows the browser calls. For local
+   docker-compose the api's WEB_ORIGIN must likewise include http://localhost:5176 (the compose
+   default now does).
 4. Juno shares the same Postgres via the api — it does **not** need its own `DATABASE_URL`
    and must **not** run `prisma migrate deploy` (Minerva's api remains the only migrator).
 5. Push to `main` → all services redeploy; the migration applies via the api.

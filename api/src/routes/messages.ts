@@ -174,6 +174,7 @@ export async function messageRoutes(app: FastifyInstance) {
     if (!parsed.success) return reply.code(400).send({ error: 'invalid_body' });
     const msg = await prisma.message.findUnique({ where: { id: req.params.id } });
     if (!msg || msg.attachmentType !== 'image') return reply.code(404).send({ error: 'not_an_image' });
+    if (msg.financeSentAt) return reply.code(409).send({ error: 'already_sent', financeSentAt: msg.financeSentAt });
     const customer = await prisma.customer.findUnique({ where: { id: msg.customerId } });
     if (!customer) return reply.code(404).send({ error: 'customer_not_found' });
 
@@ -190,6 +191,56 @@ export async function messageRoutes(app: FastifyInstance) {
     const note = parsed.data.note ?? '';
     const slipUrl = buildSlipUrl(base, msg.id);
     const sales = req.agent?.name ?? '';
+
+    // Anti-tamper signal: the OCR amount is server-stored (sales can't influence it). If the
+    // staff submitted a DIFFERENT amount, that's `corrected` — flags the Payment row and (below)
+    // logs a FinanceAudit entry. Computed BEFORE the Payment write since the write needs it.
+    const ocrAmount = msg.slipAmount ?? '';
+    const corrected = !!ocrAmount && ocrAmount !== amount;
+
+    // Juno: the Payment row is the record of truth (the sheet below is a mirror). Upsert on
+    // slipMessageId so a retry after a failed sheet post updates the same row instead of
+    // duplicating. If this write fails the forward fails — staff retry; never silent.
+    try {
+      await prisma.payment.upsert({
+        where: { slipMessageId: msg.id },
+        create: {
+          customerId: customer.id,
+          customerCode: customer.code ?? '',
+          customerName: nickname,
+          senderName: realName,
+          amount, ocrAmount, bank, transferAt, ref,
+          slipMessageId: msg.id,
+          slipUrl,
+          taxInvoice,
+          taxInvoiceStatus: taxInvoice ? 'requested' : 'none',
+          salesAgentId: req.agent?.id ?? null,
+          salesName: sales,
+          note,
+          status: 'received',
+          flagged: corrected,
+        },
+        // Refresh only Minerva-sourced fields; never touch Juno-owned lifecycle fields
+        // (status/verifiedById/verifiedAt) on a retry.
+        update: {
+          customerCode: customer.code ?? '',
+          customerName: nickname,
+          senderName: realName,
+          amount, ocrAmount, bank, transferAt, ref,
+          slipUrl,
+          taxInvoice,
+          taxInvoiceStatus: taxInvoice ? 'requested' : 'none',
+          salesAgentId: req.agent?.id ?? null,
+          salesName: sales,
+          note,
+          flagged: corrected,
+        },
+      });
+    } catch (err) {
+      req.log.error({ err, messageId: msg.id }, 'juno payment write failed');
+      return reply.code(500).send({ error: 'payment_record_failed' });
+    }
+
     const result = await sendToFinance({
       code: customer.code ?? '',
       nickname,
@@ -205,11 +256,7 @@ export async function messageRoutes(app: FastifyInstance) {
     });
     if (!result.ok) return reply.code(502).send({ error: 'finance_send_failed', detail: result.error });
 
-    // Anti-tamper audit: the OCR amount is server-stored (sales can't influence it). If the
-    // staff submitted a DIFFERENT amount, log it to Minerva's DB (NOT a sheet sales can edit)
-    // — surfaced only to supervisors for verification.
-    const ocrAmount = msg.slipAmount ?? '';
-    const corrected = !!ocrAmount && ocrAmount !== amount;
+    // FinanceAudit: NOT a sheet sales can edit — surfaced only to supervisors for verification.
     if (corrected) {
       const diff = (parseFloat(amount || '0') - parseFloat(ocrAmount || '0')).toFixed(2);
       await prisma.financeAudit.create({
@@ -221,37 +268,8 @@ export async function messageRoutes(app: FastifyInstance) {
       }).catch(() => undefined);
     }
 
-    // Juno: also write the structured Payment row (finance's record of truth — the sheet
-    // above is now just a mirror). Best-effort so a Payment-write hiccup never blocks the
-    // slip forward, but loud (not silent) so a persistent failure is visible in the logs.
-    // `flagged` mirrors the anti-tamper check; taxInvoiceStatus derives from the request text.
-    await prisma.payment.create({
-      data: {
-        customerId: customer.id,
-        customerCode: customer.code ?? '',
-        customerName: nickname,
-        senderName: realName,
-        amount,
-        ocrAmount,
-        bank,
-        transferAt,
-        ref,
-        slipMessageId: msg.id,
-        slipUrl,
-        taxInvoice,
-        taxInvoiceStatus: taxInvoice ? 'requested' : 'none',
-        salesAgentId: req.agent?.id ?? null,
-        salesName: sales,
-        note,
-        status: 'received',
-        flagged: corrected,
-      },
-    }).catch((err) => {
-      // eslint-disable-next-line no-console
-      console.error('[juno] failed to write Payment row for message', msg.id, err);
-    });
-
     const updated = await prisma.message.update({ where: { id: msg.id }, data: { financeSentAt: new Date() } });
+    pushToConsole('finance:sent', { messageId: msg.id });
     return { ok: true, financeSentAt: updated.financeSentAt, corrected };
   });
 

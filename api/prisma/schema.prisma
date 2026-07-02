@@ -216,7 +216,7 @@ model Payment {
   transferAt    String    @default("") // when the customer transferred (as-shown on slip)
   ref           String    @default("") // transfer reference no.
   // the slip itself
-  slipMessageId String? // the Minerva Message (image) this came from
+  slipMessageId String? @unique // the Minerva Message this came from — one Payment per slip (idempotent re-forward)
   slipUrl       String    @default("") // tokenized public link to the slip image (Minerva hosts it)
   // tax invoice
   taxInvoice       String @default("") // ใบกำกับภาษี: name / address / tax-id (free text), blank if not requested

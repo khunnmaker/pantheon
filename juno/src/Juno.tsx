@@ -5,11 +5,16 @@ import {
 } from 'lucide-react';
 import {
   getSummary, getPayments, setStatus, setFlag, setTaxInvoice, getReport, downloadCsv, baht,
+  clearSession,
   type Agent, type Payment, type PaymentStatus, type TaxStatus, type Summary,
   type Report, type PaymentFilter,
 } from './lib/api';
 
 type View = 'inbox' | 'flags' | 'tax' | 'reports';
+
+// Thai-locale date/time display for the inbox + drawer (house pattern, vulcan/src/Stock.tsx).
+const fmtDate = (iso: string) => new Date(iso).toLocaleDateString('th-TH', { day: '2-digit', month: 'short', year: '2-digit' });
+const fmtDateTime = (iso: string) => new Date(iso).toLocaleString('th-TH', { day: '2-digit', month: 'short', year: '2-digit', hour: '2-digit', minute: '2-digit' });
 
 const STATUS_META: Record<PaymentStatus, { label: string; cls: string }> = {
   received: { label: 'รอตรวจ', cls: 'bg-slate-100 text-slate-600' },
@@ -54,7 +59,7 @@ export default function Juno({ agent, onLogout }: { agent: Agent; onLogout: () =
           </div>
           <div className="flex items-center gap-3 text-sm">
             <span className="text-slate-500 hidden sm:inline">{agent.name}</span>
-            <button onClick={onLogout} className="flex items-center gap-1 text-slate-500 hover:text-rose-600">
+            <button onClick={() => { clearSession(); onLogout(); }} className="flex items-center gap-1 text-slate-500 hover:text-rose-600">
               <LogOut size={15} /> ออก
             </button>
           </div>
@@ -113,7 +118,12 @@ function PaymentsView({ view, onChanged }: { view: Exclude<View, 'reports'>; onC
     setLoading(true);
     setError('');
     getPayments(filter)
-      .then((r) => setRows(r.payments))
+      .then((r) => {
+        setRows(r.payments);
+        // keep the open drawer's data in sync with the freshly fetched row (a refresh
+        // shouldn't leave `selected` showing stale status/flag/tax state)
+        setSelected((prev) => (prev ? r.payments.find((x) => x.id === prev.id) ?? prev : null));
+      })
       .catch(() => setError('โหลดข้อมูลไม่สำเร็จ'))
       .finally(() => setLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -124,17 +134,18 @@ function PaymentsView({ view, onChanged }: { view: Exclude<View, 'reports'>; onC
     return () => clearTimeout(t);
   }, [load]);
 
+  // Close the drawer on tab switch — otherwise a foreign payment stays open beside the wrong queue.
+  useEffect(() => setSelected(null), [view]);
+
   // Reflect a drawer action back into the list + selected row without a full reload.
   function applyUpdate(p: Payment) {
     setSelected(p);
-    setRows((prev) => {
-      // a row may drop out of a pre-filtered queue (unflagged / tax issued) → refetch those
-      if ((view === 'flags' && !p.flagged) || (view === 'tax' && p.taxInvoiceStatus !== 'requested')) {
-        load();
-        return prev;
-      }
-      return prev.map((r) => (r.id === p.id ? p : r));
-    });
+    // a row may drop out of a pre-filtered queue (unflagged / tax issued) → refetch those
+    if ((view === 'flags' && !p.flagged) || (view === 'tax' && p.taxInvoiceStatus !== 'requested')) {
+      load();
+    } else {
+      setRows((prev) => prev.map((r) => (r.id === p.id ? p : r)));
+    }
     onChanged();
   }
 
@@ -207,7 +218,7 @@ function PaymentsView({ view, onChanged }: { view: Exclude<View, 'reports'>; onC
                     onClick={() => setSelected(p)}
                     className={`border-t border-slate-100 cursor-pointer hover:bg-emerald-50/40 ${selected?.id === p.id ? 'bg-emerald-50' : ''}`}
                   >
-                    <td className="px-3 py-2 text-slate-500 whitespace-nowrap">{p.createdAt.slice(0, 10)}</td>
+                    <td className="px-3 py-2 text-slate-500 whitespace-nowrap">{fmtDate(p.createdAt)}</td>
                     <td className="px-3 py-2">
                       <div className="font-medium">{p.customerName || <span className="text-slate-400">—</span>}</div>
                       <div className="text-xs text-slate-400">{p.customerCode}</div>
@@ -245,15 +256,17 @@ function Detail({ payment, onClose, onUpdate }: {
 }) {
   const [busy, setBusy] = useState('');
   const [flagNote, setFlagNote] = useState('');
+  const [error, setError] = useState('');
 
   async function run(key: string, fn: () => Promise<{ payment: Payment }>) {
     setBusy(key);
+    setError('');
     try {
       const { payment: p } = await fn();
       onUpdate(p);
       setFlagNote('');
-    } catch {
-      /* surfaced via the row not changing; keep it simple */
+    } catch (e) {
+      setError((e as Error).message === 'unauthorized' ? 'เซสชันหมดอายุ — กรุณาเข้าสู่ระบบใหม่' : 'บันทึกไม่สำเร็จ — ลองใหม่อีกครั้ง');
     } finally {
       setBusy('');
     }
@@ -268,12 +281,14 @@ function Detail({ payment, onClose, onUpdate }: {
   );
 
   return (
-    <div className="w-[380px] shrink-0 hidden md:block">
-      <div className="bg-white rounded-xl border border-slate-200 sticky top-[104px] max-h-[calc(100vh-120px)] overflow-y-auto">
+    <div className="fixed inset-0 z-30 bg-slate-900/40 md:static md:z-auto md:bg-transparent md:w-[380px] md:shrink-0">
+      <div className="absolute inset-x-0 bottom-0 top-10 md:static bg-white rounded-t-2xl md:rounded-xl border border-slate-200 overflow-y-auto md:sticky md:top-[104px] md:max-h-[calc(100vh-120px)]">
         <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100">
           <div className="font-semibold">รายละเอียดการรับเงิน</div>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600"><X size={18} /></button>
         </div>
+
+        {error && <div className="mx-4 mt-2 p-2 rounded-lg bg-rose-50 text-rose-700 text-xs flex items-center gap-1"><AlertTriangle size={13} /> {error}</div>}
 
         {/* slip image */}
         <div className="p-4">
@@ -302,7 +317,7 @@ function Detail({ payment, onClose, onUpdate }: {
           {field('เวลาโอน', p.transferAt)}
           {field('อ้างอิง', p.ref)}
           {field('พนักงานขาย', p.salesName)}
-          {field('วันที่ส่งเข้า', p.createdAt.slice(0, 16).replace('T', ' '))}
+          {field('วันที่ส่งเข้า', fmtDateTime(p.createdAt))}
         </div>
 
         {p.mismatch && (
@@ -323,7 +338,9 @@ function Detail({ payment, onClose, onUpdate }: {
             {(['received', 'verified', 'recorded'] as PaymentStatus[]).map((s) => (
               <button
                 key={s}
-                disabled={busy !== '' || p.status === s}
+                // a voided payment must be explicitly restored to 'received' before re-verifying
+                // (server 409s verify/record while void; รอตรวจ stays enabled as the un-void path)
+                disabled={busy !== '' || p.status === s || (p.status === 'void' && s !== 'received')}
                 onClick={() => run(s, () => setStatus(p.id, s))}
                 className={`px-2.5 py-1.5 rounded-lg text-xs font-medium border disabled:opacity-40 ${
                   p.status === s ? 'bg-emerald-600 text-white border-emerald-600' : 'border-slate-300 hover:bg-slate-50'
@@ -367,16 +384,25 @@ function Detail({ payment, onClose, onUpdate }: {
           </button>
         </div>
 
-        {/* tax invoice */}
-        {(p.taxInvoiceStatus !== 'none' || p.taxInvoice) && (
-          <div className="px-4 py-3 border-t border-slate-100">
-            <div className="text-xs text-slate-400 mb-1.5 flex items-center gap-1">
-              <FileText size={13} /> ใบกำกับภาษี · <Badge cls={TAX_META[p.taxInvoiceStatus].cls}>{TAX_META[p.taxInvoiceStatus].label}</Badge>
-            </div>
-            {p.taxInvoice && (
-              <div className="p-2 mb-2 rounded-lg bg-slate-50 text-slate-600 text-xs whitespace-pre-wrap">{p.taxInvoice}</div>
-            )}
-            <div className="flex gap-1.5">
+        {/* tax invoice — always shown: the common case is the customer asking for it days
+            after the slip was forwarded, not just at forward time */}
+        <div className="px-4 py-3 border-t border-slate-100">
+          <div className="text-xs text-slate-400 mb-1.5 flex items-center gap-1">
+            <FileText size={13} /> ใบกำกับภาษี · <Badge cls={TAX_META[p.taxInvoiceStatus].cls}>{TAX_META[p.taxInvoiceStatus].label}</Badge>
+          </div>
+          {p.taxInvoice && (
+            <div className="p-2 mb-2 rounded-lg bg-slate-50 text-slate-600 text-xs whitespace-pre-wrap">{p.taxInvoice}</div>
+          )}
+          {p.taxInvoiceStatus === 'none' ? (
+            <button
+              disabled={busy !== ''}
+              onClick={() => run('taxreq', () => setTaxInvoice(p.id, 'requested'))}
+              className="w-full px-3 py-1.5 rounded-lg text-sm font-medium border border-slate-300 hover:bg-slate-50 disabled:opacity-40 flex items-center justify-center gap-1"
+            >
+              {busy === 'taxreq' ? <Loader2 size={14} className="animate-spin" /> : 'ขอใบกำกับภาษี'}
+            </button>
+          ) : (
+            <div className="flex gap-1.5 items-center">
               {(['requested', 'issued'] as TaxStatus[]).map((s) => (
                 <button
                   key={s}
@@ -389,9 +415,18 @@ function Detail({ payment, onClose, onUpdate }: {
                   {busy === 'tax' + s ? <Loader2 size={13} className="animate-spin" /> : TAX_META[s].label}
                 </button>
               ))}
+              {p.taxInvoiceStatus === 'requested' && (
+                <button
+                  disabled={busy !== ''}
+                  onClick={() => run('taxnone', () => setTaxInvoice(p.id, 'none'))}
+                  className="px-2 py-1 text-xs text-slate-400 hover:text-rose-600 underline disabled:opacity-40"
+                >
+                  ยกเลิกคำขอ
+                </button>
+              )}
             </div>
-          </div>
-        )}
+          )}
+        </div>
       </div>
     </div>
   );
@@ -404,6 +439,7 @@ function Reports() {
   const [to, setTo] = useState('');
   const [report, setReport] = useState<Report | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
 
   const load = useCallback(() => {
     setLoading(true);
@@ -438,11 +474,17 @@ function Reports() {
         <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="px-2 py-2 rounded-lg border border-slate-300 text-sm" title="ตั้งแต่วันที่" />
         <input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="px-2 py-2 rounded-lg border border-slate-300 text-sm" title="ถึงวันที่" />
         <button
-          onClick={() => downloadCsv({ from: from || undefined, to: to || undefined }).catch(() => undefined)}
+          onClick={() => {
+            setError('');
+            // excludeVoid: the on-screen report already excludes voided payments — the CSV
+            // must match, or totals won't reconcile.
+            downloadCsv({ from: from || undefined, to: to || undefined, excludeVoid: true }).catch(() => setError('ดาวน์โหลดไม่สำเร็จ'));
+          }}
           className="flex items-center gap-1 px-3 py-2 rounded-lg bg-slate-800 text-white text-sm hover:bg-slate-700"
         >
           <Download size={15} /> CSV
         </button>
+        {error && <span className="text-xs text-rose-600 flex items-center gap-1"><AlertTriangle size={13} /> {error}</span>}
       </div>
 
       {report && (

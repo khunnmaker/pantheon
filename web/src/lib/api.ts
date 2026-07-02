@@ -291,13 +291,14 @@ export const readSlip = (messageId: string) =>
 export async function sendToFinance(
   messageId: string,
   fields: { amount: string; bank: string; transferAt: string; ref: string; nickname: string; realName: string; taxInvoice?: string; note?: string },
-): Promise<{ ok: boolean; error?: string; financeSentAt?: string; corrected?: boolean }> {
+): Promise<{ ok: boolean; error?: string; financeSentAt?: string; corrected?: boolean; alreadySent?: boolean }> {
   const token = getToken();
   const res = await fetch(`${API_URL}/api/messages/${messageId}/to-finance`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
     body: JSON.stringify(fields),
   });
+  if (res.status === 409) return { ok: false, alreadySent: true };
   if (!res.ok) {
     const e = (await res.json().catch(() => ({}))) as { detail?: string; error?: string };
     return { ok: false, error: e.detail || e.error || `HTTP ${res.status}` };

@@ -36,3 +36,4 @@ CREATE INDEX "Payment_flagged_idx" ON "Payment"("flagged");
 CREATE INDEX "Payment_taxInvoiceStatus_idx" ON "Payment"("taxInvoiceStatus");
 CREATE INDEX "Payment_customerCode_idx" ON "Payment"("customerCode");
 CREATE INDEX "Payment_createdAt_idx" ON "Payment"("createdAt");
+CREATE UNIQUE INDEX "Payment_slipMessageId_key" ON "Payment"("slipMessageId");

@@ -70,6 +70,7 @@ export interface PaymentFilter {
   tax?: 'all' | TaxStatus;
   from?: string;
   to?: string;
+  excludeVoid?: boolean; // Reports CSV: match the on-screen report, which excludes voids
 }
 
 const TOKEN_KEY = 'juno_token';
@@ -97,6 +98,11 @@ export function clearSession(): void {
   localStorage.removeItem(AGENT_KEY);
 }
 
+// Notified on a 401 (daily JWT expiry) so the app can drop back to Login instead of sitting
+// as a dead husk of failed fetches. Set by App.tsx.
+let onUnauthorized: (() => void) | null = null;
+export function setOnUnauthorized(fn: (() => void) | null): void { onUnauthorized = fn; }
+
 async function authed<T>(path: string, init?: RequestInit): Promise<T> {
   const token = getToken();
   const res = await fetch(`${API_URL}${path}`, {
@@ -109,6 +115,7 @@ async function authed<T>(path: string, init?: RequestInit): Promise<T> {
   });
   if (res.status === 401) {
     clearSession();
+    onUnauthorized?.();
     throw new Error('unauthorized');
   }
   if (res.status === 403) throw new Error('forbidden');
@@ -134,6 +141,7 @@ function filterQuery(f: PaymentFilter): string {
   if (f.tax && f.tax !== 'all') p.set('tax', f.tax);
   if (f.from) p.set('from', f.from);
   if (f.to) p.set('to', f.to);
+  if (f.excludeVoid) p.set('noVoid', '1');
   const s = p.toString();
   return s ? `?${s}` : '';
 }
