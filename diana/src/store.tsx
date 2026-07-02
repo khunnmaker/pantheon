@@ -56,7 +56,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [route, setRoute] = useState<RouteState>(parseHash);
   const [lang, setLang] = useState<Lang>(() => (localStorage.getItem('diana_lang') === 'en' ? 'en' : 'th'));
   const [clinic, setClinic] = useState<Clinic | null>(() => (getClinicToken() ? getStoredClinic() : null));
-  const [cart, setCart] = useState<Record<string, CartItem>>({});
+  // Hydrate the cart from localStorage so it survives refreshes/reloads.
+  const [cart, setCart] = useState<Record<string, CartItem>>(() => {
+    try { return JSON.parse(localStorage.getItem('diana_cart') || '{}') as Record<string, CartItem>; } catch { return {}; }
+  });
   const [facets, setFacets] = useState<Facets | null>(null);
   const [authOpen, setAuthOpen] = useState(false);
   const [cartOpen, setCartOpen] = useState(false);
@@ -77,14 +80,29 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   // Refresh approval status on load (approve-since-last-visit takes effect on the same token).
   useEffect(() => {
-    if (!getClinicToken()) return;
+    const token = getClinicToken();
+    if (!token) return;
     getMe()
-      .then(({ clinic: c }) => { setClinic(c); setClinicSession(getClinicToken()!, c); })
-      .catch(() => { clearClinicSession(); setClinic(null); });
+      .then(({ clinic: c }) => {
+        if (getClinicToken() !== token) return; // logged out/in during the request — ignore
+        setClinic(c);
+        setClinicSession(token, c);
+      })
+      .catch((e) => {
+        // Only drop the session on a real auth failure, NOT a transient network/5xx blip.
+        if ((e as Error).message === 'unauthorized' && getClinicToken() === token) {
+          clearClinicSession();
+          setClinic(null);
+        }
+      });
   }, []);
 
   // Facets (brands/categories) once.
   useEffect(() => { getFacets().then(setFacets).catch(() => undefined); }, []);
+
+  // Persist the cart across refreshes; keep <html lang> in sync on load + toggle.
+  useEffect(() => { localStorage.setItem('diana_cart', JSON.stringify(cart)); }, [cart]);
+  useEffect(() => { document.documentElement.lang = lang; }, [lang]);
 
   const login = useCallback((c: Clinic, token: string) => { setClinicSession(token, c); setClinic(c); setAuthOpen(false); }, []);
   const logout = useCallback(() => { clearClinicSession(); setClinic(null); setCart({}); }, []);

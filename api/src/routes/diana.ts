@@ -3,7 +3,7 @@ import type { Product, ProductEnrichment } from '@prisma/client';
 import { z } from 'zod';
 import { prisma } from '../db/prisma.js';
 import { hashPassword, verifyPassword, DUMMY_HASH } from '../auth/password.js';
-import { requireAuth } from '../auth/middleware.js';
+import { requireAuth, requireRole } from '../auth/middleware.js';
 import {
   signClinicToken,
   requireClinic,
@@ -288,9 +288,10 @@ export async function dianaRoutes(app: FastifyInstance) {
     },
   );
 
-  // ── STAFF admin: clinic approval ──────────────────────────────────────────
+  // ── STAFF admin: clinic approval (SUPERVISOR only — approval unlocks pricing,
+  //    and the list carries clinic PII; mirrors the supervisor gate on stock.ts) ──
   const adminClinicsQuery = z.object({ status: z.enum(['pending', 'approved', 'rejected']).optional() });
-  app.get('/api/diana/admin/clinics', { preHandler: requireAuth }, async (req, reply) => {
+  app.get('/api/diana/admin/clinics', { preHandler: [requireAuth, requireRole('supervisor')] }, async (req, reply) => {
     const parsed = adminClinicsQuery.safeParse(req.query);
     if (!parsed.success) return reply.code(400).send({ error: 'invalid_query' });
     const clinics = await prisma.clinicAccount.findMany({
@@ -308,7 +309,7 @@ export async function dianaRoutes(app: FastifyInstance) {
   const approveBody = z.object({ customerCode: z.string().trim().max(40).optional() });
   app.post<{ Params: { id: string } }>(
     '/api/diana/admin/clinics/:id/approve',
-    { preHandler: requireAuth },
+    { preHandler: [requireAuth, requireRole('supervisor')] },
     async (req, reply) => {
       const parsed = approveBody.safeParse(req.body ?? {});
       if (!parsed.success) return reply.code(400).send({ error: 'invalid_body' });
@@ -328,7 +329,7 @@ export async function dianaRoutes(app: FastifyInstance) {
   const rejectBody = z.object({ note: z.string().trim().max(500).default('') });
   app.post<{ Params: { id: string } }>(
     '/api/diana/admin/clinics/:id/reject',
-    { preHandler: requireAuth },
+    { preHandler: [requireAuth, requireRole('supervisor')] },
     async (req, reply) => {
       const parsed = rejectBody.safeParse(req.body ?? {});
       if (!parsed.success) return reply.code(400).send({ error: 'invalid_body' });
