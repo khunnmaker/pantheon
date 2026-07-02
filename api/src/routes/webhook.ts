@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { verifyLineSignature } from '../line/signature.js';
 import { ingestCustomerText } from '../line/ingest.js';
 import { saveLineContent } from '../line/contentStore.js';
-import { generateDraftForMessage, generateImageDraft, generateStickerDraft } from '../llm/draft.js';
+import { scheduleDraft, nonTextNeedsHuman, KIND_LABEL } from '../llm/draftQueue.js';
 import { prisma } from '../db/prisma.js';
 import { pushToConsole } from '../ws/io.js';
 
@@ -18,6 +18,7 @@ interface LineMessage {
   keywords?: string[]; // LINE-supplied words describing a sticker (e.g. "Thank you")
   fileName?: string; // for "file" messages
   fileSize?: number;
+  mention?: { mentionees?: { isSelf?: boolean }[] }; // LINE @mention payload (text messages)
 }
 interface LineEvent {
   type: string;
@@ -26,28 +27,6 @@ interface LineEvent {
 }
 interface LineWebhookBody {
   events?: LineEvent[];
-}
-
-const KIND_LABEL: Record<string, string> = {
-  image: 'รูปภาพ',
-  sticker: 'สติกเกอร์',
-  video: 'วิดีโอ',
-  audio: 'เสียง',
-  file: 'ไฟล์',
-  location: 'ตำแหน่งที่ตั้ง',
-};
-
-// Non-text messages can't be answered from the KB → store a needs_human draft so
-// the console flags it for a person (the AI never drafts a reply to a photo).
-async function nonTextNeedsHuman(messageId: string, kind: string): Promise<void> {
-  const label = KIND_LABEL[kind] ?? 'ข้อความ';
-  const note = `ลูกค้าส่ง${label} — ระบบ AI ตอบจากฐานความรู้ไม่ได้ ขอให้เจ้าหน้าที่ตรวจและตอบเองค่ะ`;
-  const draft = await prisma.draft.upsert({
-    where: { messageId },
-    update: { type: 'needs_human', draftText: '', note, usedKb: [] },
-    create: { messageId, type: 'needs_human', draftText: '', usedKb: [], note, retrievedMsgIds: [] },
-  });
-  pushToConsole('draft:new', { messageId, draft, guardrailReason: null });
 }
 
 export async function webhookRoutes(app: FastifyInstance) {
@@ -77,6 +56,12 @@ export async function webhookRoutes(app: FastifyInstance) {
         // so keying the Customer by this target never collides a group with a user.
         const lineUserId = ev.source?.groupId ?? ev.source?.roomId ?? ev.source?.userId;
         if (!lineUserId) continue;
+        // Group/room chatter is mostly staff talking to each other, not a customer asking the
+        // OA something — auto-drafting every one of those messages was burning a full draft
+        // call for free. Skip the auto-draft for group/room messages UNLESS the customer
+        // explicitly @mentions the bot; staff can always ร่างใหม่ on a group message that does
+        // need the AI. Ingest + message:new push + dedup are unaffected — only the draft is gated.
+        const isGroup = !!(ev.source?.groupId || ev.source?.roomId);
 
         // Dedup LINE's at-least-once delivery retries.
         const channelMsgId = ev.message.id;
@@ -98,11 +83,10 @@ export async function webhookRoutes(app: FastifyInstance) {
           });
           const msgId = result.message.id;
           const customerId = result.customer.id;
-          void generateDraftForMessage(msgId)
-            .then((d) =>
-              pushToConsole('draft:new', { messageId: msgId, customerId, draft: d.draft, guardrailReason: d.guardrailReason }),
-            )
-            .catch((err) => req.log.error({ err }, 'draft generation failed'));
+          const mentioned = ev.message.mention?.mentionees?.some((m) => m.isSelf === true) ?? false;
+          if (!isGroup || mentioned) {
+            scheduleDraft(customerId, msgId, 'text');
+          }
           continue;
         }
 
@@ -122,20 +106,14 @@ export async function webhookRoutes(app: FastifyInstance) {
             message: result.message,
             isNewCustomer: result.isNewCustomer,
           });
-          // With keyword(s) the AI can draft a fitting reply; with none, defer to a human.
-          if (meaning) {
-            const sMsgId = result.message.id;
-            const sCustomerId = result.customer.id;
-            void generateStickerDraft(sMsgId)
-              .then((d) =>
-                pushToConsole('draft:new', { messageId: sMsgId, customerId: sCustomerId, draft: d.draft, guardrailReason: d.guardrailReason }),
-              )
-              .catch(async (err) => {
-                req.log.error({ err }, 'sticker draft failed');
-                await nonTextNeedsHuman(sMsgId, 'sticker');
-              });
-          } else {
-            await nonTextNeedsHuman(result.message.id, 'sticker');
+          // With keyword(s) the AI can draft a fitting reply — debounced like text/image, so a
+          // sticker+text burst still produces ONE draft; with none, defer to a human.
+          if (!isGroup) {
+            if (meaning) {
+              scheduleDraft(result.customer.id, result.message.id, 'sticker');
+            } else {
+              await nonTextNeedsHuman(result.message.id, 'sticker');
+            }
           }
           continue;
         }
@@ -162,17 +140,13 @@ export async function webhookRoutes(app: FastifyInstance) {
             message,
             isNewCustomer: result.isNewCustomer,
           });
-          // Let Claude read the photo and draft a reply (still human-approved).
+          // Let Claude read the photo and draft a reply (still human-approved) — debounced so a
+          // burst that includes an image only fires one draft (see draftQueue.ts).
           const imgMsgId = message.id;
           const imgCustomerId = result.customer.id;
-          void generateImageDraft(imgMsgId)
-            .then((d) =>
-              pushToConsole('draft:new', { messageId: imgMsgId, customerId: imgCustomerId, draft: d.draft, guardrailReason: d.guardrailReason }),
-            )
-            .catch(async (err) => {
-              req.log.error({ err }, 'image draft failed');
-              await nonTextNeedsHuman(imgMsgId, 'image');
-            });
+          if (!isGroup) {
+            scheduleDraft(imgCustomerId, imgMsgId, 'image');
+          }
           continue;
         }
 
@@ -202,7 +176,9 @@ export async function webhookRoutes(app: FastifyInstance) {
           message,
           isNewCustomer: result.isNewCustomer,
         });
-        await nonTextNeedsHuman(message.id, mtype);
+        if (!isGroup) {
+          await nonTextNeedsHuman(message.id, mtype);
+        }
       } catch (err) {
         req.log.error({ err }, 'failed to ingest LINE event');
       }

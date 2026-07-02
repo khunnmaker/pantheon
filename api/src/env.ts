@@ -24,6 +24,8 @@ const schema = z.object({
   RECENT_WINDOW: z.coerce.number().int().positive().default(10),
   RETRIEVE_K: z.coerce.number().int().positive().default(3),
   SESSION_IDLE_MINUTES: z.coerce.number().int().positive().default(30),
+  DRAFT_DEBOUNCE_MS: z.coerce.number().int().min(0).default(15000), // burst debounce: wait this long after the LAST message before drafting (0 = draft immediately)
+  KB_INJECT_ALL_MAX: z.coerce.number().int().positive().default(120),
 
   WEB_ORIGIN: z.string().default('http://localhost:5173'),
 

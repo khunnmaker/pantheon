@@ -273,7 +273,9 @@ export async function generateImageDraft(messageId: string, mainSkus?: string[],
     throw new Error('image message not found');
   }
 
-  const kb = await prisma.kbEntry.findMany({ where: { status: 'active' } });
+  // Deterministic order so the image prompt's cached KB block is byte-stable across calls
+  // (same rationale as selectRelevantKb's inject-all path).
+  const kb = await prisma.kbEntry.findMany({ where: { status: 'active' }, orderBy: { id: 'asc' } });
   const cust = await prisma.customer.findUnique({ where: { id: message.customerId }, select: { answeredThroughAt: true } });
   const recentRows = await prisma.message.findMany({
     where: {

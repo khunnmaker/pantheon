@@ -41,7 +41,7 @@ export async function catalogRoutes(app: FastifyInstance) {
     const mainRaw = (req.body as { mainSkus?: unknown }).mainSkus;
     const mainSkus = Array.isArray(mainRaw) ? mainRaw.filter((s): s is string => typeof s === 'string') : [];
     const agentText = String((req.body as { agentText?: string }).agentText ?? '').trim() || undefined;
-    const kb = await prisma.kbEntry.findMany({ where: { status: 'active' } });
+    const kb = await prisma.kbEntry.findMany({ where: { status: 'active' }, orderBy: { id: 'asc' } }); // stable order = cacheable KB block
     const products = await findProducts(q);
     const confirmedProducts = mainSkus.length
       ? (await prisma.product.findMany({ where: { sku: { in: mainSkus } } })).map((p) => ({

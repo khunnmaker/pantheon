@@ -1,4 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
+import type { TextBlockParam } from '@anthropic-ai/sdk/resources/messages';
 import { env } from '../env.js';
 
 // Drafting/summarizing model (spec §3/§7).
@@ -17,12 +18,31 @@ export function llmAvailable(): boolean {
   return !!env.ANTHROPIC_API_KEY;
 }
 
+// A system prompt is either a plain string (unchanged behavior) or split into stable/
+// cacheable prefix blocks + an optional per-call variable suffix. Drafts fire every few
+// seconds during business hours, so the cached blocks (rules, KB) stay warm well inside
+// Anthropic's 5-min TTL — cache READS bill at ~10% of normal input token price, so marking
+// the byte-identical rules+KB prefix is most of this system's cost win.
+export type SystemPrompt = string | { cached: string[]; variable?: string };
+
+function buildSystemBlocks(system: SystemPrompt): string | TextBlockParam[] {
+  if (typeof system === 'string') return system;
+  const blocks: TextBlockParam[] = system.cached.map((text) => ({
+    type: 'text',
+    text,
+    cache_control: { type: 'ephemeral' },
+  }));
+  // Only append when non-empty — the API rejects empty text blocks.
+  if (system.variable) blocks.push({ type: 'text', text: system.variable });
+  return blocks;
+}
+
 // Single-shot completion. Optional system prompt keeps trusted rules separate
 // from untrusted user/customer content. Throws if no key or the API errors —
 // callers wrap in try/catch and safe-default to needs_human.
 export async function callClaude(
   user: string,
-  system?: string,
+  system?: SystemPrompt,
   maxTokens = MAX_TOKENS,
 ): Promise<string> {
   const c = getClient();
@@ -31,7 +51,7 @@ export async function callClaude(
   const res = await c.messages.create({
     model: MODEL,
     max_tokens: maxTokens,
-    ...(system ? { system } : {}),
+    ...(system ? { system: buildSystemBlocks(system) } : {}),
     messages: [{ role: 'user', content: user }],
   });
 
@@ -44,7 +64,7 @@ const SUPPORTED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/we
 // turn so the model can read/understand a customer photo.
 export async function callClaudeWithImage(
   userText: string,
-  system: string,
+  system: SystemPrompt,
   image: { base64: string; mediaType: string },
   maxTokens = MAX_TOKENS,
 ): Promise<string> {
@@ -58,7 +78,7 @@ export async function callClaudeWithImage(
   const res = await c.messages.create({
     model: MODEL,
     max_tokens: maxTokens,
-    system,
+    system: buildSystemBlocks(system),
     messages: [
       {
         role: 'user',

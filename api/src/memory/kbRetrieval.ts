@@ -1,12 +1,15 @@
 import type { KbEntry } from '@prisma/client';
 import { prisma } from '../db/prisma.js';
+import { env } from '../env.js';
 import { embed, embeddingsAvailable, retrieveRelevantKbIds, countActiveKbEmbeddings } from './embeddings.js';
 import { backfillKbEmbeddings } from '../db/ensureSeeded.js';
 
 // At/below this many active entries the whole KB fits comfortably in the prompt, so we inject
-// all of it — cheaper and zero risk of dropping a relevant entry. Above it we switch to
+// ALL of it in one prompt-caching-eligible block — while the KB fits, that's ~10x cheaper than
+// per-question semantic retrieval of an uncached subset (cache reads bill at ~10% of normal
+// input price; a freshly-selected subset can't hit the cache). Above the threshold we switch to
 // semantic retrieval so the prompt stays bounded as the KB grows (every promotion adds one).
-const INJECT_ALL_MAX = 30;
+const INJECT_ALL_MAX = env.KB_INJECT_ALL_MAX;
 // Top-K per individual question (results are unioned across a burst's questions).
 const PER_QUERY_K = 12;
 // Cap how many of a burst's questions drive retrieval — matches the draft pipeline's 15-message
@@ -35,7 +38,9 @@ function maybeBackfill(): void {
 // Otherwise it returns the per-question top-K union PLUS every non-'normal' (policy/price/
 // clinical) entry, which is ALWAYS kept so safety/policy knowledge can't be dropped by ranking.
 export async function selectRelevantKb(queries: string[]): Promise<KbEntry[]> {
-  const allActive = await prisma.kbEntry.findMany({ where: { status: 'active' } });
+  // Deterministic order (not DB-default/insertion order) so the inject-all block is
+  // byte-identical across calls while the KB doesn't change — required for it to be a cache hit.
+  const allActive = await prisma.kbEntry.findMany({ where: { status: 'active' }, orderBy: { id: 'asc' } });
   const qs = queries.map((q) => q.trim()).filter(Boolean).slice(-MAX_QUERIES);
   if (!embeddingsAvailable() || allActive.length <= INJECT_ALL_MAX || qs.length === 0) {
     return allActive;
