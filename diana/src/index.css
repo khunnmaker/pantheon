@@ -95,6 +95,12 @@ header.site{position:sticky;top:0;z-index:60;background:rgba(251,247,241,.85);ba
 .chip.c3{bottom:0;left:46px;animation:float 5s ease-in-out infinite 1.6s}
 @keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-12px)}}
 
+/* Real photos wired into the hero / split sections / page banners. */
+.hero-photo{position:absolute;inset:0;margin:auto;width:min(390px,86%);aspect-ratio:1;border-radius:28px;overflow:hidden;box-shadow:var(--shadow)}
+.hero-photo img{width:100%;height:100%;object-fit:cover;display:block}
+.split-img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.page-banner{width:100%;max-height:440px;object-fit:cover;border-radius:var(--r-lg);box-shadow:var(--shadow-sm);display:block}
+
 .strip{background:var(--surface);border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
 .strip .wrap{display:flex;align-items:center;gap:30px;padding:22px 24px;flex-wrap:wrap;justify-content:center}
 .strip span{font-size:.8rem;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}

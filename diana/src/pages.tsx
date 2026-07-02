@@ -28,14 +28,6 @@ const ARM_BG: Record<string, string> = {
   manufacturing: 'linear-gradient(135deg,#2f86c4,#1473A8)',
 };
 
-function Tooth({ size = 24 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.4} aria-hidden="true">
-      <path d="M12 3c-2 0-3 1-4.5 1S5 3.5 4 4.5C2.5 6 3 9 4 13c.8 3.2 1.3 7 3 7 1.5 0 1.5-3 2.5-3s1 3 2.5 3c1.7 0 2.2-3.8 3-7 1-4 1.5-7-.5-8.5C16 3.5 15 4 13.5 4S14 3 12 3z" />
-    </svg>
-  );
-}
-
 function catHref(c: CatGroup): string {
   if (c.catalogCategory) return `/catalog?category=${encodeURIComponent(c.catalogCategory)}`;
   if (c.search) return `/catalog?q=${encodeURIComponent(c.search)}`;
@@ -72,7 +64,7 @@ export function HomePage() {
             </div>
           </div>
           <div className="hero-art">
-            <div className="blob"><Tooth size={175} /></div>
+            <div className="hero-photo"><img src="/hero.jpg" alt={pick('ผลิตภัณฑ์ทันตกรรมที่เราผลิตเอง', 'Our own-made dental products')} /></div>
             <div className="chip c1"><span className="ci" style={{ background: 'var(--coral-l)', color: 'var(--coral-d)' }}><Clock size={19} /></span><div>{pick('จัดส่งไว', 'Fast dispatch')}<small>{pick('สั่งก่อน 15:00 น.', 'Order before 3pm')}</small></div></div>
             <div className="chip c2"><span className="ci" style={{ background: 'var(--teal-l)', color: 'var(--teal-d)' }}><ShieldCheck size={19} /></span><div>{pick('คุณภาพรับรอง', 'Certified quality')}<small>ISO 9001 &amp; 13485</small></div></div>
             <div className="chip c3"><span className="ci" style={{ background: '#E6F3FB', color: '#1473A8' }}><Boxes size={19} /></span><div>{pick('กว่า 1,000 รายการ', '1,000+ products')}<small>{pick('คลินิก · แล็บ · เครื่องมือ', 'Clinic · Lab · Machine')}</small></div></div>
@@ -101,7 +93,7 @@ export function HomePage() {
       <section className="section">
         <div className="wrap split">
           <div className="split-art">
-            <ScanLine size={150} />
+            <img src="/section-digital.jpg" alt="" className="split-img" />
             <div className="pill" style={{ top: 18, left: 18 }}><span style={{ width: 10, height: 10, borderRadius: 9, background: 'var(--coral)' }} /> Intraoral scan</div>
             <div className="pill" style={{ bottom: 18, right: 18 }}><span style={{ width: 10, height: 10, borderRadius: 9, background: 'var(--teal)' }} /> Exocad CAD/CAM</div>
           </div>
@@ -217,7 +209,7 @@ export function AboutPage() {
               <div className="stat"><b>ISO</b><span>9001 &amp; 13485</span></div>
             </div>
           </div>
-          <div className="split-art"><Tooth size={150} /><div className="pill" style={{ top: 18, left: 18 }}><span style={{ width: 10, height: 10, borderRadius: 9, background: 'var(--coral)' }} /> {pick('ไว้วางใจโดยคลินิกและแล็บ', 'Trusted by clinics & labs')}</div></div>
+          <div className="split-art"><img src="/arm-distribution.jpg" alt="" className="split-img" /><div className="pill" style={{ top: 18, left: 18 }}><span style={{ width: 10, height: 10, borderRadius: 9, background: 'var(--coral)' }} /> {pick('ไว้วางใจโดยคลินิกและแล็บ', 'Trusted by clinics & labs')}</div></div>
         </div>
       </section>
       <section className="section" style={{ background: 'var(--sand)' }}>
@@ -247,6 +239,7 @@ export function ProductsPage() {
   return (
     <>
       <PageHero eyebrow={pick('สินค้า', 'Products')} title={pick('เลือกชมตามหมวด', 'Browse by category')} desc={pick('เลือกหมวดที่สนใจ แล้วเข้าสู่ระบบเพื่อดูราคาและสั่งซื้อ', 'Pick a category, then sign in to see prices and order.')} />
+      <div className="wrap" style={{ paddingTop: 32 }}><img className="page-banner" src="/our-products.jpg" alt={pick('กลุ่มสินค้าที่เราผลิต', 'Our product range')} /></div>
       <section className="section"><div className="wrap"><CatGrid /></div></section>
     </>
   );
@@ -287,6 +280,7 @@ export function LabPage() {
   return (
     <>
       <PageHero eyebrow="DentalPort" title={pick('แล็บทันตกรรมด้วยเทคโนโลยีดิจิทัล', 'A dental laboratory powered by digital technology')} desc={pick(ARMS[1].blurb, ARMS[1].blurbEn)} />
+      <div className="wrap" style={{ paddingTop: 32 }}><img className="page-banner" src="/arm-lab.jpg" alt="" /></div>
       <section className="section">
         <div className="wrap" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(260px,1fr))', gap: 16 }}>
           {services.map((s) => (
@@ -314,6 +308,7 @@ export function ManufacturingPage() {
   return (
     <>
       <PageHero eyebrow="Dentory" title={pick('โรงงานผลิตวัสดุทันตกรรม กว่า 30 ปี', 'Manufacturing dental materials for 30+ years')} desc={pick(ARMS[2].blurb, ARMS[2].blurbEn)} />
+      <div className="wrap" style={{ paddingTop: 32 }}><img className="page-banner" src="/arm-manufacturing.jpg" alt="" /></div>
       <section className="section">
         <div className="wrap" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(220px,1fr))', gap: 16, marginBottom: 28 }}>
           {products.map((p) => (
