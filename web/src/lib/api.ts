@@ -349,6 +349,7 @@ export async function promoteLearned(id: string): Promise<
       skipped?: boolean;
       reason?: string;
       similarTo?: { id: string; category: string; answerPreview: string; similarityPct: number };
+      dedupUnavailable?: boolean;
     }
   | { unavailable: true }
   | { conflict: true }

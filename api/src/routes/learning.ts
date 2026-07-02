@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { prisma } from '../db/prisma.js';
 import { requireAuth, requireRole } from '../auth/middleware.js';
 import { distillKnowledge } from '../llm/distill.js';
-import { embedKbEntry, kbEmbeddingText, findSimilarKb } from '../memory/embeddings.js';
+import { embedKbEntry, kbEmbeddingText, findSimilarKb, countActiveKbEmbeddings } from '../memory/embeddings.js';
 
 // Cosine similarity at/above which a newly-promoted fact is flagged (non-blocking) as a likely
 // near-duplicate or conflict with an existing KB entry, for the supervisor to reconcile. Tunable.
@@ -63,7 +63,15 @@ export async function learningRoutes(app: FastifyInstance) {
     // warn the supervisor about a near-duplicate or a possible contradiction. Non-destructive —
     // we still add the entry (never silently fold a corrected fact into the wrong answer); the
     // supervisor reconciles via the KB editor.
-    const similar = await findSimilarKb(candidateText);
+    // Skip the check entirely when the embedding index isn't fully warm: searching a
+    // half-populated index can miss the real duplicate and come back confidently "no match",
+    // which is worse than telling the supervisor the check was skipped.
+    const [embedded, activeCount] = await Promise.all([
+      countActiveKbEmbeddings(),
+      prisma.kbEntry.count({ where: { status: 'active' } }),
+    ]);
+    const dedupUnavailable = embedded < activeCount;
+    const similar = dedupUnavailable ? null : await findSimilarKb(candidateText);
 
     let kb;
     try {
@@ -102,7 +110,7 @@ export async function learningRoutes(app: FastifyInstance) {
             similarityPct: Math.round(similar.similarity * 100),
           }
         : undefined;
-    return { ok: true, kb, similarTo };
+    return { ok: true, kb, similarTo, dedupUnavailable: dedupUnavailable || undefined };
   });
 
   // POST /api/learned/:id/reject — supervisor discards a captured edit.
@@ -126,10 +134,13 @@ export async function learningRoutes(app: FastifyInstance) {
         count(*)::int AS total
       FROM "ReplyOutcome"
       GROUP BY 1 ORDER BY total DESC`;
+    // sentAt is stored as UTC wall-time; the business runs on Asia/Bangkok (UTC+7), so shift
+    // before truncating to a week — otherwise a Monday-morning Bangkok send can land in the
+    // prior UTC week and get bucketed under the wrong week.
     const weekly = await prisma.$queryRaw<
       { week: string; accepted: number; edited: number; escalated: number; total: number }[]
     >`
-      SELECT to_char(date_trunc('week', "sentAt"), 'YYYY-MM-DD') AS week,
+      SELECT to_char(date_trunc('week', "sentAt" + interval '7 hours'), 'YYYY-MM-DD') AS week,
         count(*) FILTER (WHERE outcome = 'accepted_verbatim')::int AS accepted,
         count(*) FILTER (WHERE outcome = 'edited')::int AS edited,
         count(*) FILTER (WHERE outcome = 'escalated')::int AS escalated,

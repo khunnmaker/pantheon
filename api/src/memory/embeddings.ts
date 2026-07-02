@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { Prisma } from '@prisma/client';
 import { prisma } from '../db/prisma.js';
 import { env } from '../env.js';
@@ -99,12 +100,17 @@ export function kbEmbeddingText(entry: { questionVariants: string[]; answer: str
   return [entry.questionVariants.join('\n'), entry.answer].filter(Boolean).join('\n');
 }
 
-export async function storeKbEmbedding(kbId: string, vec: number[]): Promise<void> {
+// sha256 of the embedded text — stored beside the vector so staleness is detectable.
+export function kbTextHash(text: string): string {
+  return createHash('sha256').update(text).digest('hex');
+}
+
+export async function storeKbEmbedding(kbId: string, vec: number[], textHash: string): Promise<void> {
   const lit = toVectorLiteral(vec);
   await prisma.$executeRaw`
-    INSERT INTO kb_embedding (kb_id, embedding)
-    VALUES (${kbId}, ${lit}::vector)
-    ON CONFLICT (kb_id) DO UPDATE SET embedding = EXCLUDED.embedding`;
+    INSERT INTO kb_embedding (kb_id, embedding, text_hash)
+    VALUES (${kbId}, ${lit}::vector, ${textHash})
+    ON CONFLICT (kb_id) DO UPDATE SET embedding = EXCLUDED.embedding, text_hash = EXCLUDED.text_hash`;
 }
 
 // Embed + store one KB entry; best-effort (never throws — retrieval just falls back to
@@ -113,7 +119,7 @@ export async function embedKbEntry(kbId: string, text: string): Promise<void> {
   if (!embeddingsAvailable()) return;
   try {
     const [vec] = await embed([text], 'document');
-    await storeKbEmbedding(kbId, vec);
+    await storeKbEmbedding(kbId, vec, kbTextHash(text));
   } catch (err) {
     // Couldn't (re)embed — drop any existing row so we never serve a STALE vector for an
     // edited entry. Retrieval then falls back to the full KB for it, and the next boot's

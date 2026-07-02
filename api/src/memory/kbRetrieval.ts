@@ -1,6 +1,7 @@
 import type { KbEntry } from '@prisma/client';
 import { prisma } from '../db/prisma.js';
 import { embed, embeddingsAvailable, retrieveRelevantKbIds, countActiveKbEmbeddings } from './embeddings.js';
+import { backfillKbEmbeddings } from '../db/ensureSeeded.js';
 
 // At/below this many active entries the whole KB fits comfortably in the prompt, so we inject
 // all of it — cheaper and zero risk of dropping a relevant entry. Above it we switch to
@@ -8,8 +9,22 @@ import { embed, embeddingsAvailable, retrieveRelevantKbIds, countActiveKbEmbeddi
 const INJECT_ALL_MAX = 30;
 // Top-K per individual question (results are unioned across a burst's questions).
 const PER_QUERY_K = 12;
-// Cap how many of a burst's questions drive retrieval, to bound the vector-query count.
-const MAX_QUERIES = 6;
+// Cap how many of a burst's questions drive retrieval — matches the draft pipeline's 15-message
+// unanswered-burst cap so a long burst's earlier questions still contribute to retrieval.
+// Queries are embedded in one batched Voyage call and the per-vector pgvector lookups are
+// cheap, so this can track the burst cap rather than being an independent, tighter limit.
+const MAX_QUERIES = 15;
+
+// Debounced self-heal trigger (no timers — just a last-attempt timestamp) so a warm-miss during
+// a live draft kicks the backfill without hammering it on every request while it's running.
+let lastBackfillAttempt = 0;
+const BACKFILL_DEBOUNCE_MS = 60_000;
+function maybeBackfill(): void {
+  const now = Date.now();
+  if (now - lastBackfillAttempt < BACKFILL_DEBOUNCE_MS) return;
+  lastBackfillAttempt = now;
+  void backfillKbEmbeddings();
+}
 
 // Choose the KB entries to put in a draft prompt for the customer's question(s). Safe by
 // construction — it returns the FULL active KB (the original behavior) whenever:
@@ -32,6 +47,9 @@ export async function selectRelevantKb(queries: string[]): Promise<KbEntry[]> {
     if (embedded < allActive.length) {
       // eslint-disable-next-line no-console
       console.warn(`[kb] embedding index not warm (${embedded}/${allActive.length}); using full KB`);
+      // Self-heal: kick the backfill (debounced) so one failed embed doesn't disarm semantic
+      // retrieval until the next deploy — the index repairs on a live draft instead.
+      maybeBackfill();
       return allActive;
     }
     // Per-question retrieval, unioned: one off-topic line in a burst can't push another
