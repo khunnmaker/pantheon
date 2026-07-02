@@ -294,7 +294,7 @@ export async function sendMessage(
   return res.json() as Promise<{ message: Message; dryRun: boolean }>;
 }
 
-export interface SlipReadResult { nickname: string; realName: string; amount: string; bank: string; transferAt: string; ref: string }
+export interface SlipReadResult { nickname: string; code: string; realName: string; amount: string; bank: string; transferAt: string; ref: string }
 // OCR a customer's payment slip → pre-fill fields (best-effort; blanks if no LLM credits).
 export const readSlip = (messageId: string) =>
   authed<SlipReadResult>(`/api/messages/${messageId}/read-slip`, { method: 'POST' });

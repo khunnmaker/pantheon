@@ -273,7 +273,7 @@ function FinanceModal({ messageId, onClose, onSent }: { messageId: string; onClo
   const [sending, setSending] = useState(false);
   const [err, setErr] = useState('');
   const [ocrAmount, setOcrAmount] = useState(''); // server-truth amount read off the slip
-  const [f, setF] = useState({ nickname: '', realName: '', amount: '', bank: '', transferAt: '', ref: '', taxInvoice: '', note: '' });
+  const [f, setF] = useState({ nickname: '', code: '', realName: '', amount: '', bank: '', transferAt: '', ref: '', taxInvoice: '', note: '' });
 
   useEffect(() => {
     let cancelled = false;
@@ -311,6 +311,7 @@ function FinanceModal({ messageId, onClose, onSent }: { messageId: string; onClo
         <div className="font-semibold text-slate-800 flex items-center gap-1.5"><Banknote size={17} className="text-amber-600" /> แจ้งการเงิน</div>
         {loading && <div className="text-xs text-slate-400 flex items-center gap-1"><Loader2 size={13} className="animate-spin" /> กำลังอ่านสลิป…</div>}
         <div className="grid grid-cols-2 gap-2">
+          {field('รหัสลูกค้า', 'code', '—', true)}
           {field('ชื่อ', 'nickname', '', true)}
           {field('ชื่อผู้โอน', 'realName', 'ชื่อผู้โอน')}
           {field('จำนวนเงิน', 'amount', 'เช่น 1500')}
