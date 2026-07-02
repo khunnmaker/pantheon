@@ -1235,6 +1235,9 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                                   <Banknote size={12} /> แจ้งการเงิน
                                 </button>
                           )}
+                          {m.role !== 'customer' && m.agentName && (
+                            <div className="text-[10px] text-sky-100/80 text-right mt-1">— {m.agentName}</div>
+                          )}
                         </div>
                       </div>
                     ))}

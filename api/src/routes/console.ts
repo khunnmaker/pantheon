@@ -191,9 +191,19 @@ export async function consoleRoutes(app: FastifyInstance) {
         .map(toProductCard);
     }
 
+    // Resolve sender names for outgoing messages (who answered) — Message.agentId has no Prisma
+    // relation, and old ids may reference pruned accounts, so look up what exists and leave the
+    // rest null (the console simply shows no name for those).
+    const agentIds = [...new Set(ordered.map((m) => m.agentId).filter((v): v is string => !!v))];
+    const agents = agentIds.length
+      ? await prisma.agent.findMany({ where: { id: { in: agentIds } }, select: { id: true, name: true } })
+      : [];
+    const agentNameById = new Map(agents.map((a) => [a.id, a.name]));
+    const messages = ordered.map((m) => ({ ...m, agentName: m.agentId ? (agentNameById.get(m.agentId) ?? null) : null }));
+
     return {
       customer,
-      messages: ordered,
+      messages,
       pendingDraft,
       pendingProduct,
       productCandidates,

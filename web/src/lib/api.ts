@@ -21,6 +21,7 @@ export interface Message {
   role: 'customer' | 'agent';
   text: string;
   agentId: string | null;
+  agentName?: string | null; // sender staff name (agent messages; null if the account was pruned)
   kbIds: string[];
   channelMsgId: string | null;
   attachmentType: string | null; // image | sticker | video | audio | file | location | product
