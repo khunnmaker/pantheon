@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react';
 import {
   ShieldCheck, LogIn, LogOut, Loader2, AlertTriangle, Check, X, Clock, ClipboardList,
-  Users, CheckCircle2, FileText, Ban, Tags, Search, Save, ChevronLeft, ChevronRight,
+  Users, CheckCircle2, FileText, Ban, Tags, Search, Save, ChevronLeft, ChevronRight, Trash2,
 } from 'lucide-react';
 import {
   loginStaff, setStaffSession, getStaffToken, getStoredStaff, clearStaffSession,
-  adminListClinics, adminApproveClinic, adminRejectClinic,
+  adminListClinics, adminApproveClinic, adminRejectClinic, adminDeleteClinic,
   adminListOrders, adminOrderTransition,
   adminListEnrichment, adminSaveEnrichment, mediaUrl, formatBaht,
   type Agent, type AdminClinic, type AdminOrder, type ClinicStatus, type OrderStatus,
@@ -72,6 +72,11 @@ function ClinicsPanel() {
     setBusyId(c.id);
     try { await adminRejectClinic(c.id, note.trim()); load(); } catch { setError('ปฏิเสธไม่สำเร็จ'); } finally { setBusyId(''); }
   }
+  async function del(c: AdminClinic) {
+    if (!window.confirm(`ลบบัญชี "${c.clinicName}" (${c.email}) และคำสั่งซื้อทั้งหมดอย่างถาวร?\nการกระทำนี้ย้อนกลับไม่ได้ — ใช้สำหรับลบบัญชีทดสอบ`)) return;
+    setBusyId(c.id);
+    try { await adminDeleteClinic(c.id); load(); } catch { setError('ลบไม่สำเร็จ'); } finally { setBusyId(''); }
+  }
 
   return (
     <>
@@ -87,14 +92,17 @@ function ClinicsPanel() {
                 <div className="text-xs text-slate-400 mt-0.5">สมัคร {new Date(c.createdAt).toLocaleString('th-TH')}{c.pdpaConsentAt ? ' · ยินยอม PDPA' : ''}</div>
                 {c.status === 'rejected' && c.rejectNote && <div className="text-xs text-rose-500 mt-0.5">เหตุผล: {c.rejectNote}</div>}
               </div>
-              {c.status === 'pending' ? (
-                <div className="flex gap-2 shrink-0">
-                  <button disabled={busyId === c.id} onClick={() => approve(c)} className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-sm flex items-center gap-1 disabled:opacity-50"><Check size={15} /> อนุมัติ</button>
-                  <button disabled={busyId === c.id} onClick={() => reject(c)} className="px-3 py-1.5 rounded-lg border border-slate-300 text-slate-600 text-sm flex items-center gap-1 disabled:opacity-50"><X size={15} /> ปฏิเสธ</button>
-                </div>
-              ) : (
-                <StatusChip status={c.status} />
-              )}
+              <div className="flex items-center gap-2 shrink-0">
+                {c.status === 'pending' ? (
+                  <>
+                    <button disabled={busyId === c.id} onClick={() => approve(c)} className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-sm flex items-center gap-1 disabled:opacity-50"><Check size={15} /> อนุมัติ</button>
+                    <button disabled={busyId === c.id} onClick={() => reject(c)} className="px-3 py-1.5 rounded-lg border border-slate-300 text-slate-600 text-sm flex items-center gap-1 disabled:opacity-50"><X size={15} /> ปฏิเสธ</button>
+                  </>
+                ) : (
+                  <StatusChip status={c.status} />
+                )}
+                <button disabled={busyId === c.id} onClick={() => del(c)} title="ลบบัญชี (ถาวร)" aria-label="ลบบัญชี" className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 disabled:opacity-50"><Trash2 size={16} /></button>
+              </div>
             </div>
           ))}
         </div>

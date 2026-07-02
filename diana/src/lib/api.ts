@@ -265,6 +265,10 @@ export const adminRejectClinic = (id: string, note: string) =>
     body: JSON.stringify({ note }),
   });
 
+// Supervisor-only: permanently delete a clinic account + all its orders (test cleanup).
+export const adminDeleteClinic = (id: string) =>
+  staffCall<{ ok: boolean }>(`/api/diana/admin/clinics/${encodeURIComponent(id)}`, { method: 'DELETE' });
+
 export interface AdminOrder extends WebOrder {
   clinicAccount: { id: string; clinicName: string; email: string; customerCode: string | null };
 }

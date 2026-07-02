@@ -344,6 +344,24 @@ export async function dianaRoutes(app: FastifyInstance) {
     },
   );
 
+  // SUPERVISOR only: permanently delete a clinic account and all its orders.
+  // Intended for clearing test accounts. WebOrderLine cascades from WebOrder, so we
+  // delete the clinic's orders first (WebOrder has onDelete: Restrict to ClinicAccount),
+  // then the account — both in one transaction.
+  app.delete<{ Params: { id: string } }>(
+    '/api/diana/admin/clinics/:id',
+    { preHandler: [requireAuth, requireRole('supervisor')] },
+    async (req, reply) => {
+      const exists = await prisma.clinicAccount.findUnique({ where: { id: req.params.id } });
+      if (!exists) return reply.code(404).send({ error: 'not_found' });
+      await prisma.$transaction([
+        prisma.webOrder.deleteMany({ where: { clinicAccountId: req.params.id } }),
+        prisma.clinicAccount.delete({ where: { id: req.params.id } }),
+      ]);
+      return { ok: true };
+    },
+  );
+
   // ── STAFF admin: order queue ──────────────────────────────────────────────
   const adminOrdersQuery = z.object({ status: z.enum(['submitted', 'confirmed', 'invoiced', 'cancelled']).optional() });
   app.get('/api/diana/admin/orders', { preHandler: requireAuth }, async (req, reply) => {
