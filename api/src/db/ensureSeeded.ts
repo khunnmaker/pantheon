@@ -1,7 +1,7 @@
 import { prisma } from './prisma.js';
 import { hashPassword, verifyPassword } from '../auth/password.js';
 import { HISTORY_KB } from '../kb/historyKb.js';
-import { embed, embeddingsAvailable, storeKbEmbedding, kbEmbeddingText } from '../memory/embeddings.js';
+import { embed, embeddingsAvailable, storeKbEmbedding, kbEmbeddingText, kbTextHash } from '../memory/embeddings.js';
 
 // Canonical staff list — the single source of truth for who can log in.
 // Synced on every boot (see syncStaff): names/roles come from here, passwords
@@ -62,28 +62,39 @@ async function syncStaff(): Promise<void> {
 
 // Populate an EMPTY production database on boot so a fresh cloud deploy is usable
 // without a manual seed step. KB loads only when empty; staff are reconciled to
-// Backfill missing KB embeddings (best-effort, batched). The kb_embedding table exists from
-// the M3 pgvector migration but was never populated; semantic retrieval needs it. Idempotent:
-// only embeds active entries that have no row yet, so it's a near no-op after the first run.
-async function backfillKbEmbeddings(): Promise<void> {
+// Backfill missing/stale KB embeddings (best-effort, batched). Repairs two cases: a row with
+// no embedding yet (kb_embedding table populated post-hoc, or a new entry whose embed failed)
+// AND a row whose stored text_hash no longer matches the entry's current text — a stale vector
+// left behind by a re-embed that was lost (deploy mid-flight, bulk KB reload, failed delete).
+// Fetches all active entries (KB is ~50-100 rows) and filters in JS; idempotent, so it's a
+// near no-op once every active entry's hash is current.
+export async function backfillKbEmbeddings(): Promise<void> {
   if (!embeddingsAvailable()) return;
   try {
-    const missing = await prisma.$queryRaw<{ id: string; questionVariants: string[]; answer: string }[]>`
-      SELECT k.id, k."questionVariants", k.answer
+    const all = await prisma.$queryRaw<
+      { id: string; questionVariants: string[]; answer: string; text_hash: string | null }[]
+    >`
+      SELECT k.id, k."questionVariants", k.answer, ke.text_hash
       FROM "KbEntry" k
       LEFT JOIN kb_embedding ke ON ke.kb_id = k.id
-      WHERE k.status = 'active' AND ke.kb_id IS NULL`;
-    if (!missing.length) return;
+      WHERE k.status = 'active'`;
+    const stale = all.filter((row) => {
+      const hash = kbTextHash(kbEmbeddingText(row));
+      return row.text_hash == null || row.text_hash !== hash;
+    });
+    if (!stale.length) return;
     const CHUNK = 64; // bound the Voyage request payload
     let done = 0;
-    for (let i = 0; i < missing.length; i += CHUNK) {
-      const batch = missing.slice(i, i + CHUNK);
+    for (let i = 0; i < stale.length; i += CHUNK) {
+      const batch = stale.slice(i, i + CHUNK);
       try {
         const vecs = await embed(batch.map((m) => kbEmbeddingText(m)), 'document');
         // allSettled + the vecs[j] guard so one bad row/store never aborts the whole run;
         // anything left unembedded is just retried on the next boot.
         const results = await Promise.allSettled(
-          batch.map((m, j) => (vecs[j] ? storeKbEmbedding(m.id, vecs[j]) : Promise.reject(new Error('no vector')))),
+          batch.map((m, j) =>
+            vecs[j] ? storeKbEmbedding(m.id, vecs[j], kbTextHash(kbEmbeddingText(m))) : Promise.reject(new Error('no vector')),
+          ),
         );
         done += results.filter((r) => r.status === 'fulfilled').length;
       } catch (err) {
@@ -92,7 +103,7 @@ async function backfillKbEmbeddings(): Promise<void> {
       }
     }
     // eslint-disable-next-line no-console
-    console.log(`[seed] backfilled ${done}/${missing.length} KB embeddings`);
+    console.log(`[seed] backfilled ${done}/${stale.length} KB embeddings`);
   } catch (err) {
     // eslint-disable-next-line no-console
     console.error('[seed] KB embedding backfill failed', err);

@@ -657,6 +657,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
   // Staff upload a photo/file to ATTACH to the reply (sent together on อนุมัติ & ส่ง).
   async function onPickFile(file?: File) {
     if (!file) return;
+    if (uploading) return; // the paste path bypasses the disabled buttons, so guard here too
     if (file.size > 25 * 1024 * 1024) { setError('ไฟล์ใหญ่เกิน 25MB'); return; }
     setUploading(true);
     setError('');
@@ -676,10 +677,14 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
   // Paste an image with Ctrl+V (e.g. a Snipping Tool capture) to attach it to the reply, then
   // send with the normal button. A document-level listener so it works regardless of focus; it
   // only acts on an IMAGE in the clipboard, so pasting text into a box still works as usual.
+  // Gated to the visible console composer: in the Learning/Audit tabs, or behind the finance
+  // modal / lightbox / camera modal, the composer isn't on screen — a stray Ctrl+V there would
+  // silently upload into the hidden composer and (via onPickFile) wipe the staff's selected
+  // product photos.
   const onPickFileRef = useRef(onPickFile);
   onPickFileRef.current = onPickFile;
   useEffect(() => {
-    if (!selectedId) return;
+    if (!selectedId || view !== 'console' || financeMsg || lightbox || cameraOpen) return;
     const onPaste = (e: ClipboardEvent) => {
       const items = e.clipboardData?.items;
       if (!items) return;
@@ -698,7 +703,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
     };
     document.addEventListener('paste', onPaste);
     return () => document.removeEventListener('paste', onPaste);
-  }, [selectedId]);
+  }, [selectedId, view, financeMsg, lightbox, cameraOpen]);
 
   // Camera capture → upload + send the photo to the customer IMMEDIATELY (standalone,
   // no text). Does NOT queue onto the draft; the composer text is left untouched.
@@ -944,6 +949,8 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
             kind: 'warn',
             text: `เพิ่มเข้า KB แล้ว แต่คล้ายความรู้เดิม (${res.similarTo.similarityPct}%) หมวด "${res.similarTo.category}": "${res.similarTo.answerPreview}" — โปรดตรวจสอบใน KB ว่าซ้ำ/ขัดแย้งกันไหม`,
           });
+        } else if (res.dedupUnavailable) {
+          flashToast('เพิ่มเข้า KB แล้ว (ข้ามการเช็คซ้ำ — ดัชนีความรู้กำลังอัปเดต)');
         } else {
           const f = res.kb.answer;
           flashToast('เพิ่มเข้า KB แล้ว (สรุปเป็นความรู้): ' + (f.length > 70 ? f.slice(0, 70) + '…' : f));
@@ -1490,9 +1497,12 @@ function LearningMetrics() {
           <div className="flex items-end gap-4">
             <div>
               <div className="text-3xl font-bold text-sky-700 leading-none">{pct(m.overall.acceptRate)}</div>
-              <div className="text-[11px] text-slate-400 mt-1">ส่งเลยโดยไม่แก้</div>
+              <div className="text-[11px] text-slate-400 mt-1">ส่งเลยโดยไม่แก้ (จากที่ AI ตอบเอง)</div>
             </div>
-            <div className="text-xs text-slate-500 pb-1">จาก {m.overall.total} ดราฟ · ส่งเอง {m.overall.accepted} · แก้ {m.overall.edited} · ให้คนตอบ {m.overall.escalated}</div>
+            <div className="text-xs text-slate-500 pb-1">
+              จาก {m.overall.total} ดราฟ · ส่งเอง {m.overall.accepted} · แก้ {m.overall.edited} · ให้คนตอบ {m.overall.escalated}
+              {m.overall.total > 0 && ` (${Math.round((m.overall.escalated / m.overall.total) * 100)}%)`}
+            </div>
           </div>
           <div className="space-y-1.5">
             <div className="text-[11px] font-semibold text-slate-500">แยกตามหมวด (อัตราส่งโดยไม่แก้)</div>
