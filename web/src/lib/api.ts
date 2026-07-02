@@ -338,14 +338,31 @@ export const resolveFinanceAudit = (id: string) =>
 
 export const getLearned = (status = 'pending') =>
   authed<{ learned: LearnedAnswer[] }>(`/api/learned?status=${status}`);
-export const promoteLearned = (id: string) =>
-  authed<{
-    ok: boolean;
-    kb?: { answer: string } | null;
-    skipped?: boolean;
-    reason?: string;
-    similarTo?: { id: string; category: string; answerPreview: string; similarityPct: number };
-  }>(`/api/learned/${id}/promote`, { method: 'POST' });
+
+// Promote a learned answer into the KB. 503 = distillation temporarily unavailable (retry);
+// 409 = already promoted or another promote is in flight.
+export async function promoteLearned(id: string): Promise<
+  | {
+      ok: boolean;
+      kb?: { answer: string } | null;
+      skipped?: boolean;
+      reason?: string;
+      similarTo?: { id: string; category: string; answerPreview: string; similarityPct: number };
+    }
+  | { unavailable: true }
+  | { conflict: true }
+> {
+  const token = getToken();
+  const res = await fetch(`${API_URL}/api/learned/${id}/promote`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
+  });
+  if (res.status === 503) return { unavailable: true }; // LLM distill unavailable — retry later
+  if (res.status === 409) return { conflict: true }; // already promoted or a promote is in flight
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
 export const rejectLearned = (id: string) =>
   authed<{ ok: boolean }>(`/api/learned/${id}/reject`, { method: 'POST' });
 

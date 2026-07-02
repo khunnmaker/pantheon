@@ -24,14 +24,28 @@ export async function learningRoutes(app: FastifyInstance) {
 
   // POST /api/learned/:id/promote — supervisor turns an edited answer into KB.
   app.post<{ Params: { id: string } }>('/api/learned/:id/promote', supervisorOnly, async (req, reply) => {
-    const rec = await prisma.learnedAnswer.findUnique({ where: { id: req.params.id } });
-    if (!rec) return reply.code(404).send({ error: 'not_found' });
-    if (rec.status === 'approved') return reply.code(409).send({ error: 'already_promoted' });
+    // Claim atomically BEFORE the slow LLM/embedding work: only one request can move
+    // pending → promoting, so a double-click can't distill twice or create duplicate entries.
+    const claimed = await prisma.learnedAnswer.updateMany({
+      where: { id: req.params.id, status: 'pending' },
+      data: { status: 'promoting' },
+    });
+    if (claimed.count === 0) {
+      const rec = await prisma.learnedAnswer.findUnique({ where: { id: req.params.id } });
+      if (!rec) return reply.code(404).send({ error: 'not_found' });
+      return reply.code(409).send({ error: rec.status === 'approved' ? 'already_promoted' : 'in_progress' });
+    }
+    const rec = (await prisma.learnedAnswer.findUnique({ where: { id: req.params.id } }))!;
 
     // Distill the staff's approved reply into reusable knowledge (facts only — no tone, no
     // greeting/closing, no customer-specific details) BEFORE it enters the KB. The draft
     // pipeline rephrases KB facts in Minerva's own voice. [[kb-learn-knowledge-not-tone]]
     const distilled = await distillKnowledge(rec.customerQuestion, rec.finalAnswer);
+    if (!distilled) {
+      // Distillation unavailable (LLM down/unparseable) — release the claim; the supervisor retries.
+      await prisma.learnedAnswer.update({ where: { id: rec.id }, data: { status: 'pending' } }).catch(() => undefined);
+      return reply.code(503).send({ error: 'distill_unavailable' });
+    }
     if (!distilled.generalizable || !distilled.fact) {
       // Too customer-specific to be general knowledge — don't pollute the KB. Resolve the
       // queued item so it doesn't linger, and tell the supervisor why nothing was added.
@@ -51,24 +65,34 @@ export async function learningRoutes(app: FastifyInstance) {
     // supervisor reconciles via the KB editor.
     const similar = await findSimilarKb(candidateText);
 
-    const kb = await prisma.kbEntry.create({
-      data: {
-        category: 'เรียนรู้จากพนักงาน',
-        questionVariants,
-        answer: distilled.fact,
-        sensitivity: 'normal',
-        source: 'learned',
-        status: 'active',
-        lastVerifiedAt: new Date(),
-        ownerAgentId: req.agent?.id,
-      },
-    });
-    // Index the new fact for semantic retrieval (best-effort).
+    let kb;
+    try {
+      kb = await prisma.$transaction(async (tx) => {
+        const created = await tx.kbEntry.create({
+          data: {
+            category: 'เรียนรู้จากพนักงาน',
+            questionVariants,
+            answer: distilled.fact,
+            sensitivity: 'normal',
+            source: 'learned',
+            status: 'active',
+            lastVerifiedAt: new Date(),
+            ownerAgentId: req.agent?.id,
+          },
+        });
+        await tx.learnedAnswer.update({
+          where: { id: rec.id },
+          data: { status: 'approved', promotedKbId: created.id },
+        });
+        return created;
+      });
+    } catch (err) {
+      req.log.error({ err }, 'promote transaction failed');
+      await prisma.learnedAnswer.update({ where: { id: rec.id }, data: { status: 'pending' } }).catch(() => undefined);
+      return reply.code(500).send({ error: 'promote_failed' });
+    }
+    // Index the new fact for semantic retrieval (best-effort, after the transaction commits).
     void embedKbEntry(kb.id, candidateText);
-    await prisma.learnedAnswer.update({
-      where: { id: rec.id },
-      data: { status: 'approved', promotedKbId: kb.id },
-    });
     const similarTo =
       similar && similar.similarity >= KB_SIMILAR_FLAG
         ? {

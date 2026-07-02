@@ -335,20 +335,26 @@ export async function messageRoutes(app: FastifyInstance) {
       void recordCrossSellOutcome(anchorSku, draft.crossSellSkus, parsed.data.attachProductSkus).catch(() => undefined);
     }
 
-    // Learning loop: capture edits (final differs from the AI draft).
+    // Learning loop: capture edits (final differs from the AI draft). Best-effort — this runs
+    // AFTER the LINE send already succeeded, so a DB hiccup here must never 500 the route and
+    // skip the metrics/socket updates below; the customer already has their reply.
     let learnedCaptured = false;
     if (draft && finalText.trim() !== draft.draftText.trim()) {
-      await prisma.learnedAnswer.create({
-        data: {
-          customerQuestion: customerMsg.text,
-          aiDraft: draft.draftText,
-          finalAnswer: finalText,
-          agentId: agent.id,
-          edited: true,
-          status: 'pending',
-        },
-      });
-      learnedCaptured = true;
+      try {
+        await prisma.learnedAnswer.create({
+          data: {
+            customerQuestion: customerMsg.text,
+            aiDraft: draft.draftText,
+            finalAnswer: finalText,
+            agentId: agent.id,
+            edited: true,
+            status: 'pending',
+          },
+        });
+        learnedCaptured = true;
+      } catch (err) {
+        req.log.warn({ err }, 'learned capture failed');
+      }
     }
 
     // Stage-1 learning instrumentation: record EVERY drafted send's outcome (accepted_verbatim
