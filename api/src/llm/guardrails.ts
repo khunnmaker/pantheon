@@ -37,7 +37,7 @@ const PAY_CONFIRM = [
   'ยอดเข้า', 'เงินเข้า', 'ได้รับเงิน', 'ได้รับยอด', 'ได้รับการชำระ', 'โอนเข้าเรียบร้อย',
   'ชำระเรียบร้อย', 'ตรวจสอบยอด', 'เช็กยอด', 'เช็คยอด',
 ];
-const ACCOUNT_NUMBER = /[0-9๐-๙]{6,}/; // account / PromptPay length run (only consulted in payment context)
+const ACCOUNT_NUMBER = /[0-9๐-๙]{9,}/; // account / PromptPay length run (Thai accounts 10, PromptPay 10-13; only consulted in payment context)
 
 // Lowercase, strip zero-width chars and ALL whitespace so spaced/zero-width/case
 // tricks all collapse to a matchable form.
@@ -48,8 +48,9 @@ function normalize(s: string): string {
     .replace(/\s+/g, '');
 }
 
-// A number adjacent to a currency unit (whitespace already stripped by normalize).
-const PRICE_PATTERN = /[0-9๐-๙][0-9๐-๙,.]*(บาท|baht|thb|฿)/;
+// A number adjacent to a currency unit, either postfix ("1500บาท") or prefix ("฿1500")
+// (whitespace already stripped by normalize).
+const PRICE_PATTERN = /[0-9๐-๙][0-9๐-๙,.]*(บาท|baht|thb|฿)|(?:บาท|baht|thb|฿)[0-9๐-๙]/;
 
 function matches(text: string, words: string[]): boolean {
   const t = normalize(text);
@@ -71,10 +72,16 @@ export function hasNumbers(text: string): boolean {
   return /[0-9๐-๙]/.test(text || ''); // ASCII or Thai digits
 }
 
-// Price-like tokens (a number next to a currency unit), thousands-separators
-// stripped so "2,000 บาท" and "2000บาท" compare equal.
+// Price-like tokens in BOTH notations — postfix "1500บาท"/"1500฿" and prefix "฿1500"/"thb1500"
+// — canonicalized to "<digits>บาท" so grounding comparison works across notations. Thousands
+// separators stripped so "2,000 บาท" and "2000บาท" compare equal.
 function priceTokens(s: string): string[] {
-  return normalize(s).replace(/,/g, '').match(/[0-9๐-๙]+(?:\.[0-9๐-๙]+)?(?:บาท|baht|thb|฿)/g) || [];
+  const t = normalize(s).replace(/,/g, '');
+  const post = t.match(/[0-9๐-๙]+(?:\.[0-9๐-๙]+)?(?=บาท|baht|thb|฿)/g) || [];
+  // Prefix notation is ฿/THB/baht only — Thai never writes "บาท1500", and including บาท here
+  // would turn "50 บาท 3 วัน" (whitespace-stripped) into a spurious "3บาท" token.
+  const pre = t.match(/(?<=฿|thb|baht)[0-9๐-๙]+(?:\.[0-9๐-๙]+)?/g) || [];
+  return [...post, ...pre].map((n) => `${n}บาท`);
 }
 
 // True if the text quotes a PRICE (a number next to a currency unit). Gates the
@@ -96,10 +103,20 @@ function pricesGrounded(draftText: string, citedKb: KbEntry[], extraGroundedText
   return tokens.every((t) => grounded.has(t));
 }
 
-// True if a (payment-context) draft originates a bank/PromptPay number or confirms a transfer.
-function originatesPaymentAction(text: string): boolean {
-  const t = normalize(text).replace(/[,.\-]/g, '');
-  return ACCOUNT_NUMBER.test(t) || PAY_CONFIRM.some((w) => t.includes(normalize(w)));
+// Payment ACTIONS the AI must never originate: confirming a transfer was received (PAY_CONFIRM)
+// or quoting a bank/PromptPay-length number. Price tokens (both notations) are stripped FIRST so
+// a grounded big-ticket price ("125,000 บาท") isn't mistaken for an account number, and the run
+// must be 9+ digits (Thai accounts 10, PromptPay 10-13) so order/tracking refs don't over-trigger.
+function originatesPaymentAction(text: string): { accountNumber: boolean; confirmsPayment: boolean } {
+  const norm = normalize(text);
+  const confirmsPayment = PAY_CONFIRM.some((w) => norm.includes(normalize(w)));
+  let t = norm.replace(/,/g, '');
+  t = t.replace(/[0-9๐-๙]+(?:\.[0-9๐-๙]+)?(?:บาท|baht|thb|฿)/g, '');
+  // Prefix strip is ฿/THB/baht only — stripping "บาท<digits>" could mask a REAL account
+  // number that happens to follow the word บาท ("...เงินบาท 1234567890").
+  t = t.replace(/(?:฿|thb|baht)[0-9๐-๙]+(?:\.[0-9๐-๙]+)?/g, '');
+  t = t.replace(/[.\-]/g, '');
+  return { accountNumber: ACCOUNT_NUMBER.test(t), confirmsPayment };
 }
 
 const OVERRIDE: Record<'price_stock' | 'clinical' | 'payment', { draft: string; note: string }> = {
@@ -148,12 +165,16 @@ export function applyGuardrails(
   // answer (allowed) from a stock/availability reply that only defers (escalate).
   const statesGroundedPrice = priceTokens(result.draft).length > 0 && grounded;
 
-  const escalate = (reason: 'price_stock' | 'clinical' | 'payment'): GuardrailOutcome => {
+  const escalate = (
+    reason: 'price_stock' | 'clinical' | 'payment',
+    opts?: { keepDraft?: boolean },
+  ): GuardrailOutcome => {
     const o = OVERRIDE[reason];
     // Keep the model's text only if it invents no price (grounded) and isn't clinical or
     // payment — so a polite "we'll check" and answerable parts survive, but the AI never
-    // originates a bank account / payment confirmation or a clinical answer.
-    const keep = reason !== 'clinical' && reason !== 'payment' && !!result.draft && grounded;
+    // originates a bank account / payment confirmation or a clinical answer. Callers can
+    // override via opts.keepDraft (e.g. an account-number hit that should stay visible to staff).
+    const keep = (opts?.keepDraft ?? (reason !== 'clinical' && reason !== 'payment')) && !!result.draft && grounded;
     return {
       result: { type: 'needs_human', draft: keep ? result.draft : o.draft, used_kb: result.used_kb, note: o.note },
       triggered: true,
@@ -163,18 +184,29 @@ export function applyGuardrails(
 
   // 1. Clinical always reaches a professional — no exceptions.
   if (kbClinical || qReason === 'clinical' || dReason === 'clinical') return escalate('clinical');
-  // 2. Payment: the AI MAY answer payment-method policy that's grounded in approved KB (how to
-  //    pay / cards / COD — the team marks those entries 'normal' on purpose), but must NEVER
-  //    originate a bank/PromptPay number or confirm a transfer was received — those stay human,
-  //    even when KB-grounded. Any price quoted must still be grounded (no invented numbers).
+  // 2. A KB topic a supervisor marked no_auto always escalates — checked before the payment
+  //    pass so a supervisor's no_auto marking can never be bypassed by a payment-grounded pass.
+  if (kbNoAuto) return escalate('price_stock');
+  // 3. Payment: the AI MAY answer payment-method policy that's grounded in an APPROVED
+  //    PAYMENT-RELATED KB entry (how to pay / cards / COD — the team marks those entries
+  //    'normal' on purpose), but must NEVER originate a bank/PromptPay number or confirm a
+  //    transfer was received — those stay human, even when KB-grounded. Any price quoted must
+  //    still be grounded (no invented numbers). Citing an unrelated 'normal' KB entry does not
+  //    count — the citation must actually be about payment.
   if (qReason === 'payment' || dReason === 'payment') {
-    if (result.type === 'draft' && originatesPaymentAction(result.draft)) return escalate('payment');
-    if (citedKb.length > 0 && grounded) return { result, triggered: false, reason: null };
+    if (result.type === 'draft') {
+      const action = originatesPaymentAction(result.draft);
+      // AI confirming money was received → always replace with the canned deferral.
+      if (action.confirmsPayment) return escalate('payment');
+      // A bank-account-length digit run → flag for a human but KEEP the draft text (grounded
+      // permitting) so a correct answer that merely contains a long ref/phone isn't lost.
+      if (action.accountNumber) return escalate('payment', { keepDraft: true });
+    }
+    const paymentKb = citedKb.some((k) => matches([...k.questionVariants, k.answer].join(' '), PAYMENT));
+    if (paymentKb && grounded) return { result, triggered: false, reason: null };
     return escalate('payment');
   }
-  // 3. A KB topic a supervisor marked no_auto always escalates.
-  if (kbNoAuto) return escalate('price_stock');
-  // 3. Price/stock: a grounded price answer (KB or catalog) OR an availability answer
+  // 4. Price/stock: a grounded price answer (KB or catalog) OR an availability answer
   //    backed by real stock data passes — provided any price quoted is grounded (no
   //    invented numbers). Anything else price/stock-looking defers to staff.
   if (kbPriceStock || qReason === 'price_stock' || dReason === 'price_stock') {

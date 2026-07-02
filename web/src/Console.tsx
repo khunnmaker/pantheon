@@ -419,6 +419,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
   const [qrSaving, setQrSaving] = useState(false);
   const [qrOpen, setQrOpen] = useState(false);
   const [qrSending, setQrSending] = useState(false);
+  const [qrConfirmId, setQrConfirmId] = useState<string | null>(null);
   const [freeText, setFreeText] = useState('');
   const [freeNeedsConfirm, setFreeNeedsConfirm] = useState(false);
   const [freeSending, setFreeSending] = useState(false);
@@ -452,6 +453,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
       setDetail(d);
       setEditText(d.pendingDraft?.draftText ?? '');
       setNeedsConfirm(false);
+      setQrConfirmId(null);
       setRewriteNote(null);
       // Preserve the staff's photo selection across reloads (their own ร่างใหม่ AND the
       // live draft:new socket push that follows): keep any selected SKU still present in
@@ -719,7 +721,13 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
     setQrSending(true);
     setError('');
     try {
-      const res = await sendQuickReply(selectedId, q.id);
+      const res = await sendQuickReply(selectedId, q.id, qrConfirmId === q.id);
+      if ('needsConfirm' in res) {
+        setQrConfirmId(q.id);
+        setError('ข้อความด่วนนี้มีราคา — กดอีกครั้งเพื่อยืนยันส่ง');
+        return;
+      }
+      setQrConfirmId(null);
       setQrOpen(false);
       flashToast(res.dryRun ? `บันทึก "${q.label}" (โหมดทดสอบ)` : `ส่ง "${q.label}" ให้ลูกค้าแล้ว ✓`);
     } catch {

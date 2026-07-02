@@ -235,14 +235,6 @@ export async function messageRoutes(app: FastifyInstance) {
     const customer = await prisma.customer.findUnique({ where: { id: customerMsg.customerId } });
     if (!customer) return reply.code(404).send({ error: 'customer_not_found' });
 
-    // Server-enforced numbers-confirm (defense in depth, spec §8): a reply that quotes a price
-    // (a number next to a currency unit — bare-number prices like "250 ค่ะ" are NOT caught) must
-    // be explicitly confirmed before it can send — enforced HERE, not just in the console. 428
-    // (vs the 409 already-replied claim) tells the console to ask the staff to verify and resend.
-    if (!confirmNumbers && hasPrice(finalText)) {
-      return reply.code(428).send({ error: 'needs_confirm' });
-    }
-
     const draft = await prisma.draft.findUnique({ where: { messageId: customerMsg.id } });
 
     // Resolve an optional attachment to send + record — a staff upload (photo/file)
@@ -280,6 +272,17 @@ export async function messageRoutes(app: FastifyInstance) {
         imageUrls = photoSkus.map((ps) => `${base}/content/product/${ps}`);
         attach = { attachmentType: 'product', attachmentRef: photoSkus.join(',') };
       }
+    }
+
+    // Server-enforced numbers-confirm (defense in depth, spec §8): a reply that quotes a price
+    // (a number next to a currency unit — bare-number prices like "250 ค่ะ" are NOT caught) must
+    // be explicitly confirmed before it can send — enforced HERE, not just in the console, and
+    // gated on the FINAL composed sendText (including an appended attachment filename like
+    // "📎 ใบเสนอราคา2500.pdf") so a price hiding in the filename isn't missed. 428 (vs the 409
+    // already-replied claim) tells the console to ask the staff to verify and resend. Everything
+    // above this point is read-only, so gating here (instead of at the top) has no side effects.
+    if (!confirmNumbers && hasPrice(sendText)) {
+      return reply.code(428).send({ error: 'needs_confirm' });
     }
 
     // Claim this customer message atomically BEFORE sending. The unique

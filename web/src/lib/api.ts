@@ -250,11 +250,22 @@ export const deleteQuickReply = (id: string) =>
   authed<{ ok: boolean }>(`/api/quick-replies/${id}`, { method: 'DELETE' });
 // Send a quick-reply template to the customer as a standalone message (does not
 // touch the pending question or the draft composer).
-export const sendQuickReply = (customerId: string, quickReplyId: string) =>
-  authed<{ ok: boolean; message: Message; dryRun: boolean }>(`/api/customers/${customerId}/quick-reply`, {
+// Returns { needsConfirm: true } when the template quotes a price and confirm wasn't set (428).
+export async function sendQuickReply(
+  customerId: string,
+  quickReplyId: string,
+  confirmNumbers?: boolean,
+): Promise<{ ok: boolean; message: Message; dryRun: boolean } | { needsConfirm: true }> {
+  const token = getToken();
+  const res = await fetch(`${API_URL}/api/customers/${customerId}/quick-reply`, {
     method: 'POST',
-    body: JSON.stringify({ quickReplyId }),
+    headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
+    body: JSON.stringify({ quickReplyId, confirmNumbers }),
   });
+  if (res.status === 428) return { needsConfirm: true }; // template has a price; staff must confirm
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json() as Promise<{ ok: boolean; message: Message; dryRun: boolean }>;
+}
 
 // Send a staff photo to the customer IMMEDIATELY (camera) — standalone image message.
 export const sendPhotoNow = (customerId: string, uploadId: string) =>
