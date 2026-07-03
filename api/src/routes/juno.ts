@@ -211,23 +211,29 @@ async function recomputePaymentReconciled(paymentId: string): Promise<void> {
 // null on every link this function creates — a deliberate marker distinguishing "the system
 // auto-matched this" from a FIN-driven manual match (POST /match, which stamps req.agent.id).
 async function runAutoMatcher(txnIds?: string[]): Promise<number> {
-  const [txns, payments] = await Promise.all([
+  // Ambiguity is judged against ALL unmatched in-lines, not just the ones this run may link:
+  // an import-scoped run would otherwise miss that an OLDER unmatched line is an equally
+  // plausible home for the payment, and link the new line with false confidence.
+  const [allTxns, payments] = await Promise.all([
     prisma.bankTxn.findMany({
-      where: { direction: 'in', matchStatus: 'unmatched', ...(txnIds ? { id: { in: txnIds } } : {}) },
+      where: { direction: 'in', matchStatus: 'unmatched' },
     }),
     prisma.payment.findMany({
       where: { status: 'verified', reconciled: false },
       select: { id: true, amount: true, transferAt: true, createdAt: true },
     }),
   ]);
-  if (!txns.length || !payments.length) return 0;
+  const linkTargets = txnIds ? new Set(txnIds) : null;
+  const linkable = linkTargets ? allTxns.filter((t) => linkTargets.has(t.id)) : allTxns;
+  if (!linkable.length || !payments.length) return 0;
 
   const paymentTimes = new Map(payments.map((p) => [p.id, paymentTimestamp(p.transferAt, p.createdAt)]));
 
-  // candidates[txnId] = list of payment ids that pass the amount+day-window rule.
+  // candidates[txnId] = list of payment ids that pass the amount+day-window rule —
+  // computed over ALL unmatched lines so both ambiguity checks see the full picture.
   const txnCandidates = new Map<string, string[]>();
   const paymentCandidates = new Map<string, string[]>();
-  for (const t of txns) {
+  for (const t of allTxns) {
     const matches: string[] = [];
     for (const p of payments) {
       if (!amountsEqual(t.amount, p.amount)) continue;
@@ -239,7 +245,7 @@ async function runAutoMatcher(txnIds?: string[]): Promise<number> {
   }
 
   let autoMatched = 0;
-  for (const t of txns) {
+  for (const t of linkable) {
     const matches = txnCandidates.get(t.id) ?? [];
     if (matches.length !== 1) continue; // ambiguous or no candidate on the txn side
     const pid = matches[0];
