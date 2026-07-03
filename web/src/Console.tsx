@@ -194,6 +194,75 @@ function PhotoStrip({ direct, cross, selected, onToggle }: {
   );
 }
 
+// The "ส่งข้อความสำเร็จรูป" (quick-reply) button + its dropdown popover — list of saved
+// templates (click sends immediately to the customer) plus an add/manage panel. Shared by
+// the pending-question composer and the already-answered composer so the two stay identical.
+function QuickReplyMenu({
+  quickReplies, qrOpen, setQrOpen, qrSending, quickSend,
+  qrManage, setQrManage, qrLabel, setQrLabel, qrBody, setQrBody, qrSaving, saveQuickReply, removeQuickReply,
+}: {
+  quickReplies: QuickReply[];
+  qrOpen: boolean;
+  setQrOpen: (v: boolean | ((prev: boolean) => boolean)) => void;
+  qrSending: boolean;
+  quickSend: (q: QuickReply) => void;
+  qrManage: boolean;
+  setQrManage: (v: boolean | ((prev: boolean) => boolean)) => void;
+  qrLabel: string;
+  setQrLabel: (v: string) => void;
+  qrBody: string;
+  setQrBody: (v: string) => void;
+  qrSaving: boolean;
+  saveQuickReply: () => void;
+  removeQuickReply: (id: string) => void;
+}) {
+  return (
+    <div className="relative">
+      <button type="button" onClick={() => setQrOpen((v) => !v)} disabled={qrSending}
+        title="ส่งข้อความสำเร็จรูป" aria-label="ส่งข้อความสำเร็จรูป"
+        className="w-full h-full px-2 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 flex items-center justify-center gap-0.5 disabled:opacity-50">
+        {qrSending ? <Loader2 size={15} className="animate-spin" /> : <MessageSquare size={15} />}
+        <ChevronDown size={11} />
+      </button>
+      {qrOpen && (
+        <>
+          <div className="fixed inset-0 z-20" onClick={() => setQrOpen(false)} />
+          <div className="absolute bottom-full mb-1 left-0 z-30 w-64 max-h-80 overflow-y-auto bg-white border border-slate-200 rounded-xl shadow-lg p-1">
+            <div className="px-2 py-1 text-[10px] text-slate-400">กดเพื่อส่งให้ลูกค้าทันที</div>
+            {quickReplies.map((q) => (
+              <div key={q.id} className="flex items-center gap-1">
+                <button type="button" onClick={() => quickSend(q)} disabled={qrSending}
+                  className="flex-1 text-left text-xs px-2 py-1.5 rounded-lg hover:bg-sky-50 text-slate-700 truncate disabled:opacity-50" title={q.body}>
+                  {q.label}
+                </button>
+                {qrManage && <button type="button" onClick={() => removeQuickReply(q.id)} title="ลบ" className="text-rose-400 hover:text-rose-600 px-1"><X size={12} /></button>}
+              </div>
+            ))}
+            <div className="border-t border-slate-100 mt-1 pt-1">
+              <button type="button" onClick={() => setQrManage((v) => !v)}
+                className="w-full text-left text-[11px] text-slate-500 px-2 py-1 hover:bg-slate-50 rounded flex items-center gap-1">
+                <Pencil size={11} /> {qrManage ? 'เสร็จสิ้น' : 'แก้ไข / เพิ่มรายการ'}
+              </button>
+              {qrManage && (
+                <div className="flex flex-col gap-1 p-1">
+                  <input value={qrLabel} onChange={(e) => setQrLabel(e.target.value)} placeholder="ชื่อปุ่ม"
+                    className="text-xs px-2 py-1 rounded border border-slate-200 focus:outline-none focus:ring-1 focus:ring-sky-400" />
+                  <textarea value={qrBody} onChange={(e) => setQrBody(e.target.value)} rows={3} placeholder="ข้อความที่จะส่ง…"
+                    className="text-xs px-2 py-1 rounded border border-slate-200 resize-none focus:outline-none focus:ring-1 focus:ring-sky-400" />
+                  <button type="button" onClick={saveQuickReply} disabled={qrSaving || !qrLabel.trim() || !qrBody.trim()}
+                    className="self-start text-xs px-3 py-1 rounded-lg bg-sky-600 hover:bg-sky-700 text-white disabled:opacity-50">
+                    {qrSaving ? 'กำลังบันทึก…' : 'เพิ่ม'}
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 // Live webcam capture for desktop (where the <input capture> attribute is ignored and
 // only opens a file dialog). Streams the camera, snaps a frame to a JPEG File.
 function CameraCapture({ onCapture, onClose }: { onCapture: (file: File) => void; onClose: () => void }) {
@@ -436,6 +505,8 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
   const [freeText, setFreeText] = useState('');
   const [freeNeedsConfirm, setFreeNeedsConfirm] = useState(false);
   const [freeSending, setFreeSending] = useState(false);
+  const [freeProducts, setFreeProducts] = useState<PendingProduct[]>([]); // catalog photos picked in the answered-state composer (no draft to attach to)
+  const [freeRewriting, setFreeRewriting] = useState(false);
   const [prodSearchOpen, setProdSearchOpen] = useState(false);
   const [prodSearchQ, setProdSearchQ] = useState('');
   const [prodSearchResults, setProdSearchResults] = useState<PendingProduct[]>([]);
@@ -488,6 +559,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
       setSelectionDirty(false); // a freshly loaded draft already reflects the current selection
       setUpload(null);
       setFreeText('');
+      setFreeProducts([]);
     } finally {
       setLoadingDetail(false);
     }
@@ -759,13 +831,15 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
     }
   }
 
-  // Free-form message (text and/or an attached photo/file) when there's no pending question.
+  // Free-form message (text and/or an attached photo/file and/or picked catalog products)
+  // when there's no pending question.
   async function freeSend() {
-    if (!selectedId || (!freeText.trim() && !upload) || freeSending) return;
+    if (!selectedId || (!freeText.trim() && !upload && !freeProducts.length) || freeSending) return;
     setFreeSending(true);
     setError('');
     try {
-      const res = await sendMessage(selectedId, freeText.trim(), upload?.uploadId, freeNeedsConfirm);
+      const skus = freeProducts.length ? freeProducts.map((p) => p.sku) : undefined;
+      const res = await sendMessage(selectedId, freeText.trim(), upload?.uploadId, freeNeedsConfirm, skus);
       if ('needsConfirm' in res) {
         setFreeNeedsConfirm(true);
         setError('ข้อความมีราคา — โปรดตรวจสอบตัวเลขแล้วกดส่งอีกครั้งเพื่อยืนยัน');
@@ -773,6 +847,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
       }
       setFreeText('');
       setUpload(null);
+      setFreeProducts([]);
       setFreeNeedsConfirm(false);
       flashToast(res.dryRun ? 'บันทึกแล้ว (โหมดทดสอบ)' : 'ส่งข้อความให้ลูกค้าแล้ว ✓');
     } catch {
@@ -780,6 +855,36 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
     } finally {
       setFreeSending(false);
     }
+  }
+
+  // ✨ button for the already-answered composer: pure grammar/wording polish (no draft, so
+  // no regenerate-about-products behavior like the pending composer's rewrite()).
+  async function freeRewrite() {
+    if (freeRewriting || freeSending || !freeText.trim()) return;
+    setFreeRewriting(true);
+    setError('');
+    setRewriteNote(null);
+    try {
+      const res = await rewriteText(freeText.trim());
+      setFreeText(res.text);
+      setRewriteNote(res.note); // staff-only note — shown OUTSIDE the reply box
+      setFreeNeedsConfirm(false); // text changed — re-check numbers on send
+      flashToast('เรียบเรียงใหม่แล้ว — ตรวจทานก่อนส่ง');
+    } catch (e) {
+      setError('เรียบเรียงใหม่ไม่สำเร็จ: ' + (e as Error).message);
+    } finally {
+      setFreeRewriting(false);
+    }
+  }
+
+  // Add a searched product to the answered-state composer's LOCAL selection (cap 6, no
+  // duplicates). No draft exists here, so this does NOT call addProductToDraft — that
+  // endpoint requires a pending draft and drives keyword-learning tied to a pending question.
+  function addFreeProduct(p: PendingProduct) {
+    setFreeProducts((prev) => (prev.length >= 6 || prev.some((x) => x.sku === p.sku) ? prev : [...prev, p]));
+  }
+  function removeFreeProduct(sku: string) {
+    setFreeProducts((prev) => prev.filter((p) => p.sku !== sku));
   }
 
   // Camera button → native camera on touch devices, webcam modal on desktop.
@@ -1376,49 +1481,11 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                           className="px-2.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 flex items-center justify-center disabled:opacity-50">
                           {uploading ? <Loader2 size={16} className="animate-spin" /> : <Paperclip size={16} />}
                         </button>
-                        <div className="relative">
-                          <button type="button" onClick={() => setQrOpen((v) => !v)} disabled={qrSending}
-                            title="ส่งข้อความสำเร็จรูป" aria-label="ส่งข้อความสำเร็จรูป"
-                            className="w-full h-full px-2 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 flex items-center justify-center gap-0.5 disabled:opacity-50">
-                            {qrSending ? <Loader2 size={15} className="animate-spin" /> : <MessageSquare size={15} />}
-                            <ChevronDown size={11} />
-                          </button>
-                          {qrOpen && (
-                            <>
-                              <div className="fixed inset-0 z-20" onClick={() => setQrOpen(false)} />
-                              <div className="absolute bottom-full mb-1 left-0 z-30 w-64 max-h-80 overflow-y-auto bg-white border border-slate-200 rounded-xl shadow-lg p-1">
-                                <div className="px-2 py-1 text-[10px] text-slate-400">กดเพื่อส่งให้ลูกค้าทันที</div>
-                                {quickReplies.map((q) => (
-                                  <div key={q.id} className="flex items-center gap-1">
-                                    <button type="button" onClick={() => quickSend(q)} disabled={qrSending}
-                                      className="flex-1 text-left text-xs px-2 py-1.5 rounded-lg hover:bg-sky-50 text-slate-700 truncate disabled:opacity-50" title={q.body}>
-                                      {q.label}
-                                    </button>
-                                    {qrManage && <button type="button" onClick={() => removeQuickReply(q.id)} title="ลบ" className="text-rose-400 hover:text-rose-600 px-1"><X size={12} /></button>}
-                                  </div>
-                                ))}
-                                <div className="border-t border-slate-100 mt-1 pt-1">
-                                  <button type="button" onClick={() => setQrManage((v) => !v)}
-                                    className="w-full text-left text-[11px] text-slate-500 px-2 py-1 hover:bg-slate-50 rounded flex items-center gap-1">
-                                    <Pencil size={11} /> {qrManage ? 'เสร็จสิ้น' : 'แก้ไข / เพิ่มรายการ'}
-                                  </button>
-                                  {qrManage && (
-                                    <div className="flex flex-col gap-1 p-1">
-                                      <input value={qrLabel} onChange={(e) => setQrLabel(e.target.value)} placeholder="ชื่อปุ่ม"
-                                        className="text-xs px-2 py-1 rounded border border-slate-200 focus:outline-none focus:ring-1 focus:ring-sky-400" />
-                                      <textarea value={qrBody} onChange={(e) => setQrBody(e.target.value)} rows={3} placeholder="ข้อความที่จะส่ง…"
-                                        className="text-xs px-2 py-1 rounded border border-slate-200 resize-none focus:outline-none focus:ring-1 focus:ring-sky-400" />
-                                      <button type="button" onClick={saveQuickReply} disabled={qrSaving || !qrLabel.trim() || !qrBody.trim()}
-                                        className="self-start text-xs px-3 py-1 rounded-lg bg-sky-600 hover:bg-sky-700 text-white disabled:opacity-50">
-                                        {qrSaving ? 'กำลังบันทึก…' : 'เพิ่ม'}
-                                      </button>
-                                    </div>
-                                  )}
-                                </div>
-                              </div>
-                            </>
-                          )}
-                        </div>
+                        <QuickReplyMenu
+                          quickReplies={quickReplies} qrOpen={qrOpen} setQrOpen={setQrOpen} qrSending={qrSending} quickSend={quickSend}
+                          qrManage={qrManage} setQrManage={setQrManage} qrLabel={qrLabel} setQrLabel={setQrLabel} qrBody={qrBody} setQrBody={setQrBody}
+                          qrSaving={qrSaving} saveQuickReply={saveQuickReply} removeQuickReply={removeQuickReply}
+                        />
                         <button onClick={() => regenerate()} disabled={sending || rewriting}
                           title="ร่างคำตอบใหม่จากบทสนทนา + สินค้าที่เลือก (ไม่ใช้ข้อความที่พิมพ์ในกล่อง)"
                           className="min-w-0 px-2 py-2 rounded-xl bg-slate-200 hover:bg-slate-300 text-slate-700 text-sm font-semibold flex items-center justify-center gap-1 disabled:opacity-50">
@@ -1438,7 +1505,70 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                     </div>
                   ) : detail && detail.messages.length > 0 ? (
                     <div className="border-t border-slate-200 p-3 space-y-2 bg-white flex flex-col flex-1 min-h-0">
-                      <div className="text-[11px] text-slate-400">ลูกค้าได้รับคำตอบล่าสุดแล้ว — พิมพ์เพื่อส่งข้อความเพิ่มเติม / แก้ไขได้</div>
+                      <div className="flex items-start gap-2">
+                        <div className="text-[11px] text-slate-400">ลูกค้าได้รับคำตอบล่าสุดแล้ว — ส่งข้อความเพิ่มเติม แนบรูปสินค้า หรือใช้ ✨ ช่วยเรียบเรียงได้</div>
+                        <button type="button" onClick={() => setProdSearchOpen((v) => !v)}
+                          title="ค้นหา / แนบรูปสินค้า" aria-label="ค้นหา / แนบรูปสินค้า"
+                          className={'ml-auto shrink-0 p-1 rounded-lg hover:bg-slate-100 ' + (prodSearchOpen ? 'text-sky-600 bg-sky-50' : 'text-slate-400 hover:text-slate-600')}>
+                          <Search size={16} />
+                        </button>
+                      </div>
+                      {freeProducts.length > 0 && (
+                        <div className="flex flex-wrap gap-1.5">
+                          {freeProducts.map((p) => (
+                            <div key={p.sku} className="flex items-center gap-1.5 bg-sky-50 border border-sky-200 rounded-lg pl-1 pr-1.5 py-1 text-xs">
+                              {p.photoSku
+                                ? <img src={`${API_URL}/content/product/${p.photoSku}`} alt="" className="w-7 h-7 object-contain rounded bg-white"
+                                    onError={(e) => { e.currentTarget.style.visibility = 'hidden'; }} />
+                                : <div className="w-7 h-7 shrink-0 rounded bg-slate-100 text-[7px] text-slate-400 flex items-center justify-center text-center">ไม่มีรูป</div>}
+                              <span className="truncate max-w-[120px] text-sky-800">{[p.nameEn, p.nameTh].filter(Boolean).join(' / ') || flatSku(p.sku)}</span>
+                              <button type="button" onClick={() => removeFreeProduct(p.sku)} className="text-slate-400 hover:text-rose-500"><X size={13} /></button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      {prodSearchOpen && (
+                        <div className="space-y-1.5 border border-slate-200 rounded-xl p-2 bg-slate-50">
+                          <div className="relative">
+                            <input value={prodSearchQ} onChange={(e) => setProdSearchQ(e.target.value)}
+                              placeholder="พิมพ์ชื่อสินค้า หรือ SKU…"
+                              className="w-full px-2 py-1.5 pr-7 rounded-lg border border-slate-300 text-xs focus:outline-none focus:ring-2 focus:ring-sky-400" />
+                            {prodSearchQ && (
+                              <button type="button" onClick={() => setProdSearchQ('')} title="ล้าง" aria-label="ล้างคำค้นหา"
+                                className="absolute right-1.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
+                                <X size={14} />
+                              </button>
+                            )}
+                          </div>
+                          {prodSearching && <div className="text-[11px] text-slate-400 flex items-center gap-1"><Loader2 size={12} className="animate-spin" /> กำลังค้นหา…</div>}
+                          <div className="max-h-56 overflow-y-auto space-y-1">
+                            {prodSearchResults.map((p) => (
+                              <div key={p.sku} className="flex items-center gap-2 bg-white border border-slate-200 rounded-lg p-1">
+                                {p.photoSku
+                                  ? <img src={`${API_URL}/content/product/${p.photoSku}`} alt="" className="w-9 h-9 object-contain shrink-0 rounded bg-white"
+                                      onError={(e) => { e.currentTarget.style.visibility = 'hidden'; }} />
+                                  : <div className="w-9 h-9 shrink-0 rounded bg-slate-100 text-[8px] text-slate-400 flex items-center justify-center text-center">ไม่มีรูป</div>}
+                                <div className="flex-1 min-w-0">
+                                  <div className="text-[11px] font-medium text-slate-800 truncate">{[p.nameEn, p.nameTh].filter(Boolean).join(' / ') || flatSku(p.sku)}</div>
+                                  <div className="text-[10px] text-slate-500 truncate">
+                                    {flatSku(p.sku)} · {p.price > 0 ? `${p.price.toLocaleString()} บาท` : '—'}
+                                    {p.stock != null && (() => {
+                                      const out = p.stock <= 0;
+                                      const lowFlag = !out && (p.low ?? (p.reorderPoint == null && p.stock <= 5));
+                                      return <span className={out ? 'text-rose-600' : lowFlag ? 'text-amber-600' : 'text-sky-600'}> · {out ? 'หมด' : `${lowFlag ? 'ใกล้หมด ' : ''}คงเหลือ ${p.stock}`}</span>;
+                                    })()}
+                                  </div>
+                                </div>
+                                <button type="button" onClick={() => addFreeProduct(p)} title="เลือกสินค้านี้"
+                                  className="shrink-0 text-[10px] px-2 py-1 rounded-lg bg-sky-600 hover:bg-sky-700 text-white">เลือก</button>
+                              </div>
+                            ))}
+                            {prodSearchQ.trim() && !prodSearching && !prodSearchResults.length && (
+                              <div className="text-[11px] text-slate-400 px-1 py-2 text-center">ไม่พบสินค้า</div>
+                            )}
+                          </div>
+                        </div>
+                      )}
                       {error && <div className="text-xs text-rose-600 bg-rose-50 border border-rose-200 rounded-lg p-2">{error}</div>}
                       {upload && (
                         <div className="flex items-center gap-2 bg-sky-50 border border-sky-200 rounded-lg pl-1 pr-2 py-1 text-xs w-fit">
@@ -1449,9 +1579,15 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                           <button type="button" onClick={() => setUpload(null)} className="text-slate-400 hover:text-rose-500"><X size={14} /></button>
                         </div>
                       )}
-                      <textarea value={freeText} onChange={(e) => { setFreeText(e.target.value); setFreeNeedsConfirm(false); }} rows={3}
+                      <textarea value={freeText} onChange={(e) => { setFreeText(e.target.value); setFreeNeedsConfirm(false); setRewriteNote(null); }} rows={3}
                         className="w-full flex-1 min-h-[100px] p-3 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-sky-400 resize-none" placeholder="พิมพ์ข้อความถึงลูกค้า… (วางรูป Ctrl+V ได้)" />
-                      <div className="grid grid-cols-[auto_auto_1fr] gap-2">
+                      {rewriteNote && (
+                        <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-2 flex items-start gap-1.5">
+                          <AlertTriangle size={14} className="shrink-0 mt-0.5" />
+                          <span><span className="font-semibold">หมายเหตุจาก AI</span> (ไม่ส่งให้ลูกค้า): {rewriteNote}</span>
+                        </div>
+                      )}
+                      <div className="grid grid-cols-[auto_auto_auto_auto_1fr] gap-2">
                         <button type="button" disabled={uploading || freeSending} onClick={openCamera}
                           title="ถ่ายรูปแล้วส่งทันที" aria-label="ถ่ายรูปแล้วส่งทันที"
                           className="px-2.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 flex items-center justify-center disabled:opacity-50">
@@ -1462,9 +1598,19 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                           className="px-2.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 flex items-center justify-center disabled:opacity-50">
                           {uploading ? <Loader2 size={16} className="animate-spin" /> : <Paperclip size={16} />}
                         </button>
-                        <button onClick={freeSend} disabled={(!freeText.trim() && !upload) || freeSending}
-                          title="ส่งข้อความให้ลูกค้า"
-                          className="px-2 py-2 rounded-xl bg-sky-600 hover:bg-sky-700 text-white text-sm font-semibold flex items-center justify-center gap-1 disabled:opacity-50">
+                        <QuickReplyMenu
+                          quickReplies={quickReplies} qrOpen={qrOpen} setQrOpen={setQrOpen} qrSending={qrSending} quickSend={quickSend}
+                          qrManage={qrManage} setQrManage={setQrManage} qrLabel={qrLabel} setQrLabel={setQrLabel} qrBody={qrBody} setQrBody={setQrBody}
+                          qrSaving={qrSaving} saveQuickReply={saveQuickReply} removeQuickReply={removeQuickReply}
+                        />
+                        <button onClick={freeRewrite} disabled={freeRewriting || freeSending || !freeText.trim()}
+                          title="ให้ AI ช่วยแก้ไวยากรณ์/เรียบเรียงข้อความนี้"
+                          className="min-w-0 px-2 py-2 rounded-xl bg-indigo-100 hover:bg-indigo-200 text-indigo-700 text-sm font-semibold flex items-center justify-center gap-1 disabled:opacity-50">
+                          {freeRewriting ? <Loader2 size={17} className="animate-spin" /> : <Wand2 size={17} />}
+                        </button>
+                        <button onClick={freeSend} disabled={(!freeText.trim() && !upload && !freeProducts.length) || freeSending}
+                          title={freeNeedsConfirm ? 'ยืนยันส่ง (ข้อความมีราคา)' : 'ส่งข้อความให้ลูกค้า'}
+                          className={'px-2 py-2 rounded-xl text-white text-sm font-semibold flex items-center justify-center gap-1 disabled:opacity-50 ' + (freeNeedsConfirm ? 'bg-amber-600 hover:bg-amber-700' : 'bg-sky-600 hover:bg-sky-700')}>
                           {freeSending ? <Loader2 size={16} className="animate-spin" /> : <Send size={15} />} ส่งข้อความ
                         </button>
                       </div>
