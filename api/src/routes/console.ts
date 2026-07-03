@@ -1,10 +1,13 @@
 import type { FastifyInstance } from 'fastify';
+import { promises as fs } from 'node:fs';
+import path from 'node:path';
 import { z } from 'zod';
 import { prisma } from '../db/prisma.js';
 import { requireAuth } from '../auth/middleware.js';
 import { endSession } from '../memory/summarize.js';
 import { sendLineText, sendLineImages, sendLineReply } from '../line/send.js';
 import { readStaffUploadMeta, UPLOAD_ID_RE } from '../line/staffUploads.js';
+import { PRODUCT_PHOTO_DIR } from './content.js';
 import { isStage } from '../stages.js';
 import { pushToConsole } from '../ws/io.js';
 import { isLow } from '../stock/helpers.js';
@@ -332,23 +335,26 @@ export async function consoleRoutes(app: FastifyInstance) {
     const parsed = z.object({
       text: z.string().max(4000).optional(),
       uploadId: z.string().max(80).optional(), // optional staff photo/file attachment
+      attachProductSkus: z.array(z.string()).max(6).optional(), // catalog photos to attach (only when no upload)
       confirmNumbers: z.boolean().optional(),
     }).safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: 'invalid_body' });
     const text = (parsed.data.text ?? '').trim();
     const { uploadId } = parsed.data;
-    if (!text && !uploadId) return reply.code(400).send({ error: 'empty' });
+    if (!text && !uploadId && !parsed.data.attachProductSkus?.length) return reply.code(400).send({ error: 'empty' });
     const customer = await prisma.customer.findUnique({ where: { id: req.params.id } });
     if (!customer) return reply.code(404).send({ error: 'not_found' });
 
-    // Resolve an optional attachment: image → sent as a LINE image; file → download link.
+    // Resolve an optional attachment: a staff upload (image → LINE image, file → download
+    // link) wins; when no upload resolved, fall back to catalog product photos — same
+    // precedence and resolution as POST /api/messages/:id/reply.
+    const base = `${(req.headers['x-forwarded-proto'] as string) || req.protocol}://${req.headers.host}`;
     let attach: { attachmentType: string; attachmentRef: string; attachmentName?: string } | undefined;
     let imageUrls: string[] = [];
     let sendText = text;
     if (uploadId && UPLOAD_ID_RE.test(uploadId)) {
       const meta = await readStaffUploadMeta(uploadId);
       if (meta) {
-        const base = `${(req.headers['x-forwarded-proto'] as string) || req.protocol}://${req.headers.host}`;
         const url = `${base}/content/upload/${uploadId}`;
         if (meta.kind === 'image') {
           imageUrls = [url];
@@ -357,6 +363,21 @@ export async function consoleRoutes(app: FastifyInstance) {
           sendText = text ? `${text}\n\n📎 ${meta.fileName}: ${url}` : `📎 ${meta.fileName}: ${url}`;
           attach = { attachmentType: 'file', attachmentRef: uploadId, attachmentName: meta.fileName };
         }
+      }
+    } else if (parsed.data.attachProductSkus?.length) {
+      const prods = await prisma.product.findMany({ where: { sku: { in: parsed.data.attachProductSkus } } });
+      const bySku = new Map(prods.map((p) => [p.sku, p]));
+      const photoSkus: string[] = [];
+      for (const sku of parsed.data.attachProductSkus) {
+        const photoSku = bySku.get(sku)?.photoSku;
+        if (photoSku && !photoSkus.includes(photoSku)) {
+          const file = path.join(PRODUCT_PHOTO_DIR, `${photoSku}.png`);
+          if (await fs.access(file).then(() => true).catch(() => false)) photoSkus.push(photoSku);
+        }
+      }
+      if (photoSkus.length) {
+        imageUrls = photoSkus.map((ps) => `${base}/content/product/${ps}`);
+        attach = { attachmentType: 'product', attachmentRef: photoSkus.join(',') };
       }
     }
 
