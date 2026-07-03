@@ -1,7 +1,8 @@
 import jwt from 'jsonwebtoken';
 import { env } from '../env.js';
 
-export type Role = 'agent' | 'supervisor';
+export type Role = 'agent' | 'supervisor' | 'messenger' | 'md';
+export const ALL_ROLES = ['agent', 'supervisor', 'messenger', 'md'] as const;
 
 // What we put inside the signed token (and hydrate onto each request).
 export interface AuthedAgent {
@@ -26,7 +27,7 @@ export function verifyToken(token: string): AuthedAgent | null {
   try {
     // Pin the accepted algorithm so verification can't drift to another scheme.
     const p = jwt.verify(token, env.JWT_SECRET, { algorithms: ['HS256'] }) as jwt.JwtPayload;
-    if (!p.sub || (p.role !== 'agent' && p.role !== 'supervisor')) return null;
+    if (!p.sub || !ALL_ROLES.includes(p.role)) return null;
     return {
       id: String(p.sub),
       email: String(p.email ?? ''),

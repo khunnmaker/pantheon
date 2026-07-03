@@ -25,6 +25,8 @@ import { ensureCatalog } from './db/ensureCatalog.js';
 import { ensureEnrichment } from './db/ensureEnrichment.js';
 import { ensureStock } from './db/ensureStock.js';
 import { ensureQuickReplies } from './db/ensureQuickReplies.js';
+import { ensureCeres } from './db/ensureCeres.js';
+import { ceresRoutes } from './routes/ceres/index.js';
 
 // Raw body is needed to verify the LINE webhook signature.
 declare module 'fastify' {
@@ -84,6 +86,7 @@ async function buildServer() {
   await app.register(stockRoutes);
   await app.register(dianaRoutes);
   await app.register(junoRoutes);
+  await app.register(ceresRoutes);
 
   return app;
 }
@@ -101,6 +104,8 @@ async function main() {
   await ensureStock().catch((err) => app.log.error({ err }, 'ensureStock failed'));
   // Seed the starter quick-reply templates on first boot.
   await ensureQuickReplies().catch((err) => app.log.error({ err }, 'ensureQuickReplies failed'));
+  // Seed Ceres's cash accounts / parties / categories on first boot.
+  await ensureCeres().catch((err) => app.log.error({ err }, 'ensureCeres failed'));
 
   // Attach the Socket.IO server for live console push.
   initIo(app.server);

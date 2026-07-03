@@ -476,6 +476,210 @@ model ProductEnrichment {
   @@index([category])
 }
 
+// ─── Ceres (expenses & petty cash) ─── money OUT; append-only; String baht amounts
+// (sums parse on read); see docs/CERES_BRIEF.md
+
+model CeresParty {
+  id         String  @id @default(cuid())
+  name       String  @unique          // ต้า, อาร์ม, … or carrier bucket J&T, LALAMOVE Prom …
+  kind       String  @default("person") // person | carrier
+  agentEmail String?                  // login link for persons (m-<slug>@prominent.local)
+  active     Boolean @default(true)
+  sortOrder  Int     @default(0)
+}
+
+model CashAccount {
+  id   String @id                     // literal ids: "pettyCash", "bank"
+  name String @default("")
+}
+
+model CashMovement {
+  id            String   @id @default(cuid())
+  accountId     String   @default("pettyCash")
+  type          String                 // deposit | advance | refund | topup
+  partyId       String?
+  partyName     String   @default("") // snapshot
+  entity        String   @default("") // PROM | DENL | "" (movements need no entity)
+  amount        String   @default("")
+  note          String   @default("")
+  createdById   String?
+  createdByName String   @default("")
+  createdAt     DateTime @default(now())
+  @@index([accountId, createdAt])
+  @@index([partyId])
+  @@index([type])
+}
+
+model CeresExpense {
+  id              String    @id @default(cuid())
+  partyId         String?
+  partyName       String    @default("")
+  enteredById     String?
+  enteredByName   String    @default("")
+  entity          String    @default("PROM") // PROM | DENL
+  category        String    @default("")
+  customerNote    String    @default("")     // "ลูกค้า: X" for shipping categories
+  amount          String    @default("")
+  spentAt         DateTime  @default(now())
+  receiptUploadId String?
+  receiptSha      String    @default("")     // sha256 of the receipt image (duplicate detection)
+  ocrAmount       String    @default("")
+  ocrVendor       String    @default("")
+  ocrDate         String    @default("")
+  status          String    @default("pending") // pending | approved | settled | rejected
+  approvedById    String?
+  approvedAt      DateTime?
+  rejectReason    String    @default("")
+  settlementId    String?
+  aiVerdict       String    @default("")     // "" | ok | flagged (post-hoc AI review, wired later)
+  aiReviewId      String?
+  note            String    @default("")
+  createdAt       DateTime  @default(now())
+  @@index([status])
+  @@index([partyId])
+  @@index([settlementId])
+  @@index([createdAt])
+  @@index([receiptSha])
+}
+
+model CeresRevision {
+  id            String   @id @default(cuid())
+  subjectType   String                 // expense | paymentRequest
+  subjectId     String
+  changedById   String?
+  changedByName String   @default("")
+  before        Json
+  after         Json
+  reason        String   @default("")
+  createdAt     DateTime @default(now())
+  @@index([subjectType, subjectId])
+}
+
+model CeresSettlement {
+  id           String   @id @default(cuid())
+  dayKey       String   @unique        // Thai day "YYYY-MM-DD"; one close per day
+  closedById   String?
+  closedByName String   @default("")
+  boxBefore    String   @default("")   // box balance before close (computed snapshot)
+  boxAfter     String   @default("")
+  note         String   @default("")
+  createdAt    DateTime @default(now())
+  lines        CeresSettlementLine[]
+}
+
+model CeresSettlementLine {
+  id           String          @id @default(cuid())
+  settlementId String
+  settlement   CeresSettlement @relation(fields: [settlementId], references: [id])
+  partyId      String?
+  partyName    String          @default("")
+  advances     String          @default("") // since previous settlement
+  expenses     String          @default("")
+  refunds      String          @default("")
+  outstanding  String          @default("") // carried forward
+  @@index([settlementId])
+  @@index([partyId])
+}
+
+model CeresPaymentRequest {
+  id                  String    @id @default(cuid())
+  requestedById       String?
+  requestedByName     String    @default("")
+  entity              String    @default("PROM")
+  payee               String    @default("")
+  category            String    @default("")
+  amount              String    @default("")
+  detail              String    @default("")
+  recurringTemplateId String?
+  billPeriod          String    @default("") // e.g. "2026-06" for recurring
+  status              String    @default("requested") // requested | ai_approved | escalated | ceo_approved | rejected | cancelled | paid
+  aiReviewId          String?
+  decidedById         String?
+  decidedAt           DateTime?
+  decisionNote        String    @default("")
+  paidById            String?
+  paidAt              DateTime?
+  paidRef             String    @default("")
+  createdAt           DateTime  @default(now())
+  @@index([status])
+  @@index([recurringTemplateId])
+  @@index([createdAt])
+}
+
+model CeresRecurringTemplate {
+  id             String   @id @default(cuid())
+  payee          String
+  entity         String   @default("PROM")
+  category       String   @default("")
+  expectedAmount String   @default("")
+  tolerancePct   Int      @default(15)
+  period         String   @default("monthly") // monthly | quarterly | yearly
+  dueDay         Int      @default(1)
+  graceDays      Int      @default(5)
+  active         Boolean  @default(true)
+  note           String   @default("")
+  createdAt      DateTime @default(now())
+}
+
+model CeresAIReview {
+  id            String   @id @default(cuid())
+  subjectType   String                 // expense | paymentRequest
+  subjectId     String
+  verdict       String                 // approve | flag | escalate | error
+  reasoning     String   @default("")
+  policyVersion String   @default("")
+  model         String   @default("")
+  createdAt     DateTime @default(now())
+  @@index([subjectType, subjectId])
+}
+
+model CeresStatementImport {
+  id           String   @id @default(cuid())
+  fileName     String   @default("")
+  sha256       String   @default("")
+  periodFrom   String   @default("")
+  periodTo     String   @default("")
+  rowsParsed   Int      @default(0)
+  linesNew     Int      @default(0)
+  linesDup     Int      @default(0)
+  excluded     Int      @default(0)
+  importedById String?
+  importedAt   DateTime @default(now())
+}
+
+model CeresStatementLine {
+  id             String    @id @default(cuid())
+  importId       String
+  txnAt          DateTime
+  amount         String    @default("")
+  direction      String    @default("in") // in | out
+  channel        String    @default("")
+  description    String    @default("")
+  details        String    @default("")
+  payerName      String    @default("")
+  payerBank      String    @default("")
+  dedupeKey      String    @unique
+  matchStatus    String    @default("unmatched") // unmatched | matched
+  matchedType    String    @default("") // paymentRequest | cashMovement | ""
+  matchedId      String    @default("")
+  refText        String    @default("")
+  reconciledById String?
+  reconciledAt   DateTime?
+  @@index([txnAt])
+  @@index([matchStatus])
+  @@index([direction])
+}
+
+model CeresCategory {
+  id                String  @id @default(cuid())
+  name              String  @unique
+  kind              String  @default("general") // shipping | fuel | toll | general
+  ceiling           String  @default("")        // per-item baht ceiling for AI policy; "" = none
+  needsCustomerNote Boolean @default(false)
+  active            Boolean @default(true)
+  sortOrder         Int     @default(0)
+}
+
 // ─── DEFERRED TO M3: pgvector embedding tables (spec §5 note) ────────────
 // Activate in M3 once the database has the `vector` extension. Steps:
 //   1. add `previewFeatures = ["postgresqlExtensions"]` to the generator

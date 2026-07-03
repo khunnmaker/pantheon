@@ -1,0 +1,409 @@
+import type { FastifyInstance } from 'fastify';
+import { z } from 'zod';
+import { prisma } from '../../db/prisma.js';
+import { requireCeresRole } from '../../ceres/auth.js';
+import { reviewPaymentRequest } from '../../ceres/aiReview.js';
+import { notifyCeoEscalation } from '../../ceres/notifyCeo.js';
+import { isValidAmount, num, thaiDayKey, thaiDayRange } from './common.js';
+
+const ENTITIES = ['PROM', 'DENL'] as const;
+
+interface RequestRow {
+  id: string;
+  requestedById: string | null;
+  requestedByName: string;
+  entity: string;
+  payee: string;
+  category: string;
+  amount: string;
+  detail: string;
+  recurringTemplateId: string | null;
+  billPeriod: string;
+  status: string;
+  aiReviewId: string | null;
+  decidedById: string | null;
+  decidedAt: Date | null;
+  decisionNote: string;
+  paidById: string | null;
+  paidAt: Date | null;
+  paidRef: string;
+  createdAt: Date;
+}
+
+// The row shape the Ceres UI consumes for a payment request (plus a derived numeric
+// amount, ISO dates, and the attached AI review summary when one is loaded).
+function toRequestRow(r: RequestRow, review?: { verdict: string; reasoning: string; createdAt: Date } | null) {
+  return {
+    id: r.id,
+    requestedById: r.requestedById,
+    requestedByName: r.requestedByName,
+    entity: r.entity,
+    payee: r.payee,
+    category: r.category,
+    amount: r.amount,
+    amountNum: num(r.amount),
+    detail: r.detail,
+    recurringTemplateId: r.recurringTemplateId,
+    billPeriod: r.billPeriod,
+    status: r.status,
+    aiReviewId: r.aiReviewId,
+    decidedById: r.decidedById,
+    decidedAt: r.decidedAt ? r.decidedAt.toISOString() : null,
+    decisionNote: r.decisionNote,
+    paidById: r.paidById,
+    paidAt: r.paidAt ? r.paidAt.toISOString() : null,
+    paidRef: r.paidRef,
+    createdAt: r.createdAt.toISOString(),
+    aiReview: review ? { verdict: review.verdict, reasoning: review.reasoning, createdAt: review.createdAt.toISOString() } : null,
+  };
+}
+
+// Batch-load CeresAIReview rows by id (no N+1) and return a Map keyed by review id.
+async function loadReviewsByIds(ids: (string | null)[]): Promise<Map<string, { verdict: string; reasoning: string; createdAt: Date }>> {
+  const set = [...new Set(ids.filter((id): id is string => !!id))];
+  if (set.length === 0) return new Map();
+  const reviews = await prisma.ceresAIReview.findMany({ where: { id: { in: set } } });
+  return new Map(reviews.map((r) => [r.id, r]));
+}
+
+// Last day of the given month (1-indexed month, in the Thai/local calendar sense —
+// callers pass Thai-shifted y/m so this only needs plain calendar math).
+function lastDayOfMonth(year: number, month1: number): number {
+  return new Date(year, month1, 0).getDate();
+}
+
+export interface TemplateDue {
+  template: {
+    id: string;
+    payee: string;
+    entity: string;
+    category: string;
+    expectedAmount: string;
+    tolerancePct: number;
+    period: string;
+    dueDay: number;
+    graceDays: number;
+    active: boolean;
+    note: string;
+  };
+  periodKey: string;
+  dueDate: string; // ISO date (YYYY-MM-DD)
+  state: 'paid' | 'pending' | 'missing' | 'overdue';
+}
+
+// Per-ACTIVE-template due computation (Thai time) shared by GET /templates/due and the
+// CEO overview's missed-bills section.
+export async function computeTemplateDue(): Promise<TemplateDue[]> {
+  const templates = await prisma.ceresRecurringTemplate.findMany({ where: { active: true }, orderBy: { payee: 'asc' } });
+  if (templates.length === 0) return [];
+
+  const now = new Date();
+  const thaiNow = new Date(now.getTime() + 7 * 3600 * 1000);
+  const y = thaiNow.getUTCFullYear();
+  const m = thaiNow.getUTCMonth() + 1; // 1-12
+  const todayKey = thaiDayKey(now);
+
+  const results: TemplateDue[] = [];
+  for (const t of templates) {
+    let periodKey: string;
+    let dueYear = y;
+    let dueMonth = m;
+    if (t.period === 'quarterly') {
+      const qStartMonth = Math.floor((m - 1) / 3) * 3 + 1;
+      const q = Math.floor((m - 1) / 3) + 1;
+      periodKey = `${y}-Q${q}`;
+      dueMonth = qStartMonth;
+    } else if (t.period === 'yearly') {
+      periodKey = `${y}`;
+      dueMonth = 1;
+    } else {
+      periodKey = `${y}-${String(m).padStart(2, '0')}`;
+      dueMonth = m;
+    }
+    const clampedDay = Math.min(t.dueDay, lastDayOfMonth(dueYear, dueMonth));
+    const dueDateStr = `${dueYear}-${String(dueMonth).padStart(2, '0')}-${String(clampedDay).padStart(2, '0')}`;
+
+    const existing = await prisma.ceresPaymentRequest.findFirst({
+      where: { recurringTemplateId: t.id, billPeriod: periodKey },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    let state: TemplateDue['state'];
+    if (existing && ['ai_approved', 'ceo_approved', 'paid'].includes(existing.status)) {
+      state = 'paid';
+    } else if (existing && ['requested', 'escalated'].includes(existing.status)) {
+      state = 'pending';
+    } else {
+      const graceEnd = new Date(`${dueDateStr}T00:00:00+07:00`);
+      graceEnd.setUTCDate(graceEnd.getUTCDate() + t.graceDays);
+      const graceEndKey = thaiDayKey(graceEnd);
+      state = todayKey > graceEndKey ? 'overdue' : 'missing';
+    }
+
+    results.push({
+      template: {
+        id: t.id,
+        payee: t.payee,
+        entity: t.entity,
+        category: t.category,
+        expectedAmount: t.expectedAmount,
+        tolerancePct: t.tolerancePct,
+        period: t.period,
+        dueDay: t.dueDay,
+        graceDays: t.graceDays,
+        active: t.active,
+        note: t.note,
+      },
+      periodKey,
+      dueDate: dueDateStr,
+      state,
+    });
+  }
+  return results;
+}
+
+// P2/P3 routes — MD's pre-approval payment requests + recurring templates. Mounted
+// inside the requireCeresAuth scope (see routes/ceres/index.ts).
+export function requestsRoutes(app: FastifyInstance) {
+  // POST /api/ceres/requests — MD submits a payment for pre-approval (P2/P3 step 1).
+  // The AI gate runs SYNCHRONOUSLY: the MD needs the answer now, before paying.
+  const createBody = z.object({
+    entity: z.enum(ENTITIES),
+    payee: z.string().min(1).max(200),
+    category: z.string().min(1),
+    amount: z.string().refine(isValidAmount, 'invalid_amount'),
+    detail: z.string().max(600).optional(),
+    recurringTemplateId: z.string().optional(),
+    billPeriod: z.string().max(20).optional(),
+  });
+  app.post('/api/ceres/requests', { preHandler: requireCeresRole('md', 'ceo') }, async (req, reply) => {
+    const parsed = createBody.safeParse(req.body);
+    if (!parsed.success) {
+      const amountIssue = parsed.error.issues.some((i) => i.message === 'invalid_amount');
+      return reply.code(400).send({ error: amountIssue ? 'invalid_amount' : 'invalid_body' });
+    }
+    const b = parsed.data;
+    const agent = req.agent!;
+
+    const created = await prisma.ceresPaymentRequest.create({
+      data: {
+        requestedById: agent.id,
+        requestedByName: agent.name,
+        entity: b.entity,
+        payee: b.payee,
+        category: b.category,
+        amount: b.amount,
+        detail: b.detail ?? '',
+        recurringTemplateId: b.recurringTemplateId ?? null,
+        billPeriod: b.billPeriod ?? '',
+        status: 'requested',
+      },
+    });
+
+    const result = await reviewPaymentRequest(created.id);
+    const updated = await prisma.ceresPaymentRequest.update({
+      where: { id: created.id },
+      data: { status: result.verdict === 'approve' ? 'ai_approved' : 'escalated', aiReviewId: result.reviewId },
+    });
+
+    if (result.verdict === 'escalate') {
+      void notifyCeoEscalation(
+        { payee: updated.payee, amount: updated.amount, entity: updated.entity, requestedByName: updated.requestedByName },
+        result.reasoning,
+      );
+    }
+
+    const review = await prisma.ceresAIReview.findUnique({ where: { id: result.reviewId } });
+    return { request: toRequestRow(updated, review) };
+  });
+
+  // GET /api/ceres/requests?status=&from=&to=&q=&limit=
+  const listQuery = z.object({
+    status: z.enum(['requested', 'ai_approved', 'escalated', 'ceo_approved', 'rejected', 'cancelled', 'paid']).optional(),
+    from: z.string().optional(),
+    to: z.string().optional(),
+    q: z.string().optional(),
+    limit: z.coerce.number().int().min(1).max(500).optional(),
+  });
+  app.get('/api/ceres/requests', { preHandler: requireCeresRole('md', 'ceo') }, async (req, reply) => {
+    const parsed = listQuery.safeParse(req.query ?? {});
+    if (!parsed.success) return reply.code(400).send({ error: 'invalid_query' });
+    const q = parsed.data;
+
+    const where: Record<string, unknown> = {};
+    if (q.status) where.status = q.status;
+    const range = thaiDayRange(q.from, q.to);
+    if (range) where.createdAt = range;
+    if (q.q) {
+      const needle = q.q;
+      where.OR = [
+        { payee: { contains: needle, mode: 'insensitive' } },
+        { detail: { contains: needle, mode: 'insensitive' } },
+        { category: { contains: needle, mode: 'insensitive' } },
+        { amount: { contains: needle } },
+      ];
+    }
+
+    const rows = await prisma.ceresPaymentRequest.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      take: q.limit ?? 200,
+    });
+    const reviewMap = await loadReviewsByIds(rows.map((r) => r.aiReviewId));
+    return { requests: rows.map((r) => toRequestRow(r, r.aiReviewId ? reviewMap.get(r.aiReviewId) ?? null : null)) };
+  });
+
+  // GET /api/ceres/requests/:id
+  app.get<{ Params: { id: string } }>(
+    '/api/ceres/requests/:id',
+    { preHandler: requireCeresRole('md', 'ceo') },
+    async (req, reply) => {
+      const existing = await prisma.ceresPaymentRequest.findUnique({ where: { id: req.params.id } });
+      if (!existing) return reply.code(404).send({ error: 'not_found' });
+      const review = existing.aiReviewId ? await prisma.ceresAIReview.findUnique({ where: { id: existing.aiReviewId } }) : null;
+      return { request: toRequestRow(existing, review) };
+    },
+  );
+
+  // POST /api/ceres/requests/:id/decide — CEO-only escalation decision.
+  const decideBody = z.object({ decision: z.enum(['approve', 'reject']), note: z.string().max(600).optional() });
+  app.post<{ Params: { id: string } }>(
+    '/api/ceres/requests/:id/decide',
+    { preHandler: requireCeresRole('ceo') },
+    async (req, reply) => {
+      const parsed = decideBody.safeParse(req.body);
+      if (!parsed.success) return reply.code(400).send({ error: 'invalid_body' });
+      const existing = await prisma.ceresPaymentRequest.findUnique({ where: { id: req.params.id } });
+      if (!existing) return reply.code(404).send({ error: 'not_found' });
+      if (existing.status !== 'escalated') return reply.code(409).send({ error: 'not_escalated' });
+
+      const updated = await prisma.ceresPaymentRequest.update({
+        where: { id: existing.id },
+        data: {
+          status: parsed.data.decision === 'approve' ? 'ceo_approved' : 'rejected',
+          decidedById: req.agent!.id,
+          decidedAt: new Date(),
+          decisionNote: parsed.data.note ?? '',
+        },
+      });
+      const review = updated.aiReviewId ? await prisma.ceresAIReview.findUnique({ where: { id: updated.aiReviewId } }) : null;
+      return { request: toRequestRow(updated, review) };
+    },
+  );
+
+  // POST /api/ceres/requests/:id/paid — THE GATE: only ai_approved/ceo_approved may pay.
+  const paidBody = z.object({ paidRef: z.string().max(120).optional() });
+  app.post<{ Params: { id: string } }>(
+    '/api/ceres/requests/:id/paid',
+    { preHandler: requireCeresRole('md', 'ceo') },
+    async (req, reply) => {
+      const parsed = paidBody.safeParse(req.body ?? {});
+      if (!parsed.success) return reply.code(400).send({ error: 'invalid_body' });
+      const existing = await prisma.ceresPaymentRequest.findUnique({ where: { id: req.params.id } });
+      if (!existing) return reply.code(404).send({ error: 'not_found' });
+      if (!['ai_approved', 'ceo_approved'].includes(existing.status)) {
+        return reply.code(409).send({ error: 'not_approved' });
+      }
+      const updated = await prisma.ceresPaymentRequest.update({
+        where: { id: existing.id },
+        data: { status: 'paid', paidById: req.agent!.id, paidAt: new Date(), paidRef: parsed.data.paidRef ?? '' },
+      });
+      const review = updated.aiReviewId ? await prisma.ceresAIReview.findUnique({ where: { id: updated.aiReviewId } }) : null;
+      return { request: toRequestRow(updated, review) };
+    },
+  );
+
+  // POST /api/ceres/requests/:id/cancel — requested/escalated only.
+  app.post<{ Params: { id: string } }>(
+    '/api/ceres/requests/:id/cancel',
+    { preHandler: requireCeresRole('md', 'ceo') },
+    async (req, reply) => {
+      const existing = await prisma.ceresPaymentRequest.findUnique({ where: { id: req.params.id } });
+      if (!existing) return reply.code(404).send({ error: 'not_found' });
+      if (!['requested', 'escalated'].includes(existing.status)) {
+        return reply.code(409).send({ error: 'not_cancellable' });
+      }
+      const updated = await prisma.ceresPaymentRequest.update({ where: { id: existing.id }, data: { status: 'cancelled' } });
+      const review = updated.aiReviewId ? await prisma.ceresAIReview.findUnique({ where: { id: updated.aiReviewId } }) : null;
+      return { request: toRequestRow(updated, review) };
+    },
+  );
+
+  // ─── Templates (P3) ───
+
+  // GET /api/ceres/templates
+  app.get('/api/ceres/templates', { preHandler: requireCeresRole('md', 'ceo') }, async () => {
+    const templates = await prisma.ceresRecurringTemplate.findMany({ orderBy: { payee: 'asc' } });
+    return { templates };
+  });
+
+  // POST /api/ceres/templates
+  const templateBody = z.object({
+    payee: z.string().min(1).max(200),
+    entity: z.enum(ENTITIES),
+    category: z.string().min(1),
+    expectedAmount: z.string().refine(isValidAmount, 'invalid_amount'),
+    tolerancePct: z.number().min(0).max(100).default(15),
+    period: z.enum(['monthly', 'quarterly', 'yearly']),
+    dueDay: z.number().int().min(1).max(31),
+    graceDays: z.number().int().min(0).max(30),
+    note: z.string().max(600).optional(),
+  });
+  app.post('/api/ceres/templates', { preHandler: requireCeresRole('md', 'ceo') }, async (req, reply) => {
+    const parsed = templateBody.safeParse(req.body);
+    if (!parsed.success) {
+      const amountIssue = parsed.error.issues.some((i) => i.message === 'invalid_amount');
+      return reply.code(400).send({ error: amountIssue ? 'invalid_amount' : 'invalid_body' });
+    }
+    const b = parsed.data;
+    const template = await prisma.ceresRecurringTemplate.create({
+      data: {
+        payee: b.payee,
+        entity: b.entity,
+        category: b.category,
+        expectedAmount: b.expectedAmount,
+        tolerancePct: b.tolerancePct,
+        period: b.period,
+        dueDay: b.dueDay,
+        graceDays: b.graceDays,
+        note: b.note ?? '',
+      },
+    });
+    return { template };
+  });
+
+  // PATCH /api/ceres/templates/:id — any subset incl. active.
+  const templatePatchBody = z.object({
+    payee: z.string().min(1).max(200).optional(),
+    entity: z.enum(ENTITIES).optional(),
+    category: z.string().min(1).optional(),
+    expectedAmount: z.string().refine(isValidAmount, 'invalid_amount').optional(),
+    tolerancePct: z.number().min(0).max(100).optional(),
+    period: z.enum(['monthly', 'quarterly', 'yearly']).optional(),
+    dueDay: z.number().int().min(1).max(31).optional(),
+    graceDays: z.number().int().min(0).max(30).optional(),
+    note: z.string().max(600).optional(),
+    active: z.boolean().optional(),
+  });
+  app.patch<{ Params: { id: string } }>(
+    '/api/ceres/templates/:id',
+    { preHandler: requireCeresRole('md', 'ceo') },
+    async (req, reply) => {
+      const parsed = templatePatchBody.safeParse(req.body);
+      if (!parsed.success) {
+        const amountIssue = parsed.error.issues.some((i) => i.message === 'invalid_amount');
+        return reply.code(400).send({ error: amountIssue ? 'invalid_amount' : 'invalid_body' });
+      }
+      const existing = await prisma.ceresRecurringTemplate.findUnique({ where: { id: req.params.id } });
+      if (!existing) return reply.code(404).send({ error: 'not_found' });
+      const template = await prisma.ceresRecurringTemplate.update({ where: { id: existing.id }, data: parsed.data });
+      return { template };
+    },
+  );
+
+  // GET /api/ceres/templates/due — missed-payment / due-status board (P3 bonus).
+  app.get('/api/ceres/templates/due', { preHandler: requireCeresRole('md', 'ceo') }, async () => {
+    const due = await computeTemplateDue();
+    return { due };
+  });
+}

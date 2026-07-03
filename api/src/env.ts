@@ -40,6 +40,13 @@ const schema = z.object({
   // Finance "แจ้งการเงิน" → Google Sheet via an Apps Script web-app webhook + shared secret.
   FINANCE_SHEET_WEBHOOK: z.string().default(''),
   FINANCE_SHEET_SECRET: z.string().default(''),
+
+  // Ceres (expenses & petty cash) — see docs/CERES_BRIEF.md.
+  CERES_MD_PASSWORD: z.string().default(''),
+  CERES_MESSENGER_PINS: z.string().default(''),   // "ta:123456,arm:234567,…" slug:pin pairs
+  CERES_FLOOR: z.coerce.number().default(40000),
+  CERES_CEO_THRESHOLD: z.coerce.number().default(5000),
+  CERES_CEO_LINE_USER_ID: z.string().default(''),
 });
 
 const parsed = schema.safeParse(process.env);
