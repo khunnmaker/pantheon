@@ -201,15 +201,18 @@ export async function junoRoutes(app: FastifyInstance) {
     if (!cur) return reply.code(404).send({ error: 'not_found' });
     if (cur.status === 'void') return reply.code(409).send({ error: 'void_locked' });
 
+    // Editing the check data on an already-recorded (ยืนยันใน Express) payment must NOT
+    // demote it back to 'verified' or re-stamp — the owner's Express confirmation stands;
+    // only the field values are refreshed.
+    const keepRecorded = cur.status === 'recorded';
     const p = await prisma.payment.update({
       where: { id: req.params.id },
       data: {
-        status: 'verified',
+        status: keepRecorded ? 'recorded' : 'verified',
         reNumber: stripped,
         receiptName: body.data.receiptName?.trim() ?? '',
         customerType: body.data.customerType ?? '',
-        verifiedById: req.agent?.id ?? null,
-        verifiedAt: new Date(),
+        ...(keepRecorded ? {} : { verifiedById: req.agent?.id ?? null, verifiedAt: new Date() }),
       },
     });
 
