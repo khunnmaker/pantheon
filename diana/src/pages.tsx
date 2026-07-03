@@ -75,7 +75,7 @@ export function HomePage() {
       <div className="strip">
         <div className="wrap">
           <span>{pick('แบรนด์ที่เราจัดจำหน่าย', 'Brands we carry')}</span>
-          <b>BEGO</b><b>Exocad</b><b>Sunshine&nbsp;Diamonds</b><b>Dentory</b>
+          <b>BEGO</b><b>Exocad</b><b>Sunshine&nbsp;Diamonds</b><b>Dentories</b>
         </div>
       </div>
 
@@ -307,7 +307,7 @@ export function ManufacturingPage() {
   ];
   return (
     <>
-      <PageHero eyebrow="Dentory" title={pick('โรงงานผลิตวัสดุทันตกรรม กว่า 30 ปี', 'Manufacturing dental materials for 30+ years')} desc={pick(ARMS[2].blurb, ARMS[2].blurbEn)} />
+      <PageHero eyebrow="Dentories · KPK" title={pick('โรงงานผลิตวัสดุทันตกรรม กว่า 30 ปี', 'Manufacturing dental materials for 30+ years')} desc={pick(ARMS[2].blurb, ARMS[2].blurbEn)} />
       <div className="wrap" style={{ paddingTop: 32 }}><img className="page-banner" src="/arm-manufacturing.jpg" alt="" /></div>
       <section className="section">
         <div className="wrap" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(220px,1fr))', gap: 16, marginBottom: 28 }}>

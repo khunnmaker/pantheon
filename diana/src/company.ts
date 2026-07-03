@@ -62,13 +62,13 @@ export const ARMS = [
   },
   {
     key: 'manufacturing',
-    name: 'Dentory Manufacturing',
+    name: 'KPK Manufacturing',
     nameTh: 'โรงงานผลิต',
     blurb:
-      'ผลิตวัสดุทันตกรรมภายใต้แบรนด์ของเราเอง เช่น วัสดุพิมพ์ปาก แว็กซ์ หน้ากากอนามัย หมวกคลุมผม และถาดพิมพ์ ' +
+      'โรงงาน KPK ผลิตวัสดุทันตกรรมภายใต้แบรนด์ Dentories ของเราเอง เช่น วัสดุพิมพ์ปาก แว็กซ์ หน้ากากอนามัย หมวกคลุมผม และถาดพิมพ์ ' +
       'ภายใต้มาตรฐาน ISO 9001 และ ISO 13485 ด้วยประสบการณ์ผลิตกว่า 30 ปี',
     blurbEn:
-      'Manufacturing dental materials under our own brand — impression materials, wax, masks, caps and trays — under ISO 9001 and ISO 13485, with over 30 years of experience.',
+      'Our KPK factory manufactures dental materials under our own Dentories brand — impression materials, wax, masks, caps and trays — under ISO 9001 and ISO 13485, with over 30 years of experience.',
     icon: 'factory',
   },
 ];
@@ -106,5 +106,5 @@ export const BRANDS = [
   { name: 'BEGO', desc: 'ระบบรากเทียมและวัสดุงานแล็บจากเยอรมนี', descEn: 'German implant systems and lab materials.', tag: 'Implants · Lab' },
   { name: 'Sunshine Diamond', desc: 'หัวกรอเพชรคุณภาพสำหรับงานกรอแต่ง', descEn: 'Quality diamond burs for preparation.', tag: 'Burs' },
   { name: 'ExoCAD', desc: 'ซอฟต์แวร์ออกแบบงานทันตกรรมดิจิทัล', descEn: 'Digital dental CAD design software.', tag: 'Software' },
-  { name: 'Dentory', desc: 'แบรนด์ผลิตเองของ Prominent — วัสดุสิ้นเปลืองและวัสดุงานแล็บ', descEn: "Prominent's in-house brand — consumables and lab materials.", tag: 'In-house' },
+  { name: 'Dentories', desc: 'แบรนด์ผลิตเองของเรา (โรงงาน KPK) — วัสดุสิ้นเปลืองและวัสดุงานแล็บ', descEn: 'Our own in-house brand, made at the KPK factory — consumables and lab materials.', tag: 'In-house' },
 ];
