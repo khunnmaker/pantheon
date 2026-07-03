@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Landmark, LogOut, Search, Download, Flag, FileText, Inbox, BarChart3, Scale,
-  Loader2, AlertTriangle, CheckCircle2, X, RefreshCw, ExternalLink, Ban, Printer, Pencil,
+  Loader2, AlertTriangle, CheckCircle2, X, RefreshCw, ExternalLink, Ban, Printer,
+  Undo2, ClipboardCheck, CheckCheck,
 } from 'lucide-react';
 import {
   getSummary, getPayments, setStatus, setFlag, verifyPayment, getReport, downloadCsv, baht,
@@ -226,17 +227,15 @@ function PaymentsView({ view, onChanged }: { view: Exclude<View, 'reports' | 're
             <div className="p-8 text-center text-slate-400 text-sm">ไม่มีรายการ</div>
           ) : (
             <table className="w-full text-sm">
-              {/* th cells are sticky (93px = the app header + tab bar above) so the column
-                  names — สถานะ especially — stay visible however long the list scrolls. */}
-              <thead className="text-slate-500 text-xs">
+              <thead className="bg-slate-50 text-slate-500 text-xs">
                 <tr>
-                  <th className="sticky top-[93px] z-10 bg-slate-50 text-left font-medium px-3 py-2">วันที่</th>
-                  <th className="sticky top-[93px] z-10 bg-slate-50 text-left font-medium px-3 py-2">ลูกค้า</th>
-                  <th className="sticky top-[93px] z-10 bg-slate-50 text-right font-medium px-3 py-2">ยอด</th>
-                  <th className="sticky top-[93px] z-10 bg-slate-50 text-left font-medium px-3 py-2 hidden md:table-cell">ธนาคาร</th>
-                  <th className="sticky top-[93px] z-10 bg-slate-50 text-left font-medium px-3 py-2 hidden lg:table-cell">ขาย</th>
-                  <th className="sticky top-[93px] z-10 bg-slate-50 text-left font-medium px-3 py-2 hidden md:table-cell">RE</th>
-                  <th className="sticky top-[93px] z-10 bg-slate-50 text-left font-medium px-3 py-2">สถานะ</th>
+                  <th className="text-left font-medium px-3 py-2">วันที่</th>
+                  <th className="text-left font-medium px-3 py-2">ลูกค้า</th>
+                  <th className="text-right font-medium px-3 py-2">ยอด</th>
+                  <th className="text-left font-medium px-3 py-2 hidden md:table-cell">ธนาคาร</th>
+                  <th className="text-left font-medium px-3 py-2 hidden lg:table-cell">ขาย</th>
+                  <th className="text-left font-medium px-3 py-2 hidden md:table-cell">RE</th>
+                  <th className="text-left font-medium px-3 py-2">สถานะ</th>
                 </tr>
               </thead>
               <tbody>
@@ -292,10 +291,14 @@ function Detail({ payment, onClose, onUpdate, onPrint }: {
 }) {
   const [busy, setBusy] = useState('');
   const [flagNote, setFlagNote] = useState('');
+  const [flagOpen, setFlagOpen] = useState(false);
   const [error, setError] = useState('');
   const [checkOpen, setCheckOpen] = useState(false);
   // informational only — cleared whenever the drawer moves to a different payment
   const [reDuplicates, setReDuplicates] = useState(0);
+  useEffect(() => {
+    setFlagOpen(false); setFlagNote(''); setReDuplicates(0); setError('');
+  }, [payment.id]);
 
   async function run(key: string, fn: () => Promise<{ payment: Payment }>) {
     setBusy(key);
@@ -319,21 +322,99 @@ function Detail({ payment, onClose, onUpdate, onPrint }: {
     </div>
   );
 
+  // One compact icon in the sticky action rail. `active` tints it as the current state;
+  // busy shows a spinner in place of the icon. Tooltips carry the Thai names.
+  const rail = (
+    key: string,
+    title: string,
+    icon: React.ReactNode,
+    onClick: () => void,
+    opts: { disabled?: boolean; active?: boolean; danger?: boolean } = {},
+  ) => (
+    <button
+      disabled={busy !== '' || opts.disabled}
+      onClick={onClick}
+      title={title}
+      className={`p-1.5 rounded-lg border disabled:opacity-30 shrink-0 ${
+        opts.active
+          ? 'bg-emerald-600 text-white border-emerald-600'
+          : opts.danger
+            ? 'border-slate-200 text-slate-400 hover:bg-rose-50 hover:text-rose-600'
+            : 'border-slate-200 text-slate-500 hover:bg-slate-50 hover:text-slate-700'
+      }`}
+    >
+      {busy === key ? <Loader2 size={16} className="animate-spin" /> : icon}
+    </button>
+  );
+
   return (
     <div className="fixed inset-0 z-30 bg-slate-900/40 md:static md:z-auto md:bg-transparent md:w-[380px] md:shrink-0">
       <div className="absolute inset-x-0 bottom-0 top-10 md:static bg-white rounded-t-2xl md:rounded-xl border border-slate-200 overflow-y-auto md:sticky md:top-[104px] md:max-h-[calc(100vh-120px)]">
-        {/* Sticky header: the title, the CURRENT STATUS, and the close button must stay
-            visible however far the drawer is scrolled (owner request 2026-07-03). */}
-        <div className="sticky top-0 z-10 bg-white flex items-center justify-between gap-2 px-4 py-3 border-b border-slate-100 rounded-t-2xl md:rounded-t-xl">
-          <div className="font-semibold whitespace-nowrap">รายละเอียดการรับเงิน</div>
-          <div className="flex items-center gap-1.5 min-w-0">
-            <Badge cls={STATUS_META[p.status].cls}>{STATUS_META[p.status].label}</Badge>
-            {p.flagged && <Flag size={13} className="text-rose-500 shrink-0" />}
-            <button onClick={onClose} className="text-slate-400 hover:text-slate-600 shrink-0 ml-1"><X size={18} /></button>
+        {/* Sticky header = status + RE on the left, EVERY action as an icon on the right
+            (owner request 2026-07-03: actions reachable at any scroll position, add/remove
+            any time). Hover an icon for its Thai name. */}
+        <div className="sticky top-0 z-10 bg-white px-3 py-2 border-b border-slate-100 rounded-t-2xl md:rounded-t-xl">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-1.5 min-w-0">
+              <Badge cls={STATUS_META[p.status].cls}>{STATUS_META[p.status].label}</Badge>
+              {p.reNumber && <span className="text-xs font-bold text-slate-700 whitespace-nowrap truncate">RE {p.reNumber}</span>}
+              {p.flagged && <Flag size={13} className="text-rose-500 shrink-0" />}
+            </div>
+            <div className="flex items-center gap-1 shrink-0">
+              {rail('received', STATUS_META.received.label, <Undo2 size={16} />, () => run('received', () => setStatus(p.id, 'received')), {
+                disabled: p.status === 'received',
+              })}
+              {/* 'verified' only via the check dialog — the one path that supplies the RE */}
+              {rail('check', p.reNumber ? 'แก้ไขข้อมูลใบเสร็จ' : STATUS_META.verified.label, <ClipboardCheck size={16} />, () => setCheckOpen(true), {
+                disabled: p.status === 'void',
+                active: p.status === 'verified',
+              })}
+              {rail('recorded', STATUS_META.recorded.label, <CheckCheck size={16} />, () => run('recorded', () => setStatus(p.id, 'recorded')), {
+                disabled: p.status === 'recorded' || p.status === 'void',
+                active: p.status === 'recorded',
+              })}
+              {rail('print', p.reNumber ? 'พิมพ์ใบปะหน้า' : 'พิมพ์ใบปะหน้า (ต้องมีเลข RE ก่อน)', <Printer size={16} />, () => onPrint(p), {
+                disabled: !p.reNumber,
+              })}
+              {rail('flag', p.flagged ? 'เคลียร์ธงตรวจสอบ' : 'ติดธงตรวจสอบยอด', <Flag size={16} />, () => {
+                if (p.flagged) void run('flag', () => setFlag(p.id, false));
+                else setFlagOpen((v) => !v);
+              }, { active: p.flagged })}
+              {rail('void', 'ยกเลิก (ตัดออกจากรายงาน)', <Ban size={16} />, () => run('void', () => setStatus(p.id, 'void')), {
+                disabled: p.status === 'void',
+                danger: true,
+              })}
+              <button onClick={onClose} title="ปิด" className="p-1.5 text-slate-400 hover:text-slate-600 shrink-0"><X size={18} /></button>
+            </div>
           </div>
+          {/* transient flag-note row (setting a flag can carry a note for the audit trail) */}
+          {flagOpen && !p.flagged && (
+            <div className="mt-2 flex items-center gap-1.5">
+              <input
+                value={flagNote}
+                onChange={(e) => setFlagNote(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') void run('flag', () => setFlag(p.id, true, flagNote.trim() || undefined)).then(() => setFlagOpen(false)); }}
+                placeholder="หมายเหตุ (ถ้ามี)"
+                autoFocus
+                className="flex-1 px-2 py-1.5 rounded-lg border border-slate-300 text-sm"
+              />
+              <button
+                disabled={busy !== ''}
+                onClick={() => void run('flag', () => setFlag(p.id, true, flagNote.trim() || undefined)).then(() => setFlagOpen(false))}
+                className="px-2.5 py-1.5 rounded-lg text-xs font-medium bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100 disabled:opacity-40 whitespace-nowrap"
+              >
+                ติดธง
+              </button>
+            </div>
+          )}
         </div>
 
         {error && <div className="mx-4 mt-2 p-2 rounded-lg bg-rose-50 text-rose-700 text-xs flex items-center gap-1"><AlertTriangle size={13} /> {error}</div>}
+        {reDuplicates > 0 && (
+          <div className="mx-4 mt-2 px-2 py-1 rounded-lg bg-amber-50 text-amber-700 text-xs flex items-center gap-1">
+            <AlertTriangle size={13} /> เลข RE นี้ซ้ำกับรายการอื่น ({reDuplicates})
+          </div>
+        )}
 
         {/* slip image */}
         <div className="p-4">
@@ -378,78 +459,6 @@ function Detail({ payment, onClose, onUpdate, onPrint }: {
           <div className="mx-4 mt-3 p-2 rounded-lg bg-slate-50 text-slate-600 text-xs whitespace-pre-wrap">{p.note}</div>
         )}
 
-        {/* lifecycle actions */}
-        <div className="px-4 py-3 mt-2 border-t border-slate-100">
-          <div className="text-xs text-slate-400 mb-1.5 flex items-center gap-1.5 flex-wrap">
-            สถานะ · <Badge cls={STATUS_META[p.status].cls}>{STATUS_META[p.status].label}</Badge>
-            {p.reNumber && (
-              <>
-                <span className="font-bold text-slate-700 text-sm">RE {p.reNumber}</span>
-                <button
-                  onClick={() => setCheckOpen(true)}
-                  className="text-slate-400 hover:text-emerald-700 flex items-center gap-0.5"
-                  title="แก้ไขข้อมูลใบเสร็จ"
-                >
-                  <Pencil size={12} /> แก้ไข
-                </button>
-              </>
-            )}
-          </div>
-          {reDuplicates > 0 && (
-            <div className="mb-1.5 px-2 py-1 rounded-lg bg-amber-50 text-amber-700 text-xs flex items-center gap-1">
-              <AlertTriangle size={13} /> เลข RE นี้ซ้ำกับรายการอื่น ({reDuplicates})
-            </div>
-          )}
-          <div className="flex flex-wrap gap-1.5">
-            <button
-              disabled={busy !== '' || p.status === 'received'}
-              onClick={() => run('received', () => setStatus(p.id, 'received'))}
-              className={`px-2.5 py-1.5 rounded-lg text-xs font-medium border disabled:opacity-40 ${
-                p.status === 'received' ? 'bg-emerald-600 text-white border-emerald-600' : 'border-slate-300 hover:bg-slate-50'
-              }`}
-            >
-              {busy === 'received' ? <Loader2 size={13} className="animate-spin" /> : STATUS_META.received.label}
-            </button>
-            <button
-              // 'verified' is never set directly — the check dialog is mandatory (it's the
-              // only path that can supply the RE number the server requires).
-              disabled={busy !== '' || p.status === 'void'}
-              onClick={() => setCheckOpen(true)}
-              className={`px-2.5 py-1.5 rounded-lg text-xs font-medium border disabled:opacity-40 ${
-                p.status === 'verified' || p.status === 'recorded' ? 'bg-emerald-600 text-white border-emerald-600' : 'border-slate-300 hover:bg-slate-50'
-              }`}
-            >
-              {STATUS_META.verified.label}
-            </button>
-            <button
-              // a voided payment must be explicitly restored to 'received' before re-verifying
-              // (server 409s record while void; รอตรวจ stays enabled as the un-void path)
-              disabled={busy !== '' || p.status === 'recorded' || p.status === 'void'}
-              onClick={() => run('recorded', () => setStatus(p.id, 'recorded'))}
-              className={`px-2.5 py-1.5 rounded-lg text-xs font-medium border disabled:opacity-40 ${
-                p.status === 'recorded' ? 'bg-emerald-600 text-white border-emerald-600' : 'border-slate-300 hover:bg-slate-50'
-              }`}
-            >
-              {busy === 'recorded' ? <Loader2 size={13} className="animate-spin" /> : STATUS_META.recorded.label}
-            </button>
-            <button
-              disabled={busy !== '' || p.status === 'void'}
-              onClick={() => run('void', () => setStatus(p.id, 'void'))}
-              className="px-2.5 py-1.5 rounded-lg text-xs font-medium border border-slate-300 text-slate-500 hover:bg-rose-50 hover:text-rose-600 disabled:opacity-40 flex items-center gap-1"
-            >
-              <Ban size={13} /> ยกเลิก
-            </button>
-          </div>
-          <button
-            disabled={!p.reNumber}
-            onClick={() => onPrint(p)}
-            className="mt-1.5 w-full px-3 py-1.5 rounded-lg text-xs font-medium border border-slate-300 hover:bg-slate-50 disabled:opacity-40 flex items-center justify-center gap-1"
-            title={p.reNumber ? 'พิมพ์ใบปะหน้าใบเสร็จ' : 'ต้องมีเลขที่ใบเสร็จ (RE) ก่อน'}
-          >
-            <Printer size={13} /> พิมพ์ใบปะหน้า
-          </button>
-        </div>
-
         {checkOpen && (
           <CheckDialog
             payment={p}
@@ -461,31 +470,6 @@ function Detail({ payment, onClose, onUpdate, onPrint }: {
             }}
           />
         )}
-
-        {/* flag */}
-        <div className="px-4 py-3 border-t border-slate-100">
-          <div className="text-xs text-slate-400 mb-1.5">
-            {p.flagged ? <span className="text-rose-600 font-semibold flex items-center gap-1"><Flag size={13} /> ติดธงตรวจสอบ</span> : 'ตรวจสอบยอด'}
-          </div>
-          {!p.flagged && (
-            <input
-              value={flagNote}
-              onChange={(e) => setFlagNote(e.target.value)}
-              placeholder="หมายเหตุ (ถ้ามี)"
-              className="w-full px-2 py-1.5 mb-1.5 rounded-lg border border-slate-300 text-sm"
-            />
-          )}
-          <button
-            disabled={busy !== ''}
-            onClick={() => run('flag', () => setFlag(p.id, !p.flagged, flagNote.trim() || undefined))}
-            className={`w-full px-3 py-1.5 rounded-lg text-sm font-medium disabled:opacity-40 flex items-center justify-center gap-1 ${
-              p.flagged ? 'bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100'
-                        : 'bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100'
-            }`}
-          >
-            {busy === 'flag' ? <Loader2 size={14} className="animate-spin" /> : p.flagged ? <><CheckCircle2 size={14} /> เคลียร์ธง</> : <><Flag size={14} /> ติดธง</>}
-          </button>
-        </div>
 
         {/* tax-invoice DETAILS only (no status tracking): every sale gets a ใบกำกับภาษี,
             issued in Express as part of recording — but the name/address/tax-ID the customer
