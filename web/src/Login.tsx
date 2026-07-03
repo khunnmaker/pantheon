@@ -1,28 +1,35 @@
-import { useRef, useState } from 'react';
-import { Bot, LogIn, Loader2, AlertTriangle } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { Bot, LogIn, Loader2, AlertTriangle, UserCircle2 } from 'lucide-react';
 import { login, setSession, type Agent } from './lib/api';
 
+// Owner-approved name-first layout (same as Vulcan/Juno): a vertical list of person
+// cards — Dr. M on top, the team under his name — and NO credential box until a name
+// is selected. Selecting an agent reveals a 6-digit PIN input (auto-submits on the 6th
+// digit); selecting Dr. M reveals a password field (the supervisor never uses a PIN).
+// The manual email/password form stays as a fallback (and keeps agents working via
+// STAFF_PASSWORD for as long as AGENT_PINS isn't configured).
 const QUICK = [
-  { email: 'drm@prominent.local', label: 'Dr. M', role: 'supervisor' },
-  { email: 'nadeer@prominent.local', label: 'NaDeer', role: 'agent' },
-  { email: 'anny@prominent.local', label: 'Anny', role: 'agent' },
-  { email: 'noey@prominent.local', label: 'Noey', role: 'agent' },
+  { email: 'drm@prominent.local', label: 'Dr. M', role: 'supervisor' as const },
+  { email: 'nadeer@prominent.local', label: 'NaDeer', role: 'agent' as const },
+  { email: 'anny@prominent.local', label: 'Anny', role: 'agent' as const },
+  { email: 'noey@prominent.local', label: 'Noey', role: 'agent' as const },
 ];
-
-// Three view-states: pick a name → PIN pad (agents) or password field (Dr. M) →
-// fall back to the full manual email/password form (kept working for as long as
-// AGENT_PINS isn't configured — agents can still use STAFF_PASSWORD by hand).
-type View = 'picker' | 'pin' | 'manual';
+type Person = (typeof QUICK)[number];
 
 export default function Login({ onLogin }: { onLogin: (agent: Agent) => void }) {
-  const [view, setView] = useState<View>('picker');
-  const [selected, setSelected] = useState<(typeof QUICK)[number] | null>(null);
+  const [view, setView] = useState<'list' | 'manual'>('list');
+  const [selected, setSelected] = useState<Person | null>(null);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [pin, setPin] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const pinRef = useRef<HTMLInputElement>(null);
+  const credRef = useRef<HTMLInputElement>(null);
+
+  // Focus the credential input as soon as a person is picked (or re-picked).
+  useEffect(() => {
+    if (selected) setTimeout(() => credRef.current?.focus(), 0);
+  }, [selected]);
 
   async function submit(useEmail: string, usePassword: string) {
     const em = useEmail.trim();
@@ -34,31 +41,21 @@ export default function Login({ onLogin }: { onLogin: (agent: Agent) => void }) 
       setSession(token, agent);
       onLogin(agent);
     } catch {
-      setError('อีเมลหรือรหัสผ่านไม่ถูกต้อง');
-      // PIN attempts are one-shot — clear it and let the agent retype rather than
-      // resubmitting the same (wrong) 6 digits. Refocus after the input re-enables
-      // (it's disabled while busy, which blurs it; autoFocus only fires on mount).
-      if (view === 'pin') {
-        setPin('');
-        setTimeout(() => pinRef.current?.focus(), 0);
-      }
+      setError('รหัสไม่ถูกต้อง');
+      // PIN attempts are one-shot — clear and refocus so the agent just retypes.
+      setPin('');
+      setTimeout(() => credRef.current?.focus(), 0);
     } finally {
       setBusy(false);
     }
   }
 
-  function pickQuick(q: (typeof QUICK)[number]) {
+  function pick(q: Person) {
     setError('');
-    if (q.role === 'supervisor') {
-      // Dr. M keeps the original flow: email prefilled, password typed by hand.
-      setEmail(q.email);
-      setSelected(q);
-      setView('manual');
-      return;
-    }
-    setSelected(q);
     setPin('');
-    setView('pin');
+    setPassword('');
+    // Tapping the already-selected card collapses it back to the plain list.
+    setSelected((cur) => (cur?.email === q.email ? null : q));
   }
 
   function onPinChange(raw: string) {
@@ -69,14 +66,6 @@ export default function Login({ onLogin }: { onLogin: (agent: Agent) => void }) 
     }
   }
 
-  function backToPicker() {
-    setError('');
-    setPin('');
-    setPassword('');
-    setSelected(null);
-    setView('picker');
-  }
-
   return (
     <div className="min-h-screen bg-slate-100 flex items-center justify-center p-6 font-sans text-slate-800">
       <div className="bg-white rounded-2xl shadow-sm border border-slate-200 max-w-sm w-full p-6">
@@ -84,68 +73,109 @@ export default function Login({ onLogin }: { onLogin: (agent: Agent) => void }) 
           <Bot size={24} />
           <h1 className="text-xl font-bold">Minerva</h1>
         </div>
-        <p className="text-sm text-slate-500 mb-5">เข้าสู่ระบบ</p>
+        <p className="text-sm text-slate-500 mb-5">คอนโซลพนักงาน · เข้าสู่ระบบ</p>
 
-        {view === 'picker' && (
+        {view === 'list' ? (
           <>
-            <p className="text-xs font-semibold text-slate-500 mb-2">เลือกชื่อพนักงาน</p>
-            <div className="flex flex-wrap gap-1 mb-4">
-              {QUICK.map((q) => (
-                <button
-                  key={q.email}
-                  onClick={() => pickQuick(q)}
-                  className="text-xs px-2 py-1 rounded-lg bg-slate-100 hover:bg-sky-100 text-slate-600 border border-slate-200"
-                >
-                  {q.label}
-                  {q.role === 'supervisor' && <span className="text-sky-600"> · หัวหน้า</span>}
-                </button>
-              ))}
+            <div className="space-y-2">
+              {QUICK.map((q) => {
+                const isSel = selected?.email === q.email;
+                const isSup = q.role === 'supervisor';
+                return (
+                  <div key={q.email}>
+                    <button
+                      type="button"
+                      onClick={() => pick(q)}
+                      className={
+                        'w-full flex items-center gap-2 rounded-xl px-3 py-2.5 border text-left transition-colors ' +
+                        (isSel
+                          ? 'bg-sky-50 border-sky-200'
+                          : 'bg-white border-slate-200 hover:bg-slate-50')
+                      }
+                    >
+                      <UserCircle2 size={22} className={isSel ? 'text-sky-600 shrink-0' : 'text-slate-400 shrink-0'} />
+                      <div>
+                        <div className="text-sm font-semibold text-slate-800">{q.label}</div>
+                        <div className={'text-[11px] ' + (isSel ? 'text-sky-600' : 'text-slate-400')}>
+                          {isSup ? 'หัวหน้า' : 'พนักงาน'}
+                        </div>
+                      </div>
+                    </button>
+
+                    {/* Credential box appears ONLY under the selected name. */}
+                    {isSel && (
+                      <div className="mt-2 mb-1 px-1">
+                        {isSup ? (
+                          <>
+                            <label className="block text-xs font-semibold text-slate-500 mb-1">
+                              รหัสผ่านของ {q.label}
+                            </label>
+                            <input
+                              ref={credRef}
+                              type="password"
+                              value={password}
+                              onChange={(e) => setPassword(e.target.value)}
+                              onKeyDown={(e) => e.key === 'Enter' && submit(q.email, password)}
+                              disabled={busy}
+                              className="w-full px-3 py-2 mb-2 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-sky-400 disabled:opacity-50"
+                            />
+                            {error && (
+                              <div className="flex items-center gap-1 text-rose-600 text-xs mb-2">
+                                <AlertTriangle size={13} /> {error}
+                              </div>
+                            )}
+                            <button
+                              onClick={() => submit(q.email, password)}
+                              disabled={busy}
+                              className="w-full px-3 py-2 rounded-xl bg-sky-600 hover:bg-sky-700 text-white text-sm font-semibold flex items-center justify-center gap-1 disabled:opacity-50"
+                            >
+                              {busy ? <Loader2 size={16} className="animate-spin" /> : <LogIn size={16} />} เข้าสู่ระบบ
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            <label className="block text-xs font-semibold text-slate-500 mb-1">
+                              รหัส PIN 6 หลักของ {q.label}
+                            </label>
+                            <input
+                              ref={credRef}
+                              type="password"
+                              inputMode="numeric"
+                              autoComplete="current-password"
+                              maxLength={6}
+                              value={pin}
+                              onChange={(e) => onPinChange(e.target.value)}
+                              disabled={busy}
+                              className="w-full px-3 py-2.5 rounded-xl border border-slate-300 text-2xl tracking-[0.5em] text-center focus:outline-none focus:ring-2 focus:ring-sky-400 disabled:opacity-50"
+                            />
+                            {busy && (
+                              <div className="flex items-center justify-center gap-1 text-slate-400 text-xs mt-2">
+                                <Loader2 size={13} className="animate-spin" /> กำลังเข้าสู่ระบบ...
+                              </div>
+                            )}
+                            {error && (
+                              <div className="flex items-center justify-center gap-1 text-rose-600 text-xs mt-2">
+                                <AlertTriangle size={13} /> {error}
+                              </div>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
+
             <button
-              onClick={() => { setSelected(null); setView('manual'); }}
-              className="text-xs text-sky-600 hover:text-sky-700 underline"
+              type="button"
+              onClick={() => { setView('manual'); setSelected(null); setError(''); }}
+              className="w-full mt-4 text-[11px] text-slate-400 hover:text-slate-600"
             >
               เข้าสู่ระบบด้วยอีเมล/รหัสผ่าน
             </button>
           </>
-        )}
-
-        {view === 'pin' && selected && (
-          <>
-            <p className="text-sm text-slate-600 mb-3 text-center">
-              {selected.label} · ใส่รหัส PIN 6 หลัก
-            </p>
-            <input
-              type="password"
-              inputMode="numeric"
-              autoComplete="current-password"
-              maxLength={6}
-              autoFocus
-              ref={pinRef}
-              value={pin}
-              onChange={(e) => onPinChange(e.target.value)}
-              disabled={busy}
-              className="w-full px-3 py-3 mb-3 rounded-xl border border-slate-300 text-2xl tracking-[0.5em] text-center focus:outline-none focus:ring-2 focus:ring-sky-400 disabled:opacity-50"
-            />
-
-            {busy && (
-              <div className="flex items-center justify-center gap-1 text-slate-400 text-xs mb-3">
-                <Loader2 size={13} className="animate-spin" /> กำลังเข้าสู่ระบบ...
-              </div>
-            )}
-            {error && (
-              <div className="flex items-center justify-center gap-1 text-rose-600 text-xs mb-3">
-                <AlertTriangle size={13} /> {error}
-              </div>
-            )}
-
-            <button onClick={backToPicker} className="text-xs text-slate-400 hover:text-sky-600 underline">
-              ย้อนกลับ
-            </button>
-          </>
-        )}
-
-        {view === 'manual' && (
+        ) : (
           <>
             <label className="block text-xs font-semibold text-slate-500 mb-1">อีเมล</label>
             <input
@@ -161,16 +191,13 @@ export default function Login({ onLogin }: { onLogin: (agent: Agent) => void }) 
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && submit(email, password)}
-              autoFocus={!!selected}
               className="w-full px-3 py-2 mb-3 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-sky-400"
             />
-
             {error && (
               <div className="flex items-center gap-1 text-rose-600 text-xs mb-3">
                 <AlertTriangle size={13} /> {error}
               </div>
             )}
-
             <button
               onClick={() => submit(email, password)}
               disabled={busy}
@@ -178,12 +205,13 @@ export default function Login({ onLogin }: { onLogin: (agent: Agent) => void }) 
             >
               {busy ? <Loader2 size={16} className="animate-spin" /> : <LogIn size={16} />} เข้าสู่ระบบ
             </button>
-
-            <div className="mt-4 pt-3 border-t border-slate-100">
-              <button onClick={backToPicker} className="text-xs text-slate-400 hover:text-sky-600 underline">
-                ย้อนกลับ
-              </button>
-            </div>
+            <button
+              type="button"
+              onClick={() => { setView('list'); setError(''); }}
+              className="w-full mt-3 text-[11px] text-slate-400 hover:text-slate-600"
+            >
+              ย้อนกลับ
+            </button>
           </>
         )}
       </div>
