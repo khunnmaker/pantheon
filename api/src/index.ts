@@ -36,6 +36,10 @@ declare module 'fastify' {
 async function buildServer() {
   const app = Fastify({
     logger: { level: env.NODE_ENV === 'development' ? 'debug' : 'info' },
+    // Railway terminates TLS at a proxy in front of us. Without this, req.ip is the
+    // proxy's IP for every client, so the per-IP login rate limit would throttle
+    // everyone collectively instead of one abuser (and req.protocol would read wrong).
+    trustProxy: true,
   });
 
   // Capture the raw JSON body (for HMAC signature checks) while still parsing it.
