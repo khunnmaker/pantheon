@@ -36,7 +36,7 @@ function toRow(p: {
   ref: string; slipMessageId: string | null; slipUrl: string; taxInvoice: string;
   taxInvoiceStatus: string; salesAgentId: string | null; salesName: string; note: string;
   status: string; flagged: boolean; verifiedById: string | null; verifiedAt: Date | null;
-  createdAt: Date;
+  createdAt: Date; reNumber: string; receiptName: string; customerType: string;
 }) {
   return {
     id: p.id,
@@ -63,6 +63,10 @@ function toRow(p: {
     createdAt: p.createdAt.toISOString(),
     // does the confirmed amount differ from what the OCR read? (the fraud/error signal)
     mismatch: !!p.ocrAmount && p.ocrAmount !== p.amount,
+    // FIN's check data (see POST /payments/:id/verify — the only route that sets these)
+    reNumber: p.reNumber,
+    receiptName: p.receiptName,
+    customerType: p.customerType,
   };
 }
 
@@ -89,6 +93,8 @@ function buildListWhere(q: z.infer<typeof listFilterSchema>): Record<string, unk
   if (range) where.createdAt = range;
   const term = q.q?.trim();
   if (term) {
+    // typing "RE6900123" should find the bare-digit reNumber "6900123" too
+    const reTerm = /^re\d+/i.test(term) ? term.replace(/^re/i, '') : term;
     where.OR = [
       { customerName: { contains: term, mode: 'insensitive' } },
       { customerCode: { contains: term, mode: 'insensitive' } },
@@ -97,6 +103,7 @@ function buildListWhere(q: z.infer<typeof listFilterSchema>): Record<string, unk
       { bank: { contains: term, mode: 'insensitive' } },
       { salesName: { contains: term, mode: 'insensitive' } },
       { amount: { contains: term } },
+      { reNumber: { contains: reTerm } },
     ];
   }
   return where;
@@ -146,18 +153,21 @@ export async function junoRoutes(app: FastifyInstance) {
   });
 
   // POST /api/juno/payments/:id/status { status } — advance the lifecycle.
-  // Moving to verified/recorded stamps who/when; received/void clear the stamps (a payment
-  // moved back to received, or voided, must not still read as verified-by-someone). A voided
-  // payment is locked — it must be explicitly restored to 'received' before re-verifying.
+  // Moving to recorded stamps who/when; received/void clear the stamps (a payment moved back
+  // to received, or voided, must not still read as verified-by-someone). A voided payment is
+  // locked — it must be explicitly restored to 'received' before re-verifying. 'verified' is
+  // NOT reachable here — the check dialog (POST /verify) is the only path, since FIN must
+  // supply the RE number; this route 409s that target so the UI is forced through the modal.
   app.post<{ Params: { id: string } }>('/api/juno/payments/:id/status', async (req, reply) => {
     const body = z.object({ status: z.enum(STATUSES) }).safeParse(req.body);
     if (!body.success) return reply.code(400).send({ error: 'invalid_status' });
+    if (body.data.status === 'verified') return reply.code(409).send({ error: 'use_verify' });
     const cur = await prisma.payment.findUnique({ where: { id: req.params.id }, select: { id: true, status: true } });
     if (!cur) return reply.code(404).send({ error: 'not_found' });
-    if (cur.status === 'void' && (body.data.status === 'verified' || body.data.status === 'recorded')) {
+    if (cur.status === 'void' && body.data.status === 'recorded') {
       return reply.code(409).send({ error: 'void_locked' });
     }
-    const advancing = body.data.status === 'verified' || body.data.status === 'recorded';
+    const advancing = body.data.status === 'recorded';
     const p = await prisma.payment.update({
       where: { id: req.params.id },
       data: {
@@ -168,6 +178,48 @@ export async function junoRoutes(app: FastifyInstance) {
       },
     });
     return { ok: true, payment: toRow(p) };
+  });
+
+  // POST /api/juno/payments/:id/verify { reNumber, receiptName?, customerType? } — the ONLY
+  // way to reach status 'verified'. FIN types the RE number issued in Express here; re-opening
+  // the dialog on an already-verified payment is fine (re-verify just updates fields + re-stamps).
+  const customerTypeSchema = z.enum(['โอนก่อนส่ง', 'เครดิต', 'เก็บปลายทาง', '']).default('');
+  const verifyBodySchema = z.object({
+    reNumber: z.string().max(40),
+    receiptName: z.string().max(200).optional(),
+    customerType: customerTypeSchema.optional(),
+  });
+  app.post<{ Params: { id: string } }>('/api/juno/payments/:id/verify', async (req, reply) => {
+    const body = verifyBodySchema.safeParse(req.body);
+    if (!body.success) return reply.code(400).send({ error: 'invalid_body' });
+
+    // Normalize: trim, strip a leading RE/re, require exactly 7 digits — store bare digits.
+    const stripped = body.data.reNumber.trim().replace(/^re/i, '');
+    if (!/^\d{7}$/.test(stripped)) return reply.code(400).send({ error: 'invalid_re' });
+
+    const cur = await prisma.payment.findUnique({ where: { id: req.params.id }, select: { id: true, status: true } });
+    if (!cur) return reply.code(404).send({ error: 'not_found' });
+    if (cur.status === 'void') return reply.code(409).send({ error: 'void_locked' });
+
+    const p = await prisma.payment.update({
+      where: { id: req.params.id },
+      data: {
+        status: 'verified',
+        reNumber: stripped,
+        receiptName: body.data.receiptName?.trim() ?? '',
+        customerType: body.data.customerType ?? '',
+        verifiedById: req.agent?.id ?? null,
+        verifiedAt: new Date(),
+      },
+    });
+
+    // Duplicate-RE guard: informational only (many-to-many bank matching is expected in
+    // phase B), but FIN should see it immediately in case it's a typo.
+    const reDuplicates = await prisma.payment.count({
+      where: { id: { not: p.id }, reNumber: stripped, status: { not: 'void' } },
+    });
+
+    return { ok: true, payment: toRow(p), reDuplicates };
   });
 
   // POST /api/juno/payments/:id/flag { flagged, note? } — raise/clear the flag queue.
@@ -271,7 +323,8 @@ export async function junoRoutes(app: FastifyInstance) {
 
     const headers = [
       'createdAt (UTC+7)', 'code', 'customer', 'sender', 'amount', 'ocrAmount', 'bank',
-      'transferAt', 'ref', 'sales', 'status', 'flagged', 'taxInvoiceStatus', 'taxInvoice', 'note',
+      'transferAt', 'ref', 'sales', 'status', 'reNumber', 'receiptName', 'customerType',
+      'flagged', 'taxInvoiceStatus', 'taxInvoice', 'note',
     ];
     const esc = (v: unknown): string => {
       const raw = String(v ?? '');
@@ -285,8 +338,8 @@ export async function junoRoutes(app: FastifyInstance) {
       lines.push([
         new Date(p.createdAt.getTime() + TH_OFFSET_MS).toISOString().slice(0, 16).replace('T', ' '),
         p.customerCode, p.customerName, p.senderName, p.amount, p.ocrAmount,
-        p.bank, p.transferAt, p.ref, p.salesName, p.status, p.flagged ? 'yes' : '', p.taxInvoiceStatus,
-        p.taxInvoice, p.note,
+        p.bank, p.transferAt, p.ref, p.salesName, p.status, p.reNumber, p.receiptName, p.customerType,
+        p.flagged ? 'yes' : '', p.taxInvoiceStatus, p.taxInvoice, p.note,
       ].map(esc).join(','));
     }
     reply.header('content-type', 'text/csv; charset=utf-8');

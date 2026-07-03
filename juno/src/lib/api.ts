@@ -14,6 +14,7 @@ export interface Agent {
 
 export type PaymentStatus = 'received' | 'verified' | 'recorded' | 'void';
 export type TaxStatus = 'none' | 'requested' | 'issued';
+export type CustomerType = 'โอนก่อนส่ง' | 'เครดิต' | 'เก็บปลายทาง' | '';
 
 export interface Payment {
   id: string;
@@ -39,6 +40,10 @@ export interface Payment {
   verifiedAt: string | null;
   createdAt: string;
   mismatch: boolean;
+  // FIN's check data (RE receipt issued in Express) — see verifyPayment
+  reNumber: string;
+  receiptName: string;
+  customerType: CustomerType;
 }
 
 export interface Summary {
@@ -155,6 +160,17 @@ export const setStatus = (id: string, status: PaymentStatus) =>
   authed<{ ok: boolean; payment: Payment }>(`/api/juno/payments/${id}/status`, {
     method: 'POST',
     body: JSON.stringify({ status }),
+  });
+
+// The check dialog: FIN types the RE number issued in Express (plus the receipt name /
+// customer type) — the only route that can advance a payment to 'verified'.
+export const verifyPayment = (
+  id: string,
+  data: { reNumber: string; receiptName?: string; customerType?: CustomerType },
+) =>
+  authed<{ ok: boolean; payment: Payment; reDuplicates: number }>(`/api/juno/payments/${id}/verify`, {
+    method: 'POST',
+    body: JSON.stringify(data),
   });
 
 export const setFlag = (id: string, flagged: boolean, note?: string) =>

@@ -231,12 +231,17 @@ model Payment {
   verifiedById String? // finance user who last advanced it
   verifiedAt   DateTime?
   createdAt    DateTime  @default(now()) // when Minerva forwarded it
+  // FIN check data (entered in Juno's check dialog when the RE is issued in Express)
+  reNumber     String @default("") // receipt no., stored as BARE 7 digits (e.g. "6900123")
+  receiptName  String @default("") // official name on the RE (may differ from customerName)
+  customerType String @default("") // โอนก่อนส่ง | เครดิต | เก็บปลายทาง | "" (unset)
 
   @@index([status])
   @@index([flagged])
   @@index([taxInvoiceStatus])
   @@index([customerCode])
   @@index([createdAt])
+  @@index([reNumber])
 }
 
 // Staff quick-reply templates — canned messages (address, hours, payment, catalog,
