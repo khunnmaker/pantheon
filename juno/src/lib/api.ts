@@ -14,6 +14,7 @@ export interface Agent {
 
 export type PaymentStatus = 'received' | 'verified' | 'recorded' | 'void';
 export type TaxStatus = 'none' | 'requested' | 'issued';
+export type CustomerType = 'โอนก่อนส่ง' | 'เครดิต' | 'เก็บปลายทาง' | '';
 
 export interface Payment {
   id: string;
@@ -39,6 +40,10 @@ export interface Payment {
   verifiedAt: string | null;
   createdAt: string;
   mismatch: boolean;
+  // FIN's check data (RE receipt issued in Express) — see verifyPayment
+  reNumber: string;
+  receiptName: string;
+  customerType: CustomerType;
 }
 
 export interface Summary {
@@ -157,6 +162,17 @@ export const setStatus = (id: string, status: PaymentStatus) =>
     body: JSON.stringify({ status }),
   });
 
+// The check dialog: FIN types the RE number issued in Express (plus the receipt name /
+// customer type) — the only route that can advance a payment to 'verified'.
+export const verifyPayment = (
+  id: string,
+  data: { reNumber: string; receiptName?: string; customerType?: CustomerType },
+) =>
+  authed<{ ok: boolean; payment: Payment; reDuplicates: number }>(`/api/juno/payments/${id}/verify`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+
 export const setFlag = (id: string, flagged: boolean, note?: string) =>
   authed<{ ok: boolean; payment: Payment }>(`/api/juno/payments/${id}/flag`, {
     method: 'POST',
@@ -198,3 +214,174 @@ export async function downloadCsv(f: PaymentFilter): Promise<void> {
 // Baht formatting for display (from the parsed amountNum).
 export const baht = (n: number): string =>
   `฿${n.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+// ── Phase B: bank import + reconciliation (กระทบยอด) ────────────────────────
+// See JUNO_PROCESS_BRIEF.md PHASE B. The owner downloads KBIZ + K SHOP every Wed/Sat;
+// Juno reconciles their credit lines against checked (RE-carrying) Payments.
+
+export type BankSource = 'kbiz' | 'kshop';
+export type BankDirection = 'in' | 'out';
+export type BankMatchStatus = 'unmatched' | 'matched';
+export type BankTxnStatusFilter = 'all' | 'unmatched' | 'matched' | 'confirmed';
+
+export interface BankTxnLink {
+  paymentId: string;
+  reNumber: string;
+  receiptName: string;
+  customerName: string;
+  amount: string;
+}
+
+export interface BankTxn {
+  id: string;
+  source: BankSource;
+  txnAt: string;
+  amount: string;
+  amountNum: number;
+  direction: BankDirection;
+  channel: string;
+  description: string;
+  details: string;
+  payerName: string;
+  payerBank: string;
+  matchStatus: BankMatchStatus;
+  refText: string;
+  expressConfirmedAt: string | null;
+  expressConfirmedById: string | null;
+  links: BankTxnLink[];
+  linkedSum: number;
+  sumDelta: number | null;
+}
+
+export interface BankImportPreviewRow {
+  txnAt: string;
+  amount: string;
+  direction: BankDirection;
+  channel: string;
+  payerName: string;
+  details: string;
+  isNew: boolean;
+}
+
+export interface BankImportPreview {
+  token: string;
+  source: BankSource;
+  fileName: string;
+  periodFrom: string | null;
+  periodTo: string | null;
+  rows: BankImportPreviewRow[];
+  counts: { parsed: number; new: number; dup: number; excluded: number };
+}
+
+export interface BankImportApplyResult {
+  ok: boolean;
+  importId: string;
+  source: BankSource;
+  counts: { parsed: number; new: number; dup: number; excluded: number };
+  autoMatched: number;
+}
+
+export interface BankSuggestion {
+  paymentId: string;
+  reNumber: string;
+  receiptName: string;
+  customerName: string;
+  senderName: string;
+  amount: string;
+  dayDistance: number;
+  exactAmount: boolean;
+  nameScore: number;
+}
+
+export interface BankSummary {
+  unmatchedIn: { count: number; sum: number };
+  matchedUnconfirmed: { count: number; sum: number };
+  verifiedUnreconciled: { count: number; sum: number; oldestDays: number };
+  lastImports: {
+    kbiz: { id: string; fileName: string; importedAt: string; txnsNew: number } | null;
+    kshop: { id: string; fileName: string; importedAt: string; txnsNew: number } | null;
+  };
+}
+
+// Reads a File as base64 (no data: prefix) for the import preview upload.
+export function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = String(reader.result ?? '');
+      resolve(result.slice(result.indexOf(',') + 1));
+    };
+    reader.onerror = () => reject(reader.error ?? new Error('read_failed'));
+    reader.readAsDataURL(file);
+  });
+}
+
+export const previewBankImport = (dataB64: string, fileName: string) =>
+  authed<BankImportPreview>('/api/juno/bank/import/preview', {
+    method: 'POST',
+    body: JSON.stringify({ dataB64, fileName }),
+  });
+
+export const applyBankImport = (token: string) =>
+  authed<BankImportApplyResult>('/api/juno/bank/import/apply', {
+    method: 'POST',
+    body: JSON.stringify({ token }),
+  });
+
+export const runBankAutomatch = () =>
+  authed<{ ok: boolean; autoMatched: number }>('/api/juno/bank/automatch', { method: 'POST' });
+
+export interface BankTxnFilter {
+  status?: BankTxnStatusFilter;
+  dir?: BankDirection | 'all';
+  from?: string;
+  to?: string;
+  q?: string;
+}
+function bankTxnFilterQuery(f: BankTxnFilter): string {
+  const p = new URLSearchParams();
+  if (f.status && f.status !== 'all') p.set('status', f.status);
+  if (f.dir && f.dir !== 'all') p.set('dir', f.dir);
+  if (f.from) p.set('from', f.from);
+  if (f.to) p.set('to', f.to);
+  if (f.q) p.set('q', f.q);
+  const s = p.toString();
+  return s ? `?${s}` : '';
+}
+export const getBankTxns = (f: BankTxnFilter) =>
+  authed<{ txns: BankTxn[] }>(`/api/juno/bank/txns${bankTxnFilterQuery(f)}`);
+
+export const getBankSuggestions = (txnId: string) =>
+  authed<{ suggestions: BankSuggestion[] }>(`/api/juno/bank/txns/${txnId}/suggestions`);
+
+export const matchBankTxn = (txnId: string, paymentIds: string[]) =>
+  authed<{ ok: boolean; sumDelta: number }>(`/api/juno/bank/txns/${txnId}/match`, {
+    method: 'POST',
+    body: JSON.stringify({ paymentIds }),
+  });
+
+export const unmatchBankTxn = (txnId: string, paymentId: string) =>
+  authed<{ ok: boolean }>(`/api/juno/bank/txns/${txnId}/unmatch`, {
+    method: 'POST',
+    body: JSON.stringify({ paymentId }),
+  });
+
+export const setBankTxnRef = (txnId: string, refText: string) =>
+  authed<{ ok: boolean; txn: BankTxn }>(`/api/juno/bank/txns/${txnId}/ref`, {
+    method: 'POST',
+    body: JSON.stringify({ refText }),
+  });
+
+export const confirmBankTxn = (txnId: string) =>
+  authed<{ ok: boolean }>(`/api/juno/bank/txns/${txnId}/confirm`, { method: 'POST' });
+
+export const confirmAllMatched = (to?: string) =>
+  authed<{ ok: boolean; txnsConfirmed: number; paymentsAdvanced: number }>('/api/juno/bank/confirm-matched', {
+    method: 'POST',
+    body: JSON.stringify({ to }),
+  });
+
+export const getBankSummary = () => authed<BankSummary>('/api/juno/bank/summary');
+
+export const getBankWatchlist = (limit?: number) =>
+  authed<{ payments: Payment[] }>(`/api/juno/bank/watchlist${limit ? `?limit=${limit}` : ''}`);

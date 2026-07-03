@@ -3,9 +3,11 @@ import { randomUUID, createHash } from 'node:crypto';
 import { z } from 'zod';
 import { prisma } from '../../db/prisma.js';
 import { requireCeresRole } from '../../ceres/auth.js';
-import { parseKbiz, type KbizRow } from '../../bank/parseKbiz.js';
+import { parseKbiz } from '../../bank/parseKbiz.js';
+import { BankParseError, type ParsedBankRow } from '../../bank/types.js';
+import { makeUniqueDedupeKeys } from '../../bank/dedupe.js';
 import { saveStatementFile } from '../../ceres/statementStore.js';
-import { num, thaiDayRange } from './common.js';
+import { num, thaiDayKey, thaiDayRange } from './common.js';
 
 // P5 — bank statement import + reconciliation. Nee uploads the KBIZ CSV export from
 // Ceres's SEPARATE expense bank account (same file format Juno uses for the income
@@ -13,7 +15,7 @@ import { num, thaiDayRange } from './common.js';
 // payments (CeresPaymentRequest) and P4 top-ups (CashMovement), flagging unmatched
 // lines both ways. See docs/CERES_BRIEF.md §2 P5 / §6.
 
-interface StagedRow extends KbizRow {
+interface StagedRow extends ParsedBankRow {
   dedupeKey: string;
   isNew: boolean;
 }
@@ -43,21 +45,11 @@ function stash(s: StagedImport): string {
   return token;
 }
 
-function computeDedupeKeyBase(txnAt: Date, amount: string, details: string): string {
-  return createHash('sha256').update(`kbiz|${txnAt.toISOString()}|${amount}|${details}`).digest('hex');
-}
-
-// Applies the base dedupeKey across a batch from ONE file, appending "|n" (n = 1, 2, …)
-// on the 2nd/3rd/... occurrence of a within-file collision so every row gets a unique
-// key while the first occurrence keeps the bare hash.
-function makeDedupeKeys(rows: KbizRow[]): string[] {
-  const seen = new Map<string, number>();
-  return rows.map((r) => {
-    const base = computeDedupeKeyBase(r.txnAt, r.amount, r.details);
-    const n = seen.get(base) ?? 0;
-    seen.set(base, n + 1);
-    return n === 0 ? base : `${base}|${n}`;
-  });
+// Dedupe keys come from the SHARED bank module (api/src/bank/dedupe.ts) so Ceres and
+// Juno hash statement lines identically — sha256("kbiz|txnAt ISO|amount|details") with
+// a "|n" suffix on within-file collisions.
+function makeDedupeKeys(rows: ParsedBankRow[]): string[] {
+  return makeUniqueDedupeKeys(rows.map((r) => ({ source: 'kbiz' as const, txnAt: r.txnAt, amount: r.amount, details: r.details })));
 }
 
 const DAY_MS = 24 * 3600 * 1000;
@@ -184,7 +176,7 @@ export function statementsRoutes(app: FastifyInstance) {
       try {
         result = parseKbiz(buf);
       } catch (err) {
-        if (err instanceof Error && err.message === 'not_kbiz') {
+        if (err instanceof BankParseError) {
           return reply.code(400).send({ error: 'not_kbiz' });
         }
         req.log.error({ err }, 'ceres statement parse failed');
@@ -204,14 +196,18 @@ export function statementsRoutes(app: FastifyInstance) {
       }));
 
       const fileSha256 = createHash('sha256').update(buf).digest('hex');
+      // Shared-parser periods are Dates (or null on an empty file); Ceres stores/returns
+      // Thai-day strings.
+      const periodFrom = result.periodFrom ? thaiDayKey(result.periodFrom) : '';
+      const periodTo = result.periodTo ? thaiDayKey(result.periodTo) : '';
       const token = stash({
         fileName,
         fileSha256,
         buf,
         rows: staged,
-        periodFrom: result.periodFrom,
-        periodTo: result.periodTo,
-        counts: result.counts,
+        periodFrom,
+        periodTo,
+        counts: { parsed: result.parsed, excluded: result.excluded },
         at: Date.now(),
       });
 
@@ -221,9 +217,9 @@ export function statementsRoutes(app: FastifyInstance) {
       return {
         token,
         fileName,
-        periodFrom: result.periodFrom,
-        periodTo: result.periodTo,
-        counts: { parsed: result.counts.parsed, new: newCount, dup: dupCount, excluded: result.counts.excluded },
+        periodFrom,
+        periodTo,
+        counts: { parsed: result.parsed, new: newCount, dup: dupCount, excluded: result.excluded },
         rows: staged.slice(0, 100).map((r) => ({
           txnAt: r.txnAt.toISOString(),
           amount: r.amount,
