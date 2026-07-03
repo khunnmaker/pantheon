@@ -1587,7 +1587,9 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                           <span><span className="font-semibold">หมายเหตุจาก AI</span> (ไม่ส่งให้ลูกค้า): {rewriteNote}</span>
                         </div>
                       )}
-                      <div className="grid grid-cols-[auto_auto_auto_auto_1fr] gap-2">
+                      {/* Same column template + button classes as the pending composer's row (minus
+                          the regenerate column) so the two states look identical in size. */}
+                      <div className="grid grid-cols-[auto_auto_auto_1fr_1fr] gap-2">
                         <button type="button" disabled={uploading || freeSending} onClick={openCamera}
                           title="ถ่ายรูปแล้วส่งทันที" aria-label="ถ่ายรูปแล้วส่งทันที"
                           className="px-2.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 flex items-center justify-center disabled:opacity-50">
@@ -1610,8 +1612,8 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                         </button>
                         <button onClick={freeSend} disabled={(!freeText.trim() && !upload && !freeProducts.length) || freeSending}
                           title={freeNeedsConfirm ? 'ยืนยันส่ง (ข้อความมีราคา)' : 'ส่งข้อความให้ลูกค้า'}
-                          className={'px-2 py-2 rounded-xl text-white text-sm font-semibold flex items-center justify-center gap-1 disabled:opacity-50 ' + (freeNeedsConfirm ? 'bg-amber-600 hover:bg-amber-700' : 'bg-sky-600 hover:bg-sky-700')}>
-                          {freeSending ? <Loader2 size={16} className="animate-spin" /> : <Send size={15} />} ส่งข้อความ
+                          className={'min-w-0 px-2 py-2 rounded-xl text-white text-sm font-semibold flex items-center justify-center gap-1 disabled:opacity-50 ' + (freeNeedsConfirm ? 'bg-amber-600 hover:bg-amber-700' : 'bg-sky-600 hover:bg-sky-700')}>
+                          {freeSending ? <Loader2 size={17} className="animate-spin" /> : <Send size={17} />}
                         </button>
                       </div>
                     </div>
