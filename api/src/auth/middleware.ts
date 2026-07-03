@@ -21,14 +21,17 @@ function bearer(req: FastifyRequest): string | null {
 // immediately rather than lingering until the 12h token expires. Returns null if
 // the token is invalid OR the account no longer exists. Shared by the REST
 // preHandler and the Socket.IO handshake.
-export async function authedAgentFromToken(token: string | null): Promise<AuthedAgent | null> {
+export async function authedAgentFromToken(
+  token: string | null,
+  allowed: readonly Role[] = ['agent', 'supervisor'],
+): Promise<AuthedAgent | null> {
   const claims = token ? verifyToken(token) : null;
   if (!claims) return null;
   const live = await prisma.agent.findUnique({
     where: { id: claims.id },
     select: { id: true, email: true, name: true, role: true },
   });
-  if (!live || (live.role !== 'agent' && live.role !== 'supervisor')) return null;
+  if (!live || !allowed.includes(live.role as Role)) return null;
   return { id: live.id, email: live.email, name: live.name, role: live.role as Role };
 }
 

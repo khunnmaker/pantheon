@@ -1,0 +1,201 @@
+import { prisma } from '../../db/prisma.js';
+import { env } from '../../env.js';
+import { ceresReceiptUrl } from '../../ceres/receiptLink.js';
+
+// All Ceres day-math is Thai business time (UTC+7) regardless of server TZ — same
+// convention as Juno (see routes/juno.ts).
+const TH_OFFSET_MS = 7 * 3600 * 1000;
+export const thaiDayKey = (d: Date): string => new Date(d.getTime() + TH_OFFSET_MS).toISOString().slice(0, 10);
+
+// "YYYY-MM-DD" (from the UI date inputs) → an inclusive UTC instant range for the Thai day.
+export function thaiDayRange(from?: string, to?: string): { gte?: Date; lte?: Date } | null {
+  const range: { gte?: Date; lte?: Date } = {};
+  if (from) { const d = new Date(`${from}T00:00:00+07:00`); if (!Number.isNaN(d.getTime())) range.gte = d; }
+  if (to)   { const d = new Date(`${to}T23:59:59.999+07:00`); if (!Number.isNaN(d.getTime())) range.lte = d; }
+  return range.gte || range.lte ? range : null;
+}
+
+// A parsed baht number for summing/sorting; free-text/blank amounts → 0.
+export function num(s: string): number {
+  const n = parseFloat((s || '').replace(/[^\d.-]/g, ''));
+  return Number.isFinite(n) ? n : 0;
+}
+
+// Amounts are accepted as strings matching this pattern (whole baht or up to 2 decimal
+// places) and must be > 0 — reject anything else (free text, negative, zero) with 400.
+export const AMOUNT_RE = /^\d+(\.\d{1,2})?$/;
+export function isValidAmount(s: string): boolean {
+  return AMOUNT_RE.test(s) && num(s) > 0;
+}
+
+// The row shape the Ceres UI consumes for an expense (the stored CeresExpense plus
+// a derived numeric amount + tokenized receipt url when a receipt is attached).
+export function toExpenseRow(
+  e: {
+    id: string; partyId: string | null; partyName: string; enteredById: string | null;
+    enteredByName: string; entity: string; category: string; customerNote: string;
+    amount: string; spentAt: Date; receiptUploadId: string | null; receiptSha: string;
+    ocrAmount: string; ocrVendor: string; ocrDate: string; status: string;
+    approvedById: string | null; approvedAt: Date | null; rejectReason: string;
+    settlementId: string | null; aiVerdict: string; note: string; createdAt: Date;
+  },
+  base: string,
+) {
+  return {
+    id: e.id,
+    partyId: e.partyId,
+    partyName: e.partyName,
+    enteredById: e.enteredById,
+    enteredByName: e.enteredByName,
+    entity: e.entity,
+    category: e.category,
+    customerNote: e.customerNote,
+    amount: e.amount,
+    amountNum: num(e.amount),
+    spentAt: e.spentAt.toISOString(),
+    receiptUploadId: e.receiptUploadId,
+    receiptUrl: e.receiptUploadId ? ceresReceiptUrl(base, e.receiptUploadId) : null,
+    ocrAmount: e.ocrAmount,
+    ocrVendor: e.ocrVendor,
+    ocrDate: e.ocrDate,
+    status: e.status,
+    approvedById: e.approvedById,
+    approvedAt: e.approvedAt ? e.approvedAt.toISOString() : null,
+    rejectReason: e.rejectReason,
+    settlementId: e.settlementId,
+    aiVerdict: e.aiVerdict,
+    note: e.note,
+    createdAt: e.createdAt.toISOString(),
+  };
+}
+
+// Re-exported here so route files only need one import for the row mapper + url builder.
+export { ceresReceiptUrl } from '../../ceres/receiptLink.js';
+
+export async function lastSettlement() {
+  return prisma.ceresSettlement.findFirst({ orderBy: { createdAt: 'desc' } });
+}
+
+export interface PartyBoard {
+  partyId: string;
+  partyName: string;
+  active: boolean;
+  outstandingBefore: number;
+  advancesSince: number;
+  refundsSince: number;
+  approvedSince: number;
+  pendingCount: number;
+  pendingSum: number;
+  expectedChange: number;
+}
+
+// A Prisma client OR an interactive-transaction client — computeBoard can run inside
+// POST /close's transaction so the settlement snapshot and the reads it is built from
+// are one consistent view.
+type Db = typeof prisma | Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
+
+// Per-party "expected change" board — everything measured SINCE THE LAST SETTLEMENT
+// (not calendar-day), so a skipped daily close never corrupts the math (CERES_BRIEF
+// P1 step 3/4). Options (used by POST /close):
+//   tx     — run every read on this transaction client instead of the global prisma.
+//   cutoff — upper bound (lte) on every CashMovement read. The close stamps the new
+//            settlement's createdAt to the SAME instant, so a movement landing
+//            mid-close can never fall between this settlement's lines and the next
+//            board's "since last settlement" window.
+export async function computeBoard(opts?: { tx?: Db; cutoff?: Date }): Promise<{
+  settlement: Awaited<ReturnType<typeof lastSettlement>>;
+  parties: PartyBoard[];
+  box: { balance: number; floor: number; belowFloor: boolean; suggestedTopup: number };
+}> {
+  const db = opts?.tx ?? prisma;
+  const cutoff = opts?.cutoff;
+  const settlement = await db.ceresSettlement.findFirst({ orderBy: { createdAt: 'desc' } });
+  const since = settlement?.createdAt;
+
+  // Movement windows: "since the last settlement" for the per-party sums, all-time for
+  // the box balance — both clipped to the cutoff instant when one is given.
+  const sinceWindow =
+    since || cutoff ? { createdAt: { ...(since ? { gt: since } : {}), ...(cutoff ? { lte: cutoff } : {}) } } : {};
+  const allTimeWindow = cutoff ? { createdAt: { lte: cutoff } } : {};
+
+  // ALL parties — including deactivated ones: a party switched off while still owing
+  // money must keep appearing on the board and in settlement lines until its balance
+  // clears, or its outstanding would be silently written off. The inclusion filter
+  // below drops only inactive parties with no balance and no activity.
+  const [parties, lines, advances, refunds, approved, pending, deposits, topups, advancesAll, refundsAll] =
+    await Promise.all([
+      db.ceresParty.findMany({ orderBy: { sortOrder: 'asc' } }),
+      settlement
+        ? db.ceresSettlementLine.findMany({ where: { settlementId: settlement.id } })
+        : Promise.resolve([] as Awaited<ReturnType<typeof prisma.ceresSettlementLine.findMany>>),
+      db.cashMovement.findMany({ where: { type: 'advance', accountId: 'pettyCash', ...sinceWindow } }),
+      db.cashMovement.findMany({ where: { type: 'refund', accountId: 'pettyCash', ...sinceWindow } }),
+      db.ceresExpense.findMany({ where: { status: 'approved', settlementId: null } }),
+      db.ceresExpense.findMany({ where: { status: 'pending' } }),
+      db.cashMovement.findMany({ where: { type: 'deposit', accountId: 'pettyCash', ...allTimeWindow }, select: { amount: true } }),
+      db.cashMovement.findMany({ where: { type: 'topup', accountId: 'pettyCash', ...allTimeWindow }, select: { amount: true } }),
+      db.cashMovement.findMany({ where: { type: 'advance', accountId: 'pettyCash', ...allTimeWindow }, select: { amount: true } }),
+      db.cashMovement.findMany({ where: { type: 'refund', accountId: 'pettyCash', ...allTimeWindow }, select: { amount: true } }),
+    ]);
+
+  const outstandingByParty = new Map<string, number>();
+  for (const l of lines) {
+    if (l.partyId) outstandingByParty.set(l.partyId, num(l.outstanding));
+  }
+  const sumByParty = (rows: { partyId: string | null; amount: string }[]) => {
+    const m = new Map<string, number>();
+    for (const r of rows) {
+      if (!r.partyId) continue;
+      m.set(r.partyId, (m.get(r.partyId) ?? 0) + num(r.amount));
+    }
+    return m;
+  };
+  const advancesByParty = sumByParty(advances);
+  const refundsByParty = sumByParty(refunds);
+  const approvedByParty = sumByParty(approved);
+  const pendingCountByParty = new Map<string, number>();
+  const pendingSumByParty = new Map<string, number>();
+  for (const e of pending) {
+    if (!e.partyId) continue;
+    pendingCountByParty.set(e.partyId, (pendingCountByParty.get(e.partyId) ?? 0) + 1);
+    pendingSumByParty.set(e.partyId, (pendingSumByParty.get(e.partyId) ?? 0) + num(e.amount));
+  }
+
+  const partyBoards: PartyBoard[] = [];
+  for (const p of parties) {
+    const outstandingBefore = outstandingByParty.get(p.id) ?? 0;
+    const advancesSince = advancesByParty.get(p.id) ?? 0;
+    const refundsSince = refundsByParty.get(p.id) ?? 0;
+    const approvedSince = approvedByParty.get(p.id) ?? 0;
+    const pendingCount = pendingCountByParty.get(p.id) ?? 0;
+    const pendingSum = pendingSumByParty.get(p.id) ?? 0;
+    const expectedChange = outstandingBefore + advancesSince - approvedSince - refundsSince;
+    const hasActivity = advancesSince !== 0 || refundsSince !== 0 || approvedSince !== 0 || pendingCount > 0;
+    if (hasActivity || outstandingBefore !== 0 || p.active) {
+      partyBoards.push({
+        partyId: p.id,
+        partyName: p.name,
+        active: p.active,
+        outstandingBefore,
+        advancesSince,
+        refundsSince,
+        approvedSince,
+        pendingCount,
+        pendingSum,
+        expectedChange,
+      });
+    }
+  }
+
+  const sum = (rows: { amount: string }[]) => rows.reduce((s, r) => s + num(r.amount), 0);
+  const balance = sum(deposits) + sum(topups) - sum(advancesAll) + sum(refundsAll);
+  const floor = env.CERES_FLOOR;
+  const belowFloor = balance < floor;
+  const suggestedTopup = belowFloor ? Math.ceil((floor - balance + 1000) / 1000) * 1000 : 0;
+
+  return {
+    settlement,
+    parties: partyBoards,
+    box: { balance, floor, belowFloor, suggestedTopup },
+  };
+}
