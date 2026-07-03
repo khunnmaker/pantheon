@@ -29,6 +29,10 @@ const schema = z.object({
 
   WEB_ORIGIN: z.string().default('http://localhost:5173'),
 
+  // Per-agent 6-digit PINs "name:pin,name:pin" (name = email local part). An agent
+  // absent from the list falls back to STAFF_PASSWORD.
+  AGENT_PINS: z.string().default(''),
+
   // Where customer images are stored. In prod set this to a mounted persistent
   // volume path (e.g. /data); defaults to ./uploads for local dev.
   UPLOAD_DIR: z.string().default(''),

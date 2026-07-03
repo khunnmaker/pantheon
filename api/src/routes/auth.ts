@@ -15,7 +15,7 @@ export async function authRoutes(app: FastifyInstance) {
   // Rate-limited (per IP) to blunt online password guessing / credential stuffing.
   app.post(
     '/api/auth/login',
-    { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } },
+    { config: { rateLimit: { max: 10, timeWindow: '5 minutes' } } },
     async (req, reply) => {
       const parsed = loginBody.safeParse(req.body);
       if (!parsed.success) {

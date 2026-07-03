@@ -17,7 +17,7 @@ list — each only when its table is empty.
 | Var | Value |
 |---|---|
 | `CERES_MD_PASSWORD` | Nee's login password (login email: `md@prominent.local`) |
-| `CERES_MESSENGER_PINS` | `ta:XXXXXX,arm:XXXXXX,man:XXXXXX,boonson:XXXXXX,kaew:XXXXXX,lungko:XXXXXX,wong:XXXXXX,paeng:XXXXXX,nun:XXXXXX,nee:XXXXXX,pin:XXXXXX,lekmaeban:XXXXXX,da:XXXXXX` — **6-digit PINs recommended** (the login is rate-limited, but PINs are short; 6 digits keeps brute force impractical). A messenger missing from the list simply can't log in yet — and the stale-account prune stays disabled until every listed account is provisioned, so partial rollout is safe. |
+| `CERES_MESSENGER_PINS` | `ta:XXXXXX,arm:XXXXXX,man:XXXXXX,boonson:XXXXXX,kaew:XXXXXX,lungko:XXXXXX,wong:XXXXXX,paeng:XXXXXX,nun:XXXXXX,nee:XXXXXX,pin:XXXXXX,lekmaeban:XXXXXX,da:XXXXXX` — **exactly 6 digits per PIN** (same parser/rules as the console's `AGENT_PINS`; non-6-digit entries are skipped with a warning, weak PINs like 123456 are warned). A messenger missing from the list simply can't log in yet — and the stale-account prune stays disabled until every listed account is provisioned, so partial rollout is safe. |
 | `CERES_CEO_LINE_USER_ID` | optional — Dr. M's LINE userId for escalation pushes from the Prominent OA. To find it: message the OA from the personal account, then read the `Customer.lineUserId` of that chat (console or DB). Leave unset to disable pushes (escalations still appear in the CEO tab). |
 | `CERES_FLOOR` | optional, default `40000` (top-up trigger) |
 | `CERES_CEO_THRESHOLD` | optional, default `5000` (mandatory CEO pre-approval above this) |

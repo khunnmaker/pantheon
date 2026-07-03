@@ -226,15 +226,17 @@ function PaymentsView({ view, onChanged }: { view: Exclude<View, 'reports' | 're
             <div className="p-8 text-center text-slate-400 text-sm">ไม่มีรายการ</div>
           ) : (
             <table className="w-full text-sm">
-              <thead className="bg-slate-50 text-slate-500 text-xs">
+              {/* th cells are sticky (93px = the app header + tab bar above) so the column
+                  names — สถานะ especially — stay visible however long the list scrolls. */}
+              <thead className="text-slate-500 text-xs">
                 <tr>
-                  <th className="text-left font-medium px-3 py-2">วันที่</th>
-                  <th className="text-left font-medium px-3 py-2">ลูกค้า</th>
-                  <th className="text-right font-medium px-3 py-2">ยอด</th>
-                  <th className="text-left font-medium px-3 py-2 hidden md:table-cell">ธนาคาร</th>
-                  <th className="text-left font-medium px-3 py-2 hidden lg:table-cell">ขาย</th>
-                  <th className="text-left font-medium px-3 py-2 hidden md:table-cell">RE</th>
-                  <th className="text-left font-medium px-3 py-2">สถานะ</th>
+                  <th className="sticky top-[93px] z-10 bg-slate-50 text-left font-medium px-3 py-2">วันที่</th>
+                  <th className="sticky top-[93px] z-10 bg-slate-50 text-left font-medium px-3 py-2">ลูกค้า</th>
+                  <th className="sticky top-[93px] z-10 bg-slate-50 text-right font-medium px-3 py-2">ยอด</th>
+                  <th className="sticky top-[93px] z-10 bg-slate-50 text-left font-medium px-3 py-2 hidden md:table-cell">ธนาคาร</th>
+                  <th className="sticky top-[93px] z-10 bg-slate-50 text-left font-medium px-3 py-2 hidden lg:table-cell">ขาย</th>
+                  <th className="sticky top-[93px] z-10 bg-slate-50 text-left font-medium px-3 py-2 hidden md:table-cell">RE</th>
+                  <th className="sticky top-[93px] z-10 bg-slate-50 text-left font-medium px-3 py-2">สถานะ</th>
                 </tr>
               </thead>
               <tbody>
@@ -320,9 +322,15 @@ function Detail({ payment, onClose, onUpdate, onPrint }: {
   return (
     <div className="fixed inset-0 z-30 bg-slate-900/40 md:static md:z-auto md:bg-transparent md:w-[380px] md:shrink-0">
       <div className="absolute inset-x-0 bottom-0 top-10 md:static bg-white rounded-t-2xl md:rounded-xl border border-slate-200 overflow-y-auto md:sticky md:top-[104px] md:max-h-[calc(100vh-120px)]">
-        <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100">
-          <div className="font-semibold">รายละเอียดการรับเงิน</div>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-600"><X size={18} /></button>
+        {/* Sticky header: the title, the CURRENT STATUS, and the close button must stay
+            visible however far the drawer is scrolled (owner request 2026-07-03). */}
+        <div className="sticky top-0 z-10 bg-white flex items-center justify-between gap-2 px-4 py-3 border-b border-slate-100 rounded-t-2xl md:rounded-t-xl">
+          <div className="font-semibold whitespace-nowrap">รายละเอียดการรับเงิน</div>
+          <div className="flex items-center gap-1.5 min-w-0">
+            <Badge cls={STATUS_META[p.status].cls}>{STATUS_META[p.status].label}</Badge>
+            {p.flagged && <Flag size={13} className="text-rose-500 shrink-0" />}
+            <button onClick={onClose} className="text-slate-400 hover:text-slate-600 shrink-0 ml-1"><X size={18} /></button>
+          </div>
         </div>
 
         {error && <div className="mx-4 mt-2 p-2 rounded-lg bg-rose-50 text-rose-700 text-xs flex items-center gap-1"><AlertTriangle size={13} /> {error}</div>}
