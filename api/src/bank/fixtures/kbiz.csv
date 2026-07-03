@@ -1,0 +1,26 @@
+รายการเดินบัญชีเงินฝากออมทรัพย์ (มีรายละเอียด),,,,,,,,,,,,
+K-DEPOSIT STATEMENT OF SAVING ACCOUNT (WITH DETAIL),,,,,,,,,,,,
+,Ref. No. DD.048 : N26070308150301530998O/2569,Page 1/1,,,0099,,,,,,,
+,Account,"FAKE TEST CO.,LTD.
+99/9 ซ.ทดสอบ 25 ถนนทดสอบ
+แขวงทดสอบ เขตทดสอบ กรุงเทพฯ 10400",,,,,Reference Code,,,,26070308150301530998,
+,,,,,,,Account Number,,,,000-0-00000-0,
+,,,,,,,Period,,,,01/07/2026 - 02/07/2026,
+,,,,,,,Owner Branch,,,,Sample Main Branch,
+,,,,,,,ENDING BALANCE,,,,,"100,000.00"
+,,,,,,,TOTAL WITHDRAWAL,,2,,ITEMS,"1,116.83"
+,,,,,,,TOTAL DEPOSIT,,8,,ITEMS,"86,821.36"
+,Date,"Time/
+Eff.Date",Descriptions,Withdrawal,,Deposit,,"Outstanding
+Balance",,Channel,,Details
+,01-07-26,,Beginning Balance,,,,,"92,016.83",,,,
+,01-07-26,02:24,Transfer Deposit,,,"2,425.00",,"94,441.83",,K BIZ,,From SCB X1234 สมชาย ใจดี++
+,01-07-26,09:13,Transfer Deposit,,,"2,627.00",,"97,068.83",,Internet/Mobile SCB,,From SCB X1234 สมชาย ใจดี++
+,01-07-26,10:30,Cash Deposit,,,"5,000.00",,"102,068.83",,Branch,,Ref Code 000123456789
+,02-07-26,03:07,Automatic Deposit,,,"16,404.24",,"118,473.07",,Automatic Transfer,,From SMART BBL X5678 โรงพยาบาลทดสอบ++
+,02-07-26,17:28,Cheque Deposit,,,"1,165.00",,"119,638.07",,Automatic Transfer,,KBANK 0721 Cheque No. 26488913
+,01-07-26,23:14,Payment Received: Thai QR Payment,,,"32,438.60",,"152,076.67",,EDC/K SHOP/MYQR,,From KB000000000000 SAMPLE
+,02-07-26,11:15,Transfer Deposit,,,"13,380.76",,"165,457.43",,K PLUS,,From X7375 MS. SAMPLE PAYER++
+,02-07-26,19:37,Transfer Withdrawal,"1,100.00",,,,"164,357.43",,K BIZ,,"To X9354 SAMPLE CO.,LT++"
+,02-07-26,11:18,Fee,16.83,,,,"164,340.60",,Automatic Transfer,,Cheque Collection Fee BBL 0426 Cheque No. 01590926
+,02-07-26,11:15,Transfer Deposit,,,"13,380.76",,"177,721.36",,K PLUS,,From X7375 MS. SAMPLE PAYER++

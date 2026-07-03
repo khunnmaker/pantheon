@@ -288,6 +288,298 @@ export interface Settlement {
 export const listSettlements = (limit?: number) =>
   authed<{ settlements: Settlement[] }>(`/api/ceres/settlements${limit ? `?limit=${limit}` : ''}`);
 
+// ---------------------------------------------------------------------------
+// P2/P3 — payment requests + recurring templates
+// ---------------------------------------------------------------------------
+
+export type RequestStatus =
+  | 'requested'
+  | 'ai_approved'
+  | 'escalated'
+  | 'ceo_approved'
+  | 'rejected'
+  | 'cancelled'
+  | 'paid';
+
+export interface AIReviewBrief {
+  verdict: string;
+  reasoning: string;
+  createdAt: string;
+}
+
+export interface PaymentRequest {
+  id: string;
+  requestedById: string;
+  requestedByName: string;
+  entity: string;
+  payee: string;
+  category: string;
+  amount: string;
+  amountNum: number;
+  detail: string;
+  recurringTemplateId: string | null;
+  billPeriod: string;
+  status: RequestStatus;
+  aiReviewId: string | null;
+  decidedById: string | null;
+  decidedAt: string | null;
+  decisionNote: string;
+  paidById: string | null;
+  paidAt: string | null;
+  paidRef: string;
+  createdAt: string;
+  aiReview: AIReviewBrief | null;
+}
+
+export const createRequest = (body: {
+  entity: string;
+  payee: string;
+  category: string;
+  amount: string;
+  detail?: string;
+  recurringTemplateId?: string;
+  billPeriod?: string;
+}) => authed<{ request: PaymentRequest }>('/api/ceres/requests', { method: 'POST', body: JSON.stringify(body) });
+
+export const listRequests = (q: { status?: RequestStatus; from?: string; to?: string; q?: string; limit?: number }) =>
+  authed<{ requests: PaymentRequest[] }>(`/api/ceres/requests${queryString(q)}`);
+
+export const decideRequest = (id: string, decision: 'approve' | 'reject', note?: string) =>
+  authed<{ request: PaymentRequest }>(`/api/ceres/requests/${id}/decide`, {
+    method: 'POST',
+    body: JSON.stringify({ decision, note }),
+  });
+
+export const markRequestPaid = (id: string, paidRef?: string) =>
+  authed<{ request: PaymentRequest }>(`/api/ceres/requests/${id}/paid`, {
+    method: 'POST',
+    body: JSON.stringify({ paidRef }),
+  });
+
+export const cancelRequest = (id: string) =>
+  authed<{ request: PaymentRequest }>(`/api/ceres/requests/${id}/cancel`, { method: 'POST' });
+
+export type TemplatePeriod = 'monthly' | 'quarterly' | 'yearly';
+
+export interface RecurringTemplate {
+  id: string;
+  payee: string;
+  entity: string;
+  category: string;
+  expectedAmount: string;
+  tolerancePct: number;
+  period: TemplatePeriod;
+  dueDay: number;
+  graceDays: number;
+  active: boolean;
+  note: string;
+  createdAt: string;
+}
+
+export const listTemplates = () => authed<{ templates: RecurringTemplate[] }>('/api/ceres/templates');
+
+export const createTemplate = (body: {
+  payee: string;
+  entity: string;
+  category: string;
+  expectedAmount: string;
+  tolerancePct: number;
+  period: TemplatePeriod;
+  dueDay: number;
+  graceDays: number;
+  active?: boolean;
+  note?: string;
+}) => authed<{ template: RecurringTemplate }>('/api/ceres/templates', { method: 'POST', body: JSON.stringify(body) });
+
+export const updateTemplate = (
+  id: string,
+  body: Partial<{
+    payee: string;
+    entity: string;
+    category: string;
+    expectedAmount: string;
+    tolerancePct: number;
+    period: TemplatePeriod;
+    dueDay: number;
+    graceDays: number;
+    active: boolean;
+    note: string;
+  }>,
+) => authed<{ template: RecurringTemplate }>(`/api/ceres/templates/${id}`, { method: 'PATCH', body: JSON.stringify(body) });
+
+export type DueState = 'paid' | 'pending' | 'missing' | 'overdue';
+export interface TemplateDue {
+  template: RecurringTemplate;
+  periodKey: string;
+  dueDate: string;
+  state: DueState;
+}
+export const listTemplatesDue = () => authed<{ due: TemplateDue[] }>('/api/ceres/templates/due');
+
+// ---------------------------------------------------------------------------
+// P4 — CEO nightly overview + revisions
+// ---------------------------------------------------------------------------
+
+export interface AIReviewRow {
+  id: string;
+  subjectType: 'expense' | 'paymentRequest';
+  subjectId: string;
+  verdict: string;
+  reasoning: string;
+  policyVersion: string;
+  model: string;
+  createdAt: string;
+  subject: { partyName?: string; payee?: string; amount: string; category?: string; status?: string } | null;
+}
+
+export interface CeoOverview {
+  dayKey: string;
+  escalations: PaymentRequest[];
+  aiReviews: AIReviewRow[];
+  flaggedExpenses: Expense[];
+  cash: { box: { balance: number; floor: number; belowFloor: boolean; suggestedTopup: number }; outstandingTotal: number };
+  missedBills: TemplateDue[];
+  settlementToday: Settlement | null;
+  requestCounts: Record<string, number>;
+}
+
+export const getCeoOverview = (date?: string) => authed<CeoOverview>(`/api/ceres/ceo/overview${queryString({ date })}`);
+
+export interface Revision {
+  id: string;
+  subjectType: string;
+  subjectId: string;
+  changedByName: string;
+  before: unknown;
+  after: unknown;
+  reason: string;
+  createdAt: string;
+}
+export const listRevisions = (q: { subjectType?: string; subjectId?: string; limit?: number }) =>
+  authed<{ revisions: Revision[] }>(`/api/ceres/revisions${queryString(q)}`);
+
+// ---------------------------------------------------------------------------
+// P5 — bank statement import + reconciliation
+// ---------------------------------------------------------------------------
+
+export interface StatementPreviewRow {
+  txnAt: string;
+  amount: string;
+  direction: 'in' | 'out';
+  channel: string;
+  payerName: string;
+  details: string;
+  isNew: boolean;
+}
+export interface StatementPreview {
+  token: string;
+  fileName: string;
+  periodFrom: string;
+  periodTo: string;
+  counts: { parsed: number; new: number; dup: number; excluded: number };
+  rows: StatementPreviewRow[];
+}
+export const previewStatement = (dataB64: string, fileName: string) =>
+  authed<StatementPreview>('/api/ceres/statements/preview', { method: 'POST', body: JSON.stringify({ dataB64, fileName }) });
+
+export const applyStatement = (token: string) =>
+  authed<{ importId: string; inserted: number; dup: number; excluded: number; autoMatched: number }>(
+    '/api/ceres/statements/apply',
+    { method: 'POST', body: JSON.stringify({ token }) },
+  );
+
+export const runAutomatch = () =>
+  authed<{ autoMatched: number }>('/api/ceres/statements/automatch', { method: 'POST' });
+
+export interface StatementImport {
+  id: string;
+  fileName: string;
+  sha256: string;
+  periodFrom: string;
+  periodTo: string;
+  rowsParsed: number;
+  linesNew: number;
+  linesDup: number;
+  excluded: number;
+  importedAt: string;
+}
+export const listStatementImports = () => authed<{ imports: StatementImport[] }>('/api/ceres/statements');
+
+export type MatchStatus = 'unmatched' | 'matched';
+export interface StatementLine {
+  id: string;
+  txnAt: string;
+  amount: string;
+  direction: 'in' | 'out';
+  channel: string;
+  description: string;
+  details: string;
+  payerName: string;
+  payerBank: string;
+  matchStatus: MatchStatus;
+  matchedType: string | null;
+  matchedId: string | null;
+  refText: string;
+  matched: { type: string; summary: string } | null;
+}
+export const listStatementLines = (q: { status?: MatchStatus; dir?: 'in' | 'out'; from?: string; to?: string; q?: string; limit?: number }) =>
+  authed<{ lines: StatementLine[] }>(`/api/ceres/statements/lines${queryString(q)}`);
+
+export const matchStatementLine = (id: string, type: 'paymentRequest' | 'cashMovement', targetId: string) =>
+  authed<{ line: StatementLine }>(`/api/ceres/statements/lines/${id}/match`, {
+    method: 'POST',
+    body: JSON.stringify({ type, id: targetId }),
+  });
+
+export const unmatchStatementLine = (id: string) =>
+  authed<{ line: StatementLine }>(`/api/ceres/statements/lines/${id}/unmatch`, { method: 'POST' });
+
+export const setStatementLineRef = (id: string, refText: string) =>
+  authed<{ line: StatementLine }>(`/api/ceres/statements/lines/${id}/ref`, {
+    method: 'POST',
+    body: JSON.stringify({ refText }),
+  });
+
+export interface StatementSummary {
+  unmatchedOut: { count: number; sum: number };
+  unmatchedIn: { count: number; sum: number };
+  paidRequestsUnreconciled: { count: number; sum: number; oldestDays: number };
+  lastImport: { importedAt: string; fileName: string } | null;
+}
+export const getStatementSummary = () => authed<StatementSummary>('/api/ceres/statements/summary');
+
+// ---------------------------------------------------------------------------
+// Weekly export pack — CSV blob downloads (same pattern as Juno's downloadCsv).
+// ---------------------------------------------------------------------------
+
+async function downloadCsv(path: string, filename: string): Promise<void> {
+  const token = getToken();
+  const res = await fetch(`${API_URL}${path}`, {
+    headers: token ? { authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+export const downloadExpensesCsv = (from: string, to: string) =>
+  downloadCsv(`/api/ceres/export/expenses.csv${queryString({ from, to })}`, 'ceres-expenses.csv');
+export const downloadMovementsCsv = (from: string, to: string) =>
+  downloadCsv(`/api/ceres/export/movements.csv${queryString({ from, to })}`, 'ceres-movements.csv');
+export const downloadRequestsCsv = (from: string, to: string) =>
+  downloadCsv(`/api/ceres/export/requests.csv${queryString({ from, to })}`, 'ceres-requests.csv');
+export const downloadReviewsCsv = (from: string, to: string) =>
+  downloadCsv(`/api/ceres/export/reviews.csv${queryString({ from, to })}`, 'ceres-reviews.csv');
+export const downloadStatementLinesCsv = (from: string, to: string) =>
+  downloadCsv(`/api/ceres/export/statement-lines.csv${queryString({ from, to })}`, 'ceres-statement-lines.csv');
+
 // Baht formatting for display.
 export const baht = (n: number): string =>
   `฿${n.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
