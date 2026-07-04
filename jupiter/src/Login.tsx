@@ -1,23 +1,28 @@
 import { useState } from 'react';
-import { Crown, LogIn, Loader2, AlertTriangle, ShieldCheck, ChevronDown, ChevronRight, ArrowLeft, Users } from 'lucide-react';
+import { Crown, LogIn, Loader2, AlertTriangle, ShieldCheck, ChevronDown, ChevronRight, ArrowLeft } from 'lucide-react';
 import { login, setSession, type Agent } from './lib/api';
-import { SUPERVISOR, AGENTS, MD, MESSENGERS, type Person } from './lib/roster';
+import { ROLE_GROUPS, SUPERVISOR_EMAIL, type Person, type RoleGroup } from './lib/roster';
 
 const PIN_LEN = 6;
 
 // The "หัวหน้า" (boss) marker + shield are the SUPERVISOR's alone — not "anyone with a
 // password". Nee (MD) also logs in with a password now, so key the tag on identity, not cred.
-const isSupervisor = (p: Person) => p.email === SUPERVISOR.email;
+const isSupervisor = (p: Person) => p.email === SUPERVISOR_EMAIL;
 
-// Suite login standard: a card list of people. No credential box until a name is tapped;
-// then Dr. M types a password, everyone else a masked auto-submit 6-digit PIN. With ~18
-// accounts the 13 messengers collapse under "ทีมแมสเซนเจอร์"; supervisor/agents/MD stay top-level.
+// Suite login standard: no credential box until a name is tapped; then Dr. M & Nee (MD) type a
+// password, everyone else a masked auto-submit 6-digit PIN. People are grouped into collapsible
+// ROLE sections — tapping a role header expands it to reveal that group's name cards, then
+// tapping a name shows the credential input. Groups start collapsed; multiple may be open.
 export default function Login({ onLogin }: { onLogin: (agent: Agent) => void }) {
   const [selected, setSelected] = useState<Person | null>(null);
   const [secret, setSecret] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const [showMessengers, setShowMessengers] = useState(false);
+  const [open, setOpen] = useState<Record<string, boolean>>({});
+
+  function toggle(id: string) {
+    setOpen((o) => ({ ...o, [id]: !o[id] }));
+  }
 
   async function submit(person: Person, value: string) {
     if (!value || busy) return;
@@ -37,6 +42,7 @@ export default function Login({ onLogin }: { onLogin: (agent: Agent) => void }) 
   }
 
   function pick(p: Person) {
+    if (p.comingSoon || !p.email) return; // disabled card — never selectable/submittable.
     setSelected(p);
     setSecret('');
     setError('');
@@ -65,7 +71,7 @@ export default function Login({ onLogin }: { onLogin: (agent: Agent) => void }) 
         <p className="text-sm text-slate-500 mb-5">พอร์ทัลทีมงาน · เลือกชื่อเพื่อเข้าสู่ระบบ</p>
 
         {!selected ? (
-          <PersonList onPick={pick} showMessengers={showMessengers} setShowMessengers={setShowMessengers} />
+          <GroupedList open={open} onToggle={toggle} onPick={pick} />
         ) : (
           <div>
             <button onClick={back} className="flex items-center gap-1 text-xs text-slate-400 hover:text-violet-600 mb-3">
@@ -134,6 +140,21 @@ export default function Login({ onLogin }: { onLogin: (agent: Agent) => void }) 
 }
 
 function PersonCard({ p, onPick }: { p: Person; onPick: (p: Person) => void }) {
+  // Disabled "coming soon" card — greyed, not tappable (no account provisioned yet).
+  if (p.comingSoon) {
+    return (
+      <div
+        aria-disabled="true"
+        className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl border border-slate-100 bg-slate-50 text-left opacity-60 cursor-not-allowed select-none"
+      >
+        <div className="w-8 h-8 rounded-full bg-slate-300 text-white flex items-center justify-center text-xs font-bold shrink-0">
+          {p.label.charAt(0)}
+        </div>
+        <span className="text-sm font-medium flex-1 text-slate-400">{p.label}</span>
+        <span className="text-[11px] text-slate-400">เร็วๆ นี้</span>
+      </div>
+    );
+  }
   return (
     <button
       onClick={() => onPick(p)}
@@ -149,33 +170,52 @@ function PersonCard({ p, onPick }: { p: Person; onPick: (p: Person) => void }) {
   );
 }
 
-function PersonList({
-  onPick, showMessengers, setShowMessengers,
+function GroupSection({
+  group, isOpen, onToggle, onPick,
 }: {
+  group: RoleGroup;
+  isOpen: boolean;
+  onToggle: (id: string) => void;
   onPick: (p: Person) => void;
-  showMessengers: boolean;
-  setShowMessengers: (v: boolean) => void;
+}) {
+  const empty = group.members.length === 0;
+  return (
+    <div>
+      <button
+        onClick={() => onToggle(group.id)}
+        className="w-full flex items-center gap-2 px-3 py-2.5 rounded-xl border border-slate-200 hover:bg-slate-50 text-left text-sm font-semibold text-slate-600"
+      >
+        <span className="flex-1">{group.label}</span>
+        <span className="text-xs font-normal text-slate-400">({group.members.length})</span>
+        <span>{isOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}</span>
+      </button>
+      {isOpen && (
+        <div className="space-y-2 pl-2 mt-2 border-l-2 border-violet-100">
+          {empty ? (
+            <div className="px-3 py-2 text-xs text-slate-400">ยังไม่มีรายชื่อ</div>
+          ) : (
+            group.members.map((p) => (
+              <PersonCard key={p.email || p.label} p={p} onPick={onPick} />
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function GroupedList({
+  open, onToggle, onPick,
+}: {
+  open: Record<string, boolean>;
+  onToggle: (id: string) => void;
+  onPick: (p: Person) => void;
 }) {
   return (
     <div className="space-y-2">
-      <PersonCard p={SUPERVISOR} onPick={onPick} />
-      {AGENTS.map((p) => <PersonCard key={p.email} p={p} onPick={onPick} />)}
-      <PersonCard p={MD} onPick={onPick} />
-
-      <button
-        onClick={() => setShowMessengers(!showMessengers)}
-        className="w-full flex items-center gap-2 px-3 py-2.5 rounded-xl border border-slate-200 hover:bg-slate-50 text-left text-sm font-medium text-slate-600"
-      >
-        <Users size={15} className="text-slate-400" />
-        ทีมแมสเซนเจอร์
-        <span className="text-xs text-slate-400">({MESSENGERS.length})</span>
-        <span className="ml-auto">{showMessengers ? <ChevronDown size={16} /> : <ChevronRight size={16} />}</span>
-      </button>
-      {showMessengers && (
-        <div className="space-y-2 pl-2 border-l-2 border-violet-100">
-          {MESSENGERS.map((p) => <PersonCard key={p.email} p={p} onPick={onPick} />)}
-        </div>
-      )}
+      {ROLE_GROUPS.map((g) => (
+        <GroupSection key={g.id} group={g} isOpen={!!open[g.id]} onToggle={onToggle} onPick={onPick} />
+      ))}
     </div>
   );
 }
