@@ -8,56 +8,59 @@ export type Pillar = 'lab' | 'digital' | 'clinical' | 'equipment';
 
 export interface CatalogGroup {
   key: string;
+  code: string; // fixed 2-letter product-code prefix (e.g. "IM" → IM01, IM02…)
   nameTh: string;
   nameEn: string;
   pillar: Pillar;
 }
 
-// Order matters only for display (grouped by pillar, in this order).
+// Order matters only for display (grouped by pillar, in this order). `code` values are the
+// human-facing product-code prefixes — globally unique, never reused.
 export const CATALOG_GROUPS: CatalogGroup[] = [
   // ── Lab / prosthetic ──
-  { key: 'impression', nameTh: 'วัสดุพิมพ์ปากและถาดพิมพ์', nameEn: 'Impression & Trays', pillar: 'lab' },
-  { key: 'acrylic', nameTh: 'อะคริลิกและโมโนเมอร์', nameEn: 'Acrylics & Monomers', pillar: 'lab' },
-  { key: 'teeth', nameTh: 'ฟันปลอม', nameEn: 'Denture Teeth', pillar: 'lab' },
-  { key: 'temp_crown', nameTh: 'วัสดุครอบชั่วคราว', nameEn: 'Temp-Crown / Provisional', pillar: 'lab' },
-  { key: 'wax', nameTh: 'แว็กซ์ทันตกรรม', nameEn: 'Dental Waxes', pillar: 'lab' },
-  { key: 'investment', nameTh: 'ปูนหุ้มและงานหล่อ', nameEn: 'Investment & Casting', pillar: 'lab' },
-  { key: 'lab_finishing', nameTh: 'วัสดุขัดแต่งและหัวกรอแล็บ', nameEn: 'Finishing & Lab Rotary', pillar: 'lab' },
-  { key: 'articulator', nameTh: 'อุปกรณ์สบฟัน', nameEn: 'Articulators & Occlusion', pillar: 'lab' },
-  { key: 'porcelain', nameTh: 'พอร์ซเลนและเซรามิก', nameEn: 'Porcelain & Ceramics', pillar: 'lab' },
-  { key: 'gypsum', nameTh: 'ปูนและวัสดุทำโมเดล', nameEn: 'Gypsum & Model Materials', pillar: 'lab' },
-  { key: 'reline', nameTh: 'วัสดุเสริมฐานและซ่อมฟันปลอม', nameEn: 'Reline & Repair', pillar: 'lab' },
-  { key: 'alloy', nameTh: 'โลหะผสมหล่อ', nameEn: 'Casting Alloys', pillar: 'lab' },
+  { key: 'impression', code: 'IM', nameTh: 'วัสดุพิมพ์ปากและถาดพิมพ์', nameEn: 'Impression & Trays', pillar: 'lab' },
+  { key: 'acrylic', code: 'AC', nameTh: 'อะคริลิกและโมโนเมอร์', nameEn: 'Acrylics & Monomers', pillar: 'lab' },
+  { key: 'teeth', code: 'TE', nameTh: 'ฟันปลอม', nameEn: 'Denture Teeth', pillar: 'lab' },
+  { key: 'temp_crown', code: 'TC', nameTh: 'วัสดุครอบชั่วคราว', nameEn: 'Temp-Crown / Provisional', pillar: 'lab' },
+  { key: 'wax', code: 'WX', nameTh: 'แว็กซ์ทันตกรรม', nameEn: 'Dental Waxes', pillar: 'lab' },
+  { key: 'investment', code: 'IV', nameTh: 'ปูนหุ้มและงานหล่อ', nameEn: 'Investment & Casting', pillar: 'lab' },
+  { key: 'lab_finishing', code: 'FN', nameTh: 'วัสดุขัดแต่งและหัวกรอแล็บ', nameEn: 'Finishing & Lab Rotary', pillar: 'lab' },
+  { key: 'articulator', code: 'AR', nameTh: 'อุปกรณ์สบฟัน', nameEn: 'Articulators & Occlusion', pillar: 'lab' },
+  { key: 'porcelain', code: 'PC', nameTh: 'พอร์ซเลนและเซรามิก', nameEn: 'Porcelain & Ceramics', pillar: 'lab' },
+  { key: 'gypsum', code: 'GY', nameTh: 'ปูนและวัสดุทำโมเดล', nameEn: 'Gypsum & Model Materials', pillar: 'lab' },
+  { key: 'reline', code: 'RL', nameTh: 'วัสดุเสริมฐานและซ่อมฟันปลอม', nameEn: 'Reline & Repair', pillar: 'lab' },
+  { key: 'alloy', code: 'AL', nameTh: 'โลหะผสมหล่อ', nameEn: 'Casting Alloys', pillar: 'lab' },
   // ── Digital ──
-  { key: 'cadcam', nameTh: 'แคดแคมและงานกัด', nameEn: 'CAD-CAM Milling', pillar: 'digital' },
-  { key: 'printing', nameTh: 'การพิมพ์ 3 มิติ', nameEn: '3D Printing', pillar: 'digital' },
-  { key: 'scanner', nameTh: 'เครื่องสแกน', nameEn: 'Scanners', pillar: 'digital' },
+  { key: 'cadcam', code: 'CM', nameTh: 'แคดแคมและงานกัด', nameEn: 'CAD-CAM Milling', pillar: 'digital' },
+  { key: 'printing', code: 'PR', nameTh: 'การพิมพ์ 3 มิติ', nameEn: '3D Printing', pillar: 'digital' },
+  { key: 'scanner', code: 'SC', nameTh: 'เครื่องสแกน', nameEn: 'Scanners', pillar: 'digital' },
   // ── Clinical ──
-  { key: 'restorative', nameTh: 'วัสดุอุดฟัน', nameEn: 'Restorative', pillar: 'clinical' },
-  { key: 'endo', nameTh: 'รักษารากฟัน', nameEn: 'Endodontics', pillar: 'clinical' },
-  { key: 'preventive', nameTh: 'วัสดุเคลือบผิวฟันป้องกันฟันผุ', nameEn: 'Preventive', pillar: 'clinical' },
-  { key: 'ortho', nameTh: 'จัดฟัน', nameEn: 'Orthodontics', pillar: 'clinical' },
-  { key: 'surgery', nameTh: 'ศัลยกรรมช่องปาก', nameEn: 'Oral Surgery', pillar: 'clinical' },
-  { key: 'perio', nameTh: 'ปริทันต์', nameEn: 'Periodontics', pillar: 'clinical' },
-  { key: 'implant', nameTh: 'รากเทียม', nameEn: 'Implants', pillar: 'clinical' },
-  { key: 'whitening', nameTh: 'ฟอกสีฟัน', nameEn: 'Whitening', pillar: 'clinical' },
-  { key: 'anesthetic', nameTh: 'ยาชาและเข็มฉีดยา', nameEn: 'Anesthetics & Injectables', pillar: 'clinical' },
-  { key: 'pedo', nameTh: 'ทันตกรรมสำหรับเด็ก', nameEn: 'Pediatric', pillar: 'clinical' },
-  { key: 'pharma', nameTh: 'เวชภัณฑ์ทางทันตกรรม', nameEn: 'Pharmaceuticals & Medicaments', pillar: 'clinical' },
-  { key: 'isolation', nameTh: 'แผ่นยางกันน้ำลาย', nameEn: 'Isolation (Rubber Dam)', pillar: 'clinical' },
+  { key: 'restorative', code: 'RS', nameTh: 'วัสดุอุดฟัน', nameEn: 'Restorative', pillar: 'clinical' },
+  { key: 'endo', code: 'EN', nameTh: 'รักษารากฟัน', nameEn: 'Endodontics', pillar: 'clinical' },
+  { key: 'preventive', code: 'PV', nameTh: 'วัสดุเคลือบผิวฟันป้องกันฟันผุ', nameEn: 'Preventive', pillar: 'clinical' },
+  { key: 'ortho', code: 'OR', nameTh: 'จัดฟัน', nameEn: 'Orthodontics', pillar: 'clinical' },
+  { key: 'surgery', code: 'SG', nameTh: 'ศัลยกรรมช่องปาก', nameEn: 'Oral Surgery', pillar: 'clinical' },
+  { key: 'perio', code: 'PD', nameTh: 'ปริทันต์', nameEn: 'Periodontics', pillar: 'clinical' },
+  { key: 'implant', code: 'IP', nameTh: 'รากเทียม', nameEn: 'Implants', pillar: 'clinical' },
+  { key: 'whitening', code: 'WH', nameTh: 'ฟอกสีฟัน', nameEn: 'Whitening', pillar: 'clinical' },
+  { key: 'anesthetic', code: 'AN', nameTh: 'ยาชาและเข็มฉีดยา', nameEn: 'Anesthetics & Injectables', pillar: 'clinical' },
+  { key: 'pedo', code: 'PE', nameTh: 'ทันตกรรมสำหรับเด็ก', nameEn: 'Pediatric', pillar: 'clinical' },
+  { key: 'pharma', code: 'PH', nameTh: 'เวชภัณฑ์ทางทันตกรรม', nameEn: 'Pharmaceuticals & Medicaments', pillar: 'clinical' },
+  { key: 'isolation', code: 'IS', nameTh: 'แผ่นยางกันน้ำลาย', nameEn: 'Isolation (Rubber Dam)', pillar: 'clinical' },
   // ── Equipment & shared supplies ──
-  { key: 'lab_equipment', nameTh: 'เครื่องจักรแล็บ', nameEn: 'Lab Equipment & Machines', pillar: 'equipment' },
-  { key: 'imaging', nameTh: 'เครื่องเอกซเรย์และครุภัณฑ์', nameEn: 'Imaging & Capital Equipment', pillar: 'equipment' },
-  { key: 'ppe', nameTh: 'ป้องกันโรคติดต่อและน้ำยาฆ่าเชื้อ', nameEn: 'Infection Control & PPE', pillar: 'equipment' },
-  { key: 'separator', nameTh: 'สารแยกแบบและสารเสริม', nameEn: 'Separators & Auxiliaries', pillar: 'equipment' },
-  { key: 'clinical_bur', nameTh: 'หัวกรอคลินิก', nameEn: 'Clinical Burs', pillar: 'equipment' },
-  { key: 'instrument', nameTh: 'เครื่องมือทันตกรรม', nameEn: 'Hand Instruments', pillar: 'equipment' },
-  { key: 'clinical_equipment', nameTh: 'เครื่องมือคลินิก', nameEn: 'Clinical Small Equipment', pillar: 'equipment' },
-  { key: 'dental_unit', nameTh: 'ยูนิตและเก้าอี้ทำฟัน', nameEn: 'Chairs & Dental Units', pillar: 'equipment' },
-  { key: 'sterilizer', nameTh: 'เครื่องนึ่งฆ่าเชื้อ', nameEn: 'Sterilization Equipment', pillar: 'equipment' },
+  { key: 'lab_equipment', code: 'LE', nameTh: 'เครื่องจักรแล็บ', nameEn: 'Lab Equipment & Machines', pillar: 'equipment' },
+  { key: 'imaging', code: 'XR', nameTh: 'เครื่องเอกซเรย์และครุภัณฑ์', nameEn: 'Imaging & Capital Equipment', pillar: 'equipment' },
+  { key: 'ppe', code: 'PP', nameTh: 'ป้องกันโรคติดต่อและน้ำยาฆ่าเชื้อ', nameEn: 'Infection Control & PPE', pillar: 'equipment' },
+  { key: 'separator', code: 'SP', nameTh: 'สารแยกแบบและสารเสริม', nameEn: 'Separators & Auxiliaries', pillar: 'equipment' },
+  { key: 'clinical_bur', code: 'BU', nameTh: 'หัวกรอคลินิก', nameEn: 'Clinical Burs', pillar: 'equipment' },
+  { key: 'instrument', code: 'IN', nameTh: 'เครื่องมือทันตกรรม', nameEn: 'Hand Instruments', pillar: 'equipment' },
+  { key: 'clinical_equipment', code: 'CE', nameTh: 'เครื่องมือคลินิก', nameEn: 'Clinical Small Equipment', pillar: 'equipment' },
+  { key: 'dental_unit', code: 'UN', nameTh: 'ยูนิตและเก้าอี้ทำฟัน', nameEn: 'Chairs & Dental Units', pillar: 'equipment' },
+  { key: 'sterilizer', code: 'ST', nameTh: 'เครื่องนึ่งฆ่าเชื้อ', nameEn: 'Sterilization Equipment', pillar: 'equipment' },
 ];
 
 export const GROUP_KEYS = new Set(CATALOG_GROUPS.map((g) => g.key));
+export const GROUP_CODE = new Map(CATALOG_GROUPS.map((g) => [g.key, g.code]));
 
 // Ordered auto-assign rules (FIRST match wins → specific before general). Each tests the
 // lowercased "nameEn + nameTh + keywords" of a product. Tuned to Prominent's ACTUAL catalog

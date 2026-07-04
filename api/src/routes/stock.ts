@@ -5,7 +5,7 @@ import { requireAuth, requireRole } from '../auth/middleware.js';
 import { searchProducts } from '../catalog/match.js';
 import { toStockRow } from '../stock/helpers.js';
 import { decodeExpressBytes, parseExpressReport, type ParsedStockRow } from '../stock/parseExpressReport.js';
-import { buildAliases, groupOf } from '../stock/aliases.js';
+import { buildGroupAliases, groupOf } from '../stock/aliases.js';
 import { CATALOG_GROUPS, GROUP_KEYS, autoAssignGroup } from '../stock/catalogGroups.js';
 
 // Attach the short alias (e.g. "TR34") to a set of rows in one query. Generic so any
@@ -380,40 +380,46 @@ export async function stockRoutes(app: FastifyInstance) {
     return { groups };
   });
 
-  // POST /api/stock/aliases/generate { regenerate? } — auto-assign grouped aliases.
-  // fill (default): keep existing rows + prefixes, only assign products with no alias.
-  // regenerate: wipe + rebuild all (overwrites manual edits).
+  // POST /api/stock/aliases/generate { regenerate? } — (re)build GROUP-BASED codes:
+  // alias = <2-letter group code> + running number (e.g. IM01, EN12). Only products that
+  // HAVE a catalogGroup get a code. fill (default): keep existing codes + append new/regrouped
+  // items. regenerate: renumber every group from 1 (overwrites manual edits).
   app.post('/api/stock/aliases/generate', async (req) => {
     const regenerate = (req.body as { regenerate?: boolean }).regenerate === true;
     const products = await prisma.product.findMany({
-      where: { status: 'active' },
-      select: { sku: true, nameEn: true, nameTh: true },
+      where: { status: 'active', catalogGroup: { not: null } },
+      select: { sku: true, catalogGroup: true },
     });
-    const write = async (rows: { sku: string; alias: string; groupKey: string; prefix: string }[]) => {
-      const CHUNK = 50;
-      for (let i = 0; i < rows.length; i += CHUNK) {
-        await prisma.productAlias.createMany({
-          data: rows.slice(i, i + CHUNK).map((a) => ({ sku: a.sku, alias: a.alias, groupKey: a.groupKey, prefix: a.prefix })),
-          skipDuplicates: true,
-        });
-      }
-    };
+    const existing = await prisma.productAlias.findMany();
+    const keep = regenerate ? {} : Object.fromEntries(existing.map((e) => [e.sku, e.alias]));
+    const assignments = buildGroupAliases(products, { keep });
+    const keepSkus = new Set(assignments.map((a) => a.sku));
 
+    let written = 0;
     if (regenerate) {
       await prisma.productAlias.deleteMany({});
-      const assignments = buildAliases(products);
-      await write(assignments);
-      return { ok: true, mode: 'regenerate', groups: new Set(assignments.map((a) => a.groupKey)).size, aliased: assignments.length };
+      const CHUNK = 100;
+      for (let i = 0; i < assignments.length; i += CHUNK) {
+        await prisma.productAlias.createMany({ data: assignments.slice(i, i + CHUNK), skipDuplicates: true });
+      }
+      written = assignments.length;
+    } else {
+      // Drop codes for products that are no longer grouped, then write only the changed ones.
+      const stale = existing.filter((e) => !keepSkus.has(e.sku)).map((e) => e.sku);
+      if (stale.length) await prisma.productAlias.deleteMany({ where: { sku: { in: stale } } });
+      const exBySku = new Map(existing.map((e) => [e.sku, e.alias]));
+      for (const a of assignments) {
+        if (exBySku.get(a.sku) === a.alias) continue;
+        await prisma.productAlias.upsert({
+          where: { sku: a.sku },
+          update: { alias: a.alias, groupKey: a.groupKey, prefix: a.prefix },
+          create: a,
+        });
+        written++;
+      }
     }
-
-    const existing = await prisma.productAlias.findMany();
-    const existingSkus = new Set(existing.map((e) => e.sku));
-    const existingPrefixByGroup: Record<string, string> = {};
-    const keepAliases: Record<string, string> = {};
-    for (const e of existing) { existingPrefixByGroup[e.groupKey] = e.prefix; keepAliases[e.sku] = e.alias; }
-    const fresh = buildAliases(products, { existingPrefixByGroup, keepAliases }).filter((a) => !existingSkus.has(a.sku));
-    await write(fresh);
-    return { ok: true, mode: 'fill', groups: new Set(fresh.map((a) => a.groupKey)).size, aliased: fresh.length };
+    const ungrouped = await prisma.product.count({ where: { status: 'active', catalogGroup: null } });
+    return { ok: true, mode: regenerate ? 'regenerate' : 'fill', coded: assignments.length, written, ungrouped };
   });
 
   // POST /api/stock/aliases/group-prefix { group, prefix } — rename a family's prefix and
