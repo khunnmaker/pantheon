@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react';
-import { Wallet, Loader2, AlertTriangle, Delete, LogIn, ShieldCheck, ArrowLeft } from 'lucide-react';
+import { Wallet, Loader2, AlertTriangle, Delete, LogIn, ArrowLeft, ShieldCheck } from 'lucide-react';
 import { login, setSession, getLogins, type Agent, type LoginName } from './lib/api';
 
-const RAW_ROLES = new Set(['messenger', 'md', 'supervisor']);
+const RAW_ROLES = new Set(['employee', 'md', 'supervisor']);
 
 export default function Login({ onLogin }: { onLogin: (agent: Agent) => void }) {
-  const [adminMode, setAdminMode] = useState(false);
+  const [manual, setManual] = useState(false);
 
   return (
     <div className="min-h-screen bg-slate-100 font-sans text-slate-800 flex flex-col items-center px-4 py-8">
@@ -16,27 +16,20 @@ export default function Login({ onLogin }: { onLogin: (agent: Agent) => void }) 
       <p className="text-sm text-slate-500 mb-6">ระบบค่าใช้จ่าย</p>
 
       <div className="w-full max-w-sm">
-        {adminMode ? (
-          <AdminLogin onLogin={onLogin} onBack={() => setAdminMode(false)} />
+        {manual ? (
+          <AdminLogin onLogin={onLogin} onBack={() => setManual(false)} />
         ) : (
-          <MessengerLogin onLogin={onLogin} />
+          <CardLogin onLogin={onLogin} onManual={() => setManual(true)} />
         )}
       </div>
-
-      {!adminMode && (
-        <button
-          onClick={() => setAdminMode(true)}
-          className="mt-8 text-xs text-slate-400 underline underline-offset-2 hover:text-slate-600"
-        >
-          สำหรับผู้ดูแล (MD/CEO)
-        </button>
-      )}
     </div>
   );
 }
 
-// ── Messenger flow: pick your name, then a PIN pad ──────────────────────────
-function MessengerLogin({ onLogin }: { onLogin: (agent: Agent) => void }) {
+// ── Card flow: pick your name — 'pin' cards open a PIN pad, 'password' cards
+// (supervisor + MD) open a password field. Falls back to the manual email/password
+// form (AdminLogin) if the card list fails to load.
+function CardLogin({ onLogin, onManual }: { onLogin: (agent: Agent) => void; onManual: () => void }) {
   const [names, setNames] = useState<LoginName[] | null>(null);
   const [loadError, setLoadError] = useState('');
   const [selected, setSelected] = useState<LoginName | null>(null);
@@ -48,6 +41,9 @@ function MessengerLogin({ onLogin }: { onLogin: (agent: Agent) => void }) {
   }, []);
 
   if (selected) {
+    if (selected.kind === 'password') {
+      return <PasswordCard name={selected} onBack={() => setSelected(null)} onLogin={onLogin} />;
+    }
     return <PinPad name={selected} onBack={() => setSelected(null)} onLogin={onLogin} />;
   }
 
@@ -55,8 +51,16 @@ function MessengerLogin({ onLogin }: { onLogin: (agent: Agent) => void }) {
     <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
       <div className="text-sm font-semibold text-slate-500 mb-3">เลือกชื่อของคุณ</div>
       {loadError ? (
-        <div className="flex items-center gap-1 text-rose-600 text-sm py-4 justify-center">
-          <AlertTriangle size={15} /> {loadError}
+        <div className="flex flex-col items-center gap-2 py-4">
+          <div className="flex items-center gap-1 text-rose-600 text-sm justify-center">
+            <AlertTriangle size={15} /> {loadError}
+          </div>
+          <button
+            onClick={onManual}
+            className="text-xs text-slate-400 underline underline-offset-2 hover:text-slate-600"
+          >
+            เข้าสู่ระบบด้วยอีเมล/รหัสผ่าน
+          </button>
         </div>
       ) : !names ? (
         <div className="py-8 flex justify-center text-slate-400">
@@ -77,6 +81,77 @@ function MessengerLogin({ onLogin }: { onLogin: (agent: Agent) => void }) {
           ))}
         </div>
       )}
+      {!loadError && (
+        <button
+          onClick={onManual}
+          className="w-full mt-4 text-[11px] text-slate-400 hover:text-slate-600"
+        >
+          เข้าสู่ระบบด้วยอีเมล/รหัสผ่าน
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ── Password card: for 'password'-kind cards (supervisor + MD) picked from the list. ──
+function PasswordCard({ name, onBack, onLogin }: { name: LoginName; onBack: () => void; onLogin: (agent: Agent) => void }) {
+  const [password, setPassword] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  async function submit() {
+    if (!password || busy) return;
+    setBusy(true);
+    setError('');
+    try {
+      const { token, agent } = await login(name.email, password);
+      if (!RAW_ROLES.has(agent.role)) {
+        setError('บัญชีนี้ไม่มีสิทธิ์เข้าระบบค่าใช้จ่าย');
+        setBusy(false);
+        return;
+      }
+      setSession(token, agent);
+      onLogin(agent);
+    } catch {
+      setError('รหัสผ่านไม่ถูกต้อง');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
+      <div className="flex items-center gap-2 mb-4">
+        <button onClick={onBack} className="text-slate-400 hover:text-slate-600 p-1 -ml-1">
+          <ArrowLeft size={18} />
+        </button>
+        <div className="text-base font-semibold">{name.name}</div>
+      </div>
+
+      <label className="block text-xs font-semibold text-slate-500 mb-1">รหัสผ่าน</label>
+      <input
+        type="password"
+        value={password}
+        onChange={(e) => setPassword(e.target.value)}
+        onKeyDown={(e) => e.key === 'Enter' && submit()}
+        autoFocus
+        disabled={busy}
+        className="w-full px-3 py-3 mb-3 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 min-h-[48px] disabled:opacity-50"
+      />
+
+      {error && (
+        <div className="flex items-center gap-1 text-rose-600 text-xs mb-3">
+          <AlertTriangle size={13} /> {error}
+        </div>
+      )}
+
+      <button
+        onClick={submit}
+        disabled={busy}
+        className="w-full px-3 py-3 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-sm font-semibold flex items-center justify-center gap-1 disabled:opacity-50 min-h-[48px]"
+      >
+        {busy ? <Loader2 size={16} className="animate-spin" /> : <LogIn size={16} />} เข้าสู่ระบบ
+      </button>
     </div>
   );
 }

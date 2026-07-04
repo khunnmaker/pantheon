@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
-import { prisma } from '../../db/prisma.js';
 import { requireCeresAuth } from '../../ceres/auth.js';
+import { buildLoginCards } from '../../auth/loginCards.js';
 import { readCeresReceiptMeta, readCeresReceiptFile } from '../../ceres/receiptStore.js';
 import { ceresReceiptToken } from '../../ceres/receiptLink.js';
 import { p1Routes } from './p1.js';
@@ -31,24 +31,9 @@ export async function ceresRoutes(app: FastifyInstance) {
     },
   );
 
-  // PUBLIC — the pick-your-name PIN login screen for messengers. Names only, no
-  // ids/roles beyond that (a messenger picks their name, then enters their PIN).
-  app.get('/api/ceres/logins', async () => {
-    const parties = await prisma.ceresParty.findMany({
-      where: { active: true, kind: 'person', agentEmail: { not: null } },
-      orderBy: { sortOrder: 'asc' },
-    });
-    const emails = parties.map((p) => p.agentEmail).filter((e): e is string => !!e);
-    const agents = await prisma.agent.findMany({
-      where: { email: { in: emails } },
-      select: { email: true },
-    });
-    const known = new Set(agents.map((a) => a.email));
-    const logins = parties
-      .filter((p) => p.agentEmail && known.has(p.agentEmail))
-      .map((p) => ({ email: p.agentEmail as string, name: p.name }));
-    return logins;
-  });
+  // PUBLIC — the name-card login list (alias of GET /api/auth/logins?app=ceres):
+  // Dr. M + Nee as password cards, then every ceres-granted employee as a PIN card.
+  app.get('/api/ceres/logins', async () => buildLoginCards('ceres'));
 
   // Everything else requires a Ceres-facing login (messenger | md | ceo/supervisor).
   await app.register(async (scoped) => {

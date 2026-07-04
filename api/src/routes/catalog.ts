@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { prisma } from '../db/prisma.js';
-import { requireAuth } from '../auth/middleware.js';
+import { requireAuth, requireApp } from '../auth/middleware.js';
 import { CATALOG_PRODUCTS } from '../catalog/catalogData.js';
 import { findProducts, searchProducts } from '../catalog/match.js';
 import { buildDraftPrompt } from '../llm/prompt.js';
@@ -15,6 +15,7 @@ const SKU_RE = /^[A-Za-z0-9_-]+$/;
 
 export async function catalogRoutes(app: FastifyInstance) {
   app.addHook('preHandler', requireAuth);
+  app.addHook('preHandler', requireApp('minerva'));
 
   // GET /api/catalog/search?q= — products matching a query by NAME or SKU. Powers the
   // console's manual "add product" search (when the AI's auto-match isn't right).

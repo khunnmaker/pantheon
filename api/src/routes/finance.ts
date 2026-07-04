@@ -1,12 +1,13 @@
 import type { FastifyInstance } from 'fastify';
 import { prisma } from '../db/prisma.js';
-import { requireAuth } from '../auth/middleware.js';
+import { requireAuth, requireApp } from '../auth/middleware.js';
 import { buildSlipUrl } from '../finance/slipLink.js';
 
 // Supervisor-only audit of staff-corrected payment amounts. Sales (agent role) have no
 // access — this is the tamper-proof home for the "ตรวจสอบยอด" report.
 export async function financeRoutes(app: FastifyInstance) {
   app.addHook('preHandler', requireAuth);
+  app.addHook('preHandler', requireApp('minerva'));
 
   // GET /api/finance/audits?status=open|resolved|all
   app.get('/api/finance/audits', async (req, reply) => {

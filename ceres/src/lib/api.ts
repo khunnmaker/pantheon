@@ -1,14 +1,14 @@
 // Typed API client for the Ceres petty-cash UI. Talks to the SHARED Minerva Fastify
 // backend (the /api/ceres/* routes — see api/src/routes/ceres/p1.ts, common.ts, index.ts).
-// Raw auth roles (Agent table): 'messenger' | 'md' | 'supervisor' (+ other non-Ceres
-// roles like 'agent'). GET /api/ceres/bootstrap normalizes that into the Ceres role
-// vocabulary 'messenger' | 'md' | 'ceo' ('supervisor' -> 'ceo') — always trust the
-// bootstrap role for UI routing/branching, never the raw login role.
+// Raw auth roles (Agent table): 'supervisor' | 'md' | 'employee'. GET /api/ceres/bootstrap
+// normalizes that into the Ceres role vocabulary 'messenger' | 'md' | 'ceo'
+// ('employee' -> 'messenger', 'supervisor' -> 'ceo') — always trust the bootstrap role
+// for UI routing/branching, never the raw login role.
 
 export const API_URL: string = import.meta.env.VITE_API_URL ?? 'http://localhost:3000';
 
 // Raw Agent-table role as returned by POST /api/auth/login.
-export type Role = 'messenger' | 'md' | 'supervisor';
+export type Role = 'supervisor' | 'md' | 'employee';
 export interface Agent {
   id: string;
   email: string;
@@ -140,8 +140,10 @@ export const getBootstrap = () => authed<Bootstrap>('/api/ceres/bootstrap');
 export interface LoginName {
   email: string;
   name: string;
+  kind: 'password' | 'pin';
 }
-// PUBLIC — no auth required.
+// PUBLIC — no auth required. Ordered: supervisor first (kind 'password'), then the MD
+// (kind 'password'), then messenger/employee cards (kind 'pin').
 export const getLogins = () => fetch(`${API_URL}/api/ceres/logins`).then((r) => r.json() as Promise<LoginName[]>);
 
 export interface OcrResult {

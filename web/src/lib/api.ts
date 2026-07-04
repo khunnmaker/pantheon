@@ -7,7 +7,7 @@ export const API_URL: string = import.meta.env.VITE_API_URL ?? 'http://localhost
 // Presentation only; the stored key keeps its dashes and search is dash-insensitive.
 export const flatSku = (sku: string): string => sku.replace(/-/g, '');
 
-export type Role = 'agent' | 'supervisor';
+export type Role = 'supervisor' | 'md' | 'employee';
 export interface Agent {
   id: string;
   email: string;
@@ -146,6 +146,18 @@ export async function login(email: string, password: string): Promise<{ token: s
   });
   if (!res.ok) throw new Error('invalid_credentials');
   return res.json() as Promise<{ token: string; agent: Agent }>;
+}
+
+export interface LoginCard {
+  email: string;
+  name: string;
+  kind: 'password' | 'pin';
+}
+// PUBLIC — no auth required. Ordered: supervisor first, then employees granted this app.
+export async function getLogins(app: 'minerva' | 'ceres'): Promise<LoginCard[]> {
+  const res = await fetch(`${API_URL}/api/auth/logins?app=${app}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json() as Promise<LoginCard[]>;
 }
 
 export const getQueue = () => authed<{ queue: QueueItem[] }>('/api/queue');
