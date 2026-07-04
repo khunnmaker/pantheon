@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Crown, LogIn, Loader2, AlertTriangle, ShieldCheck, ChevronDown, ChevronRight, ArrowLeft } from 'lucide-react';
+import { Crown, LogIn, Loader2, AlertTriangle, ShieldCheck, ChevronRight, ArrowLeft } from 'lucide-react';
 import { login, setSession, type Agent } from './lib/api';
 import { ROLE_GROUPS, SUPERVISOR_EMAIL, type Person, type RoleGroup } from './lib/roster';
 
@@ -10,19 +10,23 @@ const PIN_LEN = 6;
 const isSupervisor = (p: Person) => p.email === SUPERVISOR_EMAIL;
 
 // Suite login standard: no credential box until a name is tapped; then Dr. M & Nee (MD) type a
-// password, everyone else a masked auto-submit 6-digit PIN. People are grouped into collapsible
-// ROLE sections — tapping a role header expands it to reveal that group's name cards, then
-// tapping a name shows the credential input. Groups start collapsed; multiple may be open.
+// password, everyone else a masked auto-submit 6-digit PIN. The picker is a 3-level DRILL-DOWN:
+//   L1 departments (the 6 ROLE_GROUPS) → tap one hides its siblings and shows
+//   L2 that group's name cards → tap one hides its siblings and shows
+//   L3 the person + credential input.
+// Each deeper level has a back button that pops exactly ONE level (clears the deeper selection
+// first). State is minimal: selectedGroupId + selectedEmail, both nullable.
 export default function Login({ onLogin }: { onLogin: (agent: Agent) => void }) {
-  const [selected, setSelected] = useState<Person | null>(null);
+  const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
+  const [selectedEmail, setSelectedEmail] = useState<string | null>(null);
   const [secret, setSecret] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const [open, setOpen] = useState<Record<string, boolean>>({});
 
-  function toggle(id: string) {
-    setOpen((o) => ({ ...o, [id]: !o[id] }));
-  }
+  // Derive the current group/person from the two ids — no duplicated object state to drift.
+  const group = selectedGroupId ? ROLE_GROUPS.find((g) => g.id === selectedGroupId) ?? null : null;
+  const selected =
+    group && selectedEmail ? group.members.find((p) => p.email === selectedEmail) ?? null : null;
 
   async function submit(person: Person, value: string) {
     if (!value || busy) return;
@@ -41,14 +45,24 @@ export default function Login({ onLogin }: { onLogin: (agent: Agent) => void }) 
     }
   }
 
-  function pick(p: Person) {
-    if (p.comingSoon || !p.email) return; // disabled card — never selectable/submittable.
-    setSelected(p);
+  // L1 → L2: drill into a department (hides the other departments).
+  function pickGroup(g: RoleGroup) {
+    setSelectedGroupId(g.id);
+    setSelectedEmail(null);
     setSecret('');
     setError('');
   }
+  // L2 → L3: drill into a person (hides the other names).
+  function pickPerson(p: Person) {
+    if (p.comingSoon || !p.email) return; // disabled card — never selectable/submittable.
+    setSelectedEmail(p.email);
+    setSecret('');
+    setError('');
+  }
+  // Back pops exactly one level, clearing the deeper selection first, and resets typed secret/error.
   function back() {
-    setSelected(null);
+    if (selectedEmail) setSelectedEmail(null);
+    else setSelectedGroupId(null);
     setSecret('');
     setError('');
   }
@@ -70,13 +84,20 @@ export default function Login({ onLogin }: { onLogin: (agent: Agent) => void }) 
         </div>
         <p className="text-sm text-slate-500 mb-5">พอร์ทัลทีมงาน · เลือกชื่อเพื่อเข้าสู่ระบบ</p>
 
-        {!selected ? (
-          <GroupedList open={open} onToggle={toggle} onPick={pick} />
-        ) : (
+        {!group ? (
+          // ── Level 1: departments (root, no back button) ──
+          <DepartmentList onPick={pickGroup} />
+        ) : !selected ? (
+          // ── Level 2: names within the selected department ──
           <div>
-            <button onClick={back} className="flex items-center gap-1 text-xs text-slate-400 hover:text-violet-600 mb-3">
-              <ArrowLeft size={13} /> เปลี่ยนชื่อ
-            </button>
+            <BackButton onClick={back} />
+            <h2 className="text-sm font-semibold text-slate-700 mb-3">{group.label}</h2>
+            <NameList group={group} onPick={pickPerson} />
+          </div>
+        ) : (
+          // ── Level 3: the selected person + their credential input ──
+          <div>
+            <BackButton onClick={back} />
             <div className="flex items-center gap-2 mb-4">
               <div className={`w-9 h-9 rounded-full text-white flex items-center justify-center text-sm font-bold ${isSupervisor(selected) ? 'bg-violet-600' : 'bg-slate-500'}`}>
                 {selected.label.charAt(0)}
@@ -139,6 +160,18 @@ export default function Login({ onLogin }: { onLogin: (agent: Agent) => void }) 
   );
 }
 
+// Finger-sized, obviously-tappable back button, placed consistently at the card's top-left.
+function BackButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      className="flex items-center gap-1 px-3 py-2 -ml-2 mb-3 rounded-lg text-sm font-medium text-slate-500 hover:text-violet-600 hover:bg-violet-50"
+    >
+      <ArrowLeft size={16} /> กลับ
+    </button>
+  );
+}
+
 function PersonCard({ p, onPick }: { p: Person; onPick: (p: Person) => void }) {
   // Disabled "coming soon" card — greyed, not tappable (no account provisioned yet).
   if (p.comingSoon) {
@@ -170,51 +203,35 @@ function PersonCard({ p, onPick }: { p: Person; onPick: (p: Person) => void }) {
   );
 }
 
-function GroupSection({
-  group, isOpen, onToggle, onPick,
-}: {
-  group: RoleGroup;
-  isOpen: boolean;
-  onToggle: (id: string) => void;
-  onPick: (p: Person) => void;
-}) {
-  const empty = group.members.length === 0;
+// Level 2: the names inside one department. An empty department (สโตร์) shows a subtle
+// empty state instead of cards; the back button (rendered by the caller) still returns to L1.
+function NameList({ group, onPick }: { group: RoleGroup; onPick: (p: Person) => void }) {
+  if (group.members.length === 0) {
+    return <div className="px-3 py-2 text-xs text-slate-400">ยังไม่มีรายชื่อ</div>;
+  }
   return (
-    <div>
-      <button
-        onClick={() => onToggle(group.id)}
-        className="w-full flex items-center gap-2 px-3 py-2.5 rounded-xl border border-slate-200 hover:bg-slate-50 text-left text-sm font-semibold text-slate-600"
-      >
-        <span className="flex-1">{group.label}</span>
-        <span className="text-xs font-normal text-slate-400">({group.members.length})</span>
-        <span>{isOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}</span>
-      </button>
-      {isOpen && (
-        <div className="space-y-2 pl-2 mt-2 border-l-2 border-violet-100">
-          {empty ? (
-            <div className="px-3 py-2 text-xs text-slate-400">ยังไม่มีรายชื่อ</div>
-          ) : (
-            group.members.map((p) => (
-              <PersonCard key={p.email || p.label} p={p} onPick={onPick} />
-            ))
-          )}
-        </div>
-      )}
+    <div className="space-y-2">
+      {group.members.map((p) => (
+        <PersonCard key={p.email || p.label} p={p} onPick={onPick} />
+      ))}
     </div>
   );
 }
 
-function GroupedList({
-  open, onToggle, onPick,
-}: {
-  open: Record<string, boolean>;
-  onToggle: (id: string) => void;
-  onPick: (p: Person) => void;
-}) {
+// Level 1: the departments (root). Tapping one drills into that group's names.
+function DepartmentList({ onPick }: { onPick: (g: RoleGroup) => void }) {
   return (
     <div className="space-y-2">
       {ROLE_GROUPS.map((g) => (
-        <GroupSection key={g.id} group={g} isOpen={!!open[g.id]} onToggle={onToggle} onPick={onPick} />
+        <button
+          key={g.id}
+          onClick={() => onPick(g)}
+          className="w-full flex items-center gap-2 px-3 py-2.5 rounded-xl border border-slate-200 hover:border-violet-300 hover:bg-violet-50 text-left text-sm font-semibold text-slate-600"
+        >
+          <span className="flex-1">{g.label}</span>
+          <span className="text-xs font-normal text-slate-400">({g.members.length})</span>
+          <ChevronRight size={16} className="text-slate-300" />
+        </button>
       ))}
     </div>
   );
