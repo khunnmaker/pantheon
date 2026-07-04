@@ -11,6 +11,13 @@ const COMPANY_HEADER = 'Prominent — ใบปะหน้าใบเสร็
 const fmtDate = (iso: string) =>
   new Date(iso).toLocaleDateString('th-TH', { day: '2-digit', month: 'short', year: '2-digit' });
 
+// One cover per RE: a payment carrying N RE numbers (one transfer paying several receipts)
+// prints N covers, each showing exactly ONE RE (large) plus the shared payment details.
+interface CoverItem {
+  payment: Payment;
+  reNumber: string;
+}
+
 // A4 portrait, 2×2 grid of A6 (105×148.5mm) quadrants with dashed cut guides. window.print()
 // fires on mount; onDone fires after the browser's print dialog closes (afterprint) so the
 // caller can drop back to the inbox. The screen view renders the exact same mm-sized pages
@@ -27,9 +34,15 @@ export default function PrintCovers({ payments, onDone }: { payments: Payment[];
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Expand each payment into one cover item per RE it carries (payments with none are
+  // skipped — the caller already filters to reNumbers.length > 0, but stay defensive here).
+  const items: CoverItem[] = payments.flatMap((p) =>
+    p.reNumbers.length > 0 ? p.reNumbers.map((reNumber) => ({ payment: p, reNumber })) : [],
+  );
+
   // group into pages of 4 (one A4 sheet = 2×2 quadrants)
-  const pages: Payment[][] = [];
-  for (let i = 0; i < payments.length; i += 4) pages.push(payments.slice(i, i + 4));
+  const pages: CoverItem[][] = [];
+  for (let i = 0; i < items.length; i += 4) pages.push(items.slice(i, i + 4));
 
   return (
     <div className="print-covers">
@@ -67,7 +80,7 @@ export default function PrintCovers({ payments, onDone }: { payments: Payment[];
 
       <div className="print-covers-toolbar sticky top-0 z-10 bg-white border-b border-slate-200 px-4 py-2 flex items-center justify-between">
         <div className="text-sm text-slate-600">
-          ตัวอย่างใบปะหน้า {payments.length} รายการ ({pages.length} แผ่น) — กำลังเปิดหน้าต่างพิมพ์…
+          ตัวอย่างใบปะหน้า {items.length} ใบ ({pages.length} แผ่น) — กำลังเปิดหน้าต่างพิมพ์…
         </div>
         <button onClick={onDone} className="text-slate-400 hover:text-slate-600 flex items-center gap-1 text-sm">
           <X size={16} /> ปิด
@@ -77,7 +90,7 @@ export default function PrintCovers({ payments, onDone }: { payments: Payment[];
       <div className="bg-slate-200 py-6 flex flex-col items-center gap-6">
         {pages.map((group, pi) => (
           <div key={pi} className="print-page shadow-lg">
-            {group.map((p) => <Cover key={p.id} payment={p} />)}
+            {group.map((item) => <Cover key={`${item.payment.id}-${item.reNumber}`} item={item} />)}
             {/* pad the last page to 4 quadrants so the grid + cut guides stay regular */}
             {Array.from({ length: 4 - group.length }).map((_, i) => (
               <div key={`blank-${i}`} className="print-quadrant" />
@@ -89,14 +102,14 @@ export default function PrintCovers({ payments, onDone }: { payments: Payment[];
   );
 }
 
-function Cover({ payment: p }: { payment: Payment }) {
+function Cover({ item: { payment: p, reNumber } }: { item: CoverItem }) {
   return (
     <div className="print-quadrant">
       <div className="text-[9px] font-bold text-slate-500 mb-2">{COMPANY_HEADER}</div>
 
       <div className="mb-2">
         <div className="text-[8px] text-slate-400">เลขที่ใบเสร็จ</div>
-        <div className="text-2xl font-bold tracking-wide">RE {p.reNumber || '—'}</div>
+        <div className="text-2xl font-bold tracking-wide">RE {reNumber}</div>
       </div>
 
       <Row label="วันที่" value={fmtDate(p.createdAt)} />

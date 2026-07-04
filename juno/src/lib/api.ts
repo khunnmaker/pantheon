@@ -45,8 +45,10 @@ export interface Payment {
   verifiedAt: string | null;
   createdAt: string;
   mismatch: boolean;
-  // FIN's check data (RE receipt issued in Express) — see verifyPayment
+  // FIN's check data (RE receipt(s) issued in Express) — see verifyPayment. reNumber is the
+  // DEPRECATED join mirror (reNumbers.join('/')); reNumbers is the real (list) source of truth.
   reNumber: string;
+  reNumbers: string[];
   receiptName: string;
   customerType: CustomerType;
   // how this row was created + cash/cheque banking state (see settlePayment)
@@ -236,13 +238,13 @@ export const readManualSlip = (uploadId: string) =>
     body: JSON.stringify({ uploadId }),
   });
 
-// The check dialog: FIN types the RE number issued in Express (plus the receipt name /
+// The check dialog: FIN types the RE number(s) issued in Express (plus the receipt name /
 // customer type) — the only route that can advance a payment to 'verified'.
 export const verifyPayment = (
   id: string,
-  data: { reNumber: string; receiptName?: string; customerType?: CustomerType },
+  data: { reNumbers: string[]; receiptName?: string; customerType?: CustomerType },
 ) =>
-  authed<{ ok: boolean; payment: Payment; reDuplicates: number }>(`/api/juno/payments/${id}/verify`, {
+  authed<{ ok: boolean; payment: Payment }>(`/api/juno/payments/${id}/verify`, {
     method: 'POST',
     body: JSON.stringify(data),
   });

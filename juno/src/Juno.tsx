@@ -174,8 +174,11 @@ function PaymentsView({ view, onChanged }: { view: Exclude<View, 'reports' | 're
     onChanged();
   }
 
-  // The daily flow: filter today + ตรวจแล้ว → one click prints the whole stack.
-  const verifiedInView = rows.filter((r) => r.status === 'verified');
+  // The daily flow: filter today + ตรวจแล้ว → one click prints the whole stack. A payment with
+  // N REs prints N covers (one per RE — see PrintCovers), so the toolbar count is the total
+  // cover count, not the payment count.
+  const verifiedInView = rows.filter((r) => r.status === 'verified' && r.reNumbers.length > 0);
+  const coverCountInView = verifiedInView.reduce((sum, r) => sum + r.reNumbers.length, 0);
 
   if (printQueue) {
     return <PrintCovers payments={printQueue} onDone={() => setPrintQueue(null)} />;
@@ -218,9 +221,9 @@ function PaymentsView({ view, onChanged }: { view: Exclude<View, 'reports' | 're
             <button
               onClick={() => setPrintQueue(verifiedInView)}
               className="flex items-center gap-1 px-3 py-2 rounded-lg bg-sky-600 text-white text-sm hover:bg-sky-700"
-              title="พิมพ์ใบปะหน้าทุกรายการที่ตรวจแล้วในรายการที่กรองอยู่นี้"
+              title="พิมพ์ใบปะหน้าทุกรายการที่ตรวจแล้วในรายการที่กรองอยู่นี้ (ใบละ 1 เลข RE)"
             >
-              <Printer size={15} /> พิมพ์ใบปะหน้า ({verifiedInView.length})
+              <Printer size={15} /> พิมพ์ใบปะหน้า ({coverCountInView})
             </button>
           )}
           <button
@@ -280,7 +283,13 @@ function PaymentsView({ view, onChanged }: { view: Exclude<View, 'reports' | 're
                     </td>
                     <td className="px-3 py-2 text-slate-500 hidden md:table-cell"><div className="max-w-[110px] truncate" title={p.bank}>{p.bank}</div></td>
                     <td className="px-3 py-2 text-slate-500 hidden md:table-cell whitespace-nowrap">
-                      {p.reNumber || <span className="text-slate-300">—</span>}
+                      {p.reNumbers.length > 0 ? (
+                        <span className="max-w-[130px] truncate inline-block align-bottom" title={p.reNumbers.join(' / ')}>
+                          {p.reNumbers.join(' / ')}
+                        </span>
+                      ) : (
+                        <span className="text-slate-300">—</span>
+                      )}
                     </td>
                     <td className="px-3 py-2">
                       <div className="flex items-center gap-1">
@@ -598,10 +607,8 @@ function Detail({ payment, onClose, onUpdate, onPrint }: {
   const [flagOpen, setFlagOpen] = useState(false);
   const [error, setError] = useState('');
   const [checkOpen, setCheckOpen] = useState(false);
-  // informational only — cleared whenever the drawer moves to a different payment
-  const [reDuplicates, setReDuplicates] = useState(0);
   useEffect(() => {
-    setFlagOpen(false); setFlagNote(''); setReDuplicates(0); setError('');
+    setFlagOpen(false); setFlagNote(''); setError('');
   }, [payment.id]);
 
   async function run(key: string, fn: () => Promise<{ payment: Payment }>) {
@@ -661,15 +668,32 @@ function Detail({ payment, onClose, onUpdate, onPrint }: {
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-1.5 min-w-0">
               <Badge cls={STATUS_META[p.status].cls}>{STATUS_META[p.status].label}</Badge>
-              {p.reNumber && <span className="text-xs font-bold text-slate-700 whitespace-nowrap truncate">RE {p.reNumber}</span>}
+              {p.reNumbers.length > 0 && (
+                <div className="flex items-center gap-1 min-w-0 overflow-hidden">
+                  {p.reNumbers.length <= 2 ? (
+                    p.reNumbers.map((re) => (
+                      <span key={re} className="text-xs font-bold text-slate-700 whitespace-nowrap px-1.5 py-0.5 rounded bg-slate-100 shrink-0">
+                        RE {re}
+                      </span>
+                    ))
+                  ) : (
+                    <span
+                      className="text-xs font-bold text-slate-700 whitespace-nowrap truncate"
+                      title={p.reNumbers.map((re) => `RE ${re}`).join(' / ')}
+                    >
+                      RE {p.reNumbers[0]} +{p.reNumbers.length - 1}
+                    </span>
+                  )}
+                </div>
+              )}
               {p.flagged && <Flag size={13} className="text-rose-500 shrink-0" />}
             </div>
             <div className="flex items-center gap-1 shrink-0">
               {rail('received', STATUS_META.received.label, <Undo2 size={16} />, () => run('received', () => setStatus(p.id, 'received')), {
                 disabled: p.status === 'received',
               })}
-              {/* 'verified' only via the check dialog — the one path that supplies the RE */}
-              {rail('check', p.reNumber ? 'แก้ไขข้อมูลใบเสร็จ' : STATUS_META.verified.label, <ClipboardCheck size={16} />, () => setCheckOpen(true), {
+              {/* 'verified' only via the check dialog — the one path that supplies the RE(s) */}
+              {rail('check', p.reNumbers.length > 0 ? 'แก้ไขข้อมูลใบเสร็จ' : STATUS_META.verified.label, <ClipboardCheck size={16} />, () => setCheckOpen(true), {
                 disabled: p.status === 'void',
                 active: p.status === 'verified',
               })}
@@ -677,8 +701,8 @@ function Detail({ payment, onClose, onUpdate, onPrint }: {
                 disabled: p.status === 'recorded' || p.status === 'void',
                 active: p.status === 'recorded',
               })}
-              {rail('print', p.reNumber ? 'พิมพ์ใบปะหน้า' : 'พิมพ์ใบปะหน้า (ต้องมีเลข RE ก่อน)', <Printer size={16} />, () => onPrint(p), {
-                disabled: !p.reNumber,
+              {rail('print', p.reNumbers.length > 0 ? 'พิมพ์ใบปะหน้า' : 'พิมพ์ใบปะหน้า (ต้องมีเลข RE ก่อน)', <Printer size={16} />, () => onPrint(p), {
+                disabled: p.reNumbers.length === 0,
               })}
               {rail('flag', p.flagged ? 'เคลียร์ธงตรวจสอบ' : 'ติดธงตรวจสอบยอด', <Flag size={16} />, () => {
                 if (p.flagged) void run('flag', () => setFlag(p.id, false));
@@ -714,11 +738,6 @@ function Detail({ payment, onClose, onUpdate, onPrint }: {
         </div>
 
         {error && <div className="mx-4 mt-2 p-2 rounded-lg bg-rose-50 text-rose-700 text-xs flex items-center gap-1"><AlertTriangle size={13} /> {error}</div>}
-        {reDuplicates > 0 && (
-          <div className="mx-4 mt-2 px-2 py-1 rounded-lg bg-amber-50 text-amber-700 text-xs flex items-center gap-1">
-            <AlertTriangle size={13} /> เลข RE นี้ซ้ำกับรายการอื่น ({reDuplicates})
-          </div>
-        )}
 
         <div className="flex flex-col xl:flex-row xl:gap-2">
           <div className="xl:w-[45%] xl:shrink-0">
@@ -752,8 +771,8 @@ function Detail({ payment, onClose, onUpdate, onPrint }: {
               {field('อ้างอิง', p.ref)}
               {field('พนักงานขาย', p.salesName)}
               {field('วันที่ส่งเข้า', fmtDateTime(p.createdAt))}
-              {p.reNumber && field('ชื่อบนใบเสร็จ', p.receiptName)}
-              {p.reNumber && field('ประเภทลูกค้า', p.customerType)}
+              {p.reNumbers.length > 0 && field('ชื่อบนใบเสร็จ', p.receiptName)}
+              {p.reNumbers.length > 0 && field('ประเภทลูกค้า', p.customerType)}
             </div>
 
             {p.mismatch && (
@@ -791,9 +810,8 @@ function Detail({ payment, onClose, onUpdate, onPrint }: {
           <CheckDialog
             payment={p}
             onClose={() => setCheckOpen(false)}
-            onSaved={(updated, dup) => {
+            onSaved={(updated) => {
               onUpdate(updated);
-              setReDuplicates(dup);
               setCheckOpen(false);
             }}
           />
@@ -865,15 +883,30 @@ function CashChequeSection({ payment: p, busy, run }: {
   );
 }
 
+// Splits on '/', ',', or any whitespace — FIN pastes/types REs separated by any of these
+// (the owner's own example is "6900025/6900026/…").
+const RE_SEPARATOR = /[/,\s]+/;
+// Strip a leading "RE"/"re" and check the bare-digit shape (mirrors the server's normalization).
+function normalizeReToken(raw: string): string {
+  return raw.trim().replace(/^re/i, '');
+}
+function isValidRe(token: string): boolean {
+  return /^\d{7}$/.test(token);
+}
+
 // ── Check dialog (the RE check FIN performs when the receipt is issued in Express) ─────────
 // Small modal, NOT a browser prompt: this is the one place a payment can become 'verified'.
+// FIN can now type/paste SEVERAL RE numbers (one payment may cover many receipts): they go in
+// as one text stream separated by '/', ',', or space, and turn into removable chips as each
+// 7-digit token completes.
 function CheckDialog({ payment, onClose, onSaved }: {
   payment: Payment;
   onClose: () => void;
-  onSaved: (p: Payment, reDuplicates: number) => void;
+  onSaved: (p: Payment) => void;
 }) {
   const reRef = useRef<HTMLInputElement>(null);
-  const [reNumber, setReNumber] = useState(payment.reNumber);
+  const [reNumbers, setReNumbers] = useState<string[]>(payment.reNumbers);
+  const [reInput, setReInput] = useState('');
   const [receiptName, setReceiptName] = useState(
     payment.receiptName || payment.taxInvoice.split('\n')[0]?.trim() || payment.customerName,
   );
@@ -883,25 +916,65 @@ function CheckDialog({ payment, onClose, onSaved }: {
 
   useEffect(() => { reRef.current?.focus(); }, []);
 
-  // live-strip a typed "RE"/"re" prefix as FIN types (they naturally write "RE6900123")
-  function onReChange(v: string) {
-    setReNumber(v.replace(/^re/i, ''));
+  function addChip(token: string) {
+    if (!token) return;
+    setReNumbers((prev) => (prev.includes(token) ? prev : [...prev, token]));
+  }
+  function removeChip(token: string) {
+    setReNumbers((prev) => prev.filter((r) => r !== token));
   }
 
-  const digits = reNumber.trim();
-  const valid = /^\d{7}$/.test(digits);
+  // As FIN types, a separator (/, comma, or space) completes whatever came before it: strip a
+  // leading RE/re, and if it's a valid 7-digit token, commit it as a chip. An invalid completed
+  // token is DROPPED silently on the separator (the inline hint below covers the still-typing
+  // case) rather than left stuck in the box, so the box stays ready for the next token.
+  function onReInputChange(v: string) {
+    if (RE_SEPARATOR.test(v.slice(-1)) && v.trim()) {
+      const parts = v.split(RE_SEPARATOR);
+      const remainder = parts.pop() ?? ''; // text after the last separator (should be '')
+      for (const part of parts) {
+        const token = normalizeReToken(part);
+        if (isValidRe(token)) addChip(token);
+      }
+      setReInput(remainder);
+    } else {
+      setReInput(v);
+    }
+  }
+
+  // Enter flushes the current pending token (if valid) into a chip and clears the box.
+  function onReKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key !== 'Enter') return;
+    const token = normalizeReToken(reInput);
+    if (isValidRe(token)) {
+      addChip(token);
+      setReInput('');
+    } else if (valid) {
+      save();
+    }
+  }
+
+  const pendingToken = normalizeReToken(reInput);
+  const pendingValid = pendingToken !== '' && isValidRe(pendingToken);
+  const pendingInvalid = pendingToken !== '' && !isValidRe(pendingToken);
+  // at least one committed chip, OR exactly one valid not-yet-committed token in the box
+  const valid = reNumbers.length > 0 || pendingValid;
 
   async function save() {
     if (!valid || saving) return;
+    // flush a valid pending token into the list first, so the user doesn't have to press
+    // Enter/type a separator before clicking บันทึก
+    const finalRe = pendingValid && !reNumbers.includes(pendingToken) ? [...reNumbers, pendingToken] : reNumbers;
+    if (finalRe.length === 0) return;
     setSaving(true);
     setErr('');
     try {
       const res = await verifyPayment(payment.id, {
-        reNumber: digits,
+        reNumbers: finalRe,
         receiptName: receiptName.trim(),
         customerType,
       });
-      onSaved(res.payment, res.reDuplicates);
+      onSaved(res.payment);
     } catch (e) {
       setErr((e as Error).message === 'unauthorized' ? 'เซสชันหมดอายุ — กรุณาเข้าสู่ระบบใหม่' : 'บันทึกไม่สำเร็จ — ลองใหม่อีกครั้ง');
     } finally {
@@ -917,18 +990,29 @@ function CheckDialog({ payment, onClose, onSaved }: {
         </div>
 
         <label className="block">
-          <span className="text-xs text-slate-500">เลขที่ใบเสร็จ (RE)</span>
-          <input
-            ref={reRef}
-            value={reNumber}
-            onChange={(e) => onReChange(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter' && valid) save(); }}
-            placeholder="เช่น 6900123"
-            className={`w-full mt-0.5 px-2.5 py-1.5 rounded-lg border text-sm focus:outline-none focus:ring-2 ${
-              reNumber && !valid ? 'border-rose-300 focus:ring-rose-300' : 'border-slate-300 focus:ring-emerald-400'
-            }`}
-          />
-          {reNumber && !valid && <span className="text-[11px] text-rose-600">ต้องเป็นตัวเลข 7 หลัก</span>}
+          <span className="text-xs text-slate-500">เลขที่ใบเสร็จ (RE) — พิมพ์ได้หลายเลข คั่นด้วย / , หรือเว้นวรรค</span>
+          <div className="mt-0.5 flex flex-wrap gap-1.5 px-2 py-1.5 rounded-lg border border-slate-300 focus-within:ring-2 focus-within:ring-emerald-400">
+            {reNumbers.map((re) => (
+              <span key={re} className="flex items-center gap-1 pl-2 pr-1 py-0.5 rounded-full bg-emerald-50 text-emerald-700 text-xs font-semibold">
+                {re}
+                <button type="button" onClick={() => removeChip(re)} className="p-0.5 rounded-full hover:bg-emerald-100 text-emerald-600" title="เอาออก">
+                  <X size={11} />
+                </button>
+              </span>
+            ))}
+            <input
+              ref={reRef}
+              value={reInput}
+              onChange={(e) => onReInputChange(e.target.value)}
+              onKeyDown={onReKeyDown}
+              placeholder={reNumbers.length ? 'เพิ่มอีก…' : 'เช่น 6900025/6900026'}
+              className="flex-1 min-w-[100px] text-sm focus:outline-none"
+            />
+          </div>
+          {pendingInvalid && <span className="text-[11px] text-rose-600">ต้องเป็นตัวเลข 7 หลัก</span>}
+          {!pendingInvalid && reNumbers.length === 0 && !pendingValid && (
+            <span className="text-[11px] text-slate-400">ต้องมีอย่างน้อย 1 เลข RE</span>
+          )}
         </label>
 
         <label className="block">

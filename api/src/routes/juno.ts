@@ -50,7 +50,7 @@ function toRow(p: {
   ref: string; slipMessageId: string | null; slipUrl: string; taxInvoice: string;
   taxInvoiceStatus: string; salesAgentId: string | null; salesName: string; note: string;
   status: string; flagged: boolean; verifiedById: string | null; verifiedAt: Date | null;
-  createdAt: Date; reNumber: string; receiptName: string; customerType: string;
+  createdAt: Date; reNumber: string; reNumbers: string[]; receiptName: string; customerType: string;
   source: string; settleState: string; settledAt: Date | null;
   chequeNo: string; chequeBank: string; chequeDueDate: string;
 }) {
@@ -79,8 +79,10 @@ function toRow(p: {
     createdAt: p.createdAt.toISOString(),
     // does the confirmed amount differ from what the OCR read? (the fraud/error signal)
     mismatch: !!p.ocrAmount && p.ocrAmount !== p.amount,
-    // FIN's check data (see POST /payments/:id/verify — the only route that sets these)
+    // FIN's check data (see POST /payments/:id/verify — the only route that sets these).
+    // reNumber is the DEPRECATED join mirror; reNumbers is the real (list) source of truth.
     reNumber: p.reNumber,
+    reNumbers: p.reNumbers,
     receiptName: p.receiptName,
     customerType: p.customerType,
     // how the row was created + cash/cheque banking state (see JUNO_MANUAL_ENTRY_BRIEF.md)
@@ -457,12 +459,14 @@ export async function junoRoutes(app: FastifyInstance) {
     return { ok: true, payment: toRow(p) };
   });
 
-  // POST /api/juno/payments/:id/verify { reNumber, receiptName?, customerType? } — the ONLY
-  // way to reach status 'verified'. FIN types the RE number issued in Express here; re-opening
-  // the dialog on an already-verified payment is fine (re-verify just updates fields + re-stamps).
+  // POST /api/juno/payments/:id/verify { reNumbers, receiptName?, customerType? } — the ONLY
+  // way to reach status 'verified'. FIN types the RE number(s) issued in Express here (one
+  // transfer can pay several receipts, and one RE can be split across several payments — so
+  // this is a list); re-opening the dialog on an already-verified payment is fine (re-verify
+  // just updates fields + re-stamps).
   const customerTypeSchema = z.enum(['โอนก่อนส่ง', 'เครดิต', 'เก็บปลายทาง', '']).default('');
   const verifyBodySchema = z.object({
-    reNumber: z.string().max(40),
+    reNumbers: z.array(z.string()).min(1).max(50),
     receiptName: z.string().max(200).optional(),
     customerType: customerTypeSchema.optional(),
   });
@@ -470,9 +474,17 @@ export async function junoRoutes(app: FastifyInstance) {
     const body = verifyBodySchema.safeParse(req.body);
     if (!body.success) return reply.code(400).send({ error: 'invalid_body' });
 
-    // Normalize: trim, strip a leading RE/re, require exactly 7 digits — store bare digits.
-    const stripped = body.data.reNumber.trim().replace(/^re/i, '');
-    if (!/^\d{7}$/.test(stripped)) return reply.code(400).send({ error: 'invalid_re' });
+    // Normalize each: trim, strip a leading RE/re, require exactly 7 digits — store bare
+    // digits. Dedupe preserving order. Any invalid token (or an empty result) 400s the whole
+    // request — there is no such thing as "verify with a partially-valid RE list".
+    const seen = new Set<string>();
+    const normalized: string[] = [];
+    for (const raw of body.data.reNumbers) {
+      const stripped = raw.trim().replace(/^re/i, '');
+      if (!/^\d{7}$/.test(stripped)) return reply.code(400).send({ error: 'invalid_re' });
+      if (!seen.has(stripped)) { seen.add(stripped); normalized.push(stripped); }
+    }
+    if (normalized.length === 0) return reply.code(400).send({ error: 'invalid_re' });
 
     const cur = await prisma.payment.findUnique({ where: { id: req.params.id }, select: { id: true, status: true } });
     if (!cur) return reply.code(404).send({ error: 'not_found' });
@@ -486,20 +498,15 @@ export async function junoRoutes(app: FastifyInstance) {
       where: { id: req.params.id },
       data: {
         status: keepRecorded ? 'recorded' : 'verified',
-        reNumber: stripped,
+        reNumbers: normalized,
+        reNumber: normalized.join('/'), // deprecated join mirror — see schema comment
         receiptName: body.data.receiptName?.trim() ?? '',
         customerType: body.data.customerType ?? '',
         ...(keepRecorded ? {} : { verifiedById: req.agent?.id ?? null, verifiedAt: new Date() }),
       },
     });
 
-    // Duplicate-RE guard: informational only (many-to-many bank matching is expected in
-    // phase B), but FIN should see it immediately in case it's a typo.
-    const reDuplicates = await prisma.payment.count({
-      where: { id: { not: p.id }, reNumber: stripped, status: { not: 'void' } },
-    });
-
-    return { ok: true, payment: toRow(p), reDuplicates };
+    return { ok: true, payment: toRow(p) };
   });
 
   // POST /api/juno/payments/:id/flag { flagged, note? } — raise/clear the flag queue.
