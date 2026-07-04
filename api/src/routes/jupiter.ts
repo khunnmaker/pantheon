@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { prisma } from '../db/prisma.js';
-import { requireAuth } from '../auth/middleware.js';
+import { requireAnyAuth } from '../auth/middleware.js';
 import type { Role } from '../auth/jwt.js';
 
 // Jupiter — the portal's badges endpoint. Returns pending-work counts ONLY for the
@@ -102,7 +102,7 @@ async function ceresMessengerAwaiting(agentEmail: string): Promise<number> {
 
 export async function jupiterRoutes(app: FastifyInstance) {
   // GET /api/jupiter/badges — pending-work counts, gated to the apps this role can enter.
-  app.get('/api/jupiter/badges', { preHandler: requireAuth }, async (req) => {
+  app.get('/api/jupiter/badges', { preHandler: requireAnyAuth }, async (req) => {
     const agent = req.agent!;
     const role = agent.role;
 

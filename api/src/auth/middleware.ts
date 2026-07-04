@@ -1,5 +1,5 @@
 import type { FastifyReply, FastifyRequest, preHandlerHookHandler } from 'fastify';
-import { verifyToken, type AuthedAgent, type Role } from './jwt.js';
+import { verifyToken, ALL_ROLES, type AuthedAgent, type Role } from './jwt.js';
 import { prisma } from '../db/prisma.js';
 
 // Make request.agent available everywhere, typed.
@@ -38,6 +38,19 @@ export async function authedAgentFromToken(
 // preHandler: require a valid token backed by a live account; attaches request.agent.
 export const requireAuth: preHandlerHookHandler = async (req: FastifyRequest, reply: FastifyReply) => {
   const agent = await authedAgentFromToken(bearer(req));
+  if (!agent) {
+    return reply.code(401).send({ error: 'unauthorized' });
+  }
+  req.agent = agent;
+};
+
+// preHandler: like requireAuth but admits ANY live authenticated role (agent,
+// supervisor, messenger, md — see ALL_ROLES in auth/jwt.ts). Use for endpoints
+// open to every account that then gate per-app INSIDE the handler (e.g. the
+// Jupiter portal badges route). Deriving from ALL_ROLES avoids silently omitting
+// a future role.
+export const requireAnyAuth: preHandlerHookHandler = async (req: FastifyRequest, reply: FastifyReply) => {
+  const agent = await authedAgentFromToken(bearer(req), ALL_ROLES);
   if (!agent) {
     return reply.code(401).send({ error: 'unauthorized' });
   }
