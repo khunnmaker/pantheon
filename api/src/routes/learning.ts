@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { prisma } from '../db/prisma.js';
-import { requireAuth, requireRole } from '../auth/middleware.js';
+import { requireAuth, requireApp, requireRole } from '../auth/middleware.js';
 import { distillKnowledge } from '../llm/distill.js';
 import { embedKbEntry, kbEmbeddingText, findSimilarKb, countActiveKbEmbeddings } from '../memory/embeddings.js';
 
@@ -9,7 +9,9 @@ import { embedKbEntry, kbEmbeddingText, findSimilarKb, countActiveKbEmbeddings }
 const KB_SIMILAR_FLAG = 0.82;
 
 export async function learningRoutes(app: FastifyInstance) {
+  // Console (Minerva) scope — learning capture/promotion is part of the sales console.
   app.addHook('preHandler', requireAuth);
+  app.addHook('preHandler', requireApp('minerva'));
   const supervisorOnly = { preHandler: [requireRole('supervisor')] };
 
   // GET /api/learned?status=pending — captured edits (any agent can view).
