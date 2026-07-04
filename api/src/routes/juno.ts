@@ -9,6 +9,8 @@ import { makeUniqueDedupeKeys } from '../bank/dedupe.js';
 import { paymentTimestamp, amountsEqual, dayDistance, nameSimilarity } from '../bank/match.js';
 import type { BankSource, ParsedBankRow } from '../bank/types.js';
 import { BankParseError } from '../bank/types.js';
+import { readStaffUploadFile, readStaffUploadMeta, UPLOAD_ID_RE } from '../line/staffUploads.js';
+import { readSlipFromBuffer } from '../llm/readSlip.js';
 
 // Juno finance API. Reads the Payment table (written by Minerva's /to-finance hook) and
 // owns the finance lifecycle: verify → record, flag-queue triage, tax-invoice tracking,
@@ -369,6 +371,33 @@ export async function junoRoutes(app: FastifyInstance) {
       },
     });
     return { ok: true, payment: toRow(p) };
+  });
+
+  // POST /api/juno/read-slip { uploadId } — OCR a staff-uploaded transfer slip (attached via
+  // POST /api/uploads, see uploadSlip() in the Juno client) to prefill the โอนเงิน add-payment
+  // form. Reuses Minerva's slip reader (readSlipFromBuffer) against the staff-upload store
+  // instead of the LINE content store. Best-effort: empty fields are fine, staff fills the
+  // rest manually. Nothing is persisted here — a manually-added row has no tamper-audit need
+  // (contrast with /api/messages/:id/read-slip, which stores slipAmount server-side).
+  const readSlipBodySchema = z.object({ uploadId: z.string().max(80) });
+  app.post('/api/juno/read-slip', async (req, reply) => {
+    const body = readSlipBodySchema.safeParse(req.body);
+    if (!body.success) return reply.code(400).send({ error: 'invalid_body' });
+    if (!UPLOAD_ID_RE.test(body.data.uploadId)) return reply.code(400).send({ error: 'invalid_upload_id' });
+
+    const buf = await readStaffUploadFile(body.data.uploadId);
+    if (!buf) return reply.code(404).send({ error: 'not_found' });
+    const meta = await readStaffUploadMeta(body.data.uploadId);
+    const contentType = meta?.contentType || 'image/jpeg';
+
+    const fields = await readSlipFromBuffer(buf, contentType);
+    return {
+      amount: fields.amount,
+      bank: fields.bank,
+      transferAt: fields.transferAt,
+      ref: fields.ref,
+      senderName: fields.senderName,
+    };
   });
 
   // POST /api/juno/payments/:id/settle { state } — cash/cheque banking state: cash goes

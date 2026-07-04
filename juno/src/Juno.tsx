@@ -10,7 +10,7 @@ import {
 const PORTAL_URL: string | undefined = import.meta.env.VITE_PORTAL_URL;
 import {
   getSummary, getPayments, setStatus, setFlag, verifyPayment, getReport, downloadCsv, baht,
-  clearSession, getBankSummary, createPayment, settlePayment, uploadSlip, fileToBase64,
+  clearSession, getBankSummary, createPayment, settlePayment, uploadSlip, fileToBase64, readManualSlip,
   type Agent, type Payment, type PaymentStatus, type Summary,
   type Report, type PaymentFilter, type CustomerType, type PaymentSource, type SettleState,
 } from './lib/api';
@@ -339,9 +339,11 @@ function AddPaymentModal({ onClose, onSaved }: { onClose: () => void; onSaved: (
   const [bank, setBank] = useState('');
   const [transferAt, setTransferAt] = useState('');
   const [ref, setRef] = useState('');
+  const [senderName, setSenderName] = useState('');
   const [slipUrl, setSlipUrl] = useState('');
   const [slipName, setSlipName] = useState('');
   const [uploadingSlip, setUploadingSlip] = useState(false);
+  const [readingSlip, setReadingSlip] = useState(false);
   // เช็คธนาคาร-only
   const [chequeNo, setChequeNo] = useState('');
   const [chequeBank, setChequeBank] = useState('');
@@ -349,6 +351,11 @@ function AddPaymentModal({ onClose, onSaved }: { onClose: () => void; onSaved: (
 
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
+
+  // Flipped false on unmount (modal closed) so a slow OCR response from a stale request can't
+  // clobber state after the user has already dismissed the modal.
+  const liveRef = useRef(true);
+  useEffect(() => () => { liveRef.current = false; }, []);
 
   const amountNum = parseFloat(amount.replace(/[^\d.-]/g, ''));
   const valid = Number.isFinite(amountNum) && amountNum > 0 && customerName.trim() !== '';
@@ -359,13 +366,32 @@ function AddPaymentModal({ onClose, onSaved }: { onClose: () => void; onSaved: (
     setErr('');
     try {
       const b64 = await fileToBase64(file);
-      const { url } = await uploadSlip(b64, file.name);
+      const { uploadId, url } = await uploadSlip(b64, file.name);
       setSlipUrl(url);
       setSlipName(file.name);
-    } catch {
-      setErr('แนบสลิปไม่สำเร็จ — ลองใหม่อีกครั้ง');
-    } finally {
       setUploadingSlip(false);
+
+      // Best-effort OCR to prefill the empty fields below — never overwrite anything the
+      // user already typed, and silently do nothing on failure (staff just fills manually).
+      setReadingSlip(true);
+      try {
+        const fields = await readManualSlip(uploadId);
+        if (!liveRef.current) return; // modal closed while OCR was in flight
+        setAmount((v) => v || fields.amount);
+        setBank((v) => v || fields.bank);
+        setTransferAt((v) => v || fields.transferAt);
+        setRef((v) => v || fields.ref);
+        setSenderName((v) => v || fields.senderName);
+      } catch {
+        // silent — OCR is a convenience, not a requirement
+      } finally {
+        if (liveRef.current) setReadingSlip(false);
+      }
+    } catch {
+      if (liveRef.current) {
+        setErr('แนบสลิปไม่สำเร็จ — ลองใหม่อีกครั้ง');
+        setUploadingSlip(false);
+      }
     }
   }
 
@@ -385,6 +411,7 @@ function AddPaymentModal({ onClose, onSaved }: { onClose: () => void; onSaved: (
               bank: bank.trim() || undefined,
               transferAt: transferAt.trim() || undefined,
               ref: ref.trim() || undefined,
+              senderName: senderName.trim() || undefined,
               slipUrl: slipUrl || undefined,
             }
           : {}),
@@ -462,10 +489,16 @@ function AddPaymentModal({ onClose, onSaved }: { onClose: () => void; onSaved: (
                 <input value={transferAt} onChange={(e) => setTransferAt(e.target.value)} placeholder="เช่น 04/07/26 14:30" className={input} />
               </label>
             </div>
-            <label className="block">
-              <span className={label}>อ้างอิง</span>
-              <input value={ref} onChange={(e) => setRef(e.target.value)} className={input} />
-            </label>
+            <div className="grid grid-cols-2 gap-2">
+              <label className="block">
+                <span className={label}>อ้างอิง</span>
+                <input value={ref} onChange={(e) => setRef(e.target.value)} className={input} />
+              </label>
+              <label className="block">
+                <span className={label}>ผู้โอน</span>
+                <input value={senderName} onChange={(e) => setSenderName(e.target.value)} className={input} />
+              </label>
+            </div>
             <label className="block">
               <span className={label}>แนบสลิป (ถ้ามี)</span>
               <div className="mt-0.5 flex items-center gap-2">
@@ -475,9 +508,14 @@ function AddPaymentModal({ onClose, onSaved }: { onClose: () => void; onSaved: (
                   <input type="file" accept="image/*" className="hidden" disabled={uploadingSlip}
                     onChange={(e) => void pickSlip(e.target.files?.[0])} />
                 </label>
-                {slipUrl && (
+                {slipUrl && !readingSlip && (
                   <span className="flex items-center gap-1 text-xs text-emerald-700">
                     <Check size={13} /> {slipName || 'แนบแล้ว'}
+                  </span>
+                )}
+                {readingSlip && (
+                  <span className="flex items-center gap-1 text-xs text-slate-500">
+                    <Loader2 size={13} className="animate-spin" /> กำลังอ่านสลิป…
                   </span>
                 )}
               </div>

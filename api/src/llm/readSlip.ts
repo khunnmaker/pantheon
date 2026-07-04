@@ -17,13 +17,13 @@ const SLIP_SYSTEM = `คุณคือผู้ช่วยอ่าน "สล
 {"senderName":"ชื่อผู้โอน/เจ้าของบัญชีต้นทางที่ปรากฏบนสลิป (เช่น นาย/นาง/น.ส. ... หรือชื่อบัญชี — ผู้ที่ส่งเงินมา ไม่ใช่ผู้รับ)","amount":"จำนวนเงินเป็นตัวเลข เช่น 1500.00 (ไม่มีสัญลักษณ์/คอมมา)","bank":"ธนาคาร/เลขบัญชีปลายทางที่รับเงิน","transferAt":"วันที่และเวลาที่โอน รูปแบบ วว/ดด/ปปปป ชช:นน ใช้ปี ค.ศ. เท่านั้น (ถ้าสลิปเป็น พ.ศ. ให้ลบ 543) เช่น 27/06/2026 14:30","ref":"เลขที่อ้างอิง/รหัสรายการ"}
 ถ้าหาค่าใดไม่เจอให้ใส่ "" ห้ามเดา ตอบ JSON อย่างเดียว`;
 
-// Best-effort OCR of a payment slip image → structured fields. Returns all-empty on
-// any failure (no LLM credits, unreadable image, bad JSON) so staff can fill manually.
-export async function readSlip(messageId: string, contentType: string): Promise<SlipFields> {
+// Best-effort OCR of an already-loaded slip image buffer → structured fields. Returns
+// all-empty on any failure (no LLM credits, unreadable image, bad JSON) so staff can fill
+// manually. Buffer-agnostic — shared by readSlip (LINE-delivered slips) and Juno's manual
+// add-payment flow (staff-uploaded slips), which load the bytes from different stores.
+export async function readSlipFromBuffer(buf: Buffer, contentType: string): Promise<SlipFields> {
   if (!llmAvailable()) return EMPTY;
   try {
-    const buf = await readImageContent(messageId);
-    if (!buf) return EMPTY;
     const raw = await callClaudeWithImage('อ่านสลิปนี้แล้วตอบ JSON ตามรูปแบบที่กำหนด', SLIP_SYSTEM, {
       base64: buf.toString('base64'),
       mediaType: contentType || 'image/jpeg',
@@ -40,4 +40,13 @@ export async function readSlip(messageId: string, contentType: string): Promise<
   } catch {
     return EMPTY;
   }
+}
+
+// Best-effort OCR of a payment slip image → structured fields, loading the bytes from the
+// LINE content store by message id. See readSlipFromBuffer for the OCR core.
+export async function readSlip(messageId: string, contentType: string): Promise<SlipFields> {
+  if (!llmAvailable()) return EMPTY;
+  const buf = await readImageContent(messageId);
+  if (!buf) return EMPTY;
+  return readSlipFromBuffer(buf, contentType);
 }

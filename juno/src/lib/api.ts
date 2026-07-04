@@ -219,6 +219,22 @@ export async function uploadSlip(dataB64: string, fileName?: string): Promise<{ 
   return { uploadId, url: `${API_URL}/content/upload/${uploadId}` };
 }
 
+// OCR the just-uploaded slip (see POST /api/juno/read-slip) to prefill the โอนเงิน add-payment
+// form. Best-effort — fields come back '' when the LLM can't read something; the caller
+// should only fill EMPTY inputs from this (never clobber what the user already typed).
+export interface ManualSlipFields {
+  amount: string;
+  bank: string;
+  transferAt: string;
+  ref: string;
+  senderName: string;
+}
+export const readManualSlip = (uploadId: string) =>
+  authed<ManualSlipFields>('/api/juno/read-slip', {
+    method: 'POST',
+    body: JSON.stringify({ uploadId }),
+  });
+
 // The check dialog: FIN types the RE number issued in Express (plus the receipt name /
 // customer type) — the only route that can advance a payment to 'verified'.
 export const verifyPayment = (
