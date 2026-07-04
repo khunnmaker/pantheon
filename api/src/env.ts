@@ -31,7 +31,13 @@ const schema = z.object({
 
   // Per-agent 6-digit PINs "name:pin,name:pin" (name = email local part). An agent
   // absent from the list falls back to STAFF_PASSWORD.
+  // Deprecated fallback (unified auth) — remove after cutover once EMPLOYEE_PINS covers everyone.
   AGENT_PINS: z.string().default(''),
+
+  // Unified auth: all 15 employees' 6-digit PINs, "slug:pin,slug:pin" (slug = EMPLOYEES entry).
+  EMPLOYEE_PINS: z.string().default(''),
+  // Unified auth: Nee's (MD) password. Falls back to CERES_MD_PASSWORD (deprecated) if unset.
+  MD_PASSWORD: z.string().default(''),
 
   // Where customer images are stored. In prod set this to a mounted persistent
   // volume path (e.g. /data); defaults to ./uploads for local dev.
@@ -42,7 +48,9 @@ const schema = z.object({
   FINANCE_SHEET_SECRET: z.string().default(''),
 
   // Ceres (expenses & petty cash) — see docs/CERES_BRIEF.md.
+  // Deprecated fallback (unified auth) — rename to MD_PASSWORD; remove after cutover.
   CERES_MD_PASSWORD: z.string().default(''),
+  // Deprecated fallback (unified auth) — superseded by EMPLOYEE_PINS; remove after cutover.
   CERES_MESSENGER_PINS: z.string().default(''),   // "ta:123456,arm:234567,…" slug:pin pairs
   CERES_FLOOR: z.coerce.number().default(40000),
   CERES_CEO_THRESHOLD: z.coerce.number().default(5000),

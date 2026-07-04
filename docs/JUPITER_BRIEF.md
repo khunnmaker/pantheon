@@ -10,7 +10,9 @@
 2. **SSO** — that one login works across every deity (Minerva, Vulcan, Juno, Ceres). No re-typing PINs per app.
 3. **Connectivity steward** — Jupiter's docs own the suite map (which service lives at which domain, which envs bind them together: `WEB_ORIGIN`, `VITE_API_URL`, cookie domain). Cross-app navigation (a small "Jupiter" home link in every deity's header) also lands here.
 
-**Explicitly NOT Jupiter:** public marketing content (that is Diana, the future B2B site on the bare `prominentdental.com`), KPI dashboards duplicating deity screens, any new role or permission, notifications.
+**Explicitly NOT Jupiter:** public marketing content (that is Diana, the future B2B site on the bare `prominentdental.com`), KPI dashboards duplicating deity screens, notifications.
+
+4. **Staff admin (added by owner decision 2026-07-04, superseding the earlier "no new role or permission" line)** — Jupiter owns the CEO-only screen where employees' **app grants** are edited (see §3a): change what someone can open with a click, no env edit, no redeploy.
 
 ## 2. Owner decisions (grilled 2026-07-04 — all four were the recommended options)
 
@@ -36,7 +38,21 @@ Monorepo `github.com/khunnmaker/minerva`, `main` auto-deploys on Railway. One Po
 | Diana | public B2B site (planned) | — | public |
 | **Jupiter** | **portal + SSO (this brief)** | **`jupiter/`** | **every authenticated account** |
 
-Auth today: `POST /api/auth/login` (email+password; PINs ARE the password for agents/messengers via `AGENT_PINS` / `CERES_MESSENGER_PINS`, parsed by the shared `parseAgentPins`), JWT ~12h stored in each app's localStorage, sent as `Authorization: Bearer`. `requireAuth` + the Socket.IO handshake **re-validate the Agent row (existence + role) on every request** — keep that property. Login rate limit 10/5min/IP; Fastify `trustProxy: true`.
+### 3a. Auth model — UNIFIED (owner decision 2026-07-04; implemented on branch `unified-auth`)
+
+The per-app credential sprawl is gone. Three tiers, three env credentials, per-person app grants:
+
+| Tier (`Agent.role`) | Who | Credential env | Access |
+|---|---|---|---|
+| `supervisor` | Dr. M | `SEED_PASSWORD` (password) | everything, implicit |
+| `md` | Nee (`md@prominent.local`) | `MD_PASSWORD` (password; `CERES_MD_PASSWORD` accepted as deprecated fallback) | Ceres management, implicit |
+| `employee` | all 15 staff — sales (nadeer/anny/noey) + couriers (ta/arm/man/boonson/kaew/lungko/wong/paeng/nun/pin/da) + housekeeper (lekmaeban); emails `<slug>@prominent.local` | ONE var `EMPLOYEE_PINS` = `slug:6digitpin,…` (parsed by `parseAgentPins`; `AGENT_PINS`/`STAFF_PASSWORD` are deprecated fallbacks during transition) | per-person `Agent.apps String[]` grants ⊆ {minerva, vulcan, juno, ceres} |
+
+- Legacy roles `agent`/`messenger` are retired (tokens carrying them are still verified; the live row decides). **นี in the old messenger list IS Nee the MD** — she has no employee row.
+- `hasAppAccess(agent, app)` + `requireApp(app)` in `api/src/auth/middleware.ts` are the gate: Minerva console routes require the `minerva` grant; Ceres self-entry requires `ceres`; Vulcan/Juno remain `requireRole('supervisor')`.
+- **Boot-sync seeds `apps` only on CREATE and never overwrites it** — `Agent.apps` is Jupiter's admin surface: the CEO-only staff-admin screen (job 4, §1) edits it live. Default grants: everyone → `ceres`; sales → `+minerva`.
+- PUBLIC `GET /api/auth/logins?app=minerva|ceres` returns the ordered login-card list `[{email, name, kind: 'password'|'pin'}]` for that app's login screen (`GET /api/ceres/logins` is an alias for app=ceres). Jupiter's own login page should extend this endpoint with an all-accounts variant (supervisor + md + every employee) — a ~5-line addition to `api/src/auth/loginCards.ts`, part of the Jupiter build.
+- Everything else stands: JWT ~12h in localStorage as `Authorization: Bearer`, `requireAuth` + the Socket.IO handshake **re-validate the Agent row (existence + role, now + apps) on every request** — keep that property. Login rate limit 10/5min/IP; Fastify `trustProxy: true`.
 
 **Login-screen layout standard (owner-approved, suite-wide):** a card list of people — supervisor on top, team beneath — with NO credential box until a name is tapped; then password (Dr. M) or masked auto-submit 6-digit PIN (everyone else) appears under the selected card. See `web/src/Login.tsx` for the reference implementation. Jupiter's login MUST follow it. With ~18 accounts (Dr. M, NaDeer, Anny, Noey, Nee, 13 messengers) a flat list gets long — group the messengers under a collapsible "ทีมแมสเซนเจอร์" section; supervisor/agents/md stay as top-level cards.
 

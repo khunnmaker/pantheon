@@ -101,6 +101,10 @@ model Agent {
   passwordHash String
   role         String   @default("agent") // agent | supervisor
   createdAt    DateTime @default(now())
+  // Per-employee app grants ('minerva'|'vulcan'|'juno'|'ceres'); supervisor/md access is
+  // implicit by role, this list matters only for role 'employee'. Edited later by Jupiter's
+  // admin UI — boot-sync must never overwrite it (create-only default).
+  apps         String[] @default([])
 }
 
 model KbEntry {

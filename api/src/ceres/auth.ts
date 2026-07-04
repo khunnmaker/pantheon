@@ -1,17 +1,18 @@
 import type { FastifyReply, FastifyRequest, preHandlerHookHandler } from 'fastify';
-import type { AuthedAgent } from '../auth/jwt.js';
+import { hasAppAccess, type AuthedAgent } from '../auth/jwt.js';
 import { authedAgentFromToken } from '../auth/middleware.js';
 
-// Ceres has its own role vocabulary layered on top of the shared Agent table
-// (see auth/jwt.ts Role): messenger and md are Ceres-only Agent roles; the CEO
-// logs in with the existing Dr. M supervisor account (reused, not duplicated).
+// Ceres has its own persona vocabulary layered on top of the unified tiers
+// (see auth/jwt.ts Role): an EMPLOYEE with the 'ceres' app grant acts as
+// "messenger" (the self-entry persona — couriers, sales, housekeeper alike);
+// Nee's md tier is Ceres management; the CEO is the Dr. M supervisor account.
 export type CeresRole = 'messenger' | 'md' | 'ceo';
 
 export function ceresRole(agent: AuthedAgent): CeresRole | null {
-  if (agent.role === 'messenger') return 'messenger';
-  if (agent.role === 'md') return 'md';
   if (agent.role === 'supervisor') return 'ceo';
-  return null; // 'agent' — no Ceres access
+  if (agent.role === 'md') return 'md';
+  if (agent.role === 'employee' && hasAppAccess(agent, 'ceres')) return 'messenger';
+  return null; // employee without the ceres grant — no Ceres access
 }
 
 function bearer(req: FastifyRequest): string | null {
@@ -20,10 +21,11 @@ function bearer(req: FastifyRequest): string | null {
   return h.slice('Bearer '.length).trim() || null;
 }
 
-// preHandler: require a valid token for one of the Ceres-facing Agent roles.
+// preHandler: require a valid account that resolves to a Ceres persona (an
+// employee needs the 'ceres' grant; md/supervisor are implicit).
 export const requireCeresAuth: preHandlerHookHandler = async (req: FastifyRequest, reply: FastifyReply) => {
-  const agent = await authedAgentFromToken(bearer(req), ['messenger', 'md', 'supervisor']);
-  if (!agent) {
+  const agent = await authedAgentFromToken(bearer(req), ['supervisor', 'md', 'employee']);
+  if (!agent || ceresRole(agent) === null) {
     return reply.code(401).send({ error: 'unauthorized' });
   }
   req.agent = agent;

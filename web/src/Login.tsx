@@ -1,20 +1,16 @@
 import { useEffect, useRef, useState } from 'react';
 import { Bot, LogIn, Loader2, AlertTriangle, UserCircle2 } from 'lucide-react';
-import { login, setSession, type Agent } from './lib/api';
+import { login, setSession, getLogins, type Agent, type LoginCard } from './lib/api';
 
 // Owner-approved name-first layout (same as Vulcan/Juno): a vertical list of person
 // cards — Dr. M on top, the team under his name — and NO credential box until a name
-// is selected. Selecting an agent reveals a 6-digit PIN input (auto-submits on the 6th
-// digit); selecting Dr. M reveals a password field (the supervisor never uses a PIN).
-// The manual email/password form stays as a fallback (and keeps agents working via
-// STAFF_PASSWORD for as long as AGENT_PINS isn't configured).
-const QUICK = [
-  { email: 'drm@prominent.local', label: 'Dr. M', role: 'supervisor' as const },
-  { email: 'nadeer@prominent.local', label: 'NaDeer', role: 'agent' as const },
-  { email: 'anny@prominent.local', label: 'Anny', role: 'agent' as const },
-  { email: 'noey@prominent.local', label: 'Noey', role: 'agent' as const },
-];
-type Person = (typeof QUICK)[number];
+// is selected. Selecting a 'pin'-kind card reveals a 6-digit PIN input (auto-submits on
+// the 6th digit); selecting a 'password'-kind card (the supervisor) reveals a password
+// field. Cards come from GET /api/auth/logins?app=minerva (supervisor first, then
+// employees) — the manual email/password form stays as a fallback for when that fetch
+// fails (and keeps staff working via STAFF_PASSWORD for as long as AGENT_PINS isn't
+// configured).
+type Person = LoginCard;
 
 export default function Login({ onLogin }: { onLogin: (agent: Agent) => void }) {
   const [view, setView] = useState<'list' | 'manual'>('list');
@@ -25,6 +21,17 @@ export default function Login({ onLogin }: { onLogin: (agent: Agent) => void }) 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const credRef = useRef<HTMLInputElement>(null);
+
+  const [cards, setCards] = useState<Person[] | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    getLogins('minerva')
+      .then((rows) => { if (!cancelled) setCards(rows); })
+      .catch(() => { if (!cancelled) { setLoadFailed(true); setView('manual'); } });
+    return () => { cancelled = true; };
+  }, []);
 
   // Focus the credential input as soon as a person is picked (or re-picked).
   useEffect(() => {
@@ -77,10 +84,15 @@ export default function Login({ onLogin }: { onLogin: (agent: Agent) => void }) 
 
         {view === 'list' ? (
           <>
+            {!cards ? (
+              <div className="py-8 flex justify-center text-slate-400">
+                <Loader2 className="animate-spin" size={22} />
+              </div>
+            ) : (
             <div className="space-y-2">
-              {QUICK.map((q) => {
+              {cards.map((q) => {
                 const isSel = selected?.email === q.email;
-                const isSup = q.role === 'supervisor';
+                const isSup = q.kind === 'password';
                 return (
                   <div key={q.email}>
                     <button
@@ -95,7 +107,7 @@ export default function Login({ onLogin }: { onLogin: (agent: Agent) => void }) 
                     >
                       <UserCircle2 size={22} className={isSel ? 'text-sky-600 shrink-0' : 'text-slate-400 shrink-0'} />
                       <div>
-                        <div className="text-sm font-semibold text-slate-800">{q.label}</div>
+                        <div className="text-sm font-semibold text-slate-800">{q.name}</div>
                         <div className={'text-[11px] ' + (isSel ? 'text-sky-600' : 'text-slate-400')}>
                           {isSup ? 'หัวหน้า' : 'พนักงาน'}
                         </div>
@@ -108,7 +120,7 @@ export default function Login({ onLogin }: { onLogin: (agent: Agent) => void }) 
                         {isSup ? (
                           <>
                             <label className="block text-xs font-semibold text-slate-500 mb-1">
-                              รหัสผ่านของ {q.label}
+                              รหัสผ่านของ {q.name}
                             </label>
                             <input
                               ref={credRef}
@@ -135,7 +147,7 @@ export default function Login({ onLogin }: { onLogin: (agent: Agent) => void }) 
                         ) : (
                           <>
                             <label className="block text-xs font-semibold text-slate-500 mb-1">
-                              รหัส PIN 6 หลักของ {q.label}
+                              รหัส PIN 6 หลักของ {q.name}
                             </label>
                             <input
                               ref={credRef}
@@ -166,6 +178,7 @@ export default function Login({ onLogin }: { onLogin: (agent: Agent) => void }) 
                 );
               })}
             </div>
+            )}
 
             <button
               type="button"
@@ -177,6 +190,9 @@ export default function Login({ onLogin }: { onLogin: (agent: Agent) => void }) 
           </>
         ) : (
           <>
+            {loadFailed && (
+              <div className="text-[11px] text-slate-400 mb-3">Couldn't load accounts — sign in manually</div>
+            )}
             <label className="block text-xs font-semibold text-slate-500 mb-1">อีเมล</label>
             <input
               value={email}
@@ -205,13 +221,17 @@ export default function Login({ onLogin }: { onLogin: (agent: Agent) => void }) 
             >
               {busy ? <Loader2 size={16} className="animate-spin" /> : <LogIn size={16} />} เข้าสู่ระบบ
             </button>
-            <button
-              type="button"
-              onClick={() => { setView('list'); setError(''); }}
-              className="w-full mt-3 text-[11px] text-slate-400 hover:text-slate-600"
-            >
-              ย้อนกลับ
-            </button>
+            {/* Going back to the card list is pointless when the fetch failed — it would
+                just spin forever — so hide the back button on the fallback path. */}
+            {!loadFailed && (
+              <button
+                type="button"
+                onClick={() => { setView('list'); setError(''); }}
+                className="w-full mt-3 text-[11px] text-slate-400 hover:text-slate-600"
+              >
+                ย้อนกลับ
+              </button>
+            )}
           </>
         )}
       </div>

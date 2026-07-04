@@ -3,7 +3,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
 import { prisma } from '../db/prisma.js';
-import { requireAuth } from '../auth/middleware.js';
+import { requireAuth, requireApp } from '../auth/middleware.js';
 import { endSession } from '../memory/summarize.js';
 import { sendLineText, sendLineImages, sendLineReply } from '../line/send.js';
 import { readStaffUploadMeta, UPLOAD_ID_RE } from '../line/staffUploads.js';
@@ -35,8 +35,9 @@ function toProductCard(p: {
 }
 
 export async function consoleRoutes(app: FastifyInstance) {
-  // Everything here requires a logged-in agent.
+  // Everything here requires a logged-in agent with Minerva (sales console) access.
   app.addHook('preHandler', requireAuth);
+  app.addHook('preHandler', requireApp('minerva'));
 
   // GET /api/queue — customers whose latest message is still awaiting a reply.
   // (Drafts attach here in M2; for now lastMessage carries the pending question.)
