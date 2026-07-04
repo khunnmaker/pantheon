@@ -1,0 +1,29 @@
+{
+  "name": "minerva-jupiter",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Jupiter — staff portal for Prominent (one login, per-role app launcher with live pending-work badges). Phase 1: portal + badges, no SSO. See docs/JUPITER_BRIEF.md",
+  "scripts": {
+    "dev": "vite --host --port 5177",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview --host --port 5177",
+    "typecheck": "tsc -b --noEmit"
+  },
+  "dependencies": {
+    "lucide-react": "^0.454.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.16.5",
+    "@types/react": "^18.3.11",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.2",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.4.47",
+    "tailwindcss": "^3.4.14",
+    "typescript": "^5.6.2",
+    "vite": "^5.4.9"
+  }
+}
