@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Crown, LogIn, Loader2, AlertTriangle, ShieldCheck, ArrowLeft } from 'lucide-react';
 import { login, setSession, type Agent } from './lib/api';
 import { ROLE_GROUPS, SUPERVISOR_EMAIL, type Person, type RoleGroup } from './lib/roster';
+import { memberAvatar, teamAvatar } from './lib/avatar';
 
 const PIN_LEN = 6;
 
@@ -106,8 +107,12 @@ export default function Login({ onLogin }: { onLogin: (agent: Agent) => void }) 
             <BackButton onClick={back} />
             <div className={`${group.color} text-white rounded-md px-4 py-3 mb-4`}>
               <div className="flex items-center gap-2">
-                <div className="w-9 h-9 rounded-md bg-white/25 text-white flex items-center justify-center text-base font-bold">
-                  {selected.label.charAt(0)}
+                <div className="w-9 h-9 rounded-md bg-white/25 overflow-hidden flex items-center justify-center shrink-0">
+                  <img
+                    src={memberAvatar(selected.email || selected.label)}
+                    alt=""
+                    className="w-full h-full object-cover"
+                  />
                 </div>
                 <div>
                   <div className="font-bold text-base leading-tight">{selected.label}</div>
@@ -191,8 +196,12 @@ function PersonTile({ p, onPick }: { p: Person; onPick: (p: Person) => void }) {
         aria-disabled="true"
         className="aspect-square flex flex-col justify-between p-3 rounded-md bg-slate-100 text-left opacity-70 cursor-not-allowed select-none"
       >
-        <div className="w-8 h-8 rounded-md bg-slate-300 text-white flex items-center justify-center text-sm font-bold">
-          {p.label.charAt(0)}
+        <div className="w-8 h-8 rounded-md bg-slate-300 overflow-hidden flex items-center justify-center shrink-0">
+          <img
+            src={memberAvatar(p.label)}
+            alt=""
+            className="w-full h-full object-cover opacity-60 grayscale"
+          />
         </div>
         <div>
           <div className="text-sm font-bold text-slate-400 leading-tight">{p.label}</div>
@@ -207,8 +216,8 @@ function PersonTile({ p, onPick }: { p: Person; onPick: (p: Person) => void }) {
       className="aspect-square flex flex-col justify-between p-3 rounded-md bg-slate-700 hover:bg-slate-800 text-left text-white transition-colors"
     >
       <div className="flex items-center justify-between">
-        <div className="w-8 h-8 rounded-md bg-white/20 text-white flex items-center justify-center text-sm font-bold">
-          {p.label.charAt(0)}
+        <div className="w-8 h-8 rounded-md bg-white/20 overflow-hidden flex items-center justify-center shrink-0">
+          <img src={memberAvatar(p.email)} alt="" className="w-full h-full object-cover" />
         </div>
         {isSupervisor(p) && <ShieldCheck size={16} className="text-white/90" />}
       </div>
@@ -244,7 +253,12 @@ function DepartmentGrid({ onPick }: { onPick: (g: RoleGroup) => void }) {
           onClick={() => onPick(g)}
           className={`${g.color} aspect-square flex flex-col justify-between p-3 rounded-md text-left text-white hover:brightness-110 transition`}
         >
-          <span className="self-end text-xs font-semibold text-white/80">{g.members.length}</span>
+          <div className="flex items-start justify-between">
+            <div className="w-8 h-8 rounded-full bg-white/90 overflow-hidden flex items-center justify-center shrink-0">
+              <img src={teamAvatar(g.id)} alt="" className="w-full h-full object-cover" />
+            </div>
+            <span className="text-xs font-semibold text-white/80">{g.members.length}</span>
+          </div>
           <span className="text-base font-bold leading-tight">{g.label}</span>
         </button>
       ))}
