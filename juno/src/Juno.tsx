@@ -232,8 +232,7 @@ function PaymentsView({ view, onChanged }: { view: Exclude<View, 'reports' | 're
                   <th className="text-left font-medium px-3 py-2">วันที่</th>
                   <th className="text-left font-medium px-3 py-2">ลูกค้า</th>
                   <th className="text-right font-medium px-3 py-2">ยอด</th>
-                  <th className="text-left font-medium px-3 py-2 hidden md:table-cell">ธนาคาร</th>
-                  <th className="text-left font-medium px-3 py-2 hidden lg:table-cell">ขาย</th>
+                  <th className="text-left font-medium px-3 py-2 hidden md:table-cell w-[120px]">ธนาคาร</th>
                   <th className="text-left font-medium px-3 py-2 hidden md:table-cell">RE</th>
                   <th className="text-left font-medium px-3 py-2">สถานะ</th>
                 </tr>
@@ -247,15 +246,14 @@ function PaymentsView({ view, onChanged }: { view: Exclude<View, 'reports' | 're
                   >
                     <td className="px-3 py-2 text-slate-500 whitespace-nowrap">{fmtDate(p.createdAt)}</td>
                     <td className="px-3 py-2">
-                      <div className="font-medium">{p.customerName || <span className="text-slate-400">—</span>}</div>
-                      <div className="text-xs text-slate-400">{p.customerCode}</div>
+                      <div className="font-bold text-[15px] text-slate-800 leading-tight">{p.customerCode || <span className="text-slate-300 font-normal">—</span>}</div>
+                      <div className="text-xs text-slate-500 leading-tight">{p.customerName}</div>
                     </td>
                     <td className="px-3 py-2 text-right font-semibold whitespace-nowrap">
                       {baht(p.amountNum)}
                       {p.mismatch && <AlertTriangle size={13} className="inline ml-1 text-rose-500" />}
                     </td>
-                    <td className="px-3 py-2 text-slate-500 hidden md:table-cell">{p.bank}</td>
-                    <td className="px-3 py-2 text-slate-500 hidden lg:table-cell">{p.salesName}</td>
+                    <td className="px-3 py-2 text-slate-500 hidden md:table-cell"><div className="max-w-[110px] truncate" title={p.bank}>{p.bank}</div></td>
                     <td className="px-3 py-2 text-slate-500 hidden md:table-cell whitespace-nowrap">
                       {p.reNumber || <span className="text-slate-300">—</span>}
                     </td>
@@ -348,7 +346,7 @@ function Detail({ payment, onClose, onUpdate, onPrint }: {
   );
 
   return (
-    <div className="fixed inset-0 z-30 bg-slate-900/40 md:static md:z-auto md:bg-transparent md:w-[380px] md:shrink-0">
+    <div className="fixed inset-0 z-30 bg-slate-900/40 md:static md:z-auto md:bg-transparent md:w-[380px] xl:w-[620px] md:shrink-0">
       <div className="absolute inset-x-0 bottom-0 top-10 md:static bg-white rounded-t-2xl md:rounded-xl border border-slate-200 overflow-y-auto md:sticky md:top-[104px] md:max-h-[calc(100vh-120px)]">
         {/* Sticky header = status + RE on the left, EVERY action as an icon on the right
             (owner request 2026-07-03: actions reachable at any scroll position, add/remove
@@ -416,48 +414,66 @@ function Detail({ payment, onClose, onUpdate, onPrint }: {
           </div>
         )}
 
-        {/* slip image */}
-        <div className="p-4">
-          {p.slipUrl ? (
-            <a href={p.slipUrl} target="_blank" rel="noreferrer" className="block relative group">
-              <img src={p.slipUrl} alt="สลิป" className="w-full rounded-lg border border-slate-200 bg-slate-50" />
-              <span className="absolute top-2 right-2 bg-black/60 text-white rounded-md p-1 opacity-0 group-hover:opacity-100">
-                <ExternalLink size={14} />
-              </span>
-            </a>
-          ) : (
-            <div className="text-center text-slate-400 text-sm py-6 border border-dashed border-slate-200 rounded-lg">ไม่มีสลิป</div>
-          )}
-        </div>
-
-        {/* parsed fields */}
-        <div className="px-4 grid grid-cols-2 gap-3">
-          {field('ชื่อลูกค้า', p.customerName)}
-          {field('รหัส', p.customerCode)}
-          {field('ผู้โอน (บนสลิป)', p.senderName)}
-          {field('ธนาคาร', p.bank)}
-          {field('ยอดที่ยืนยัน', <span className="font-semibold">{baht(p.amountNum)}</span>)}
-          {field('ยอดที่ AI อ่าน', p.mismatch
-            ? <span className="text-rose-600 font-semibold">{p.ocrAmount || '—'}</span>
-            : (p.ocrAmount || '—'))}
-          {field('เวลาโอน', p.transferAt)}
-          {field('อ้างอิง', p.ref)}
-          {field('พนักงานขาย', p.salesName)}
-          {field('วันที่ส่งเข้า', fmtDateTime(p.createdAt))}
-          {p.reNumber && field('ชื่อบนใบเสร็จ', p.receiptName)}
-          {p.reNumber && field('ประเภทลูกค้า', p.customerType)}
-        </div>
-
-        {p.mismatch && (
-          <div className="mx-4 mt-3 p-2 rounded-lg bg-rose-50 text-rose-700 text-xs flex items-start gap-1">
-            <AlertTriangle size={14} className="mt-0.5 shrink-0" />
-            ยอดที่พนักงานกรอกไม่ตรงกับที่ AI อ่านจากสลิป — ควรตรวจสอบ
+        <div className="flex flex-col xl:flex-row xl:gap-2">
+          <div className="xl:w-[45%] xl:shrink-0">
+            {/* slip image */}
+            <div className="p-4">
+              {p.slipUrl ? (
+                <a href={p.slipUrl} target="_blank" rel="noreferrer" className="block relative group">
+                  <img src={p.slipUrl} alt="สลิป" className="w-full rounded-lg border border-slate-200 bg-slate-50" />
+                  <span className="absolute top-2 right-2 bg-black/60 text-white rounded-md p-1 opacity-0 group-hover:opacity-100">
+                    <ExternalLink size={14} />
+                  </span>
+                </a>
+              ) : (
+                <div className="text-center text-slate-400 text-sm py-6 border border-dashed border-slate-200 rounded-lg">ไม่มีสลิป</div>
+              )}
+            </div>
           </div>
-        )}
 
-        {p.note && (
-          <div className="mx-4 mt-3 p-2 rounded-lg bg-slate-50 text-slate-600 text-xs whitespace-pre-wrap">{p.note}</div>
-        )}
+          <div className="xl:flex-1 xl:min-w-0 xl:border-l xl:border-slate-100">
+            {/* parsed fields */}
+            <div className="px-4 grid grid-cols-2 gap-3">
+              {field('ชื่อลูกค้า', p.customerName)}
+              {field('รหัส', p.customerCode)}
+              {field('ผู้โอน (บนสลิป)', p.senderName)}
+              {field('ธนาคาร', p.bank)}
+              {field('ยอดที่ยืนยัน', <span className="font-semibold">{baht(p.amountNum)}</span>)}
+              {field('ยอดที่ AI อ่าน', p.mismatch
+                ? <span className="text-rose-600 font-semibold">{p.ocrAmount || '—'}</span>
+                : (p.ocrAmount || '—'))}
+              {field('เวลาโอน', p.transferAt)}
+              {field('อ้างอิง', p.ref)}
+              {field('พนักงานขาย', p.salesName)}
+              {field('วันที่ส่งเข้า', fmtDateTime(p.createdAt))}
+              {p.reNumber && field('ชื่อบนใบเสร็จ', p.receiptName)}
+              {p.reNumber && field('ประเภทลูกค้า', p.customerType)}
+            </div>
+
+            {p.mismatch && (
+              <div className="mx-4 mt-3 p-2 rounded-lg bg-rose-50 text-rose-700 text-xs flex items-start gap-1">
+                <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+                ยอดที่พนักงานกรอกไม่ตรงกับที่ AI อ่านจากสลิป — ควรตรวจสอบ
+              </div>
+            )}
+
+            {p.note && (
+              <div className="mx-4 mt-3 p-2 rounded-lg bg-slate-50 text-slate-600 text-xs whitespace-pre-wrap">{p.note}</div>
+            )}
+
+            {/* tax-invoice DETAILS only (no status tracking): every sale gets a ใบกำกับภาษี,
+                issued in Express as part of recording — but the name/address/tax-ID the customer
+                supplied still matters when issuing, so show it whenever it was captured. */}
+            {p.taxInvoice && (
+              <div className="px-4 py-3 border-t border-slate-100">
+                <div className="text-xs text-slate-400 mb-1.5 flex items-center gap-1">
+                  <FileText size={13} /> ข้อมูลใบกำกับภาษีจากลูกค้า
+                </div>
+                <div className="p-2 rounded-lg bg-slate-50 text-slate-600 text-xs whitespace-pre-wrap">{p.taxInvoice}</div>
+              </div>
+            )}
+          </div>
+        </div>
 
         {checkOpen && (
           <CheckDialog
@@ -469,18 +485,6 @@ function Detail({ payment, onClose, onUpdate, onPrint }: {
               setCheckOpen(false);
             }}
           />
-        )}
-
-        {/* tax-invoice DETAILS only (no status tracking): every sale gets a ใบกำกับภาษี,
-            issued in Express as part of recording — but the name/address/tax-ID the customer
-            supplied still matters when issuing, so show it whenever it was captured. */}
-        {p.taxInvoice && (
-          <div className="px-4 py-3 border-t border-slate-100">
-            <div className="text-xs text-slate-400 mb-1.5 flex items-center gap-1">
-              <FileText size={13} /> ข้อมูลใบกำกับภาษีจากลูกค้า
-            </div>
-            <div className="p-2 rounded-lg bg-slate-50 text-slate-600 text-xs whitespace-pre-wrap">{p.taxInvoice}</div>
-          </div>
         )}
       </div>
     </div>
