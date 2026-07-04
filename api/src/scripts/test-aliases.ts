@@ -1,4 +1,4 @@
-import { buildAliases, groupOf } from '../stock/aliases.js';
+import { buildAliases, buildGroupAliases, groupOf } from '../stock/aliases.js';
 
 // Plain regression test for the PURE alias generator (no DB). Exits 1 on any failure.
 let fails = 0;
@@ -66,6 +66,30 @@ const fill = buildAliases(
 );
 check('fill: pinned prefix reused → 01-01-77 = ZZ77', fill.find((r) => r.sku === '01-01-77')?.alias === 'ZZ77');
 check('fill: kept alias preserved → 01-01-01 = ZZ01', fill.find((r) => r.sku === '01-01-01')?.alias === 'ZZ01');
+
+// ── group-based codes (buildGroupAliases) ──
+// impression = code "IM"; two impression products (by sku order) → IM01, IM02.
+const gp = [
+  { sku: '07-01-04', catalogGroup: 'impression' },
+  { sku: '07-01-07', catalogGroup: 'impression' },
+  { sku: '07-22-01', catalogGroup: 'endo' },
+  { sku: '99-99-01', catalogGroup: null }, // ungrouped → no code
+];
+const gRes = buildGroupAliases(gp);
+const gAlias = (sku: string) => gRes.find((r) => r.sku === sku)?.alias;
+check('group: IM01 for first impression (by sku)', gAlias('07-01-04') === 'IM01');
+check('group: IM02 for second impression', gAlias('07-01-07') === 'IM02');
+check('group: EN01 for the endo product', gAlias('07-22-01') === 'EN01');
+check('group: ungrouped product gets no code', gRes.every((r) => r.sku !== '99-99-01'));
+check('group: deterministic', JSON.stringify(buildGroupAliases(gp)) === JSON.stringify(gRes));
+// fill/append: keep IM01, a NEW impression product appends as IM02 (not renumbering IM01).
+const gFill = buildGroupAliases(
+  [{ sku: '07-01-04', catalogGroup: 'impression' }, { sku: '07-01-99', catalogGroup: 'impression' }],
+  { keep: { '07-01-04': 'IM01' } },
+);
+check('group fill: kept IM01 preserved', gFill.find((r) => r.sku === '07-01-04')?.alias === 'IM01');
+check('group fill: new item appends → IM02', gFill.find((r) => r.sku === '07-01-99')?.alias === 'IM02');
+check('group: codes globally unique', new Set(gRes.map((r) => r.alias)).size === gRes.length);
 
 console.log(fails === 0 ? '\nAll checks PASSED' : `\n${fails} check(s) FAILED`);
 if (fails) process.exit(1);

@@ -184,39 +184,17 @@ export const applyImport = (token: string, note?: string) =>
     body: JSON.stringify({ token, note }),
   });
 
-// ── Product aliases (short human codes, e.g. "TR34") ────────────────────
-export interface AliasItem {
-  sku: string;
-  alias: string | null;
-  nameEn: string;
-  nameTh: string;
-  third: string;
-}
-export interface AliasGroup {
-  group: string; // family "NN-NN"
-  prefix: string; // the group's alpha prefix
-  count: number;
-  items: AliasItem[];
-}
-
-export const getAliases = () => authed<{ groups: AliasGroup[] }>('/api/stock/aliases');
-
-// Auto-assign aliases. regenerate=false fills only products with no alias (keeps manual
-// edits); regenerate=true wipes + rebuilds everything.
+// ── Product codes (group-based human codes, e.g. "IM01", "EN12") ─────────
+// (Re)build codes from the groups. Only grouped products get a code. regenerate=false keeps
+// existing codes + appends new items; true renumbers every group. ungrouped = products with
+// no group yet (assign a group first before they can get a code).
 export const generateAliases = (regenerate: boolean) =>
-  authed<{ ok: boolean; mode: string; groups: number; aliased: number }>('/api/stock/aliases/generate', {
+  authed<{ ok: boolean; mode: string; coded: number; written: number; ungrouped: number }>('/api/stock/aliases/generate', {
     method: 'POST',
     body: JSON.stringify({ regenerate }),
   });
 
-// Rename a family's prefix (regenerates its members' aliases). Throws on HTTP 409 (taken).
-export const setGroupPrefix = (group: string, prefix: string) =>
-  authed<{ ok: boolean; group: string; prefix: string; updated: number }>('/api/stock/aliases/group-prefix', {
-    method: 'POST',
-    body: JSON.stringify({ group, prefix }),
-  });
-
-// Set/clear one product's alias (alias='' clears). Throws on HTTP 409 (duplicate).
+// Set/clear one product's code by hand (alias='' clears). Throws on HTTP 409 (duplicate).
 export const setAlias = (sku: string, alias: string) =>
   authed<{ ok: boolean; sku: string; alias: string | null }>('/api/stock/aliases/set', {
     method: 'POST',
@@ -227,6 +205,7 @@ export const setAlias = (sku: string, alias: string) =>
 export type Pillar = 'lab' | 'digital' | 'clinical' | 'equipment';
 export interface CatalogGroupInfo {
   key: string;
+  code: string; // 2-letter product-code prefix (e.g. "IM" → IM01)
   nameTh: string;
   nameEn: string;
   pillar: Pillar;
