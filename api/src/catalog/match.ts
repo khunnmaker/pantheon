@@ -14,6 +14,7 @@ export interface ProductMatch {
   stockAt: Date | null;
   reorderPoint?: number | null; // Vulcan low-stock threshold (staff-only)
   low?: boolean; // stock <= reorderPoint (staff-only; never surfaced to customers)
+  alias?: string | null; // short human code (e.g. "TR34"); attached by searchProducts
 }
 
 // Tokenize a customer query into searchable terms (alnum + Thai, length >= 2).
@@ -129,8 +130,23 @@ export async function searchProducts(query: string, limit = 12): Promise<Product
     skuHits = rows.map((r) => r.sku);
   }
 
+  // Alias candidates: typing a short code like "TR34" (exact) or "TR" (browse the family)
+  // resolves via ProductAlias. Only run when the query carries a letter (aliases are alpha-
+  // prefixed), so a pure-digit SKU query stays SKU-only.
+  const aliasQuery = compact.toUpperCase();
+  const aliasBySku = new Map<string, string>();
+  if (aliasQuery.length >= 2 && /[A-Z]/.test(aliasQuery)) {
+    const aliasRows = await prisma.productAlias.findMany({
+      where: { alias: { startsWith: aliasQuery } },
+      select: { sku: true, alias: true },
+      take: 80,
+    });
+    for (const r of aliasRows) aliasBySku.set(r.sku, r.alias);
+  }
+
   const or = [
     ...(skuHits.length ? [{ sku: { in: skuHits } }] : []),
+    ...(aliasBySku.size ? [{ sku: { in: [...aliasBySku.keys()] } }] : []),
     ...(isSkuQuery
       ? []
       : tokens.flatMap((t) => [
@@ -139,7 +155,7 @@ export async function searchProducts(query: string, limit = 12): Promise<Product
           { keywords: { has: t } },
         ])),
   ];
-  if (or.length === 0) return []; // SKU query with no hits, or no usable tokens
+  if (or.length === 0) return []; // no SKU/alias hit and no usable tokens
 
   const candidates = await prisma.product.findMany({
     where: { status: 'active', OR: or },
@@ -149,17 +165,30 @@ export async function searchProducts(query: string, limit = 12): Promise<Product
   const score = (p: Product) => {
     let s = 0;
     if (skuFlat && p.sku.replace(/-/g, '').toLowerCase().includes(skuFlat)) s += 5;
+    const al = aliasBySku.get(p.sku);
+    if (al) s += al === aliasQuery ? 12 : 6; // exact alias beats a partial SKU/prefix hit
     const hay = `${p.nameEn} ${p.nameTh} ${p.keywords.join(' ')}`.toLowerCase();
     for (const t of tokens) if (hay.includes(t)) s++;
     return s;
   };
 
-  return candidates
+  const ranked = candidates
     .map((p) => ({ p, s: score(p) }))
     .filter((x) => x.s > 0)
     .sort((a, b) => b.s - a.s || Number(!!b.p.photoSku) - Number(!!a.p.photoSku))
     .slice(0, limit)
     .map(({ p }) => toProductMatch(p));
+
+  // Attach aliases for the final result SKUs (one query) so callers can display them.
+  if (ranked.length) {
+    const aliases = await prisma.productAlias.findMany({
+      where: { sku: { in: ranked.map((r) => r.sku) } },
+      select: { sku: true, alias: true },
+    });
+    const byId = new Map(aliases.map((a) => [a.sku, a.alias]));
+    for (const r of ranked) r.alias = byId.get(r.sku) ?? null;
+  }
+  return ranked;
 }
 
 // Learning: strengthen a customer question's keywords against a product the team chose

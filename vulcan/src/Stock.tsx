@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import {
   Boxes, Search, Upload, History, LogOut, AlertTriangle, Check, Loader2,
   Package, RefreshCw, ChevronRight, X, LayoutDashboard, PackageX, PackageCheck,
-  HelpCircle, Clock, ArrowRight, Crown,
+  HelpCircle, Clock, ArrowRight, Crown, Tag, Wand2,
 } from 'lucide-react';
 
 // Portal-back link (Jupiter). URL from build-time env; hidden when unset, so it is completely
@@ -10,12 +10,13 @@ import {
 const PORTAL_URL: string | undefined = import.meta.env.VITE_PORTAL_URL;
 import {
   type Agent, type StockRow, type StockSummary, type StockImportRow,
-  type StockAdjustmentRow, type ImportPreview,
+  type StockAdjustmentRow, type ImportPreview, type AliasGroup, type AliasItem,
   getSummary, getStockList, adjustStock, setReorderPoint, getImports, getAdjustments,
   previewImport, applyImport, clearSession, API_URL, flatSku,
+  getAliases, generateAliases, setGroupPrefix, setAlias,
 } from './lib/api';
 
-type Tab = 'dashboard' | 'stock' | 'import' | 'history';
+type Tab = 'dashboard' | 'stock' | 'import' | 'history' | 'alias';
 type StockFilter = 'all' | 'low' | 'out' | 'unknown';
 
 // Product photo thumbnail (served public from the shared api). photoSku is the catalog
@@ -101,6 +102,9 @@ export default function Stock({ agent, onLogout }: { agent: Agent; onLogout: () 
             <TabBtn active={tab === 'history'} onClick={() => setTab('history')} icon={<History size={15} />}>
               ประวัติ
             </TabBtn>
+            <TabBtn active={tab === 'alias'} onClick={() => setTab('alias')} icon={<Tag size={15} />}>
+              รหัสย่อ
+            </TabBtn>
           </nav>
           <div className="ml-auto flex items-center gap-3 text-sm text-slate-500">
             {summary && (
@@ -144,6 +148,7 @@ export default function Stock({ agent, onLogout }: { agent: Agent; onLogout: () 
           />
         )}
         {tab === 'history' && <HistoryTab />}
+        {tab === 'alias' && <AliasTab />}
       </main>
     </div>
   );
@@ -399,7 +404,7 @@ function StockTab({
           <input
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder="ค้นหาด้วยชื่อ หรือรหัสสินค้า เช่น 071009…"
+            placeholder="ค้นหาด้วยชื่อ รหัสย่อ (TR34) หรือรหัสสินค้า (071009)…"
             className="w-full pl-9 pr-3 py-2 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
           />
         </div>
@@ -477,6 +482,7 @@ function RowItem({
             <div className="min-w-0">
               <div className="font-medium text-slate-800 truncate">{row.nameTh || row.nameEn || flatSku(row.sku)}</div>
               <div className="text-xs text-slate-400 font-mono">
+                {row.alias && <span className="text-indigo-600 font-semibold">{row.alias} · </span>}
                 {flatSku(row.sku)}
                 {row.nameEn && row.nameTh && <span className="text-slate-300"> · {row.nameEn}</span>}
               </div>
@@ -924,6 +930,227 @@ function HistoryTab() {
           </ul>
         )}
       </div>
+    </div>
+  );
+}
+
+// ── Product aliases (short human codes, e.g. "TR34") ────────────────────
+function AliasTab() {
+  const [groups, setGroups] = useState<AliasGroup[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState<'fill' | 'regen' | null>(null);
+  const [q, setQ] = useState('');
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await getAliases();
+      setGroups(res.groups);
+    } catch {
+      setGroups([]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  async function gen(regenerate: boolean) {
+    if (regenerate && !window.confirm('สร้างรหัสย่อใหม่ทั้งหมด? รหัสที่แก้ด้วยมือจะถูกเขียนทับ')) return;
+    setBusy(regenerate ? 'regen' : 'fill');
+    try {
+      await generateAliases(regenerate);
+      await load();
+    } catch {
+      /* ignore — the list just won't change */
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  const term = q.trim().toLowerCase();
+  const flatTerm = term.replace(/-/g, '');
+  const shown = term
+    ? groups
+        .map((g) => ({
+          ...g,
+          items: g.items.filter(
+            (it) =>
+              g.group.includes(term) ||
+              (g.prefix && g.prefix.toLowerCase().includes(term)) ||
+              (it.alias && it.alias.toLowerCase().includes(term)) ||
+              it.sku.replace(/-/g, '').includes(flatTerm) ||
+              `${it.nameEn} ${it.nameTh}`.toLowerCase().includes(term),
+          ),
+        }))
+        .filter((g) => g.items.length)
+    : groups;
+
+  return (
+    <div className="max-w-4xl">
+      <div className="bg-white rounded-2xl border border-slate-200 p-5 mb-4">
+        <h2 className="font-semibold text-slate-800 mb-1 flex items-center gap-2">
+          <Tag size={18} className="text-indigo-600" /> รหัสย่อสินค้า
+        </h2>
+        <p className="text-sm text-slate-500 mb-4">
+          รหัสสั้นที่พิมพ์ง่าย เช่น <b>TR34</b> — สินค้ากลุ่มเดียวกันใช้ตัวอักษรนำหน้าเดียวกัน (รหัสย่อ = ตัวอักษรกลุ่ม + เลขสินค้า) พิมพ์รหัสย่อในช่องค้นหาหน้า “สต็อก” ได้เลย
+        </p>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            onClick={() => gen(false)}
+            disabled={busy !== null}
+            className="px-3 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold flex items-center gap-1.5 disabled:opacity-50"
+          >
+            {busy === 'fill' ? <Loader2 size={15} className="animate-spin" /> : <Wand2 size={15} />} สร้างรหัสย่ออัตโนมัติ
+          </button>
+          <button
+            onClick={() => gen(true)}
+            disabled={busy !== null}
+            className="px-3 py-2 rounded-xl border border-slate-300 bg-white text-slate-600 hover:bg-slate-50 text-sm disabled:opacity-50"
+          >
+            {busy === 'regen' ? <Loader2 size={15} className="animate-spin inline" /> : 'สร้างใหม่ทั้งหมด'}
+          </button>
+          <div className="relative flex-1 min-w-[200px]">
+            <Search size={16} className="absolute left-3 top-2.5 text-slate-400" />
+            <input
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="ค้นหากลุ่ม / รหัสย่อ / ชื่อ…"
+              className="w-full pl-9 pr-3 py-2 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+            />
+          </div>
+        </div>
+      </div>
+
+      {loading ? (
+        <div className="text-slate-400 py-8 text-center">
+          <Loader2 size={18} className="animate-spin inline" /> กำลังโหลด…
+        </div>
+      ) : shown.length === 0 ? (
+        <p className="text-sm text-slate-400 py-6 text-center">ยังไม่มีรหัสย่อ — กด “สร้างรหัสย่ออัตโนมัติ”</p>
+      ) : (
+        <div className="space-y-3">
+          {shown.map((g) => (
+            <AliasGroupCard key={g.group} group={g} onChanged={load} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AliasGroupCard({ group, onChanged }: { group: AliasGroup; onChanged: () => void }) {
+  const [prefix, setPrefix] = useState(group.prefix);
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState('');
+
+  async function savePrefix() {
+    const pfx = prefix.trim().toUpperCase();
+    if (!/^[A-Z0-9]{1,4}$/.test(pfx)) {
+      setErr('ตัวนำหน้า 1–4 ตัว (A–Z, 0–9)');
+      return;
+    }
+    setSaving(true);
+    setErr('');
+    try {
+      await setGroupPrefix(group.group, pfx);
+      onChanged();
+    } catch (e) {
+      setErr(e instanceof Error && e.message.includes('409') ? 'ตัวนำหน้าซ้ำกับกลุ่มอื่น' : 'บันทึกไม่สำเร็จ');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="bg-white rounded-2xl border border-slate-200 p-4">
+      <div className="flex items-center gap-2 mb-2">
+        <span className="text-xs text-slate-400 font-mono">กลุ่ม {group.group}</span>
+        <span className="text-[11px] text-slate-400">· {group.count} รายการ</span>
+        <div className="ml-auto flex items-center gap-1.5">
+          <span className="text-[11px] text-slate-500">ตัวนำหน้า</span>
+          <input
+            value={prefix}
+            onChange={(e) => setPrefix(e.target.value.toUpperCase())}
+            maxLength={4}
+            className="w-16 px-2 py-1 rounded-lg border border-slate-300 text-sm font-mono uppercase focus:outline-none focus:ring-2 focus:ring-indigo-400"
+          />
+          <button
+            onClick={savePrefix}
+            disabled={saving || prefix.trim().toUpperCase() === group.prefix}
+            className="px-2 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs disabled:opacity-40 flex items-center gap-1"
+          >
+            {saving ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} ตั้ง
+          </button>
+        </div>
+      </div>
+      {err && (
+        <div className="text-rose-600 text-[11px] mb-2 flex items-center gap-1">
+          <AlertTriangle size={11} /> {err}
+        </div>
+      )}
+      <div className="divide-y divide-slate-100">
+        {group.items.map((it) => (
+          <AliasRow key={it.sku} item={it} onChanged={onChanged} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function AliasRow({ item, onChanged }: { item: AliasItem; onChanged: () => void }) {
+  const [alias, setAliasVal] = useState(item.alias ?? '');
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState('');
+  const dirty = alias.trim().toUpperCase() !== (item.alias ?? '');
+
+  async function save() {
+    const a = alias.trim().toUpperCase();
+    if (a && !/^[A-Z0-9]{2,12}$/.test(a)) {
+      setErr('2–12 ตัว (A–Z, 0–9)');
+      return;
+    }
+    setSaving(true);
+    setErr('');
+    try {
+      await setAlias(item.sku, a);
+      onChanged();
+    } catch (e) {
+      setErr(e instanceof Error && e.message.includes('409') ? 'รหัสย่อซ้ำ' : 'บันทึกไม่สำเร็จ');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="flex items-center gap-2 py-1.5">
+      <input
+        value={alias}
+        onChange={(e) => setAliasVal(e.target.value.toUpperCase())}
+        onKeyDown={(e) => e.key === 'Enter' && dirty && save()}
+        placeholder="—"
+        maxLength={12}
+        className="w-24 shrink-0 px-2 py-1 rounded-lg border border-slate-300 text-sm font-mono uppercase focus:outline-none focus:ring-2 focus:ring-indigo-400"
+      />
+      {dirty && (
+        <button
+          onClick={save}
+          disabled={saving}
+          className="px-2 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs disabled:opacity-40 flex items-center gap-1 shrink-0"
+        >
+          {saving ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
+        </button>
+      )}
+      <div className="min-w-0 flex-1">
+        <div className="text-sm text-slate-700 truncate">{item.nameTh || item.nameEn || flatSku(item.sku)}</div>
+        <div className="text-[10px] text-slate-400 font-mono">{flatSku(item.sku)}</div>
+      </div>
+      {err && (
+        <span className="text-rose-600 text-[10px] flex items-center gap-0.5 shrink-0">
+          <AlertTriangle size={10} /> {err}
+        </span>
+      )}
     </div>
   );
 }

@@ -26,6 +26,7 @@ export interface StockRow {
   stockAt: string | null; // ISO; null = unknown
   reorderPoint: number | null;
   low: boolean;
+  alias?: string | null; // short human code (e.g. "TR34")
 }
 
 export interface StockSummary {
@@ -181,4 +182,43 @@ export const applyImport = (token: string, note?: string) =>
   authed<ImportApplyResult>('/api/stock/import/apply', {
     method: 'POST',
     body: JSON.stringify({ token, note }),
+  });
+
+// ── Product aliases (short human codes, e.g. "TR34") ────────────────────
+export interface AliasItem {
+  sku: string;
+  alias: string | null;
+  nameEn: string;
+  nameTh: string;
+  third: string;
+}
+export interface AliasGroup {
+  group: string; // family "NN-NN"
+  prefix: string; // the group's alpha prefix
+  count: number;
+  items: AliasItem[];
+}
+
+export const getAliases = () => authed<{ groups: AliasGroup[] }>('/api/stock/aliases');
+
+// Auto-assign aliases. regenerate=false fills only products with no alias (keeps manual
+// edits); regenerate=true wipes + rebuilds everything.
+export const generateAliases = (regenerate: boolean) =>
+  authed<{ ok: boolean; mode: string; groups: number; aliased: number }>('/api/stock/aliases/generate', {
+    method: 'POST',
+    body: JSON.stringify({ regenerate }),
+  });
+
+// Rename a family's prefix (regenerates its members' aliases). Throws on HTTP 409 (taken).
+export const setGroupPrefix = (group: string, prefix: string) =>
+  authed<{ ok: boolean; group: string; prefix: string; updated: number }>('/api/stock/aliases/group-prefix', {
+    method: 'POST',
+    body: JSON.stringify({ group, prefix }),
+  });
+
+// Set/clear one product's alias (alias='' clears). Throws on HTTP 409 (duplicate).
+export const setAlias = (sku: string, alias: string) =>
+  authed<{ ok: boolean; sku: string; alias: string | null }>('/api/stock/aliases/set', {
+    method: 'POST',
+    body: JSON.stringify({ sku, alias }),
   });

@@ -349,6 +349,20 @@ model Product {
   @@index([status])
 }
 
+// Short human-friendly code per product (e.g. "TR34") that resolves to the canonical SKU.
+// Products in the same family ("NN-NN") share a prefix; alias = prefix + item segment.
+// Display + search only — Product.sku stays the shared key. See api/src/stock/aliases.ts.
+model ProductAlias {
+  sku       String   @id // one alias per product; PK = canonical Product.sku
+  alias     String   @unique // UPPERCASE, globally unique (e.g. "TR34")
+  groupKey  String // the family "NN-NN"
+  prefix    String // the group's prefix (alias = prefix + 3rd segment)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([groupKey])
+}
+
 // ─── Vulcan (stock management) ───────────────────────────────────────────
 // Vulcan writes Product.stock/stockAt on each daily Express CSV import and on
 // manual corrections; Minerva reads those same rows. These two tables give

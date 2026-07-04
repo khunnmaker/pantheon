@@ -5,6 +5,21 @@ import { requireAuth, requireRole } from '../auth/middleware.js';
 import { searchProducts } from '../catalog/match.js';
 import { toStockRow } from '../stock/helpers.js';
 import { decodeExpressBytes, parseExpressReport, type ParsedStockRow } from '../stock/parseExpressReport.js';
+import { buildAliases, groupOf } from '../stock/aliases.js';
+
+// Attach the short alias (e.g. "TR34") to a set of rows in one query. Generic so any
+// {sku, alias?} shape (StockRow, etc.) can reuse it.
+async function withAliases<T extends { sku: string; alias?: string | null }>(rows: T[]): Promise<T[]> {
+  if (rows.length) {
+    const aliases = await prisma.productAlias.findMany({
+      where: { sku: { in: rows.map((r) => r.sku) } },
+      select: { sku: true, alias: true },
+    });
+    const byId = new Map(aliases.map((a) => [a.sku, a.alias]));
+    for (const r of rows) r.alias = byId.get(r.sku) ?? null;
+  }
+  return rows;
+}
 
 // Vulcan stock-management API. Writes Product.stock/stockAt (which Minerva reads)
 // plus a reorderPoint per SKU, and logs StockImport / StockAdjustment audit rows.
@@ -79,7 +94,7 @@ export async function stockRoutes(app: FastifyInstance) {
       if (filter === 'low') rows = rows.filter((r) => r.low);
       else if (filter === 'out') rows = rows.filter((r) => r.stock === 0);
       else if (filter === 'unknown') rows = rows.filter((r) => r.stock == null);
-      return { products: rows };
+      return { products: await withAliases(rows) };
     }
 
     if (filter === 'low') {
@@ -113,7 +128,7 @@ export async function stockRoutes(app: FastifyInstance) {
       });
     }
 
-    return { products: products.map(toStockRow) };
+    return { products: await withAliases(products.map(toStockRow)) };
   });
 
   // POST /api/stock/adjust { sku, toQty, reason } — manual correction between imports.
@@ -335,5 +350,129 @@ export async function stockRoutes(app: FastifyInstance) {
       });
     }
     return { ok: true, skusUpdated, skusUnmatched, importId: imp.id };
+  });
+
+  // ─── Product aliases (short human codes, e.g. "TR34") ──────────────────
+  // GET /api/stock/aliases — every active product grouped by family, with its alias.
+  app.get('/api/stock/aliases', async () => {
+    const [products, aliases] = await Promise.all([
+      prisma.product.findMany({
+        where: { status: 'active' },
+        select: { sku: true, nameEn: true, nameTh: true },
+        orderBy: { sku: 'asc' },
+      }),
+      prisma.productAlias.findMany(),
+    ]);
+    const aliasBySku = new Map(aliases.map((a) => [a.sku, a]));
+    const groupsMap = new Map<string, { group: string; prefix: string; items: Array<{ sku: string; alias: string | null; nameEn: string; nameTh: string; third: string }> }>();
+    for (const p of products) {
+      const g = groupOf(p.sku);
+      let entry = groupsMap.get(g);
+      if (!entry) { entry = { group: g, prefix: '', items: [] }; groupsMap.set(g, entry); }
+      const a = aliasBySku.get(p.sku);
+      if (a && !entry.prefix) entry.prefix = a.prefix;
+      entry.items.push({ sku: p.sku, alias: a?.alias ?? null, nameEn: p.nameEn, nameTh: p.nameTh, third: p.sku.split('-')[2] ?? '' });
+    }
+    const groups = [...groupsMap.values()]
+      .sort((x, y) => (x.group < y.group ? -1 : 1))
+      .map((g) => ({ group: g.group, prefix: g.prefix, count: g.items.length, items: g.items }));
+    return { groups };
+  });
+
+  // POST /api/stock/aliases/generate { regenerate? } — auto-assign grouped aliases.
+  // fill (default): keep existing rows + prefixes, only assign products with no alias.
+  // regenerate: wipe + rebuild all (overwrites manual edits).
+  app.post('/api/stock/aliases/generate', async (req) => {
+    const regenerate = (req.body as { regenerate?: boolean }).regenerate === true;
+    const products = await prisma.product.findMany({
+      where: { status: 'active' },
+      select: { sku: true, nameEn: true, nameTh: true },
+    });
+    const write = async (rows: { sku: string; alias: string; groupKey: string; prefix: string }[]) => {
+      const CHUNK = 50;
+      for (let i = 0; i < rows.length; i += CHUNK) {
+        await prisma.productAlias.createMany({
+          data: rows.slice(i, i + CHUNK).map((a) => ({ sku: a.sku, alias: a.alias, groupKey: a.groupKey, prefix: a.prefix })),
+          skipDuplicates: true,
+        });
+      }
+    };
+
+    if (regenerate) {
+      await prisma.productAlias.deleteMany({});
+      const assignments = buildAliases(products);
+      await write(assignments);
+      return { ok: true, mode: 'regenerate', groups: new Set(assignments.map((a) => a.groupKey)).size, aliased: assignments.length };
+    }
+
+    const existing = await prisma.productAlias.findMany();
+    const existingSkus = new Set(existing.map((e) => e.sku));
+    const existingPrefixByGroup: Record<string, string> = {};
+    const keepAliases: Record<string, string> = {};
+    for (const e of existing) { existingPrefixByGroup[e.groupKey] = e.prefix; keepAliases[e.sku] = e.alias; }
+    const fresh = buildAliases(products, { existingPrefixByGroup, keepAliases }).filter((a) => !existingSkus.has(a.sku));
+    await write(fresh);
+    return { ok: true, mode: 'fill', groups: new Set(fresh.map((a) => a.groupKey)).size, aliased: fresh.length };
+  });
+
+  // POST /api/stock/aliases/group-prefix { group, prefix } — rename a family's prefix and
+  // regenerate its members' aliases (alias = prefix + item segment).
+  app.post('/api/stock/aliases/group-prefix', async (req, reply) => {
+    const body = req.body as { group?: string; prefix?: string };
+    const g = String(body.group ?? '').trim();
+    const pfx = String(body.prefix ?? '').trim().toUpperCase();
+    if (!g) return reply.code(400).send({ error: 'bad_group' });
+    if (!/^[A-Z0-9]{1,4}$/.test(pfx)) return reply.code(400).send({ error: 'bad_prefix' });
+    const clash = await prisma.productAlias.findFirst({ where: { prefix: pfx, groupKey: { not: g } } });
+    if (clash) return reply.code(409).send({ error: 'prefix_taken' });
+
+    const products = await prisma.product.findMany({
+      where: { status: 'active', sku: { startsWith: `${g}-` } },
+      select: { sku: true },
+    });
+    if (!products.length) return reply.code(404).send({ error: 'empty_group' });
+    const newAliases = products
+      .map((p) => ({ sku: p.sku, alias: `${pfx}${p.sku.split('-')[2] ?? ''}`, third: p.sku.split('-')[2] ?? '' }))
+      .filter((x) => x.third);
+    const aliasClash = await prisma.productAlias.findFirst({
+      where: { alias: { in: newAliases.map((a) => a.alias) }, sku: { notIn: newAliases.map((a) => a.sku) } },
+    });
+    if (aliasClash) return reply.code(409).send({ error: 'alias_taken' });
+
+    let updated = 0;
+    for (const a of newAliases) {
+      await prisma.productAlias.upsert({
+        where: { sku: a.sku },
+        update: { alias: a.alias, groupKey: g, prefix: pfx },
+        create: { sku: a.sku, alias: a.alias, groupKey: g, prefix: pfx },
+      });
+      updated++;
+    }
+    return { ok: true, group: g, prefix: pfx, updated };
+  });
+
+  // POST /api/stock/aliases/set { sku, alias } — set/clear one product's alias (alias=''
+  // clears it). Uniqueness enforced.
+  app.post('/api/stock/aliases/set', async (req, reply) => {
+    const body = req.body as { sku?: string; alias?: string };
+    const sku = String(body.sku ?? '').trim();
+    if (!sku || !SKU_RE.test(sku)) return reply.code(400).send({ error: 'bad_sku' });
+    const product = await prisma.product.findUnique({ where: { sku } });
+    if (!product) return reply.code(404).send({ error: 'unknown_sku' });
+    const raw = String(body.alias ?? '').trim().toUpperCase();
+    if (raw === '') {
+      await prisma.productAlias.deleteMany({ where: { sku } });
+      return { ok: true, sku, alias: null };
+    }
+    if (!/^[A-Z0-9]{2,12}$/.test(raw)) return reply.code(400).send({ error: 'bad_alias' });
+    const clash = await prisma.productAlias.findFirst({ where: { alias: raw, sku: { not: sku } } });
+    if (clash) return reply.code(409).send({ error: 'alias_taken' });
+    const prefix = raw.replace(/[0-9]+$/, '') || raw;
+    await prisma.productAlias.upsert({
+      where: { sku },
+      update: { alias: raw, groupKey: groupOf(sku), prefix },
+      create: { sku, alias: raw, groupKey: groupOf(sku), prefix },
+    });
+    return { ok: true, sku, alias: raw };
   });
 }

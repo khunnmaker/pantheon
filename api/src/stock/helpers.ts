@@ -17,6 +17,8 @@ export interface StockRow {
   stockAt: string | null; // ISO; null = unknown
   reorderPoint: number | null;
   low: boolean;
+  // Short human code (e.g. "TR34"); filled by the /api/stock/list route, not toStockRow.
+  alias?: string | null;
 }
 
 export function toStockRow(p: Product): StockRow {
