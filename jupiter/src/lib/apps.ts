@@ -53,17 +53,21 @@ export const APPS: AppDef[] = [
     name: 'Ceres',
     job: 'ค่าใช้จ่าย · เงินสดย่อย',
     url: env.VITE_CERES_URL,
-    enter: ['supervisor'],
+    enter: ['messenger', 'md', 'supervisor'],
     accent: 'text-amber-600',
     badge: (b) => b.ceres?.awaitingAction ?? null,
   },
 ];
 
 // Most-used-first tile order per role. Agents live in Minerva all day; the supervisor's day
-// starts in finance (verify slips) then the console, stock, expenses.
+// starts in finance (verify slips) then the console, stock, expenses. messenger + md are
+// Ceres-only today, so their single tile is Ceres. Every Role must have an entry here or
+// tilesFor() throws on ORDER[role] — keep this exhaustive with the api Role type.
 const ORDER: Record<Role, AppKey[]> = {
   agent: ['minerva'],
   supervisor: ['juno', 'minerva', 'vulcan', 'ceres'],
+  messenger: ['ceres'],
+  md: ['ceres'],
 };
 
 // The tiles a role should see: allowed to enter AND has a configured URL, in most-used order.

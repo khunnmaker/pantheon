@@ -25,23 +25,26 @@ export const AGENTS: Person[] = [
   { email: 'noey@prominent.local', label: 'Noey', cred: 'pin' },
 ];
 
-// MD (Nee) — 6-digit PIN. Ceres role; account lands with Ceres go-live.
-export const MD: Person = { email: 'nee@prominent.local', label: 'Nee (MD)', cred: 'pin' };
+// MD (Nee) — password (env CERES_MD_PASSWORD). Ceres 'md' role. Email + cred MUST match
+// the seeded STAFF row in api/src/db/ensureSeeded.ts, or the login just fails.
+export const MD: Person = { email: 'md@prominent.local', label: 'Nee (MD)', cred: 'password' };
 
 // Messengers (คนส่งของ, Ceres) — 6-digit PIN. Collapsed under "ทีมแมสเซนเจอร์" so the flat
-// list stays short. Names per docs/CERES_BRIEF.md.
+// list stays short. This list MUST mirror MESSENGERS + messengerEmail() in
+// api/src/db/ensureSeeded.ts (slug → m-<slug>@prominent.local) so each card maps to a real
+// seeded account; a person not in that seed simply can't log in.
 export const MESSENGERS: Person[] = [
-  { email: 'ta@prominent.local', label: 'ต้า', cred: 'pin' },
-  { email: 'arm@prominent.local', label: 'อาร์ม', cred: 'pin' },
-  { email: 'man@prominent.local', label: 'แมน', cred: 'pin' },
-  { email: 'boonsorn@prominent.local', label: 'บุญสอน', cred: 'pin' },
-  { email: 'kaew@prominent.local', label: 'แก้ว', cred: 'pin' },
-  { email: 'lungkoh@prominent.local', label: 'ลุงโก๊ะ', cred: 'pin' },
-  { email: 'wong@prominent.local', label: 'วง', cred: 'pin' },
-  { email: 'paeng@prominent.local', label: 'แป๋ง', cred: 'pin' },
-  { email: 'nun@prominent.local', label: 'นุ่น', cred: 'pin' },
-  { email: 'nee-msg@prominent.local', label: 'นี', cred: 'pin' },
-  { email: 'messenger11@prominent.local', label: 'แมสเซนเจอร์ 11', cred: 'pin' },
-  { email: 'messenger12@prominent.local', label: 'แมสเซนเจอร์ 12', cred: 'pin' },
-  { email: 'messenger13@prominent.local', label: 'แมสเซนเจอร์ 13', cred: 'pin' },
+  { email: 'm-ta@prominent.local', label: 'ต้า', cred: 'pin' },
+  { email: 'm-arm@prominent.local', label: 'อาร์ม', cred: 'pin' },
+  { email: 'm-man@prominent.local', label: 'แมน', cred: 'pin' },
+  { email: 'm-boonson@prominent.local', label: 'บุญสอน', cred: 'pin' },
+  { email: 'm-kaew@prominent.local', label: 'แก้ว', cred: 'pin' },
+  { email: 'm-lungko@prominent.local', label: 'ลุงโก๊ะ', cred: 'pin' },
+  { email: 'm-wong@prominent.local', label: 'วง', cred: 'pin' },
+  { email: 'm-paeng@prominent.local', label: 'แป๋ง', cred: 'pin' },
+  { email: 'm-nun@prominent.local', label: 'นุ่น', cred: 'pin' },
+  { email: 'm-nee@prominent.local', label: 'นี', cred: 'pin' },
+  { email: 'm-pin@prominent.local', label: 'พิณ', cred: 'pin' },
+  { email: 'm-lekmaeban@prominent.local', label: 'เล็กแม่บ้าน', cred: 'pin' },
+  { email: 'm-da@prominent.local', label: 'ด้า', cred: 'pin' },
 ];

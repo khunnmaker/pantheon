@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
-import { LogOut, Loader2, AlertTriangle, Plus, Pencil, Trash2, CheckCircle2 } from 'lucide-react';
+import { LogOut, Loader2, AlertTriangle, Plus, Pencil, Trash2, CheckCircle2, Crown } from 'lucide-react';
 import { listExpenses, deleteExpense, clearSession, type Expense, type ExpenseStatus, baht } from './lib/api';
 import { useCeres } from './lib/bootstrapContext';
+
+// Portal-back link (Jupiter). URL from build-time env; hidden when unset, so it is completely
+// inert until VITE_PORTAL_URL is configured (matches web/vulcan/juno headers).
+const PORTAL_URL: string | undefined = import.meta.env.VITE_PORTAL_URL;
 import ExpenseSheet from './ExpenseSheet';
 
 const STATUS_META: Record<ExpenseStatus, { label: string; cls: string }> = {
@@ -73,15 +77,22 @@ export default function MessengerHome() {
       <header className="bg-white border-b border-slate-200 sticky top-0 z-20">
         <div className="max-w-md mx-auto px-4 h-14 flex items-center justify-between">
           <div className="font-bold text-base text-amber-700">{bootstrap.party?.name || bootstrap.agent.name}</div>
-          <button
-            onClick={() => {
-              clearSession();
-              onLogout();
-            }}
-            className="flex items-center gap-1 text-sm text-slate-500 hover:text-rose-600"
-          >
-            <LogOut size={15} /> ออก
-          </button>
+          <div className="flex items-center gap-3">
+            {PORTAL_URL && (
+              <a href={PORTAL_URL} title="กลับพอร์ทัล Jupiter" className="flex items-center gap-1 text-sm text-slate-500 hover:text-violet-600">
+                <Crown size={15} /> <span className="hidden sm:inline">พอร์ทัล</span>
+              </a>
+            )}
+            <button
+              onClick={() => {
+                clearSession();
+                onLogout();
+              }}
+              className="flex items-center gap-1 text-sm text-slate-500 hover:text-rose-600"
+            >
+              <LogOut size={15} /> ออก
+            </button>
+          </div>
         </div>
       </header>
 

@@ -24,6 +24,10 @@ import MdTemplates from './MdTemplates';
 import MdRecon from './MdRecon';
 import CeoOverview from './CeoOverview';
 
+// Portal-back link (Jupiter). URL from build-time env; hidden when unset, so it is completely
+// inert until VITE_PORTAL_URL is configured (matches web/vulcan/juno headers).
+const PORTAL_URL: string | undefined = import.meta.env.VITE_PORTAL_URL;
+
 type Tab = 'board' | 'approval' | 'money' | 'close' | 'expenses' | 'requests' | 'templates' | 'recon' | 'ceo';
 
 const BASE_TABS: { key: Tab; label: string; icon: React.ReactNode }[] = [
@@ -64,6 +68,11 @@ export default function MdApp() {
             </span>
           </div>
           <div className="flex items-center gap-3 text-sm">
+            {PORTAL_URL && (
+              <a href={PORTAL_URL} title="กลับพอร์ทัล Jupiter" className="flex items-center gap-1 text-slate-500 hover:text-violet-600">
+                <Crown size={15} /> <span className="hidden sm:inline">พอร์ทัล</span>
+              </a>
+            )}
             <span className="text-slate-500 hidden sm:inline">{agent.name}</span>
             <button
               onClick={() => {

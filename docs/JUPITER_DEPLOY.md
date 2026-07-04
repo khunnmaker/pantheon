@@ -18,15 +18,18 @@ need any DNS to launch the portal. Part 2 is a later, independent step.
 
 - **API** (`api/src/routes/jupiter.ts`): `GET /api/jupiter/badges` — any authenticated account;
   returns pending-work counts ONLY for the apps the caller's role may enter (agents see Minerva;
-  the supervisor sees Minerva/Juno/Vulcan). ~30s in-process cache. No schema change, no migration.
+  the supervisor sees Minerva/Juno/Vulcan/Ceres; messenger + md see Ceres). ~30s in-process cache
+  (the Ceres messenger badge, being per-user, is cached per messenger). No schema change, no migration.
+  Ceres `awaitingAction` per role: **CEO** = escalated payment requests awaiting the CEO's decision;
+  **MD** = pending expenses awaiting her approve/reject; **messenger** = their own pending drafts +
+  rejected expenses to fix.
 - **Portal web app** (`jupiter/`): a separate Vite/React app + Dockerfile — its own Railway web
   service, mirroring Juno/Vulcan. Royal-purple theme. Suite-standard login (tap a name → password
-  for Dr. M, 6-digit PIN for everyone else; the 13 messengers collapse under "ทีมแมสเซนเจอร์").
-  After login, a tile grid opens each app's URL in the same tab.
-- **Portal-back link** in `web/` (Minerva), `vulcan/`, `juno/`: one small header link back to the
-  portal, URL from `VITE_PORTAL_URL`, **hidden when that env is unset** — so it is completely
-  inert until you configure it. (Ceres has no frontend in the tree yet — add the same link when
-  Ceres ships.)
+  for Dr. M and Nee/MD, 6-digit PIN for everyone else; the 13 messengers collapse under
+  "ทีมแมสเซนเจอร์"). After login, a tile grid opens each app's URL in the same tab.
+- **Portal-back link** in `web/` (Minerva), `vulcan/`, `juno/`, and `ceres/`: one small header link
+  back to the portal, URL from `VITE_PORTAL_URL`, **hidden when that env is unset** — so it is
+  completely inert until you configure it.
 
 ---
 
@@ -35,7 +38,7 @@ need any DNS to launch the portal. Part 2 is a later, independent step.
 ### 1a. New Railway service for the portal
 
 Add ONE new web service for `jupiter/` alongside the existing `api` / `web` / `vulcan` / `juno`
-/ `diana` / Postgres:
+/ `ceres` / `diana` / Postgres:
 
 1. **New service → Deploy from repo → root directory `jupiter/`** (Dockerfile at `jupiter/Dockerfile`).
 2. Set these **build-time env vars / build args** (baked into the static bundle at build — same
@@ -47,10 +50,10 @@ Add ONE new web service for `jupiter/` alongside the existing `api` / `web` / `v
    | `VITE_MINERVA_URL`| the **web** (Minerva) service's URL | Minerva tile target |
    | `VITE_JUNO_URL`   | the **juno** service's URL | Juno tile target |
    | `VITE_VULCAN_URL` | the **vulcan** service's URL | Vulcan tile target |
-   | `VITE_CERES_URL`  | *(leave unset)* | Ceres not live yet → tile hidden |
+   | `VITE_CERES_URL`  | the **ceres** service's URL | Ceres tile target (messenger/md/CEO) |
 
-   A tile whose URL is unset is hidden even for a role that could enter it — so leaving
-   `VITE_CERES_URL` blank is how Ceres stays off the portal until it ships.
+   A tile whose URL is unset is hidden even for a role that could enter it — so leaving any
+   `VITE_*_URL` blank keeps that app off the portal until it ships.
 
 3. **Allow the portal's origin on the api.** Append the new Jupiter web origin to the api's
    **`WEB_ORIGIN`** env (comma-separated, exact origins, no trailing slash), keeping the existing
@@ -61,18 +64,20 @@ Add ONE new web service for `jupiter/` alongside the existing `api` / `web` / `v
 
 ### 1b. Configure the portal-back link in the other apps (optional, do once ready)
 
-For **each** of `web`, `juno`, `vulcan`, set the build-time env **`VITE_PORTAL_URL`** =
+For **each** of `web`, `juno`, `vulcan`, `ceres`, set the build-time env **`VITE_PORTAL_URL`** =
 the Jupiter service's public URL, then redeploy that service. The little "พอร์ทัล" link appears
 in that app's header. Leave it unset on any app you don't want linking yet — the link stays hidden.
 
 ### 1c. Verify after deploy
 
 1. Open the Jupiter URL → the login shows the people cards (Dr. M on top; messengers collapsed).
-2. Log in as **Dr. M** → tiles for Juno / Minerva / Vulcan appear, each with its badge count.
+2. Log in as **Dr. M** → tiles for Juno / Minerva / Vulcan / Ceres appear, each with its badge count.
 3. Log in as an **agent** (their 6-digit PIN) → only the **Minerva** tile appears, with its
-   "waiting to reply" count. Confirm NO Juno/Vulcan tile leaks for the agent.
-4. Tap a tile → the app opens (and, in Phase 1, asks for its own login — expected until SSO/Phase 3).
-5. If you set `VITE_PORTAL_URL`, confirm the "พอร์ทัล" link shows in that app's header and returns here.
+   "waiting to reply" count. Confirm NO Juno/Vulcan/Ceres tile leaks for the agent.
+4. Log in as **Nee (MD)** (password) or a **messenger** (PIN) → only the **Ceres** tile appears,
+   with its awaiting-action count; confirm no other app's tile leaks.
+5. Tap a tile → the app opens (and, in Phase 1, asks for its own login — expected until SSO/Phase 3).
+6. If you set `VITE_PORTAL_URL`, confirm the "พอร์ทัล" link shows in that app's header and returns here.
 
 ---
 
@@ -137,8 +142,8 @@ build-time **`VITE_API_URL`** = `https://api.prominentdental.com` and redeploy t
   `VITE_MINERVA_URL=https://minerva.prominentdental.com`,
   `VITE_JUNO_URL=https://juno.prominentdental.com`,
   `VITE_VULCAN_URL=https://vulcan.prominentdental.com`
-  (and `VITE_CERES_URL=https://ceres.prominentdental.com` when Ceres ships).
-- On **web / juno / vulcan** (and ceres when live), set
+  (and `VITE_CERES_URL=https://ceres.prominentdental.com`).
+- On **web / juno / vulcan / ceres**, set
   `VITE_PORTAL_URL=https://portal.prominentdental.com` and redeploy.
 
 ### 2f. Verify

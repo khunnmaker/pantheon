@@ -5,6 +5,10 @@ import { SUPERVISOR, AGENTS, MD, MESSENGERS, type Person } from './lib/roster';
 
 const PIN_LEN = 6;
 
+// The "หัวหน้า" (boss) marker + shield are the SUPERVISOR's alone — not "anyone with a
+// password". Nee (MD) also logs in with a password now, so key the tag on identity, not cred.
+const isSupervisor = (p: Person) => p.email === SUPERVISOR.email;
+
 // Suite login standard: a card list of people. No credential box until a name is tapped;
 // then Dr. M types a password, everyone else a masked auto-submit 6-digit PIN. With ~18
 // accounts the 13 messengers collapse under "ทีมแมสเซนเจอร์"; supervisor/agents/MD stay top-level.
@@ -68,12 +72,12 @@ export default function Login({ onLogin }: { onLogin: (agent: Agent) => void }) 
               <ArrowLeft size={13} /> เปลี่ยนชื่อ
             </button>
             <div className="flex items-center gap-2 mb-4">
-              <div className={`w-9 h-9 rounded-full text-white flex items-center justify-center text-sm font-bold ${selected.cred === 'password' ? 'bg-violet-600' : 'bg-slate-500'}`}>
+              <div className={`w-9 h-9 rounded-full text-white flex items-center justify-center text-sm font-bold ${isSupervisor(selected) ? 'bg-violet-600' : 'bg-slate-500'}`}>
                 {selected.label.charAt(0)}
               </div>
               <div>
                 <div className="font-semibold text-sm">{selected.label}</div>
-                {selected.cred === 'password' && (
+                {isSupervisor(selected) && (
                   <div className="flex items-center gap-1 text-[11px] text-violet-600"><ShieldCheck size={11} /> หัวหน้า</div>
                 )}
               </div>
@@ -135,11 +139,11 @@ function PersonCard({ p, onPick }: { p: Person; onPick: (p: Person) => void }) {
       onClick={() => onPick(p)}
       className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl border border-slate-200 hover:border-violet-300 hover:bg-violet-50 text-left"
     >
-      <div className={`w-8 h-8 rounded-full text-white flex items-center justify-center text-xs font-bold shrink-0 ${p.cred === 'password' ? 'bg-violet-600' : 'bg-slate-400'}`}>
+      <div className={`w-8 h-8 rounded-full text-white flex items-center justify-center text-xs font-bold shrink-0 ${isSupervisor(p) ? 'bg-violet-600' : 'bg-slate-400'}`}>
         {p.label.charAt(0)}
       </div>
       <span className="text-sm font-medium flex-1">{p.label}</span>
-      {p.cred === 'password' && <ShieldCheck size={14} className="text-violet-500" />}
+      {isSupervisor(p) && <ShieldCheck size={14} className="text-violet-500" />}
       <ChevronRight size={15} className="text-slate-300" />
     </button>
   );

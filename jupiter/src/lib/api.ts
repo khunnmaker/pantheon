@@ -5,7 +5,10 @@
 
 export const API_URL: string = import.meta.env.VITE_API_URL ?? 'http://localhost:3000';
 
-export type Role = 'agent' | 'supervisor';
+// Mirrors the backend's Role vocabulary (api/src/auth/jwt.ts). messenger + md are the
+// Ceres-facing roles; a supervisor is the CEO/owner. Every role that can enter at least
+// one app must appear here (and in apps.ts ORDER) or the portal shows them no tiles.
+export type Role = 'agent' | 'supervisor' | 'messenger' | 'md';
 export interface Agent {
   id: string;
   email: string;
