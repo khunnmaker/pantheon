@@ -5,8 +5,10 @@
 
 export const API_URL: string = import.meta.env.VITE_API_URL ?? 'http://localhost:3000';
 
-// Venus is the first non-Minerva deity agents can enter (md/messenger stay excluded —
-// see READ_ROLES in api/src/routes/venus.ts), so both roles can show up here.
+// Access to Venus is per-grant, enforced server-side via requireApp('venus') (see
+// api/src/routes/venus.ts): supervisor always has access; employees need the explicit
+// 'venus' grant (Agent.apps); md is excluded. The login screen does not hard-block by
+// role — an ungranted employee logs in fine and gets a friendly 403 state instead (App.tsx).
 export type Role = 'supervisor' | 'md' | 'employee';
 export interface Agent {
   id: string;
@@ -90,10 +92,9 @@ async function authed<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 // Same shared login endpoint every service uses — any live account may authenticate here;
-// per-app access is enforced by the app's own routes (Venus: supervisor + employee, see
-// READ_ROLES in api/src/routes/venus.ts). There is no `app=venus` login-card list yet
-// (AppName in api/src/auth/jwt.ts only has minerva/vulcan/juno/ceres), so Venus uses the
-// plain email/password form rather than the name-card list juno/jupiter show.
+// per-app access is enforced server-side by requireApp('venus') on the app's own routes
+// (api/src/routes/venus.ts): supervisor always has access, employees need the explicit
+// 'venus' grant, md is excluded.
 export async function login(email: string, password: string): Promise<{ token: string; agent: Agent }> {
   const res = await fetch(`${API_URL}/api/auth/login`, {
     method: 'POST',
@@ -103,6 +104,20 @@ export async function login(email: string, password: string): Promise<{ token: s
   if (!res.ok) throw new Error('invalid_credentials');
   return res.json() as Promise<{ token: string; agent: Agent }>;
 }
+
+export interface LoginName {
+  email: string;
+  name: string;
+  kind: 'password' | 'pin';
+}
+// PUBLIC — no auth required. Ordered: supervisor first (kind 'password'), then any
+// granted MD/employee cards. Uses the GENERAL suite endpoint (not an app-owned one like
+// Ceres's /api/ceres/logins) since Venus access is grant-based, not role-based.
+export const getLogins = () =>
+  fetch(`${API_URL}/api/auth/logins?app=venus`).then((r) => {
+    if (!r.ok) throw new Error('logins_failed');
+    return r.json() as Promise<LoginName[]>;
+  });
 
 export const canImport = (agent: Agent | null): boolean => agent?.role === 'supervisor';
 
