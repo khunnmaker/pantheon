@@ -168,9 +168,10 @@ function PaymentsView({ view, onChanged }: { view: Exclude<View, 'reports' | 're
   }
 
   return (
-    <div className="flex gap-4">
-      <div className="flex-1 min-w-0">
-        <div className="bg-white rounded-xl border border-slate-200 p-3 mb-3 flex flex-wrap items-center gap-2">
+    <>
+      {/* Toolbar spans the full width ABOVE the list+detail row, so opening a receipt
+          (which narrows the list column) never shrinks or shifts the search/filter bar. */}
+      <div className="bg-white rounded-xl border border-slate-200 p-3 mb-3 flex flex-wrap items-center gap-2">
           <div className="relative flex-1 min-w-[180px]">
             <Search size={15} className="absolute left-2.5 top-2.5 text-slate-400" />
             <input
@@ -214,9 +215,11 @@ function PaymentsView({ view, onChanged }: { view: Exclude<View, 'reports' | 're
           >
             <Download size={15} /> CSV
           </button>
-        </div>
+      </div>
 
-        <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+      <div className="flex gap-4">
+        <div className="flex-1 min-w-0">
+          <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
           {loading ? (
             <div className="p-8 text-center text-slate-400"><Loader2 className="animate-spin inline" size={20} /></div>
           ) : error ? (
@@ -271,15 +274,16 @@ function PaymentsView({ view, onChanged }: { view: Exclude<View, 'reports' | 're
         </div>
       </div>
 
-      {selected && (
-        <Detail
-          payment={selected}
-          onClose={() => setSelected(null)}
-          onUpdate={applyUpdate}
-          onPrint={(p) => setPrintQueue([p])}
-        />
-      )}
-    </div>
+        {selected && (
+          <Detail
+            payment={selected}
+            onClose={() => setSelected(null)}
+            onUpdate={applyUpdate}
+            onPrint={(p) => setPrintQueue([p])}
+          />
+        )}
+      </div>
+    </>
   );
 }
 
