@@ -71,6 +71,12 @@ export function clearSession(): void {
 let onUnauthorized: (() => void) | null = null;
 export function setOnUnauthorized(fn: (() => void) | null): void { onUnauthorized = fn; }
 
+// Notified on a 403 (authenticated but WITHOUT the 'venus' grant — e.g. an employee the
+// owner hasn't granted Venus yet). Distinct from 401: the session stays valid, we just show
+// a friendly "no access" state rather than bouncing to Login (which they'd just pass again).
+let onForbidden: (() => void) | null = null;
+export function setOnForbidden(fn: (() => void) | null): void { onForbidden = fn; }
+
 async function authed<T>(path: string, init?: RequestInit): Promise<T> {
   const token = getToken();
   const res = await fetch(`${API_URL}${path}`, {
@@ -86,7 +92,10 @@ async function authed<T>(path: string, init?: RequestInit): Promise<T> {
     onUnauthorized?.();
     throw new Error('unauthorized');
   }
-  if (res.status === 403) throw new Error('forbidden');
+  if (res.status === 403) {
+    onForbidden?.();
+    throw new Error('forbidden');
+  }
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json() as Promise<T>;
 }
