@@ -347,7 +347,7 @@ function Detail({ payment, onClose, onUpdate, onPrint }: {
 
   return (
     <div className="fixed inset-0 z-30 bg-slate-900/40 md:static md:z-auto md:bg-transparent md:w-[380px] xl:w-[620px] md:shrink-0">
-      <div className="absolute inset-x-0 bottom-0 top-10 md:static bg-white rounded-t-2xl md:rounded-xl border border-slate-200 overflow-y-auto md:sticky md:top-[104px] md:max-h-[calc(100vh-120px)]">
+      <div className="absolute inset-x-0 bottom-0 top-10 md:static bg-white rounded-t-2xl md:rounded-xl border border-slate-200 overflow-y-auto md:sticky md:top-[104px] md:h-[calc(100vh-112px)]">
         {/* Sticky header = status + RE on the left, EVERY action as an icon on the right
             (owner request 2026-07-03: actions reachable at any scroll position, add/remove
             any time). Hover an icon for its Thai name. */}
