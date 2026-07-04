@@ -24,6 +24,8 @@ vulcan/vite.config.js
 vulcan/vite.config.d.ts
 juno/vite.config.js
 juno/vite.config.d.ts
+jupiter/vite.config.js
+jupiter/vite.config.d.ts
 
 # downloaded LINE image content
 api/uploads/
