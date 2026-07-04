@@ -4,7 +4,7 @@ import path from 'node:path';
 import { z } from 'zod';
 import { Prisma } from '@prisma/client';
 import { prisma } from '../db/prisma.js';
-import { requireAuth } from '../auth/middleware.js';
+import { requireAuth, requireApp } from '../auth/middleware.js';
 import { sendLineReply } from '../line/send.js';
 import { fetchDisplayName, fetchGroupName } from '../line/client.js';
 import { generateDraftForMessage } from '../llm/draft.js';
@@ -60,6 +60,7 @@ const rewriteBody = z.object({ text: z.string().min(1).max(4000) });
 
 export async function messageRoutes(app: FastifyInstance) {
   app.addHook('preHandler', requireAuth);
+  app.addHook('preHandler', requireApp('minerva'));
 
   // GET /api/messages/:id/content — stream a stored attachment (image/video/audio/
   // file) for a message (auth required). Files download with their original name.

@@ -3,7 +3,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
 import { prisma } from '../db/prisma.js';
-import { requireAuth } from '../auth/middleware.js';
+import { requireAuth, requireApp } from '../auth/middleware.js';
 import { endSession } from '../memory/summarize.js';
 import { sendLineText, sendLineImages, sendLineReply } from '../line/send.js';
 import { readStaffUploadMeta, UPLOAD_ID_RE } from '../line/staffUploads.js';
@@ -35,8 +35,9 @@ function toProductCard(p: {
 }
 
 export async function consoleRoutes(app: FastifyInstance) {
-  // Everything here requires a logged-in agent.
+  // Everything here requires a logged-in agent with Minerva (sales console) access.
   app.addHook('preHandler', requireAuth);
+  app.addHook('preHandler', requireApp('minerva'));
 
   // GET /api/queue — customers whose latest message is still awaiting a reply.
   // (Drafts attach here in M2; for now lastMessage carries the pending question.)
@@ -157,7 +158,10 @@ export async function consoleRoutes(app: FastifyInstance) {
 
     // Candidates for the team to choose from (match order preserved). Products WITHOUT a
     // photo are kept too (shown as a "ไม่มีรูป" tile) so they can still be selected for
-    // ร่างใหม่ / cross-sell. Dedup by photo (variants share one) or by sku (no photo).
+    // ร่างใหม่ / cross-sell. Dedup by SKU — distinct SKUs are distinct products even when they
+    // share one catalog photo (e.g. two needle sizes), so each gets its own selectable tile.
+    // The send path already dedupes the delivered image by photoSku, so a shared photo is only
+    // sent once even if two same-photo SKUs are picked together.
     let productCandidates: ProductCard[] = [];
     if (pendingDraft?.candidateSkus?.length) {
       const prods = await prisma.product.findMany({ where: { sku: { in: pendingDraft.candidateSkus } } });
@@ -167,28 +171,26 @@ export async function consoleRoutes(app: FastifyInstance) {
         .map((sku) => bySku.get(sku))
         .filter((p): p is NonNullable<typeof p> => !!p)
         .filter((p) => {
-          const key = p.photoSku ?? `sku:${p.sku}`;
-          if (seen.has(key)) return false;
-          seen.add(key);
+          if (seen.has(p.sku)) return false;
+          seen.add(p.sku);
           return true;
         })
         .map(toProductCard);
     }
 
-    // AI cross-sell candidates — complementary products; skip any already shown as a direct
-    // match so the two rows don't repeat (no-photo products kept too).
+    // AI cross-sell candidates — complementary products; skip any SKU already shown as a direct
+    // match so the two rows don't repeat the same product (no-photo products kept too).
     let crossSellCandidates: ProductCard[] = [];
     if (pendingDraft?.crossSellSkus?.length) {
       const prods = await prisma.product.findMany({ where: { sku: { in: pendingDraft.crossSellSkus } } });
       const bySku = new Map(prods.map((p) => [p.sku, p]));
-      const seen = new Set<string>(productCandidates.map((c) => c.photoSku ?? `sku:${c.sku}`));
+      const seen = new Set<string>(productCandidates.map((c) => c.sku));
       crossSellCandidates = pendingDraft.crossSellSkus
         .map((sku) => bySku.get(sku))
         .filter((p): p is NonNullable<typeof p> => !!p)
         .filter((p) => {
-          const key = p.photoSku ?? `sku:${p.sku}`;
-          if (seen.has(key)) return false;
-          seen.add(key);
+          if (seen.has(p.sku)) return false;
+          seen.add(p.sku);
           return true;
         })
         .map(toProductCard);

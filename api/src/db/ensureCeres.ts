@@ -1,5 +1,5 @@
 import { prisma } from './prisma.js';
-import { MESSENGERS, messengerEmail } from './ensureSeeded.js';
+import { EMPLOYEES, employeeEmail } from './ensureSeeded.js';
 
 // Carrier-bucket parties (kind "carrier") — expenses booked against a courier
 // rather than a person. sortOrder 100+ so they always list after the messengers.
@@ -44,10 +44,10 @@ export async function ensureCeres(): Promise<void> {
     }
 
     if ((await prisma.ceresParty.count()) === 0) {
-      const persons = MESSENGERS.map((m, i) => ({
-        name: m.name,
+      const persons = EMPLOYEES.map((e, i) => ({
+        name: e.name,
         kind: 'person',
-        agentEmail: messengerEmail(m.slug),
+        agentEmail: employeeEmail(e.slug),
         sortOrder: i,
       }));
       const carriers = CARRIERS.map((c) => ({
@@ -59,6 +59,38 @@ export async function ensureCeres(): Promise<void> {
       await prisma.ceresParty.createMany({ data: [...persons, ...carriers] });
       // eslint-disable-next-line no-console
       console.log(`[seed] created ${persons.length + carriers.length} Ceres parties`);
+    }
+
+    // Idempotent roster fixups (run every boot; cheap). Production was seeded from the
+    // pre-unification roster (13 "messenger" parties on m-<slug>@ emails, incl. นี), so:
+    //  (a) every EMPLOYEE gets a person party linked to the CURRENT <slug>@ email —
+    //      relinks the old m-<slug>@ rows and creates missing parties (e.g. the three
+    //      sales, who also enter expenses under the unified model);
+    //  (b) the party named "นี" is Nee the MD, not an employee (owner correction) —
+    //      unlink + deactivate it, but NEVER delete (append-only history).
+    for (const [i, e] of EMPLOYEES.entries()) {
+      const email = employeeEmail(e.slug);
+      const party = await prisma.ceresParty.findUnique({ where: { name: e.name } });
+      if (!party) {
+        await prisma.ceresParty.create({
+          data: { name: e.name, kind: 'person', agentEmail: email, sortOrder: i },
+        });
+        // eslint-disable-next-line no-console
+        console.log(`[seed] created Ceres party for ${e.slug}`);
+      } else if (party.agentEmail !== email) {
+        await prisma.ceresParty.update({ where: { id: party.id }, data: { agentEmail: email } });
+        // eslint-disable-next-line no-console
+        console.log(`[seed] relinked Ceres party ${e.slug} to ${email}`);
+      }
+    }
+    const neeParty = await prisma.ceresParty.findUnique({ where: { name: 'นี' } });
+    if (neeParty && (neeParty.agentEmail !== null || neeParty.active)) {
+      await prisma.ceresParty.update({
+        where: { id: neeParty.id },
+        data: { agentEmail: null, active: false },
+      });
+      // eslint-disable-next-line no-console
+      console.log('[seed] unlinked/deactivated party "นี" (she is the MD, not an employee)');
     }
 
     if ((await prisma.ceresCategory.count()) === 0) {

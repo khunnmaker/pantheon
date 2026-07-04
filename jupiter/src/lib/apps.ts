@@ -1,19 +1,21 @@
-import type { Badges, Role } from './api';
+import type { Agent, AppName, Badges } from './api';
 
 // The deities the portal can launch. `url` is read from build-time env so the
 // Railway→custom-domain cutover (Phase 2) is an env edit, not a code change; a tile with
-// an unset URL is hidden even if the role could enter it (e.g. before the service exists).
-// `enter` mirrors the api's badge gating (who may open each app). `order` is most-used-first
-// per role and is resolved in tileOrderFor() below.
+// an unset URL is hidden even if the caller could enter it (e.g. before the service exists).
+//
+// Post unified-auth (PR #7): tile visibility is a PER-PERSON grant, not a role list — it must
+// match exactly what the caller can open (and what /api/jupiter/badges returns). hasAppAccess()
+// below mirrors the server's gate (api/src/auth/jwt.ts) so tiles == badges == openable apps.
+// `order` is most-used-first and resolved in tilesFor().
 
-export type AppKey = 'minerva' | 'vulcan' | 'juno' | 'ceres';
+export type AppKey = AppName;
 
 export interface AppDef {
   key: AppKey;
   name: string;          // deity name
   job: string;           // Thai job label
   url: string | undefined;
-  enter: Role[];         // roles allowed to open it (matches /api/jupiter/badges gating)
   accent: string;        // tailwind text color for the tile icon/name
   badge: (b: Badges) => number | null;   // pending-work count from the badges payload
 }
@@ -26,7 +28,6 @@ export const APPS: AppDef[] = [
     name: 'Minerva',
     job: 'ตอบแชทลูกค้า LINE',
     url: env.VITE_MINERVA_URL,
-    enter: ['agent', 'supervisor'],
     accent: 'text-sky-600',
     badge: (b) => b.minerva?.pending ?? null,
   },
@@ -35,7 +36,6 @@ export const APPS: AppDef[] = [
     name: 'Juno',
     job: 'การเงิน · ตรวจสลิป',
     url: env.VITE_JUNO_URL,
-    enter: ['supervisor'],
     accent: 'text-emerald-600',
     badge: (b) => b.juno?.toVerify ?? null,
   },
@@ -44,7 +44,6 @@ export const APPS: AppDef[] = [
     name: 'Vulcan',
     job: 'จัดการสต็อกสินค้า',
     url: env.VITE_VULCAN_URL,
-    enter: ['supervisor'],
     accent: 'text-indigo-600',
     badge: (b) => b.vulcan?.lowStock ?? null,
   },
@@ -53,27 +52,30 @@ export const APPS: AppDef[] = [
     name: 'Ceres',
     job: 'ค่าใช้จ่าย · เงินสดย่อย',
     url: env.VITE_CERES_URL,
-    enter: ['messenger', 'md', 'supervisor'],
     accent: 'text-amber-600',
     badge: (b) => b.ceres?.awaitingAction ?? null,
   },
 ];
 
-// Most-used-first tile order per role. Agents live in Minerva all day; the supervisor's day
-// starts in finance (verify slips) then the console, stock, expenses. messenger + md are
-// Ceres-only today, so their single tile is Ceres. Every Role must have an entry here or
-// tilesFor() throws on ORDER[role] — keep this exhaustive with the api Role type.
-const ORDER: Record<Role, AppKey[]> = {
-  agent: ['minerva'],
-  supervisor: ['juno', 'minerva', 'vulcan', 'ceres'],
-  messenger: ['ceres'],
-  md: ['ceres'],
-};
+// Mirrors api/src/auth/jwt.ts hasAppAccess: supervisor → everything; md → ceres only;
+// employee → their own per-person `apps` grant. Keep in lock-step with the server so a tile
+// only ever appears when the same account would pass requireApp on that app's routes.
+export function hasAppAccess(agent: Agent, app: AppName): boolean {
+  if (agent.role === 'supervisor') return true;
+  if (agent.role === 'md') return app === 'ceres';
+  return (agent.apps ?? []).includes(app);
+}
 
-// The tiles a role should see: allowed to enter AND has a configured URL, in most-used order.
-export function tilesFor(role: Role): AppDef[] {
-  const rank = new Map(ORDER[role].map((k, i) => [k, i]));
+// Most-used-first display order. The supervisor's day starts in finance (verify slips) then
+// the console, stock, expenses; other accounts see whichever of these they're granted, in the
+// same relative order. Any app missing here sorts last (defensive; all four are listed).
+const ORDER: AppKey[] = ['juno', 'minerva', 'vulcan', 'ceres'];
+
+// The tiles this account should see: GRANTED (hasAppAccess) AND has a configured URL, in
+// most-used order. Grant-gated so tiles match the person's badges exactly.
+export function tilesFor(agent: Agent): AppDef[] {
+  const rank = new Map(ORDER.map((k, i) => [k, i]));
   return APPS
-    .filter((a) => a.enter.includes(role) && !!a.url && rank.has(a.key))
-    .sort((a, b) => (rank.get(a.key)! - rank.get(b.key)!));
+    .filter((a) => hasAppAccess(agent, a.key) && !!a.url)
+    .sort((a, b) => ((rank.get(a.key) ?? ORDER.length) - (rank.get(b.key) ?? ORDER.length)));
 }

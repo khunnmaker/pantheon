@@ -1,7 +1,7 @@
 import type { Server as HttpServer } from 'node:http';
 import { Server as IOServer, type Socket } from 'socket.io';
 import { env } from '../env.js';
-import { type AuthedAgent } from '../auth/jwt.js';
+import { type AuthedAgent, hasAppAccess } from '../auth/jwt.js';
 import { authedAgentFromToken } from '../auth/middleware.js';
 
 // Socket path matches the spec's `WS /console` and the Vite dev proxy.
@@ -32,6 +32,9 @@ export function initIo(server: HttpServer): IOServer {
     authedAgentFromToken(token)
       .then((agent) => {
         if (!agent) return next(new Error('unauthorized'));
+        // The console is Minerva-facing — a Ceres-only employee (or the md tier) must not
+        // get a live socket into sales conversations.
+        if (!hasAppAccess(agent, 'minerva')) return next(new Error('unauthorized'));
         (socket.data as SocketData).agent = agent;
         next();
       })

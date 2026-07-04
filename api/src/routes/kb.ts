@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { prisma } from '../db/prisma.js';
-import { requireAuth, requireRole } from '../auth/middleware.js';
+import { requireAuth, requireApp, requireRole } from '../auth/middleware.js';
 import { embedKbEntry, kbEmbeddingText, deleteKbEmbedding } from '../memory/embeddings.js';
 
 const sensitivity = z.enum(['normal', 'price_stock', 'clinical', 'no_auto']);
@@ -19,6 +19,7 @@ const updateBody = createBody.partial().extend({
 
 export async function kbRoutes(app: FastifyInstance) {
   app.addHook('preHandler', requireAuth);
+  app.addHook('preHandler', requireApp('minerva'));
   const supervisorOnly = { preHandler: [requireRole('supervisor')] };
 
   // GET /api/kb — list (active first). Any authenticated agent.

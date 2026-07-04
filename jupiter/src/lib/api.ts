@@ -5,15 +5,18 @@
 
 export const API_URL: string = import.meta.env.VITE_API_URL ?? 'http://localhost:3000';
 
-// Mirrors the backend's Role vocabulary (api/src/auth/jwt.ts). messenger + md are the
-// Ceres-facing roles; a supervisor is the CEO/owner. Every role that can enter at least
-// one app must appear here (and in apps.ts ORDER) or the portal shows them no tiles.
-export type Role = 'agent' | 'supervisor' | 'messenger' | 'md';
+// Mirrors the backend's Role vocabulary post unified-auth (api/src/auth/jwt.ts): three live
+// tiers. Which apps a person may open is NO LONGER derived from role alone — it's a per-person
+// grant (`apps`), exactly as the server gates it (see hasAppAccess in apps.ts). supervisor →
+// everything; md → ceres only; employee → their own `apps` list.
+export type Role = 'supervisor' | 'md' | 'employee';
+export type AppName = 'minerva' | 'vulcan' | 'juno' | 'ceres';
 export interface Agent {
   id: string;
   email: string;
   name: string;
   role: Role;
+  apps: string[];   // per-person app grants (from the login response). Absent/empty ⇒ none.
 }
 
 // The badges payload: a key per app the CALLER may enter (the server never returns a key

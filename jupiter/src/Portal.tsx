@@ -3,13 +3,14 @@ import { Crown, LogOut, Loader2, ExternalLink } from 'lucide-react';
 import { clearSession, getBadges, type Agent, type Badges } from './lib/api';
 import { tilesFor, type AppDef } from './lib/apps';
 
-// The portal home: a tile grid, one tile per app the role may enter (with a configured URL),
-// each showing the deity name + Thai job label + a live pending-work badge. A tile opens the
-// app's URL in the same tab. Phase 1: apps still ask for their own login when opened (SSO is Phase 3).
+// The portal home: a tile grid, one tile per app this account is GRANTED (with a configured
+// URL), each showing the deity name + Thai job label + a live pending-work badge. A tile opens
+// the app's URL in the same tab. Tiles are grant-gated (tilesFor) so they match the caller's
+// badges exactly. Phase 1: apps still ask for their own login when opened (SSO is Phase 3).
 export default function Portal({ agent, onLogout }: { agent: Agent; onLogout: () => void }) {
   const [badges, setBadges] = useState<Badges | null>(null);
   const [loading, setLoading] = useState(true);
-  const tiles = tilesFor(agent.role);
+  const tiles = tilesFor(agent);
 
   useEffect(() => {
     let alive = true;

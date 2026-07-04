@@ -5,41 +5,43 @@ import { embed, embeddingsAvailable, storeKbEmbedding, kbEmbeddingText, kbTextHa
 import { prewarmDraftCache } from '../llm/prewarm.js';
 import { env } from '../env.js';
 
-// Canonical staff list — the single source of truth for who can log in.
-// Synced on every boot (see syncStaff): names/roles come from here, passwords
-// from the named env var, and any account NOT listed here is removed. Passwords
+// Canonical staff roster — the single source of truth for who can log in.
+// Synced on every boot (see syncStaff): names/roles come from here, passwords from the
+// named env var(s), and any account NOT in TIER_ACCOUNTS + EMPLOYEES is removed. Passwords
 // are never committed — only the env-var NAME lives in code.
-//   SEED_PASSWORD     — admin/supervisor login
-//   STAFF_PASSWORD    — shared team (agent) login
-//   CERES_MD_PASSWORD — Nee's Ceres md login
-const STAFF = [
-  { email: 'drm@prominent.local', name: 'Dr. M', role: 'supervisor', pwEnv: 'SEED_PASSWORD' },
-  { email: 'nadeer@prominent.local', name: 'NaDeer', role: 'agent', pwEnv: 'STAFF_PASSWORD' },
-  { email: 'anny@prominent.local', name: 'Anny', role: 'agent', pwEnv: 'STAFF_PASSWORD' },
-  { email: 'noey@prominent.local', name: 'Noey', role: 'agent', pwEnv: 'STAFF_PASSWORD' },
-  { email: 'md@prominent.local', name: 'Nee', role: 'md', pwEnv: 'CERES_MD_PASSWORD' },
+//
+// Three tiers (unified auth):
+//   supervisor — Dr. M, implicit access to everything.
+//   md         — Nee, implicit access to Ceres (management side) only.
+//   employee   — all staff; per-person app access via Agent.apps (owner-edited, Jupiter's
+//                admin UI — boot-sync never overwrites it on an existing row).
+export const TIER_ACCOUNTS = [
+  { email: 'drm@prominent.local', name: 'Dr. M', role: 'supervisor', pwEnvs: ['SEED_PASSWORD'] },
+  { email: 'md@prominent.local', name: 'Nee', role: 'md', pwEnvs: ['MD_PASSWORD', 'CERES_MD_PASSWORD'] }, // first non-empty wins; using the 2nd logs a deprecation warn
 ] as const;
 
-// Canonical Ceres messenger roster — each logs in with their own PIN (see
-// CERES_MESSENGER_PINS, parsed with parseAgentPins below). Exported so
-// ensureCeres.ts can seed the matching CeresParty rows off the same list.
-export const MESSENGERS = [
-  { slug: 'ta', name: 'ต้า' },
-  { slug: 'arm', name: 'อาร์ม' },
-  { slug: 'man', name: 'แมน' },
-  { slug: 'boonson', name: 'บุญสอน' },
-  { slug: 'kaew', name: 'แก้ว' },
-  { slug: 'lungko', name: 'ลุงโก๊ะ' },
-  { slug: 'wong', name: 'วง' },
-  { slug: 'paeng', name: 'แป๋ง' },
-  { slug: 'nun', name: 'นุ่น' },
-  { slug: 'nee', name: 'นี' },
-  { slug: 'pin', name: 'พิณ' },
-  { slug: 'lekmaeban', name: 'เล็กแม่บ้าน' },
-  { slug: 'da', name: 'ด้า' },
+// Every employee, each with their own 6-digit PIN (EMPLOYEE_PINS) and a per-person set of
+// app grants. NOTE: นี (Nee) is the MD tier account above — she is NOT an employee row (the
+// old MESSENGERS list wrongly included her under a "nee" slug; fixed here).
+export const EMPLOYEES = [
+  { slug: 'nadeer', name: 'NaDeer', apps: ['minerva', 'ceres'] },
+  { slug: 'anny', name: 'Anny', apps: ['minerva', 'ceres'] },
+  { slug: 'noey', name: 'Noey', apps: ['minerva', 'ceres'] },
+  { slug: 'ta', name: 'ต้า', apps: ['ceres'] },
+  { slug: 'arm', name: 'อาร์ม', apps: ['ceres'] },
+  { slug: 'man', name: 'แมน', apps: ['ceres'] },
+  { slug: 'boonson', name: 'บุญสอน', apps: ['ceres'] },
+  { slug: 'kaew', name: 'แก้ว', apps: ['ceres'] },
+  { slug: 'lungko', name: 'ลุงโก๊ะ', apps: ['ceres'] },
+  { slug: 'wong', name: 'วง', apps: ['ceres'] },
+  { slug: 'paeng', name: 'แป๋ง', apps: ['ceres'] },
+  { slug: 'nun', name: 'นุ่น', apps: ['ceres'] },
+  { slug: 'pin', name: 'พิณ', apps: ['ceres'] },
+  { slug: 'lekmaeban', name: 'เล็กแม่บ้าน', apps: ['ceres'] }, // housekeeper — enters expenses like everyone
+  { slug: 'da', name: 'ด้า', apps: ['ceres'] },
 ] as const;
 
-export const messengerEmail = (slug: string): string => `m-${slug}@prominent.local`;
+export const employeeEmail = (slug: string): string => `${slug}@prominent.local`;
 
 // Weak/common 6-digit PINs — still accepted (never lock someone out over this) but
 // worth a boot-log nudge to change them. Never paired with the actual value in a log.
@@ -48,12 +50,10 @@ const WEAK_PINS = new Set([
   '555555', '666666', '777777', '888888', '999999', '112233', '121212',
 ]);
 
-// Parse a PIN map env ("name:pin,name:pin") → Map of key → 6-digit PIN. Used for BOTH
-// AGENT_PINS (console/Vulcan/Juno staff, keyed by email local-part) and
-// CERES_MESSENGER_PINS (Ceres messengers, keyed by slug). Invalid entries are warned
-// and skipped (a malformed env must never lock anyone out — agents fall back to
-// STAFF_PASSWORD; a messenger without a valid PIN just isn't provisioned yet).
-// Weak PINs are accepted but warned.
+// Parse a PIN map env ("name:pin,name:pin") → Map of key → 6-digit PIN. Used for EMPLOYEE_PINS
+// (all 15 staff, keyed by slug) and the deprecated AGENT_PINS transition fallback. Invalid
+// entries are warned and skipped (a malformed env must never lock anyone out). Weak PINs are
+// accepted but warned.
 export function parseAgentPins(raw: string, label = 'AGENT_PINS'): Map<string, string> {
   const pins = new Map<string, string>();
   for (const entry of raw.split(',')) {
@@ -77,82 +77,110 @@ export function parseAgentPins(raw: string, label = 'AGENT_PINS'): Map<string, s
   return pins;
 }
 
-// Reconcile the agent table to the canonical STAFF list on boot. Idempotent:
-// upserts names/roles/passwords and prunes stale logins. A missing password env
-// skips just that account (never seeds a blank/default password); pruning is
-// guarded so a misconfigured env can never delete the last working login.
+// Reconcile the agent table to the canonical roster (TIER_ACCOUNTS + EMPLOYEES) on boot.
+// Idempotent: upserts names/roles/passwords and prunes stale logins. A missing password/PIN
+// skips just that account (never seeds a blank/default password); pruning is guarded so a
+// misconfigured env can never delete the last working login.
 //
-// Agents may log in with a per-person PIN (AGENT_PINS) instead of the shared
-// STAFF_PASSWORD; the supervisor (Dr. M) always uses SEED_PASSWORD and never
-// consults the PIN map. Kept self-contained/surgical — a sibling app's boot-sync
-// additions land in this file later.
+// Transition fallbacks (unified auth cutover): while EMPLOYEE_PINS is being rolled out, an
+// employee without a PIN there falls back to the legacy AGENT_PINS map, and — for the three
+// original console agents only (nadeer/anny/noey) — finally to the shared STAFF_PASSWORD, so
+// live sales keep working uninterrupted. Each fallback logs a one-line deprecation warn.
 async function syncStaff(): Promise<void> {
-  const pins = parseAgentPins(env.AGENT_PINS);
   let allProvisioned = true;
-  for (const s of STAFF) {
-    const localPart = s.email.split('@')[0];
-    // Agents check their PIN first, falling back to the shared STAFF_PASSWORD; the
-    // supervisor is never eligible for a PIN.
-    const pw = s.role === 'agent' ? (pins.get(localPart) ?? process.env[s.pwEnv]) : process.env[s.pwEnv];
+
+  // Tier accounts (supervisor, md).
+  for (const t of TIER_ACCOUNTS) {
+    let pw: string | undefined;
+    if (t.email === 'md@prominent.local') {
+      pw = process.env.MD_PASSWORD || undefined;
+      if (!pw && process.env.CERES_MD_PASSWORD) {
+        pw = process.env.CERES_MD_PASSWORD;
+        // eslint-disable-next-line no-console
+        console.warn('[staff] CERES_MD_PASSWORD is deprecated — rename it to MD_PASSWORD');
+      }
+    } else {
+      pw = process.env[t.pwEnvs[0]] || undefined;
+    }
     if (!pw) {
       allProvisioned = false;
       // eslint-disable-next-line no-console
-      console.warn(`[staff] ${s.pwEnv} not set — skipping ${s.email}`);
+      console.warn(`[staff] ${t.pwEnvs.join('/')} not set — skipping ${t.email}`);
       continue;
     }
     const existing = await prisma.agent.findUnique({
-      where: { email: s.email },
+      where: { email: t.email },
       select: { passwordHash: true },
     });
     // Only (re)hash when the account is new or the effective password actually changed —
     // bcrypt salts differ per call, so hashing every boot would rewrite the row for
-    // no reason; verifyPassword still heals a rotated password/PIN.
+    // no reason; verifyPassword still heals a rotated password.
     const passwordHash =
       existing && (await verifyPassword(pw, existing.passwordHash))
         ? existing.passwordHash
         : await hashPassword(pw);
     await prisma.agent.upsert({
-      where: { email: s.email },
-      update: { name: s.name, role: s.role, passwordHash },
-      create: { email: s.email, name: s.name, role: s.role, passwordHash },
+      where: { email: t.email },
+      // apps is never touched on update — Jupiter's admin UI owns it for existing rows.
+      update: { name: t.name, role: t.role, passwordHash },
+      create: { email: t.email, name: t.name, role: t.role, passwordHash, apps: [] },
     });
   }
 
-  // Each messenger logs in with their own 6-digit PIN (env CERES_MESSENGER_PINS,
-  // "slug:pin,…" — same parser/rules as AGENT_PINS above). Same per-account upsert
-  // mechanism as STAFF; a messenger with no valid PIN is skipped (warn) and marks the
-  // boot as not-fully-provisioned, same safety semantics as a missing STAFF password.
-  const messengerPins = parseAgentPins(env.CERES_MESSENGER_PINS, 'CERES_MESSENGER_PINS');
-  for (const m of MESSENGERS) {
-    const pin = messengerPins.get(m.slug);
-    const email = messengerEmail(m.slug);
+  // Employees, each with their own 6-digit PIN and per-person app grants.
+  const employeePins = parseAgentPins(env.EMPLOYEE_PINS, 'EMPLOYEE_PINS');
+  const legacyAgentPins = parseAgentPins(env.AGENT_PINS, 'AGENT_PINS');
+  const consoleLegacySlugs = new Set(['nadeer', 'anny', 'noey']);
+  for (const e of EMPLOYEES) {
+    const email = employeeEmail(e.slug);
+    let pin = employeePins.get(e.slug);
+    if (!pin) {
+      pin = legacyAgentPins.get(e.slug);
+      if (pin) {
+        // eslint-disable-next-line no-console
+        console.warn(`[staff] AGENT_PINS is deprecated — move "${e.slug}" to EMPLOYEE_PINS`);
+      }
+    }
+    if (!pin && consoleLegacySlugs.has(e.slug) && process.env.STAFF_PASSWORD) {
+      pin = process.env.STAFF_PASSWORD;
+      // eslint-disable-next-line no-console
+      console.warn(`[staff] STAFF_PASSWORD is deprecated — give "${e.slug}" a PIN in EMPLOYEE_PINS`);
+    }
     if (!pin) {
       allProvisioned = false;
       // eslint-disable-next-line no-console
-      console.warn(`[staff] no PIN configured for messenger "${m.slug}" — skipping ${email}`);
+      console.warn(`[staff] no PIN configured for employee "${e.slug}" — skipping ${email}`);
       continue;
     }
     const existing = await prisma.agent.findUnique({
       where: { email },
-      select: { passwordHash: true },
+      select: { passwordHash: true, apps: true },
     });
     const passwordHash =
       existing && (await verifyPassword(pin, existing.passwordHash))
         ? existing.passwordHash
         : await hashPassword(pin);
+    // apps: a NON-EMPTY grant list belongs to Jupiter's admin UI and is never overwritten.
+    // An EMPTY list on an existing row can only be a pre-unification account (the column
+    // arrived defaulted to {}) — backfill the roster defaults ONCE, or the live sales
+    // team would deploy straight into a console lock-out. To fully revoke someone,
+    // remove their PIN from EMPLOYEE_PINS (no login at all), not their last grant.
+    const backfillApps = existing && existing.apps.length === 0 ? { apps: [...e.apps] } : {};
     await prisma.agent.upsert({
       where: { email },
-      update: { name: m.name, role: 'messenger', passwordHash },
-      create: { email, name: m.name, role: 'messenger', passwordHash },
+      update: { name: e.name, role: 'employee', passwordHash, ...backfillApps },
+      create: { email, name: e.name, role: 'employee', passwordHash, apps: [...e.apps] },
     });
+    if (existing && existing.apps.length === 0) {
+      // eslint-disable-next-line no-console
+      console.log(`[staff] backfilled default app grants for "${e.slug}" (${e.apps.join(', ')})`);
+    }
   }
 
-  // Prune stale accounts only once EVERY canonical account (STAFF + messengers) is
-  // provisioned, so the old logins keep working until the new ones are fully in
-  // place (e.g. before CERES_MESSENGER_PINS is set) and a misconfigured env can
-  // never lock everyone out. CRITICAL: the prune list must include messenger
-  // emails, or every Ceres login would be deleted on each boot.
-  const emails = [...STAFF.map((s) => s.email), ...MESSENGERS.map((m) => messengerEmail(m.slug))];
+  // Prune stale accounts only once EVERY canonical account (tier accounts + employees) is
+  // provisioned, so old logins keep working until the new ones are fully in place (e.g.
+  // before EMPLOYEE_PINS is set) and a misconfigured env can never lock everyone out.
+  const emails = [...TIER_ACCOUNTS.map((t) => t.email), ...EMPLOYEES.map((e) => employeeEmail(e.slug))];
   if (allProvisioned) {
     const { count } = await prisma.agent.deleteMany({ where: { email: { notIn: emails } } });
     if (count > 0) {

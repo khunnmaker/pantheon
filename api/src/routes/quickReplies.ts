@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { prisma } from '../db/prisma.js';
-import { requireAuth } from '../auth/middleware.js';
+import { requireAuth, requireApp } from '../auth/middleware.js';
 
 const createSchema = z.object({
   label: z.string().min(1).max(40),
@@ -13,6 +13,7 @@ const createSchema = z.object({
 // manage them (an internal tool, not customer-facing).
 export async function quickReplyRoutes(app: FastifyInstance) {
   app.addHook('preHandler', requireAuth);
+  app.addHook('preHandler', requireApp('minerva'));
 
   app.get('/api/quick-replies', async () => {
     const items = await prisma.quickReply.findMany({

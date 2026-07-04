@@ -1,43 +1,40 @@
 import type { FastifyInstance } from 'fastify';
 import { prisma } from '../db/prisma.js';
 import { requireAnyAuth } from '../auth/middleware.js';
-import type { Role } from '../auth/jwt.js';
+import { hasAppAccess, type AppName } from '../auth/jwt.js';
+import { ceresRole } from '../ceres/auth.js';
 
 // Jupiter — the portal's badges endpoint. Returns pending-work counts ONLY for the
-// apps the caller's role may enter (never leak a count for an app the caller can't
-// open). Phase 1: no SSO, any authenticated account, today's localStorage-JWT auth.
+// apps the caller may actually enter (never leak a count for an app they can't open).
+// Phase 1: no SSO, any authenticated account, today's localStorage-JWT auth.
 // See docs/JUPITER_BRIEF.md §5.
 //
-// Role→app "who may enter" map (mirrors the actual route gates in the suite):
-//   - Minerva (web/)   : agent + supervisor      → /api/queue, requireAuth only
-//   - Vulcan  (vulcan/): supervisor only         → /api/stock/*, requireRole('supervisor')
-//   - Juno    (juno/)  : supervisor only         → /api/juno/*,  requireRole('supervisor')
-//   - Ceres   (ceres/) : messenger + md + CEO    → /api/ceres/*, requireCeresRole(...)
+// Post unified-auth (PR #7): "who may enter an app" is a PER-PERSON grant, not a role
+// list. hasAppAccess(agent, app) is the single gate (supervisor → everything; md → ceres
+// only; employee → their own Agent.apps). We compute+emit a badge for an app IFF
+// hasAppAccess is true for that app, so each person's badges match exactly the tiles they
+// can open. AppName values (minerva | vulcan | juno | ceres) come straight from auth/jwt.ts.
 //
-// The auth layer now issues 'agent' | 'supervisor' | 'messenger' | 'md' (see auth/jwt.ts).
-// Ceres maps those onto its own vocabulary (ceres/auth.ts): messenger→messenger, md→md,
-// supervisor→ceo; a plain 'agent' has NO Ceres access. A Ceres badge is only ever emitted
-// for a caller whose role can actually enter Ceres.
+// Ceres has an extra persona layer on top of the grant: ceresRole(agent) maps a caller to
+// 'ceo' | 'md' | 'messenger' | null, and each persona has a DIFFERENT awaiting-action queue.
+// hasAppAccess(agent,'ceres') and ceresRole(agent) !== null agree for every account, so we
+// use ceresRole to both gate the ceres badge AND pick the right per-persona count.
 
-// A tiny in-process cache keyed by the shape of counts a role can see. Badges are a
+// A tiny in-process cache keyed by exactly what counts a caller can see. Badges are a
 // glance-level hint (a small number on a tile), not an authoritative figure, so a ~30s
-// staleness is fine and spares the DB a burst of count() queries when the whole team
-// opens the portal at once. Most counts are global, so the cache key is the role bucket —
-// EXCEPT the Ceres messenger badge, which is per-user (a messenger sees only their OWN
-// drafts/rejections). For messengers the key is therefore role+agentId so one messenger's
-// count is never served to another. See cacheKey() below.
+// staleness is fine and spares the DB a burst of count() queries when the whole team opens
+// the portal at once.
+//
+// Cache-key correctness under per-person grants: two accounts with the SAME role can now
+// have DIFFERENT app grants (employee A has minerva+ceres, employee B has only ceres), so a
+// role-only key would leak one person's set of counts to another. The key is therefore the
+// caller's full identity — the agent id — for EVERY caller. (The Ceres messenger badge is
+// per-user anyway.) This is strictly safe; the small cost is supervisors/mds no longer share
+// a cache slot, which is negligible at this team size.
 const CACHE_TTL_MS = 30_000;
 
 type BadgeBucket = { minerva?: { pending: number }; juno?: { toVerify: number }; vulcan?: { lowStock: number }; ceres?: { awaitingAction: number } };
 const cache = new Map<string, { at: number; value: BadgeBucket }>();
-
-// Which apps each role may ENTER. Keep this the single source of truth for gating so a
-// count is computed only when the caller can open the app it belongs to.
-const MINERVA_ENTER: Role[] = ['agent', 'supervisor'];
-const VULCAN_ENTER: Role[] = ['supervisor'];
-const JUNO_ENTER: Role[] = ['supervisor'];
-// Ceres: messenger + md self-entry/approval, plus the CEO (supervisor) for oversight.
-const CERES_ENTER: Role[] = ['messenger', 'md', 'supervisor'];
 
 // Minerva "pending" = customers whose LATEST message is a customer message that is still
 // awaiting a reply (after any "ตอบแล้ว" answeredThroughAt cutoff). This mirrors the
@@ -76,16 +73,17 @@ async function junoToVerify(): Promise<number> {
   return prisma.payment.count({ where: { status: 'received' } });
 }
 
-// Ceres "awaiting action" — computed per the CALLER's Ceres role so the badge matches
-// exactly what THAT person can act on (never a queue they can't touch). Field names
-// verified against api/prisma/schema.prisma (CeresExpense.status/partyId,
-// CeresPaymentRequest.status, CeresParty.agentEmail).
+// Ceres "awaiting action" — computed per the CALLER's Ceres persona so the badge matches
+// exactly what THAT person can act on (never a queue they can't touch). Field names verified
+// against api/prisma/schema.prisma (CeresExpense.status/partyId, CeresPaymentRequest.status,
+// CeresParty.agentEmail).
 //   - ceo (supervisor): escalated payment requests — the only queue the CEO alone clears
 //     (requests/:id/decide is requireCeresRole('ceo')). Indexed on status.
 //   - md              : pending expenses awaiting her approve/reject (global, not party-
 //     scoped — the MD approves ANY pending expense). Indexed on status.
-//   - messenger       : their OWN drafts + rejections — pending (still editable/deletable)
-//     and rejected (needs fixing/resubmit), scoped to the messenger's own party. Per-user.
+//   - messenger (an employee with the ceres grant): their OWN drafts + rejections — pending
+//     (still editable/deletable) and rejected (needs fixing/resubmit), scoped to their own
+//     party. Per-user.
 async function ceresCeoAwaiting(): Promise<number> {
   return prisma.ceresPaymentRequest.count({ where: { status: 'escalated' } });
 }
@@ -101,32 +99,33 @@ async function ceresMessengerAwaiting(agentEmail: string): Promise<number> {
 }
 
 export async function jupiterRoutes(app: FastifyInstance) {
-  // GET /api/jupiter/badges — pending-work counts, gated to the apps this role can enter.
+  // GET /api/jupiter/badges — pending-work counts, gated to the apps this caller can enter.
   app.get('/api/jupiter/badges', { preHandler: requireAnyAuth }, async (req) => {
     const agent = req.agent!;
-    const role = agent.role;
 
-    // The Ceres messenger badge is per-user, so its cache key must include the agent id;
-    // every other badge in the bucket is global, so a plain role key suffices otherwise.
-    const cacheKey = role === 'messenger' ? `messenger:${agent.id}` : role;
+    // Per-person grants ⇒ cache per identity, never per role (see note above).
+    const cacheKey = `agent:${agent.id}`;
     const cached = cache.get(cacheKey);
     if (cached && Date.now() - cached.at < CACHE_TTL_MS) return cached.value;
 
-    // Compute ONLY the badges this role may see; an app the role can't enter is never queried.
-    // Ceres resolves to a single count per role (ceo/md/messenger); a plain 'agent' — which
-    // can't enter Ceres — gets no ceres query and no ceres key at all.
-    const ceresAwaiting: Promise<number | null> = !CERES_ENTER.includes(role)
+    const can = (a: AppName) => hasAppAccess(agent, a);
+
+    // Ceres resolves to a single count per persona (ceo/md/messenger). A caller without the
+    // ceres grant has ceresRole === null and gets no ceres query and no ceres key at all.
+    const cRole = ceresRole(agent);
+    const ceresAwaiting: Promise<number | null> = cRole === null
       ? Promise.resolve(null)
-      : role === 'supervisor'
+      : cRole === 'ceo'
         ? ceresCeoAwaiting()
-        : role === 'md'
+        : cRole === 'md'
           ? ceresMdAwaiting()
           : ceresMessengerAwaiting(agent.email);
 
+    // Compute ONLY the badges this caller may see; an app they can't enter is never queried.
     const [pending, lowStock, toVerify, awaitingAction] = await Promise.all([
-      MINERVA_ENTER.includes(role) ? minervaPending() : Promise.resolve(null),
-      VULCAN_ENTER.includes(role) ? vulcanLowStock() : Promise.resolve(null),
-      JUNO_ENTER.includes(role) ? junoToVerify() : Promise.resolve(null),
+      can('minerva') ? minervaPending() : Promise.resolve(null),
+      can('vulcan') ? vulcanLowStock() : Promise.resolve(null),
+      can('juno') ? junoToVerify() : Promise.resolve(null),
       ceresAwaiting,
     ]);
 
