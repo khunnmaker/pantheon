@@ -1343,7 +1343,9 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                         <div className={'max-w-[78%] px-3 py-2 rounded-2xl text-sm whitespace-pre-wrap ' +
                           (m.role === 'customer' ? 'bg-white border border-slate-200 rounded-tl-sm' : 'bg-sky-600 text-white rounded-tr-sm')}>
                           <MessageBody m={m} />
-                          <div className={'text-[10px] mt-0.5 ' + (m.role === 'customer' ? 'text-slate-400' : 'text-sky-100')}>{fmtTime(m.createdAt)}</div>
+                          <div className={'text-[10px] mt-0.5 ' + (m.role === 'customer' ? 'text-slate-400' : 'text-sky-100')}>
+                            {fmtTime(m.createdAt)}{m.role !== 'customer' && m.agentName ? ` — ${m.agentName}` : ''}
+                          </div>
                           {m.role === 'customer' && m.attachmentType === 'image' && (
                             m.financeSentAt
                               ? <div className="mt-1 text-[10px] text-sky-600 font-medium flex items-center gap-1"><CheckCircle2 size={11} /> ส่งการเงินแล้ว</div>
@@ -1351,9 +1353,6 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                                   className="mt-1 text-[10px] px-2 py-1 rounded-lg bg-amber-100 hover:bg-amber-200 text-amber-800 font-medium flex items-center gap-1">
                                   <Banknote size={12} /> แจ้งการเงิน
                                 </button>
-                          )}
-                          {m.role !== 'customer' && m.agentName && (
-                            <div className="text-[10px] text-sky-100/80 text-right mt-1">— {m.agentName}</div>
                           )}
                         </div>
                       </div>
