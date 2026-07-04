@@ -698,6 +698,93 @@ model CeresCategory {
   sortOrder         Int     @default(0)
 }
 
+// ─── Venus (360° customer CRM) ─── Stage A+B: backend foundation only.
+// See docs/VENUS_BRIEF.md. Express's customer master ("ARMAST") is a DIFFERENT,
+// larger population than Customer (which is LINE-keyed — code is nullable/non-unique,
+// only set for chat customers staff tagged). VenusCustomer is keyed on the Express
+// code itself and soft-links to Customer BY VALUE (code), never a FK — Customer.code
+// isn't unique so a real FK isn't possible, and we don't want an import to ever be
+// blocked by Customer-side data quality.
+model VenusCustomer {
+  id              String   @id @default(cuid())
+  code            String   @unique // Express customer code, as-is (e.g. "A001", "Cก002", "๙๙0000006")
+  // lowercased + dash-stripped code, for dash-insensitive search (see SKU convention doc)
+  searchKey       String
+  name            String   @default("")
+  nameEn          String?
+  custType        String? // ประเภท section this customer was filed under (e.g. ลูกค้าประจำ, ลูกค้าชั่วคราว)
+  repCode         String? // พนักงานขาย (salesperson code, e.g. "C1", "C2", "C7") — ragged, may be absent
+  zone            String? // เขต
+  priceType       String? // ประเภทราคา
+  discount        String? // ส่วนลด, kept as printed (may be a %, blank, or free text)
+  address         String? // addr1/2/3 joined with ", " (blank segments dropped)
+  contact         String? // ผู้ติดต่อ
+  phone           String? // โทร.
+  acctNo          String? // เลขที่บ/ช
+  shipBy          String? // ขนส่งโดย
+  creditDays      Int? // เครดิต : N วัน
+  creditLimit     String? // วงเงิน, kept as printed (baht string; parses on read like Ceres/Juno money)
+  creditTerms     String? // raw เงื่อนไข free text
+  creditTermsNorm String? // normalized: CASH | PREPAY | CREDIT | OTHER (see normalizeCreditTerms)
+  note            String? // trailing indented free-note lines (e.g. "เงินสด", "+เพิ่มยอด 0.25%")
+  importedAt      DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([searchKey])
+  @@index([repCode])
+  @@index([custType])
+}
+
+// Sale document header (Express sales-report import) — Phase 1, defined now so later
+// stages drop in without another migration. Soft-links to VenusCustomer by code (same
+// non-FK reasoning as above: an unmatched customer code must never block an import).
+model SaleDoc {
+  id           String     @id @default(cuid())
+  docNo        String     @unique
+  customerCode String?
+  customerId   String? // VenusCustomer.id, once matched
+  date         DateTime
+  total        String     @default("") // baht string, parses on read (Ceres/Juno convention)
+  docType      String? // invoice | credit-note | receipt, etc. — Express-specific, TBD Phase 1
+  importedAt   DateTime   @default(now())
+  lines        SaleLine[]
+
+  @@index([customerCode])
+  @@index([date])
+}
+
+model SaleLine {
+  id        String  @id @default(cuid())
+  saleDocId String
+  saleDoc   SaleDoc @relation(fields: [saleDocId], references: [id])
+  lineNo    Int
+  sku       String?
+  productId String? // Product.sku, once matched
+  qty       Float   @default(0)
+  unitPrice String  @default("")
+  amount    String  @default("")
+
+  @@unique([saleDocId, lineNo])
+  @@index([sku])
+}
+
+// One row per customer, fully overwritten by the nightly analytics job (derived data,
+// not append-only money — see VENUS_BRIEF.md §6). Phase 2 populates this; empty for now.
+model CustomerStats {
+  id           String   @id @default(cuid())
+  customerCode String   @unique // VenusCustomer.code
+  r            Int? // recency: days since last purchase
+  f            Int? // frequency: purchase count in window
+  m            Float? // monetary: revenue in window
+  rfmScore     String? // e.g. "435" (R,F,M quintiles 1-5)
+  segment      String? // ลูกค้าชั้นดี | ลูกค้าประจำ | มาใหม่ | เสี่ยงหาย | หายไปแล้ว
+  trendPct     Float? // last-90d vs previous-90d revenue % change
+  trendDir     String? // up | down | flat
+  computedAt   DateTime @default(now())
+
+  @@index([segment])
+}
+
 // ─── DEFERRED TO M3: pgvector embedding tables (spec §5 note) ────────────
 // Activate in M3 once the database has the `vector` extension. Steps:
 //   1. add `previewFeatures = ["postgresqlExtensions"]` to the generator
