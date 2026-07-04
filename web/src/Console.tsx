@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import {
   Bot, User, LogOut, Clock, Inbox, Wifi, WifiOff, Loader2, ShieldCheck, MessageSquare,
   Send, Check, CheckCircle2, RefreshCw, Brain, GraduationCap, Wand2, Pencil, AlertTriangle, Search,
-  Download, Paperclip, Camera, Banknote, X, ChevronDown, ChevronUp,
+  Download, Paperclip, Camera, Banknote, X, ChevronDown, ChevronUp, Crown,
 } from 'lucide-react';
 import {
   getQueue, getCustomers, getCustomer, searchCustomers, clearSession, regenerateDraft, rewriteText, sendReply, setNickname, setCategory, setStage, STAGES,
@@ -12,6 +12,10 @@ import {
   type Agent, type CustomerLite, type CustomerDetail, type Message, type LearnedAnswer, type LearnedMetrics, type PendingProduct, type QuickReply,
 } from './lib/api';
 import { getSocket, disconnectSocket } from './lib/socket';
+
+// Portal-back link (Jupiter). URL from build-time env; hidden when unset, so it is completely
+// inert until VITE_PORTAL_URL is configured (Phase 1 go-live / Phase 2 domains).
+const PORTAL_URL: string | undefined = import.meta.env.VITE_PORTAL_URL;
 
 // Read a File as a base64 data URL (for upload).
 function fileToDataUrl(file: File): Promise<string> {
@@ -1032,6 +1036,9 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                 </button>
               )}
               <div className="flex-1" />
+              {PORTAL_URL && (
+                <a href={PORTAL_URL} title="กลับพอร์ทัล Jupiter" className="p-2 rounded-xl text-slate-400 hover:text-violet-600 hover:bg-slate-100"><Crown size={17} /></a>
+              )}
               <span title={connected ? 'เชื่อมต่อสด' : 'ออฟไลน์'} className={'px-1 ' + (connected ? 'text-sky-600' : 'text-slate-300')}>
                 {connected ? <Wifi size={17} /> : <WifiOff size={17} />}
               </span>

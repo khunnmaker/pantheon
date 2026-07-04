@@ -2,8 +2,12 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import {
   Boxes, Search, Upload, History, LogOut, AlertTriangle, Check, Loader2,
   Package, RefreshCw, ChevronRight, X, LayoutDashboard, PackageX, PackageCheck,
-  HelpCircle, Clock, ArrowRight,
+  HelpCircle, Clock, ArrowRight, Crown,
 } from 'lucide-react';
+
+// Portal-back link (Jupiter). URL from build-time env; hidden when unset, so it is completely
+// inert until VITE_PORTAL_URL is configured (Phase 1 go-live / Phase 2 domains).
+const PORTAL_URL: string | undefined = import.meta.env.VITE_PORTAL_URL;
 import {
   type Agent, type StockRow, type StockSummary, type StockImportRow,
   type StockAdjustmentRow, type ImportPreview,
@@ -106,6 +110,11 @@ export default function Stock({ agent, onLogout }: { agent: Agent; onLogout: () 
                   {summary.low} ใกล้หมด
                 </span>
               </span>
+            )}
+            {PORTAL_URL && (
+              <a href={PORTAL_URL} title="กลับพอร์ทัล Jupiter" className="flex items-center gap-1 text-slate-500 hover:text-violet-600">
+                <Crown size={15} /> <span className="hidden sm:inline">พอร์ทัล</span>
+              </a>
             )}
             <span className="text-slate-400">{agent.name}</span>
             <button onClick={logout} className="flex items-center gap-1 text-slate-500 hover:text-rose-600">
