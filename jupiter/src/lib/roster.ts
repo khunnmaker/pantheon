@@ -25,6 +25,8 @@ export interface Person {
 export interface RoleGroup {
   id: string;
   label: string;        // Thai group header shown on the collapsible section.
+  // Flat Metro tile accent (a solid Tailwind bg-* class) for this department's tile + banner.
+  color: string;
   members: Person[];
 }
 
@@ -40,6 +42,7 @@ export const ROLE_GROUPS: RoleGroup[] = [
   {
     id: 'ceo',
     label: 'ผู้บริหาร (CEO)',
+    color: 'bg-violet-600',
     members: [
       // Dr. P — no seeded account yet; disabled "coming soon" card (owner provisions later).
       { email: '', label: 'Dr. P', cred: 'pin', comingSoon: true },
@@ -49,6 +52,7 @@ export const ROLE_GROUPS: RoleGroup[] = [
   {
     id: 'md',
     label: 'MD',
+    color: 'bg-teal-600',
     members: [
       { email: 'md@prominent.local', label: 'Nee (นี)', cred: 'password' },
       { email: slugEmail('nun'), label: 'Noon (นุ่น)', cred: 'pin' },
@@ -57,6 +61,7 @@ export const ROLE_GROUPS: RoleGroup[] = [
   {
     id: 'sales',
     label: 'ฝ่ายขาย (Sales)',
+    color: 'bg-emerald-600',
     members: [
       { email: slugEmail('nadeer'), label: 'NaDeer', cred: 'pin' },
       { email: slugEmail('anny'), label: 'Anny', cred: 'pin' },
@@ -66,6 +71,7 @@ export const ROLE_GROUPS: RoleGroup[] = [
   {
     id: 'messengers',
     label: 'แมสเซนเจอร์',
+    color: 'bg-sky-600',
     members: [
       { email: slugEmail('ta'), label: 'ต้า', cred: 'pin' },
       { email: slugEmail('arm'), label: 'อาร์ม', cred: 'pin' },
@@ -81,11 +87,13 @@ export const ROLE_GROUPS: RoleGroup[] = [
   {
     id: 'stores',
     label: 'สโตร์',
+    color: 'bg-amber-500',
     members: [], // No staff yet — clean empty state (placeholder for future staff).
   },
   {
     id: 'others',
     label: 'อื่นๆ',
+    color: 'bg-fuchsia-600',
     members: [
       { email: slugEmail('pin'), label: 'พิณ', cred: 'pin' },
       { email: slugEmail('lekmaeban'), label: 'เล็ก', cred: 'pin' }, // seed name "เล็กแม่บ้าน", displayed "เล็ก"
