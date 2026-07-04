@@ -127,6 +127,15 @@ function PaymentsView({ view, onChanged }: { view: Exclude<View, 'reports' | 're
   const [printQueue, setPrintQueue] = useState<Payment[] | null>(null);
   // + เพิ่มรายการ modal (inbox only — hand-add a โอนเงิน/เงินสด/เช็คธนาคาร payment)
   const [addOpen, setAddOpen] = useState(false);
+  // row multi-select (checkbox column): a Set of payment ids, cleared on reload/filter/tab switch
+  const [checkedIds, setCheckedIds] = useState<Set<string>>(new Set());
+  // non-null → render the batch-check queue (see BatchCheckDialog) instead of the list
+  const [batchQueue, setBatchQueue] = useState<Payment[] | null>(null);
+  // bulk-action bar: running state + a brief result line ("สำเร็จ X/N")
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkResult, setBulkResult] = useState('');
+  // inline "ยืนยันการยกเลิก N รายการ?" confirm before batch-void runs
+  const [bulkVoidConfirm, setBulkVoidConfirm] = useState(false);
 
   const filter: PaymentFilter = {
     q: q.trim() || undefined,
@@ -162,6 +171,11 @@ function PaymentsView({ view, onChanged }: { view: Exclude<View, 'reports' | 're
   // Close the drawer on tab switch — otherwise a foreign payment stays open beside the wrong queue.
   useEffect(() => setSelected(null), [view]);
 
+  // Row checkboxes are cleared whenever the list reloads/filters change or the tab switches —
+  // a stale selection referring to rows no longer on screen would be confusing/dangerous for
+  // bulk actions (owner requirement).
+  useEffect(() => { setCheckedIds(new Set()); setBulkResult(''); setBulkVoidConfirm(false); }, [view, q, status, from, to]);
+
   // Reflect a drawer action back into the list + selected row without a full reload.
   function applyUpdate(p: Payment) {
     setSelected(p);
@@ -180,8 +194,82 @@ function PaymentsView({ view, onChanged }: { view: Exclude<View, 'reports' | 're
   const verifiedInView = rows.filter((r) => r.status === 'verified' && r.reNumbers.length > 0);
   const coverCountInView = verifiedInView.reduce((sum, r) => sum + r.reNumbers.length, 0);
 
+  // ── Row multi-select + bulk actions ───────────────────────────────────────
+  const checkedRows = rows.filter((r) => checkedIds.has(r.id));
+  const checkableRows = checkedRows.filter((r) => r.status !== 'void' && r.status !== 'recorded');
+  const printableRows = checkedRows.filter((r) => r.reNumbers.length > 0);
+  const allVisibleChecked = rows.length > 0 && rows.every((r) => checkedIds.has(r.id));
+
+  // Note: the checkbox's own onClick (below, at the call site) stops propagation so checking
+  // a row never opens its drawer — this toggle is purely the Set update.
+  function toggleRow(id: string) {
+    setCheckedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+  function toggleAllVisible() {
+    setCheckedIds((prev) => {
+      if (rows.length > 0 && rows.every((r) => prev.has(r.id))) return new Set();
+      return new Set(rows.map((r) => r.id));
+    });
+  }
+  function clearSelection() {
+    setCheckedIds(new Set());
+    setBulkVoidConfirm(false);
+    setBulkResult('');
+  }
+
+  // Runs `fn` over every selected row with Promise.allSettled, then reloads + clears selection.
+  // Shared by bulk flag/clear-flag and bulk void.
+  async function runBulk(targets: Payment[], fn: (p: Payment) => Promise<unknown>) {
+    if (targets.length === 0 || bulkBusy) return;
+    setBulkBusy(true);
+    setBulkResult('');
+    const results = await Promise.allSettled(targets.map((p) => fn(p)));
+    const okCount = results.filter((r) => r.status === 'fulfilled').length;
+    setBulkResult(`สำเร็จ ${okCount}/${targets.length}`);
+    setBulkBusy(false);
+    setBulkVoidConfirm(false);
+    setCheckedIds(new Set());
+    load();
+    onChanged();
+  }
+
+  function bulkPrint() {
+    if (printableRows.length === 0) return;
+    setPrintQueue(printableRows);
+  }
+  function bulkFlagToggle() {
+    const flaggingOff = view === 'flags';
+    void runBulk(checkedRows, (p) => setFlag(p.id, !flaggingOff));
+  }
+  function bulkVoid() {
+    if (!bulkVoidConfirm) {
+      setBulkVoidConfirm(true);
+      return;
+    }
+    void runBulk(checkedRows, (p) => setStatus(p.id, 'void'));
+  }
+
   if (printQueue) {
     return <PrintCovers payments={printQueue} onDone={() => setPrintQueue(null)} />;
+  }
+
+  if (batchQueue) {
+    return (
+      <BatchCheckDialog
+        payments={batchQueue}
+        onDone={() => {
+          setBatchQueue(null);
+          setCheckedIds(new Set());
+          load();
+          onChanged();
+        }}
+      />
+    );
   }
 
   return (
@@ -242,6 +330,76 @@ function PaymentsView({ view, onChanged }: { view: Exclude<View, 'reports' | 're
           )}
       </div>
 
+      {/* Bulk-action bar — appears only when ≥1 row is checked. Sticky just below the app's own
+          sticky header (title bar + tabs, ~104px — same offset Detail's drawer already uses)
+          so it stays visible without overlapping the tabs row. */}
+      {checkedIds.size > 0 && (
+        <div className="sticky top-[104px] z-10 bg-emerald-700 text-white rounded-xl px-3 py-2 mb-3 flex flex-wrap items-center gap-2 text-sm">
+          <span className="font-semibold whitespace-nowrap">เลือก {checkedIds.size} รายการ</span>
+          <button
+            onClick={bulkPrint}
+            disabled={bulkBusy || printableRows.length === 0}
+            title={printableRows.length === 0 ? 'ไม่มีรายการที่เลือกซึ่งมีเลข RE' : undefined}
+            className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 disabled:opacity-40 disabled:hover:bg-white/10"
+          >
+            <Printer size={14} /> พิมพ์ใบปะหน้า
+          </button>
+          {checkableRows.length > 0 && (
+            <button
+              onClick={() => setBatchQueue(checkableRows)}
+              disabled={bulkBusy}
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 disabled:opacity-40"
+            >
+              <ClipboardCheck size={14} /> ตรวจแล้ว
+            </button>
+          )}
+          <button
+            onClick={bulkFlagToggle}
+            disabled={bulkBusy}
+            className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 disabled:opacity-40"
+          >
+            <Flag size={14} /> {view === 'flags' ? 'เคลียร์ธง' : 'ปักธง'}
+          </button>
+          {bulkVoidConfirm ? (
+            <span className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-rose-900/40">
+              <AlertTriangle size={14} /> ยืนยันการยกเลิก {checkedIds.size} รายการ?
+              <button
+                onClick={bulkVoid}
+                disabled={bulkBusy}
+                className="px-2 py-0.5 rounded bg-rose-600 hover:bg-rose-500 font-semibold disabled:opacity-40"
+              >
+                ยืนยัน
+              </button>
+              <button
+                onClick={() => setBulkVoidConfirm(false)}
+                disabled={bulkBusy}
+                className="px-2 py-0.5 rounded bg-white/10 hover:bg-white/20 disabled:opacity-40"
+              >
+                ไม่
+              </button>
+            </span>
+          ) : (
+            <button
+              onClick={bulkVoid}
+              disabled={bulkBusy}
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 disabled:opacity-40"
+            >
+              <Ban size={14} /> ยกเลิก
+            </button>
+          )}
+          {bulkBusy && <Loader2 size={15} className="animate-spin" />}
+          {bulkResult && <span className="text-xs bg-white/10 px-2 py-1 rounded-lg">{bulkResult}</span>}
+          <button
+            onClick={clearSelection}
+            disabled={bulkBusy}
+            title="ล้างการเลือก"
+            className="ml-auto p-1.5 rounded-lg hover:bg-white/20 disabled:opacity-40"
+          >
+            <X size={16} />
+          </button>
+        </div>
+      )}
+
       <div className="flex gap-4">
         <div className="flex-1 min-w-0">
           <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
@@ -257,6 +415,16 @@ function PaymentsView({ view, onChanged }: { view: Exclude<View, 'reports' | 're
             <table className="w-full text-sm">
               <thead className="bg-slate-50 text-slate-500 text-xs">
                 <tr>
+                  <th className="px-3 py-2 w-[36px]">
+                    <input
+                      type="checkbox"
+                      checked={allVisibleChecked}
+                      onChange={toggleAllVisible}
+                      onClick={(e) => e.stopPropagation()}
+                      title="เลือกทั้งหมดที่แสดงอยู่"
+                      className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-400"
+                    />
+                  </th>
                   <th className="text-left font-medium px-3 py-2">วันที่</th>
                   <th className="text-left font-medium px-3 py-2">ลูกค้า</th>
                   <th className="text-right font-medium px-3 py-2">ยอด</th>
@@ -272,6 +440,15 @@ function PaymentsView({ view, onChanged }: { view: Exclude<View, 'reports' | 're
                     onClick={() => setSelected(p)}
                     className={`border-t border-slate-100 cursor-pointer hover:bg-emerald-50/40 ${selected?.id === p.id ? 'bg-emerald-50' : ''}`}
                   >
+                    <td className="px-3 py-2">
+                      <input
+                        type="checkbox"
+                        checked={checkedIds.has(p.id)}
+                        onChange={() => toggleRow(p.id)}
+                        onClick={(e) => e.stopPropagation()}
+                        className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-400"
+                      />
+                    </td>
                     <td className="px-3 py-2 text-slate-500 whitespace-nowrap">{fmtDate(p.createdAt)}</td>
                     <td className="px-3 py-2">
                       <div className="font-bold text-[15px] text-slate-800 leading-tight">{p.customerCode || <span className="text-slate-300 font-normal">—</span>}</div>
@@ -311,6 +488,7 @@ function PaymentsView({ view, onChanged }: { view: Exclude<View, 'reports' | 're
             onClose={() => setSelected(null)}
             onUpdate={applyUpdate}
             onPrint={(p) => setPrintQueue([p])}
+            showExpressConfirm={view === 'cashcheque'}
           />
         )}
       </div>
@@ -599,8 +777,13 @@ function AddPaymentModal({ onClose, onSaved }: { onClose: () => void; onSaved: (
 }
 
 // ── Slip verifier + action drawer ──────────────────────────────────────────
-function Detail({ payment, onClose, onUpdate, onPrint }: {
+// showExpressConfirm: the ✓✓ ยืนยันใน Express icon only shows on the เงินสด/เช็ค tab —
+// transfers reach 'recorded' via the CEO's bulk-confirm in กระทบยอด instead (owner decision
+// 2026-07-05, JUNO bulk-actions brief §3). Cash/cheque have no bank reconciliation step, so
+// they keep the per-row action here.
+function Detail({ payment, onClose, onUpdate, onPrint, showExpressConfirm }: {
   payment: Payment; onClose: () => void; onUpdate: (p: Payment) => void; onPrint: (p: Payment) => void;
+  showExpressConfirm: boolean;
 }) {
   const [busy, setBusy] = useState('');
   const [flagNote, setFlagNote] = useState('');
@@ -697,7 +880,8 @@ function Detail({ payment, onClose, onUpdate, onPrint }: {
                 disabled: p.status === 'void',
                 active: p.status === 'verified',
               })}
-              {rail('recorded', STATUS_META.recorded.label, <CheckCheck size={16} />, () => run('recorded', () => setStatus(p.id, 'recorded')), {
+              {/* ✓✓ ยืนยันใน Express: เงินสด/เช็ค tab only — see the showExpressConfirm note above */}
+              {showExpressConfirm && rail('recorded', STATUS_META.recorded.label, <CheckCheck size={16} />, () => run('recorded', () => setStatus(p.id, 'recorded')), {
                 disabled: p.status === 'recorded' || p.status === 'void',
                 active: p.status === 'recorded',
               })}
@@ -894,27 +1078,13 @@ function isValidRe(token: string): boolean {
   return /^\d{7}$/.test(token);
 }
 
-// ── Check dialog (the RE check FIN performs when the receipt is issued in Express) ─────────
-// Small modal, NOT a browser prompt: this is the one place a payment can become 'verified'.
-// FIN can now type/paste SEVERAL RE numbers (one payment may cover many receipts): they go in
-// as one text stream separated by '/', ',', or space, and turn into removable chips as each
-// 7-digit token completes.
-function CheckDialog({ payment, onClose, onSaved }: {
-  payment: Payment;
-  onClose: () => void;
-  onSaved: (p: Payment) => void;
-}) {
-  const reRef = useRef<HTMLInputElement>(null);
-  const [reNumbers, setReNumbers] = useState<string[]>(payment.reNumbers);
+// Shared RE-chips input logic (used by both CheckDialog and BatchCheckDialog) — FIN can
+// type/paste SEVERAL RE numbers as one text stream separated by '/', ',', or space, and each
+// completes into a removable chip once it's a valid 7-digit token. Extracted as a hook (rather
+// than duplicated per-dialog state) so both dialogs share exactly one parsing implementation.
+function useReChipsInput(initial: string[]) {
+  const [reNumbers, setReNumbers] = useState<string[]>(initial);
   const [reInput, setReInput] = useState('');
-  const [receiptName, setReceiptName] = useState(
-    payment.receiptName || payment.taxInvoice.split('\n')[0]?.trim() || payment.customerName,
-  );
-  const [customerType, setCustomerType] = useState<CustomerType>(payment.customerType);
-  const [saving, setSaving] = useState(false);
-  const [err, setErr] = useState('');
-
-  useEffect(() => { reRef.current?.focus(); }, []);
 
   function addChip(token: string) {
     if (!token) return;
@@ -942,29 +1112,95 @@ function CheckDialog({ payment, onClose, onSaved }: {
     }
   }
 
-  // Enter flushes the current pending token (if valid) into a chip and clears the box.
-  function onReKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
-    if (e.key !== 'Enter') return;
-    const token = normalizeReToken(reInput);
-    if (isValidRe(token)) {
-      addChip(token);
-      setReInput('');
-    } else if (valid) {
-      save();
-    }
-  }
-
   const pendingToken = normalizeReToken(reInput);
   const pendingValid = pendingToken !== '' && isValidRe(pendingToken);
   const pendingInvalid = pendingToken !== '' && !isValidRe(pendingToken);
   // at least one committed chip, OR exactly one valid not-yet-committed token in the box
   const valid = reNumbers.length > 0 || pendingValid;
 
+  // The final RE list to submit: flushes a valid pending token so the user doesn't have to
+  // press Enter/type a separator before clicking บันทึก.
+  function finalize(): string[] {
+    return pendingValid && !reNumbers.includes(pendingToken) ? [...reNumbers, pendingToken] : reNumbers;
+  }
+
+  function reset(next: string[]) {
+    setReNumbers(next);
+    setReInput('');
+  }
+
+  return {
+    reNumbers, reInput, addChip, removeChip, onReInputChange,
+    pendingToken, pendingValid, pendingInvalid, valid, finalize, reset,
+  };
+}
+
+// The chips + input box UI (no label/hint — callers wrap those since the label text differs
+// slightly between the single-row and batch dialogs).
+function ReChipsBox({ state, onEnter, autoFocus }: {
+  state: ReturnType<typeof useReChipsInput>;
+  onEnter: () => void;
+  autoFocus?: boolean;
+}) {
+  const reRef = useRef<HTMLInputElement>(null);
+  useEffect(() => { if (autoFocus) reRef.current?.focus(); }, [autoFocus]);
+
+  // Enter flushes the current pending token (if valid) into a chip; if there's no pending
+  // token but the dialog is already valid (≥1 chip committed), Enter submits instead.
+  function onKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key !== 'Enter') return;
+    const token = normalizeReToken(state.reInput);
+    if (isValidRe(token)) {
+      state.addChip(token);
+      state.onReInputChange('');
+    } else if (state.valid) {
+      onEnter();
+    }
+  }
+
+  return (
+    <div className="mt-0.5 flex flex-wrap gap-1.5 px-2 py-1.5 rounded-lg border border-slate-300 focus-within:ring-2 focus-within:ring-emerald-400">
+      {state.reNumbers.map((re) => (
+        <span key={re} className="flex items-center gap-1 pl-2 pr-1 py-0.5 rounded-full bg-emerald-50 text-emerald-700 text-xs font-semibold">
+          {re}
+          <button type="button" onClick={() => state.removeChip(re)} className="p-0.5 rounded-full hover:bg-emerald-100 text-emerald-600" title="เอาออก">
+            <X size={11} />
+          </button>
+        </span>
+      ))}
+      <input
+        ref={reRef}
+        value={state.reInput}
+        onChange={(e) => state.onReInputChange(e.target.value)}
+        onKeyDown={onKeyDown}
+        placeholder={state.reNumbers.length ? 'เพิ่มอีก…' : 'เช่น 6900025/6900026'}
+        className="flex-1 min-w-[100px] text-sm focus:outline-none"
+      />
+    </div>
+  );
+}
+
+// ── Check dialog (the RE check FIN performs when the receipt is issued in Express) ─────────
+// Small modal, NOT a browser prompt: this is the one place a payment can become 'verified'.
+// FIN can now type/paste SEVERAL RE numbers (one payment may cover many receipts): they go in
+// as one text stream separated by '/', ',', or space, and turn into removable chips as each
+// 7-digit token completes.
+function CheckDialog({ payment, onClose, onSaved }: {
+  payment: Payment;
+  onClose: () => void;
+  onSaved: (p: Payment) => void;
+}) {
+  const re = useReChipsInput(payment.reNumbers);
+  const [receiptName, setReceiptName] = useState(
+    payment.receiptName || payment.taxInvoice.split('\n')[0]?.trim() || payment.customerName,
+  );
+  const [customerType, setCustomerType] = useState<CustomerType>(payment.customerType);
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState('');
+
   async function save() {
-    if (!valid || saving) return;
-    // flush a valid pending token into the list first, so the user doesn't have to press
-    // Enter/type a separator before clicking บันทึก
-    const finalRe = pendingValid && !reNumbers.includes(pendingToken) ? [...reNumbers, pendingToken] : reNumbers;
+    if (!re.valid || saving) return;
+    const finalRe = re.finalize();
     if (finalRe.length === 0) return;
     setSaving(true);
     setErr('');
@@ -991,26 +1227,9 @@ function CheckDialog({ payment, onClose, onSaved }: {
 
         <label className="block">
           <span className="text-xs text-slate-500">เลขที่ใบเสร็จ (RE) — พิมพ์ได้หลายเลข คั่นด้วย / , หรือเว้นวรรค</span>
-          <div className="mt-0.5 flex flex-wrap gap-1.5 px-2 py-1.5 rounded-lg border border-slate-300 focus-within:ring-2 focus-within:ring-emerald-400">
-            {reNumbers.map((re) => (
-              <span key={re} className="flex items-center gap-1 pl-2 pr-1 py-0.5 rounded-full bg-emerald-50 text-emerald-700 text-xs font-semibold">
-                {re}
-                <button type="button" onClick={() => removeChip(re)} className="p-0.5 rounded-full hover:bg-emerald-100 text-emerald-600" title="เอาออก">
-                  <X size={11} />
-                </button>
-              </span>
-            ))}
-            <input
-              ref={reRef}
-              value={reInput}
-              onChange={(e) => onReInputChange(e.target.value)}
-              onKeyDown={onReKeyDown}
-              placeholder={reNumbers.length ? 'เพิ่มอีก…' : 'เช่น 6900025/6900026'}
-              className="flex-1 min-w-[100px] text-sm focus:outline-none"
-            />
-          </div>
-          {pendingInvalid && <span className="text-[11px] text-rose-600">ต้องเป็นตัวเลข 7 หลัก</span>}
-          {!pendingInvalid && reNumbers.length === 0 && !pendingValid && (
+          <ReChipsBox state={re} onEnter={save} autoFocus />
+          {re.pendingInvalid && <span className="text-[11px] text-rose-600">ต้องเป็นตัวเลข 7 หลัก</span>}
+          {!re.pendingInvalid && re.reNumbers.length === 0 && !re.pendingValid && (
             <span className="text-[11px] text-slate-400">ต้องมีอย่างน้อย 1 เลข RE</span>
           )}
         </label>
@@ -1048,10 +1267,164 @@ function CheckDialog({ payment, onClose, onSaved }: {
           <button
             type="button"
             onClick={save}
-            disabled={!valid || saving}
+            disabled={!re.valid || saving}
             className="px-4 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold flex items-center gap-1 disabled:opacity-50"
           >
             {saving ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={13} />} บันทึก
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Batch check dialog (the ตรวจแล้ว bulk action's guided queue) ──────────────────────────
+// Each selected checkable payment needs its own RE(s), so this walks the queue one payment at
+// a time reusing the same RE-chips input as CheckDialog. บันทึกและถัดไป verifies THIS row then
+// advances; ใช้กับทุกใบที่เหลือ (M) applies the SAME entered RE(s)/receiptName/customerType to
+// every remaining row in one pass (the "one RE shared across several payments" case) — per
+// owner decision, not a new endpoint: it just loops verifyPayment like the rest of this queue.
+function BatchCheckDialog({ payments, onDone }: {
+  payments: Payment[];
+  onDone: () => void;
+}) {
+  const [index, setIndex] = useState(0);
+  const current = payments[index];
+  const re = useReChipsInput(current.reNumbers);
+  const [receiptName, setReceiptName] = useState(
+    current.receiptName || current.taxInvoice.split('\n')[0]?.trim() || current.customerName,
+  );
+  const [customerType, setCustomerType] = useState<CustomerType>(current.customerType);
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState('');
+
+  // Moving to a new row in the queue resets the chips/name/type from that row's own data —
+  // each payment starts with its own (usually empty) RE, never leaking the previous row's input.
+  function goTo(nextIndex: number, nextPayment: Payment) {
+    setIndex(nextIndex);
+    re.reset(nextPayment.reNumbers);
+    setReceiptName(nextPayment.receiptName || nextPayment.taxInvoice.split('\n')[0]?.trim() || nextPayment.customerName);
+    setCustomerType(nextPayment.customerType);
+    setErr('');
+  }
+
+  async function saveAndNext() {
+    if (!re.valid || saving) return;
+    const finalRe = re.finalize();
+    if (finalRe.length === 0) return;
+    setSaving(true);
+    setErr('');
+    try {
+      await verifyPayment(current.id, { reNumbers: finalRe, receiptName: receiptName.trim(), customerType });
+      if (index + 1 < payments.length) {
+        goTo(index + 1, payments[index + 1]);
+      } else {
+        onDone();
+      }
+    } catch (e) {
+      setErr((e as Error).message === 'unauthorized' ? 'เซสชันหมดอายุ — กรุณาเข้าสู่ระบบใหม่' : 'บันทึกไม่สำเร็จ — ลองใหม่อีกครั้ง');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  // ใช้กับทุกใบที่เหลือ: same RE(s)/receiptName/customerType applied to THIS row plus every
+  // remaining row in the queue (one shared receipt across several payments).
+  async function applyToRest() {
+    if (!re.valid || saving) return;
+    const finalRe = re.finalize();
+    if (finalRe.length === 0) return;
+    setSaving(true);
+    setErr('');
+    const remaining = payments.slice(index);
+    const results = await Promise.allSettled(
+      remaining.map((p) => verifyPayment(p.id, { reNumbers: finalRe, receiptName: receiptName.trim(), customerType })),
+    );
+    const failed = results.filter((r) => r.status === 'rejected').length;
+    setSaving(false);
+    if (failed > 0) {
+      setErr(`บันทึกไม่สำเร็จ ${failed}/${remaining.length} รายการ`);
+      return;
+    }
+    onDone();
+  }
+
+  return (
+    <div className="fixed inset-0 z-40 bg-black/50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl p-4 w-full max-w-sm space-y-3">
+        <div className="flex items-center justify-between gap-2">
+          <div className="font-semibold text-slate-800 flex items-center gap-1.5">
+            <FileText size={16} className="text-emerald-700" /> ตรวจแล้ว — รายการที่ {index + 1} / {payments.length}
+          </div>
+          <button onClick={onDone} title="ปิด" className="p-1 text-slate-400 hover:text-slate-600"><X size={18} /></button>
+        </div>
+
+        {/* current row's customer + amount, so FIN knows which payment this dialog is for */}
+        <div className="p-2 rounded-lg bg-slate-50 flex items-center justify-between gap-2 text-sm">
+          <div className="min-w-0">
+            <div className="font-semibold text-slate-800 truncate">{current.customerName}</div>
+            {current.customerCode && <div className="text-xs text-slate-500">{current.customerCode}</div>}
+          </div>
+          <div className="font-bold text-slate-800 whitespace-nowrap">{baht(current.amountNum)}</div>
+        </div>
+
+        <label className="block">
+          <span className="text-xs text-slate-500">เลขที่ใบเสร็จ (RE) — พิมพ์ได้หลายเลข คั่นด้วย / , หรือเว้นวรรค</span>
+          <ReChipsBox state={re} onEnter={saveAndNext} autoFocus />
+          {re.pendingInvalid && <span className="text-[11px] text-rose-600">ต้องเป็นตัวเลข 7 หลัก</span>}
+          {!re.pendingInvalid && re.reNumbers.length === 0 && !re.pendingValid && (
+            <span className="text-[11px] text-slate-400">ต้องมีอย่างน้อย 1 เลข RE</span>
+          )}
+        </label>
+
+        <label className="block">
+          <span className="text-xs text-slate-500">ชื่อบนใบเสร็จ</span>
+          <input
+            value={receiptName}
+            onChange={(e) => setReceiptName(e.target.value)}
+            placeholder="ชื่อบนใบเสร็จ"
+            className="w-full mt-0.5 px-2.5 py-1.5 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400"
+          />
+        </label>
+
+        <div>
+          <span className="text-xs text-slate-500">ประเภทลูกค้า</span>
+          <div className="mt-1 flex rounded-lg border border-slate-300 overflow-hidden">
+            {CUSTOMER_TYPES.map((t) => (
+              <button
+                key={t}
+                type="button"
+                onClick={() => setCustomerType((prev) => (prev === t ? '' : t))}
+                className={`flex-1 px-2 py-1.5 text-xs ${customerType === t ? 'bg-emerald-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}
+              >
+                {t}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {err && <div className="text-xs text-rose-600 bg-rose-50 border border-rose-200 rounded-lg p-2">{err}</div>}
+
+        <div className="flex flex-wrap justify-end gap-2 pt-1">
+          <button type="button" onClick={onDone} disabled={saving} className="px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 text-sm disabled:opacity-50">ปิด</button>
+          {payments.length - index > 1 && (
+            <button
+              type="button"
+              onClick={() => void applyToRest()}
+              disabled={!re.valid || saving}
+              title="ใช้เลข RE / ชื่อบนใบเสร็จ / ประเภทลูกค้าที่กรอกไว้กับทุกรายการที่เหลือในคิวนี้"
+              className="px-3 py-1.5 rounded-lg bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200 text-sm font-semibold disabled:opacity-50"
+            >
+              ใช้กับทุกใบที่เหลือ ({payments.length - index})
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => void saveAndNext()}
+            disabled={!re.valid || saving}
+            className="px-4 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold flex items-center gap-1 disabled:opacity-50"
+          >
+            {saving ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={13} />} บันทึกและถัดไป
           </button>
         </div>
       </div>
