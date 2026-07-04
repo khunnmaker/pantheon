@@ -218,6 +218,8 @@ export interface GroupProduct {
   photoSku: string | null;
   catalogGroup: string | null;
   alias: string | null;
+  stock: number | null; // remaining qty (null = unknown)
+  reorderPoint: number | null;
 }
 
 export const getGroups = () =>

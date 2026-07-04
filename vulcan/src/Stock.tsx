@@ -47,6 +47,22 @@ function Thumb({ photoSku, size = 36 }: { photoSku: string | null; size?: number
   );
 }
 
+// Remaining-stock pill: "—" unknown, "หมด" out (rose), amber when at/below reorder point.
+function StockPill({ stock, reorderPoint }: { stock: number | null; reorderPoint: number | null }) {
+  if (stock == null) return <span className="text-[11px] text-slate-300 shrink-0">—</span>;
+  const out = stock <= 0;
+  const low = !out && reorderPoint != null && stock <= reorderPoint;
+  return (
+    <span
+      className={`text-[11px] font-semibold tabular-nums shrink-0 px-1.5 py-0.5 rounded ${
+        out ? 'bg-rose-100 text-rose-700' : low ? 'bg-amber-100 text-amber-700' : 'text-slate-500'
+      }`}
+    >
+      {out ? 'หมด' : `เหลือ ${stock.toLocaleString('th-TH')}`}
+    </span>
+  );
+}
+
 function fmtDate(iso: string | null): string {
   if (!iso) return '—';
   const d = new Date(iso);
@@ -1119,6 +1135,7 @@ function CodeRow({ product, groupCode, onChanged }: { product: GroupProduct; gro
           {!product.catalogGroup && <span className="text-amber-600"> · ยังไม่จัดกลุ่ม</span>}
         </div>
       </div>
+      <StockPill stock={product.stock} reorderPoint={product.reorderPoint} />
       {err && (
         <span className="text-rose-600 text-[10px] flex items-center gap-0.5 shrink-0">
           <AlertTriangle size={10} /> {err}
@@ -1328,6 +1345,7 @@ function GroupTab() {
                       {p.nameEn && p.nameTh && <span className="text-slate-300"> · {p.nameEn}</span>}
                     </div>
                   </div>
+                  <StockPill stock={p.stock} reorderPoint={p.reorderPoint} />
                   <GroupSelect groups={groups} value={p.catalogGroup} onChange={(g) => changeProduct(p.sku, g)} />
                 </div>
               ))}

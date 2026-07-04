@@ -530,6 +530,7 @@ export async function stockRoutes(app: FastifyInstance) {
       products: products.map((p) => ({
         sku: p.sku, nameEn: p.nameEn, nameTh: p.nameTh, photoSku: p.photoSku,
         catalogGroup: p.catalogGroup, alias: aliasBySku.get(p.sku) ?? null,
+        stock: p.stock, reorderPoint: p.reorderPoint,
       })),
     };
   });
