@@ -54,6 +54,10 @@ const schema = z.object({
   CERES_MESSENGER_PINS: z.string().default(''),   // "ta:123456,arm:234567,…" slug:pin pairs
   CERES_FLOOR: z.coerce.number().default(40000),
   CERES_CEO_THRESHOLD: z.coerce.number().default(5000),
+
+  // Suite-wide: the CEO's LINE userId for push alerts (Ceres escalations today; any
+  // deity may reuse it). CERES_CEO_LINE_USER_ID is a deprecated fallback (remove after cutover).
+  CEO_LINE_USER_ID: z.string().default(''),
   CERES_CEO_LINE_USER_ID: z.string().default(''),
 });
 

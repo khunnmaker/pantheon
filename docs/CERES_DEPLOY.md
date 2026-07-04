@@ -21,7 +21,7 @@ list — each only when its table is empty.
 |---|---|
 | `MD_PASSWORD` | Nee's login password (login email: `md@prominent.local`). The old name `CERES_MD_PASSWORD` still works as a deprecated fallback. |
 | `EMPLOYEE_PINS` | **One var for ALL 15 employees** — sales + couriers + housekeeper: `nadeer:XXXXXX,anny:XXXXXX,noey:XXXXXX,ta:XXXXXX,arm:XXXXXX,man:XXXXXX,boonson:XXXXXX,kaew:XXXXXX,lungko:XXXXXX,wong:XXXXXX,paeng:XXXXXX,nun:XXXXXX,pin:XXXXXX,lekmaeban:XXXXXX,da:XXXXXX` — **exactly 6 digits per PIN** (non-6-digit entries skipped with a warning; weak PINs like 123456 warned). Someone missing from the list simply can't log in yet, and the stale-account prune stays disabled until everyone listed is provisioned — partial rollout is safe. Sales keep working via the deprecated `AGENT_PINS`/`STAFF_PASSWORD` fallbacks until their PINs land here. |
-| `CERES_CEO_LINE_USER_ID` | optional — Dr. M's LINE userId for escalation pushes from the Prominent OA. To find it: message the OA from the personal account, then read the `Customer.lineUserId` of that chat (console or DB). Leave unset to disable pushes (escalations still appear in the CEO tab). |
+| `CEO_LINE_USER_ID` | optional, suite-wide — the CEO's LINE userId for escalation pushes from the Prominent OA (the old name `CERES_CEO_LINE_USER_ID` still works as a deprecated fallback). To find it: message the OA from the personal account, then read the `Customer.lineUserId` of that chat (console or DB). Leave unset to disable pushes (escalations still appear in the CEO tab). |
 | `CERES_FLOOR` | optional, default `40000` (top-up trigger) |
 | `CERES_CEO_THRESHOLD` | optional, default `5000` (mandatory CEO pre-approval above this) |
 
@@ -52,7 +52,7 @@ Same recipe as Juno/Vulcan:
    เงินทอนที่ควรได้คืน updates → ปิดยอด works (blocked while anything is รอตรวจ).
 5. MD: จ่ายเงิน → small request ≤5,000 to a normal payee → expect instant AI verdict;
    a >5,000 request → escalates; CEO tab (Dr. M login) → อนุมัติ; only then จ่ายแล้ว unlocks.
-   If `CERES_CEO_LINE_USER_ID` is set, the escalation also pings LINE.
+   If `CEO_LINE_USER_ID` is set, the escalation also pings LINE.
 6. กระทบยอด: upload a fresh KBIZ export of the **expense** account → preview counts look
    right → นำเข้า → paid requests auto-match.
 
