@@ -1343,8 +1343,9 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                         <div className={'max-w-[78%] px-3 py-2 rounded-2xl text-sm whitespace-pre-wrap ' +
                           (m.role === 'customer' ? 'bg-white border border-slate-200 rounded-tl-sm' : 'bg-sky-600 text-white rounded-tr-sm')}>
                           <MessageBody m={m} />
-                          <div className={'text-[10px] mt-0.5 ' + (m.role === 'customer' ? 'text-slate-400' : 'text-sky-100')}>
-                            {fmtTime(m.createdAt)}{m.role !== 'customer' && m.agentName ? ` — ${m.agentName}` : ''}
+                          <div className={'text-[10px] mt-0.5 flex items-baseline justify-between gap-3 ' + (m.role === 'customer' ? 'text-slate-400' : 'text-sky-100')}>
+                            <span>{fmtTime(m.createdAt)}</span>
+                            {m.role !== 'customer' && m.agentName && <span className="text-sky-100/80">— {m.agentName}</span>}
                           </div>
                           {m.role === 'customer' && m.attachmentType === 'image' && (
                             m.financeSentAt
