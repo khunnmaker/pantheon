@@ -12,14 +12,14 @@ import {
   type Agent, type StockRow, type StockSummary, type StockImportRow,
   type StockAdjustmentRow, type ImportPreview,
   type CatalogGroupInfo, type GroupProduct, type Pillar,
-  getSummary, getStockList, adjustStock, setReorderPoint, getImports, getAdjustments,
+  getSummary, getStockList, adjustStock, setReorderPoint, renameProduct, getImports, getAdjustments,
   previewImport, applyImport, clearSession, API_URL, flatSku,
   generateAliases, setAlias,
   getGroups, getGroupProducts, autoAssignGroups, setProductGroup,
 } from './lib/api';
 
 type Tab = 'dashboard' | 'stock' | 'import' | 'history' | 'alias' | 'group';
-type StockFilter = 'all' | 'low' | 'out' | 'unknown';
+type StockFilter = 'all' | 'low' | 'out' | 'unknown' | 'noname';
 
 // Product photo thumbnail (served public from the shared api). photoSku is the catalog
 // photo key (variants share a lead photo); hides itself if the image is missing.
@@ -431,7 +431,7 @@ function StockTab({
           />
         </div>
         <div className="flex gap-1">
-          {(['all', 'low', 'out', 'unknown'] as const).map((f) => (
+          {(['all', 'low', 'out', 'unknown', 'noname'] as const).map((f) => (
             <button
               key={f}
               onClick={() => setFilter(f)}
@@ -441,7 +441,7 @@ function StockTab({
                   : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'
               }`}
             >
-              {f === 'all' ? 'ทั้งหมด' : f === 'low' ? 'ใกล้หมด' : f === 'out' ? 'หมด' : 'ไม่ทราบสต็อก'}
+              {f === 'all' ? 'ทั้งหมด' : f === 'low' ? 'ใกล้หมด' : f === 'out' ? 'หมด' : f === 'unknown' ? 'ไม่ทราบสต็อก' : 'ไม่มีชื่อไทย'}
             </button>
           ))}
         </div>
@@ -548,9 +548,26 @@ function EditPanel({ row, onPatch }: { row: StockRow; onPatch: (r: StockRow) => 
   const [qty, setQty] = useState(row.stock == null ? '' : String(row.stock));
   const [reason, setReason] = useState('');
   const [rp, setRp] = useState(row.reorderPoint == null ? '' : String(row.reorderPoint));
-  const [busy, setBusy] = useState<'qty' | 'rp' | null>(null);
+  const [nameTh, setNameTh] = useState(row.nameTh);
+  const [nameEn, setNameEn] = useState(row.nameEn);
+  const [busy, setBusy] = useState<'qty' | 'rp' | 'name' | null>(null);
   const [err, setErr] = useState('');
   const [history, setHistory] = useState<StockAdjustmentRow[] | null>(null);
+  const nameDirty = nameTh.trim() !== row.nameTh.trim() || nameEn.trim() !== row.nameEn.trim();
+
+  async function saveName() {
+    setErr('');
+    setBusy('name');
+    try {
+      // Keep the alias the row already carries — the rename response doesn't include it.
+      const { product } = await renameProduct(row.sku, nameEn.trim(), nameTh.trim());
+      onPatch({ ...product, alias: row.alias });
+    } catch {
+      setErr('บันทึกชื่อไม่สำเร็จ');
+    } finally {
+      setBusy(null);
+    }
+  }
 
   useEffect(() => {
     getAdjustments(row.sku).then((d) => setHistory(d.adjustments)).catch(() => setHistory([]));
@@ -596,6 +613,32 @@ function EditPanel({ row, onPatch }: { row: StockRow; onPatch: (r: StockRow) => 
 
   return (
     <div className="grid gap-4 md:grid-cols-3">
+      {/* rename product (Thai + English) */}
+      <div className="md:col-span-3">
+        <div className="text-xs font-semibold text-slate-500 mb-1">ชื่อสินค้า</div>
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            value={nameTh}
+            onChange={(e) => setNameTh(e.target.value)}
+            placeholder="ชื่อไทย"
+            className="flex-1 min-w-[160px] px-2 py-1.5 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+          />
+          <input
+            value={nameEn}
+            onChange={(e) => setNameEn(e.target.value)}
+            placeholder="ชื่ออังกฤษ (English)"
+            className="flex-1 min-w-[160px] px-2 py-1.5 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+          />
+          <button
+            onClick={saveName}
+            disabled={busy !== null || !nameDirty}
+            className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium flex items-center gap-1 disabled:opacity-40"
+          >
+            {busy === 'name' ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />} บันทึกชื่อ
+          </button>
+        </div>
+      </div>
+
       {/* manual stock adjust */}
       <div className="md:col-span-2">
         <div className="text-xs font-semibold text-slate-500 mb-1">แก้ไขจำนวนสต็อก (ด้วยมือ)</div>

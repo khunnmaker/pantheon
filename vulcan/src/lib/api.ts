@@ -146,10 +146,17 @@ export async function login(email: string, password: string): Promise<{ token: s
 
 export const getSummary = () => authed<StockSummary>('/api/stock/summary');
 
-export const getStockList = (q: string, filter: 'all' | 'low' | 'out' | 'unknown') =>
+export const getStockList = (q: string, filter: 'all' | 'low' | 'out' | 'unknown' | 'noname') =>
   authed<{ products: StockRow[] }>(
     `/api/stock/list?q=${encodeURIComponent(q)}&filter=${filter}`,
   );
+
+// Rename a product (Thai + English). Merges the name into keywords for search.
+export const renameProduct = (sku: string, nameEn: string, nameTh: string) =>
+  authed<{ ok: boolean; product: StockRow }>('/api/stock/catalog/name', {
+    method: 'POST',
+    body: JSON.stringify({ sku, nameEn, nameTh }),
+  });
 
 export const adjustStock = (sku: string, toQty: number | null, reason: string) =>
   authed<{ ok: boolean; product: StockRow; unchanged?: boolean }>('/api/stock/adjust', {

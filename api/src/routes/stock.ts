@@ -95,6 +95,7 @@ export async function stockRoutes(app: FastifyInstance) {
       if (filter === 'low') rows = rows.filter((r) => r.low);
       else if (filter === 'out') rows = rows.filter((r) => r.stock === 0);
       else if (filter === 'unknown') rows = rows.filter((r) => r.stock == null);
+      else if (filter === 'noname') rows = rows.filter((r) => !r.nameTh.trim());
       return { products: await withAliases(rows) };
     }
 
@@ -118,6 +119,12 @@ export async function stockRoutes(app: FastifyInstance) {
     } else if (filter === 'unknown') {
       products = await prisma.product.findMany({
         where: { status: 'active', stock: null },
+        orderBy: { sku: 'asc' },
+        take,
+      });
+    } else if (filter === 'noname') {
+      products = await prisma.product.findMany({
+        where: { status: 'active', nameTh: '' },
         orderBy: { sku: 'asc' },
         take,
       });
@@ -188,6 +195,23 @@ export async function stockRoutes(app: FastifyInstance) {
     const product = await prisma.product.findUnique({ where: { sku } });
     if (!product) return reply.code(404).send({ error: 'unknown_sku' });
     const updated = await prisma.product.update({ where: { sku }, data: { reorderPoint: rp } });
+    return { ok: true, product: toStockRow(updated) };
+  });
+
+  // POST /api/stock/catalog/name { sku, nameEn, nameTh } — rename a product. Merges the new
+  // name's tokens into keywords so Minerva's search finds it by the new name.
+  app.post('/api/stock/catalog/name', async (req, reply) => {
+    const body = req.body as { sku?: string; nameEn?: string; nameTh?: string };
+    const sku = String(body.sku ?? '').trim();
+    if (!sku || !SKU_RE.test(sku)) return reply.code(400).send({ error: 'bad_sku' });
+    const nameEn = String(body.nameEn ?? '').trim();
+    const nameTh = String(body.nameTh ?? '').trim();
+    const product = await prisma.product.findUnique({ where: { sku } });
+    if (!product) return reply.code(404).send({ error: 'unknown_sku' });
+    // Merge name tokens (alnum + Thai, length >= 2) into keywords, deduped + capped.
+    const toks = `${nameEn} ${nameTh}`.toLowerCase().split(/[^a-z0-9฀-๿]+/i).filter((t) => t.length >= 2);
+    const keywords = [...new Set([...product.keywords, ...toks])].slice(0, 30);
+    const updated = await prisma.product.update({ where: { sku }, data: { nameEn, nameTh, keywords } });
     return { ok: true, product: toStockRow(updated) };
   });
 
