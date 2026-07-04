@@ -222,3 +222,52 @@ export const setAlias = (sku: string, alias: string) =>
     method: 'POST',
     body: JSON.stringify({ sku, alias }),
   });
+
+// ── Catalog groups (merchandising taxonomy) ─────────────────────────────
+export type Pillar = 'lab' | 'digital' | 'clinical' | 'equipment';
+export interface CatalogGroupInfo {
+  key: string;
+  nameTh: string;
+  nameEn: string;
+  pillar: Pillar;
+  count: number;
+}
+export interface GroupProduct {
+  sku: string;
+  nameEn: string;
+  nameTh: string;
+  photoSku: string | null;
+  catalogGroup: string | null;
+  alias: string | null;
+}
+
+export const getGroups = () =>
+  authed<{ groups: CatalogGroupInfo[]; total: number; unassigned: number }>('/api/stock/groups');
+
+export const getGroupProducts = (opts: { group?: string; filter?: 'all' | 'unassigned'; q?: string }) => {
+  const p = new URLSearchParams();
+  if (opts.group) p.set('group', opts.group);
+  if (opts.filter) p.set('filter', opts.filter);
+  if (opts.q) p.set('q', opts.q);
+  return authed<{ products: GroupProduct[] }>(`/api/stock/groups/products?${p.toString()}`);
+};
+
+// Auto-assign products to groups by keyword/category rules. onlyUnassigned=true keeps
+// manual assignments; false re-runs on everything.
+export const autoAssignGroups = (onlyUnassigned: boolean) =>
+  authed<{ ok: boolean; assigned: number; unassigned: number; scanned: number }>('/api/stock/groups/auto-assign', {
+    method: 'POST',
+    body: JSON.stringify({ onlyUnassigned }),
+  });
+
+export const setProductGroup = (sku: string, group: string | null) =>
+  authed<{ ok: boolean; sku: string; group: string | null }>('/api/stock/groups/set-product', {
+    method: 'POST',
+    body: JSON.stringify({ sku, group }),
+  });
+
+export const setFamilyGroup = (family: string, group: string | null) =>
+  authed<{ ok: boolean; family: string; group: string | null; updated: number }>('/api/stock/groups/set-family', {
+    method: 'POST',
+    body: JSON.stringify({ family, group }),
+  });

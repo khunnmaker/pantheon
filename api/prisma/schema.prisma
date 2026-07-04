@@ -360,9 +360,13 @@ model Product {
   stockAt      DateTime? // the date the stock figure is as-of (snapshot date)
   // Vulcan low-stock threshold (null = no threshold set). Low = stock != null && stock <= reorderPoint.
   reorderPoint Int?
+  // Merchandising group key (see api/src/stock/catalogGroups.ts), e.g. "acrylic" | "endo".
+  // null = not yet assigned. Independent of the Express category in the SKU.
+  catalogGroup String?
   updatedAt    DateTime  @updatedAt
 
   @@index([status])
+  @@index([catalogGroup])
 }
 
 // Short human-friendly code per product (e.g. "TR34") that resolves to the canonical SKU.

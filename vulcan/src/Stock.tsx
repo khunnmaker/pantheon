@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import {
   Boxes, Search, Upload, History, LogOut, AlertTriangle, Check, Loader2,
   Package, RefreshCw, ChevronRight, X, LayoutDashboard, PackageX, PackageCheck,
-  HelpCircle, Clock, ArrowRight, Crown, Tag, Wand2,
+  HelpCircle, Clock, ArrowRight, Crown, Tag, Wand2, Layers,
 } from 'lucide-react';
 
 // Portal-back link (Jupiter). URL from build-time env; hidden when unset, so it is completely
@@ -11,12 +11,14 @@ const PORTAL_URL: string | undefined = import.meta.env.VITE_PORTAL_URL;
 import {
   type Agent, type StockRow, type StockSummary, type StockImportRow,
   type StockAdjustmentRow, type ImportPreview, type AliasGroup, type AliasItem,
+  type CatalogGroupInfo, type GroupProduct, type Pillar,
   getSummary, getStockList, adjustStock, setReorderPoint, getImports, getAdjustments,
   previewImport, applyImport, clearSession, API_URL, flatSku,
   getAliases, generateAliases, setGroupPrefix, setAlias,
+  getGroups, getGroupProducts, autoAssignGroups, setProductGroup,
 } from './lib/api';
 
-type Tab = 'dashboard' | 'stock' | 'import' | 'history' | 'alias';
+type Tab = 'dashboard' | 'stock' | 'import' | 'history' | 'alias' | 'group';
 type StockFilter = 'all' | 'low' | 'out' | 'unknown';
 
 // Product photo thumbnail (served public from the shared api). photoSku is the catalog
@@ -105,6 +107,9 @@ export default function Stock({ agent, onLogout }: { agent: Agent; onLogout: () 
             <TabBtn active={tab === 'alias'} onClick={() => setTab('alias')} icon={<Tag size={15} />}>
               รหัสย่อ
             </TabBtn>
+            <TabBtn active={tab === 'group'} onClick={() => setTab('group')} icon={<Layers size={15} />}>
+              จัดกลุ่ม
+            </TabBtn>
           </nav>
           <div className="ml-auto flex items-center gap-3 text-sm text-slate-500">
             {summary && (
@@ -149,6 +154,7 @@ export default function Stock({ agent, onLogout }: { agent: Agent; onLogout: () 
         )}
         {tab === 'history' && <HistoryTab />}
         {tab === 'alias' && <AliasTab />}
+        {tab === 'group' && <GroupTab />}
       </main>
     </div>
   );
@@ -1150,6 +1156,217 @@ function AliasRow({ item, onChanged }: { item: AliasItem; onChanged: () => void 
         <span className="text-rose-600 text-[10px] flex items-center gap-0.5 shrink-0">
           <AlertTriangle size={10} /> {err}
         </span>
+      )}
+    </div>
+  );
+}
+
+// ── Catalog grouping (merchandising taxonomy) ───────────────────────────
+const PILLAR_LABEL: Record<Pillar, string> = {
+  lab: 'แล็บ / ทันตกรรมประดิษฐ์',
+  digital: 'ดิจิทัล',
+  clinical: 'คลินิก',
+  equipment: 'อุปกรณ์และของใช้',
+};
+const PILLAR_ORDER: Pillar[] = ['lab', 'digital', 'clinical', 'equipment'];
+
+// A <select> of every group (optgroup'd by pillar) + a blank "unassigned" option.
+function GroupSelect({
+  groups, value, onChange, disabled,
+}: { groups: CatalogGroupInfo[]; value: string | null; onChange: (g: string | null) => void; disabled?: boolean }) {
+  return (
+    <select
+      value={value ?? ''}
+      disabled={disabled}
+      onChange={(e) => onChange(e.target.value || null)}
+      className="shrink-0 w-40 px-2 py-1 rounded-lg border border-slate-300 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-indigo-400 disabled:opacity-50"
+    >
+      <option value="">— ยังไม่จัด —</option>
+      {PILLAR_ORDER.map((pl) => (
+        <optgroup key={pl} label={PILLAR_LABEL[pl]}>
+          {groups.filter((g) => g.pillar === pl).map((g) => (
+            <option key={g.key} value={g.key}>{g.nameTh}</option>
+          ))}
+        </optgroup>
+      ))}
+    </select>
+  );
+}
+
+function GroupTab() {
+  const [groups, setGroups] = useState<CatalogGroupInfo[]>([]);
+  const [total, setTotal] = useState(0);
+  const [unassigned, setUnassigned] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState<'fill' | 'redo' | null>(null);
+  // Which bucket is open for review: a group key, 'unassigned', or null (overview only).
+  const [sel, setSel] = useState<string | null>(null);
+  const [products, setProducts] = useState<GroupProduct[]>([]);
+  const [prodLoading, setProdLoading] = useState(false);
+  const [q, setQ] = useState('');
+
+  const loadGroups = useCallback(async () => {
+    try {
+      const g = await getGroups();
+      setGroups(g.groups);
+      setTotal(g.total);
+      setUnassigned(g.unassigned);
+    } catch { /* leave as-is */ }
+  }, []);
+  useEffect(() => { loadGroups().finally(() => setLoading(false)); }, [loadGroups]);
+
+  const loadProducts = useCallback(async (bucket: string, query: string) => {
+    setProdLoading(true);
+    try {
+      const opts = bucket === 'unassigned' ? { filter: 'unassigned' as const, q: query } : { group: bucket, q: query };
+      const r = await getGroupProducts(opts);
+      setProducts(r.products);
+    } catch { setProducts([]); } finally { setProdLoading(false); }
+  }, []);
+
+  // (re)load the open bucket when it or the (debounced) search changes.
+  useEffect(() => {
+    if (!sel) { setProducts([]); return; }
+    const t = setTimeout(() => loadProducts(sel, q), 250);
+    return () => clearTimeout(t);
+  }, [sel, q, loadProducts]);
+
+  async function auto(redo: boolean) {
+    if (redo && !window.confirm('จัดกลุ่มใหม่ทั้งหมด? การจัดด้วยมือจะถูกเขียนทับ')) return;
+    setBusy(redo ? 'redo' : 'fill');
+    try {
+      await autoAssignGroups(!redo);
+      await loadGroups();
+      if (sel) await loadProducts(sel, q);
+    } catch { /* ignore */ } finally { setBusy(null); }
+  }
+
+  async function changeProduct(sku: string, group: string | null) {
+    // optimistic: update the row, then drop it if it no longer belongs to the open bucket
+    setProducts((ps) => {
+      const updated = ps.map((p) => (p.sku === sku ? { ...p, catalogGroup: group } : p));
+      if (sel === 'unassigned') return updated.filter((p) => p.catalogGroup === null);
+      if (sel) return updated.filter((p) => p.catalogGroup === sel);
+      return updated;
+    });
+    try {
+      await setProductGroup(sku, group);
+      loadGroups();
+    } catch {
+      if (sel) loadProducts(sel, q); // revert to server truth on failure
+    }
+  }
+
+  const byPillar = (pl: Pillar) => groups.filter((g) => g.pillar === pl);
+  const selName = sel === 'unassigned' ? 'ยังไม่จัดกลุ่ม' : groups.find((g) => g.key === sel)?.nameTh ?? '';
+  const assigned = total - unassigned;
+
+  if (loading) {
+    return <div className="text-slate-400 py-8 text-center"><Loader2 size={18} className="animate-spin inline" /> กำลังโหลด…</div>;
+  }
+
+  return (
+    <div className="max-w-5xl">
+      <div className="bg-white rounded-2xl border border-slate-200 p-5 mb-4">
+        <h2 className="font-semibold text-slate-800 mb-1 flex items-center gap-2">
+          <Layers size={18} className="text-indigo-600" /> จัดกลุ่มสินค้า
+        </h2>
+        <p className="text-sm text-slate-500 mb-3">
+          จัดสินค้าเข้าหมวดตามชนิด (พิมพ์ปาก, อะคริลิก, รักษาราก, ฯลฯ) — ไม่แตะรหัส Express กด “จัดกลุ่มอัตโนมัติ” ให้ระบบเดาให้ก่อน แล้วแก้รายการที่ผิดได้
+        </p>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            onClick={() => auto(false)}
+            disabled={busy !== null}
+            className="px-3 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold flex items-center gap-1.5 disabled:opacity-50"
+          >
+            {busy === 'fill' ? <Loader2 size={15} className="animate-spin" /> : <Wand2 size={15} />} จัดกลุ่มอัตโนมัติ
+          </button>
+          <button
+            onClick={() => auto(true)}
+            disabled={busy !== null}
+            className="px-3 py-2 rounded-xl border border-slate-300 bg-white text-slate-600 hover:bg-slate-50 text-sm disabled:opacity-50"
+          >
+            {busy === 'redo' ? <Loader2 size={15} className="animate-spin inline" /> : 'จัดใหม่ทั้งหมด'}
+          </button>
+          <div className="ml-auto text-sm text-slate-500">
+            จัดแล้ว <b className="text-slate-800">{assigned.toLocaleString('th-TH')}</b> / {total.toLocaleString('th-TH')} ·{' '}
+            <button
+              onClick={() => { setSel('unassigned'); setQ(''); }}
+              className={unassigned > 0 ? 'text-amber-600 font-semibold hover:underline' : 'text-slate-400'}
+            >
+              ยังไม่จัด {unassigned.toLocaleString('th-TH')}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* group overview by pillar */}
+      <div className="space-y-4">
+        {PILLAR_ORDER.map((pl) => (
+          <div key={pl}>
+            <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-2">{PILLAR_LABEL[pl]}</div>
+            <div className="flex flex-wrap gap-2">
+              {byPillar(pl).map((g) => (
+                <button
+                  key={g.key}
+                  onClick={() => { setSel(sel === g.key ? null : g.key); setQ(''); }}
+                  className={`px-3 py-2 rounded-xl border text-sm flex items-center gap-2 transition ${
+                    sel === g.key
+                      ? 'border-indigo-500 bg-indigo-50 ring-2 ring-indigo-100'
+                      : g.count > 0
+                        ? 'border-slate-200 bg-white hover:border-indigo-300'
+                        : 'border-dashed border-slate-200 bg-slate-50 text-slate-400'
+                  }`}
+                >
+                  <span className="font-medium">{g.nameTh}</span>
+                  <span className={`text-xs font-bold tabular-nums ${g.count > 0 ? 'text-indigo-600' : 'text-slate-300'}`}>{g.count}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* review list for the open bucket */}
+      {sel && (
+        <div className="mt-5 bg-white rounded-2xl border border-slate-200 p-4">
+          <div className="flex flex-wrap items-center gap-2 mb-3">
+            <h3 className="font-semibold text-slate-800">{selName}</h3>
+            <button onClick={() => setSel(null)} className="text-slate-400 hover:text-slate-600"><X size={16} /></button>
+            <div className="relative flex-1 min-w-[200px]">
+              <Search size={15} className="absolute left-3 top-2.5 text-slate-400" />
+              <input
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                placeholder="ค้นหาในหมวดนี้…"
+                className="w-full pl-9 pr-3 py-2 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+              />
+            </div>
+          </div>
+          {prodLoading ? (
+            <div className="text-slate-400 py-6 text-center"><Loader2 size={16} className="animate-spin inline" /></div>
+          ) : products.length === 0 ? (
+            <p className="text-sm text-slate-400 py-4 text-center">ไม่มีสินค้าในรายการนี้</p>
+          ) : (
+            <div className="divide-y divide-slate-100 max-h-[60vh] overflow-auto">
+              {products.map((p) => (
+                <div key={p.sku} className="flex items-center gap-2.5 py-2">
+                  <Thumb photoSku={p.photoSku} size={34} />
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm text-slate-700 truncate">{p.nameTh || p.nameEn || flatSku(p.sku)}</div>
+                    <div className="text-[10px] text-slate-400 font-mono">
+                      {p.alias && <span className="text-indigo-600 font-semibold">{p.alias} · </span>}
+                      {flatSku(p.sku)}
+                      {p.nameEn && p.nameTh && <span className="text-slate-300"> · {p.nameEn}</span>}
+                    </div>
+                  </div>
+                  <GroupSelect groups={groups} value={p.catalogGroup} onChange={(g) => changeProduct(p.sku, g)} />
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       )}
     </div>
   );
