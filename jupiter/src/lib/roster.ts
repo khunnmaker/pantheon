@@ -74,6 +74,18 @@ export const ROLE_GROUPS: RoleGroup[] = [
     ],
   },
   {
+    id: 'finance',
+    label: 'การเงิน (Finance)',
+    color: 'bg-rose-600',
+    members: [
+      // NOTE: benz@/meow@ are NOT seeded accounts yet — these cards render on the login
+      // screen but can't actually log in until the owner adds them to ensureSeeded.ts +
+      // sets their PINs on Railway (EMPLOYEE_PINS).
+      { email: slugEmail('benz'), label: 'Benz', cred: 'pin', gender: 'female' },
+      { email: slugEmail('meow'), label: 'Meow', cred: 'pin', gender: 'female' },
+    ],
+  },
+  {
     id: 'messengers',
     label: 'แมสเซนเจอร์',
     color: 'bg-sky-600',
