@@ -107,9 +107,9 @@ export default function Login({ onLogin }: { onLogin: (agent: Agent) => void }) 
             <BackButton onClick={back} />
             <div className={`${group.color} text-white rounded-md px-4 py-3 mb-4`}>
               <div className="flex items-center gap-2">
-                <div className="w-9 h-9 rounded-md bg-white/25 overflow-hidden flex items-center justify-center shrink-0">
+                <div className="w-12 h-12 rounded-md bg-white/25 overflow-hidden flex items-center justify-center shrink-0">
                   <img
-                    src={memberAvatar(selected.email || selected.label)}
+                    src={memberAvatar(selected.email || selected.label, selected.gender)}
                     alt=""
                     className="w-full h-full object-cover"
                   />
@@ -194,16 +194,14 @@ function PersonTile({ p, onPick }: { p: Person; onPick: (p: Person) => void }) {
     return (
       <div
         aria-disabled="true"
-        className="aspect-square flex flex-col justify-between p-3 rounded-md bg-slate-100 text-left opacity-70 cursor-not-allowed select-none"
+        className="aspect-square flex flex-col items-center justify-center gap-1.5 p-2 rounded-md bg-slate-100 opacity-70 cursor-not-allowed select-none"
       >
-        <div className="w-8 h-8 rounded-md bg-slate-300 overflow-hidden flex items-center justify-center shrink-0">
-          <img
-            src={memberAvatar(p.label)}
-            alt=""
-            className="w-full h-full object-cover opacity-60 grayscale"
-          />
-        </div>
-        <div>
+        <img
+          src={memberAvatar(p.label, p.gender)}
+          alt=""
+          className="w-20 h-20 rounded-full object-cover bg-slate-200 opacity-60 grayscale"
+        />
+        <div className="text-center">
           <div className="text-sm font-bold text-slate-400 leading-tight">{p.label}</div>
           <div className="text-[11px] text-slate-400">เร็วๆ นี้</div>
         </div>
@@ -213,15 +211,11 @@ function PersonTile({ p, onPick }: { p: Person; onPick: (p: Person) => void }) {
   return (
     <button
       onClick={() => onPick(p)}
-      className="aspect-square flex flex-col justify-between p-3 rounded-md bg-slate-700 hover:bg-slate-800 text-left text-white transition-colors"
+      className="relative aspect-square flex flex-col items-center justify-center gap-2 p-2 rounded-md bg-slate-700 hover:bg-slate-800 text-white transition-colors"
     >
-      <div className="flex items-center justify-between">
-        <div className="w-8 h-8 rounded-md bg-white/20 overflow-hidden flex items-center justify-center shrink-0">
-          <img src={memberAvatar(p.email)} alt="" className="w-full h-full object-cover" />
-        </div>
-        {isSupervisor(p) && <ShieldCheck size={16} className="text-white/90" />}
-      </div>
-      <span className="text-sm font-bold leading-tight">{p.label}</span>
+      {isSupervisor(p) && <ShieldCheck size={16} className="absolute top-2 right-2 text-white/90" />}
+      <img src={memberAvatar(p.email, p.gender)} alt="" className="w-24 h-24 rounded-full object-cover bg-white/15" />
+      <span className="text-sm font-bold leading-tight text-center">{p.label}</span>
     </button>
   );
 }
@@ -251,15 +245,11 @@ function DepartmentGrid({ onPick }: { onPick: (g: RoleGroup) => void }) {
         <button
           key={g.id}
           onClick={() => onPick(g)}
-          className={`${g.color} aspect-square flex flex-col justify-between p-3 rounded-md text-left text-white hover:brightness-110 transition`}
+          className={`${g.color} relative aspect-square flex flex-col items-center justify-center gap-2 p-2 rounded-md text-white hover:brightness-110 transition`}
         >
-          <div className="flex items-start justify-between">
-            <div className="w-8 h-8 rounded-full bg-white/90 overflow-hidden flex items-center justify-center shrink-0">
-              <img src={teamAvatar(g.id)} alt="" className="w-full h-full object-cover" />
-            </div>
-            <span className="text-xs font-semibold text-white/80">{g.members.length}</span>
-          </div>
-          <span className="text-base font-bold leading-tight">{g.label}</span>
+          <span className="absolute top-2 right-2.5 text-xs font-semibold text-white/80">{g.members.length}</span>
+          <img src={teamAvatar(g.id)} alt="" className="w-24 h-24 rounded-full bg-white/90 object-cover" />
+          <span className="text-base font-bold leading-tight text-center">{g.label}</span>
         </button>
       ))}
     </div>

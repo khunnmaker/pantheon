@@ -13,10 +13,15 @@
 
 export type Cred = 'password' | 'pin';   // Dr. M & Nee (MD) use a password; everyone else a 6-digit PIN.
 
+// Drives the cute avatar's look (feminine vs masculine hair). Display-only — nothing to do with
+// auth. Sales are female, messengers are male (owner-specified); the rest are set per person.
+export type Gender = 'male' | 'female';
+
 export interface Person {
   email: string;
   label: string;
   cred: Cred;
+  gender: Gender;
   // A card with no working account yet (owner provisions it later). Rendered greyed/disabled,
   // not tappable, so it can never be selected or submitted.
   comingSoon?: boolean;
@@ -45,8 +50,8 @@ export const ROLE_GROUPS: RoleGroup[] = [
     color: 'bg-violet-600',
     members: [
       // Dr. P — no seeded account yet; disabled "coming soon" card (owner provisions later).
-      { email: '', label: 'Dr. P', cred: 'pin', comingSoon: true },
-      { email: 'drm@prominent.local', label: 'Dr. M', cred: 'password' },
+      { email: '', label: 'Dr. P', cred: 'pin', gender: 'male', comingSoon: true },
+      { email: 'drm@prominent.local', label: 'Dr. M', cred: 'password', gender: 'male' },
     ],
   },
   {
@@ -54,8 +59,8 @@ export const ROLE_GROUPS: RoleGroup[] = [
     label: 'MD',
     color: 'bg-teal-600',
     members: [
-      { email: 'md@prominent.local', label: 'Nee (นี)', cred: 'password' },
-      { email: slugEmail('nun'), label: 'Noon (นุ่น)', cred: 'pin' },
+      { email: 'md@prominent.local', label: 'Nee (นี)', cred: 'password', gender: 'female' },
+      { email: slugEmail('nun'), label: 'Noon (นุ่น)', cred: 'pin', gender: 'female' },
     ],
   },
   {
@@ -63,9 +68,9 @@ export const ROLE_GROUPS: RoleGroup[] = [
     label: 'ฝ่ายขาย (Sales)',
     color: 'bg-emerald-600',
     members: [
-      { email: slugEmail('nadeer'), label: 'NaDeer', cred: 'pin' },
-      { email: slugEmail('anny'), label: 'Anny', cred: 'pin' },
-      { email: slugEmail('noey'), label: 'Noey', cred: 'pin' },
+      { email: slugEmail('nadeer'), label: 'NaDeer', cred: 'pin', gender: 'female' },
+      { email: slugEmail('anny'), label: 'Anny', cred: 'pin', gender: 'female' },
+      { email: slugEmail('noey'), label: 'Noey', cred: 'pin', gender: 'female' },
     ],
   },
   {
@@ -73,15 +78,15 @@ export const ROLE_GROUPS: RoleGroup[] = [
     label: 'แมสเซนเจอร์',
     color: 'bg-sky-600',
     members: [
-      { email: slugEmail('ta'), label: 'ต้า', cred: 'pin' },
-      { email: slugEmail('arm'), label: 'อาร์ม', cred: 'pin' },
-      { email: slugEmail('man'), label: 'แมน', cred: 'pin' },
-      { email: slugEmail('boonson'), label: 'บุญสอน', cred: 'pin' },
-      { email: slugEmail('kaew'), label: 'แก้ว', cred: 'pin' },
-      { email: slugEmail('lungko'), label: 'ลุงโก๊ะ', cred: 'pin' },
-      { email: slugEmail('wong'), label: 'วง', cred: 'pin' },
-      { email: slugEmail('paeng'), label: 'แป๋ง', cred: 'pin' },
-      { email: slugEmail('da'), label: 'ด้า', cred: 'pin' },
+      { email: slugEmail('ta'), label: 'ต้า', cred: 'pin', gender: 'male' },
+      { email: slugEmail('arm'), label: 'อาร์ม', cred: 'pin', gender: 'male' },
+      { email: slugEmail('man'), label: 'แมน', cred: 'pin', gender: 'male' },
+      { email: slugEmail('boonson'), label: 'บุญสอน', cred: 'pin', gender: 'male' },
+      { email: slugEmail('kaew'), label: 'แก้ว', cred: 'pin', gender: 'male' },
+      { email: slugEmail('lungko'), label: 'ลุงโก๊ะ', cred: 'pin', gender: 'male' },
+      { email: slugEmail('wong'), label: 'วง', cred: 'pin', gender: 'male' },
+      { email: slugEmail('paeng'), label: 'แป๋ง', cred: 'pin', gender: 'male' },
+      { email: slugEmail('da'), label: 'ด้า', cred: 'pin', gender: 'male' },
     ],
   },
   {
@@ -95,8 +100,8 @@ export const ROLE_GROUPS: RoleGroup[] = [
     label: 'อื่นๆ',
     color: 'bg-fuchsia-600',
     members: [
-      { email: slugEmail('pin'), label: 'พิณ', cred: 'pin' },
-      { email: slugEmail('lekmaeban'), label: 'เล็ก', cred: 'pin' }, // seed name "เล็กแม่บ้าน", displayed "เล็ก"
+      { email: slugEmail('pin'), label: 'พิณ', cred: 'pin', gender: 'male' },
+      { email: slugEmail('lekmaeban'), label: 'เล็ก', cred: 'pin', gender: 'female' }, // seed name "เล็กแม่บ้าน", displayed "เล็ก"
     ],
   },
 ];
