@@ -12,6 +12,7 @@ import {
   type Agent, type CustomerLite, type CustomerDetail, type Message, type LearnedAnswer, type LearnedMetrics, type PendingProduct, type QuickReply,
 } from './lib/api';
 import { getSocket, disconnectSocket } from './lib/socket';
+import AppSwitcher from './AppSwitcher';
 
 // Portal-back link (Jupiter). URL from build-time env; hidden when unset, so it is completely
 // inert until VITE_PORTAL_URL is configured (Phase 1 go-live / Phase 2 domains).
@@ -1126,6 +1127,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
             {/* icon bar */}
             <div className="bg-white rounded-2xl shadow-sm border border-slate-200 flex items-center gap-1 px-2 py-2 shrink-0">
               <div className="text-sky-700 px-1" title="Minerva"><Bot size={22} /></div>
+              <AppSwitcher agent={agent} />
               <button onClick={() => setView('console')} title="คอนโซล"
                 className={'p-2 rounded-xl ' + (view === 'console' ? 'bg-sky-600 text-white' : 'text-slate-500 hover:bg-slate-100')}><MessageSquare size={19} /></button>
               <button onClick={() => setView('learning')} title="การเรียนรู้"

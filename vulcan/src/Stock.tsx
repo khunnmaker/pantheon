@@ -17,6 +17,7 @@ import {
   generateAliases, setAlias,
   getGroups, getGroupProducts, autoAssignGroups, setProductGroup, setSubgroup,
 } from './lib/api';
+import AppSwitcher from './AppSwitcher';
 
 type Tab = 'dashboard' | 'stock' | 'import' | 'history' | 'alias' | 'group';
 type StockFilter = 'all' | 'low' | 'out' | 'unknown' | 'noname';
@@ -106,6 +107,7 @@ export default function Stock({ agent, onLogout }: { agent: Agent; onLogout: () 
         <div className="max-w-6xl mx-auto px-4 py-3 flex items-center gap-4">
           <div className="flex items-center gap-2 text-indigo-700 font-bold">
             <Boxes size={22} /> Vulcan
+            <AppSwitcher agent={agent} />
           </div>
           <nav className="flex gap-1 text-sm">
             <TabBtn active={tab === 'dashboard'} onClick={() => setTab('dashboard')} icon={<LayoutDashboard size={15} />}>

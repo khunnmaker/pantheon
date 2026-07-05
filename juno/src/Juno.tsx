@@ -16,6 +16,7 @@ import {
 } from './lib/api';
 import PrintCovers from './PrintCovers';
 import Recon from './Recon';
+import AppSwitcher from './AppSwitcher';
 
 // No ใบกำกับภาษี tab: Prominent issues a tax invoice on EVERY sale (in Express, as part of
 // recording), so a "requested" queue would contain everything and filter nothing. The invoice
@@ -67,6 +68,7 @@ export default function Juno({ agent, onLogout }: { agent: Agent; onLogout: () =
             <Landmark size={22} />
             <span className="font-bold text-lg">Juno</span>
             <span className="text-slate-400 text-sm hidden sm:inline">· ระบบการเงิน</span>
+            <AppSwitcher agent={agent} />
           </div>
           <div className="flex items-center gap-3 text-sm">
             {PORTAL_URL && (

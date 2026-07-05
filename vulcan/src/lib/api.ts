@@ -8,12 +8,29 @@ export const API_URL: string = import.meta.env.VITE_API_URL ?? 'http://localhost
 // The stored key keeps its dashes; this is presentation only. Search is dash-insensitive.
 export const flatSku = (sku: string): string => sku.replace(/-/g, '');
 
-export type Role = 'agent' | 'supervisor';
+// Live roles (mirror of api/src/auth/jwt.ts). The old 'agent' type was stale — the runtime
+// sends supervisor/md/employee. Vulcan's routes stay supervisor-gated server-side (v1).
+export type Role = 'supervisor' | 'md' | 'employee';
 export interface Agent {
   id: string;
   email: string;
   name: string;
   role: Role;
+  // Per-person app grants (from the login response). Drives the suite app switcher —
+  // see hasAppAccess, which mirrors the SERVER logic in api/src/auth/jwt.ts exactly.
+  apps: string[];
+}
+
+// Suite apps the switcher can link to. Keep in sync with AppName in api/src/auth/jwt.ts.
+export type AppName = 'minerva' | 'vulcan' | 'juno' | 'ceres';
+
+// Mirror of the server's hasAppAccess (api/src/auth/jwt.ts): supervisor → everything;
+// md → Ceres only; employee → their own per-person grant list. A stored agent from before
+// this field existed has no apps → treated as no grants (empty list), which is safe.
+export function hasAppAccess(agent: Agent, app: AppName): boolean {
+  if (agent.role === 'supervisor') return true;
+  if (agent.role === 'md') return app === 'ceres';
+  return (agent.apps ?? []).includes(app);
 }
 
 export interface StockRow {

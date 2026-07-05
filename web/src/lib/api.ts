@@ -13,6 +13,21 @@ export interface Agent {
   email: string;
   name: string;
   role: Role;
+  // Per-person app grants (from the login response). Drives the suite app switcher —
+  // see hasAppAccess, which mirrors the SERVER logic in api/src/auth/jwt.ts exactly.
+  apps: string[];
+}
+
+// Suite apps the switcher can link to. Keep in sync with AppName in api/src/auth/jwt.ts.
+export type AppName = 'minerva' | 'vulcan' | 'juno' | 'ceres';
+
+// Mirror of the server's hasAppAccess (api/src/auth/jwt.ts): supervisor → everything;
+// md → Ceres only; employee → their own per-person grant list. A stored agent from before
+// this field existed has no apps → treated as no grants (empty list), which is safe.
+export function hasAppAccess(agent: Agent, app: AppName): boolean {
+  if (agent.role === 'supervisor') return true;
+  if (agent.role === 'md') return app === 'ceres';
+  return (agent.apps ?? []).includes(app);
 }
 export interface Message {
   id: string;
