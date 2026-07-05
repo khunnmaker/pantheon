@@ -1,4 +1,5 @@
 import { buildAliases, buildGroupAliases, groupOf } from '../stock/aliases.js';
+import { autoAssignSubgroup } from '../stock/catalogGroups.js';
 
 // Plain regression test for the PURE alias generator (no DB). Exits 1 on any failure.
 let fails = 0;
@@ -90,6 +91,28 @@ const gFill = buildGroupAliases(
 check('group fill: kept IM01 preserved', gFill.find((r) => r.sku === '07-01-04')?.alias === 'IM01');
 check('group fill: new item appends → IM02', gFill.find((r) => r.sku === '07-01-99')?.alias === 'IM02');
 check('group: codes globally unique', new Set(gRes.map((r) => r.alias)).size === gRes.length);
+
+// ── sub-group codes: alias = group + subgroup + number (IMAL01, IMPV01) ──
+const sg = [
+  { sku: '07-01-04', catalogGroup: 'impression', catalogSubgroup: 'AL' },
+  { sku: '07-01-07', catalogGroup: 'impression', catalogSubgroup: 'AL' },
+  { sku: '07-02-01', catalogGroup: 'impression', catalogSubgroup: 'PV' },
+  { sku: '07-06-16', catalogGroup: 'impression', catalogSubgroup: null }, // group-only → IM##
+];
+const sgRes = buildGroupAliases(sg);
+const ga = (sku: string) => sgRes.find((r) => r.sku === sku)?.alias;
+check('sub: alginate → IMAL01', ga('07-01-04') === 'IMAL01');
+check('sub: 2nd alginate → IMAL02', ga('07-01-07') === 'IMAL02');
+check('sub: PVS → IMPV01 (own bucket)', ga('07-02-01') === 'IMPV01');
+check('sub: no-subgroup impression → IM01', ga('07-06-16') === 'IM01');
+check('sub: all codes unique', new Set(sgRes.map((r) => r.alias)).size === sgRes.length);
+check('sub: invalid sub code falls back to group code', buildGroupAliases([{ sku: '07-01-04', catalogGroup: 'impression', catalogSubgroup: 'ZZ' }])[0].alias === 'IM01');
+
+// autoAssignSubgroup
+check('autosub: alginate name → AL', autoAssignSubgroup('impression', { nameEn: 'ALGINMAX NEW', nameTh: 'ผงพิมพ์ปาก' }) === 'AL');
+check('autosub: silicone name → PV', autoAssignSubgroup('impression', { nameEn: 'Ormadent putty', nameTh: 'ซิลิโคน' }) === 'PV');
+check('autosub: gutta percha → GP', autoAssignSubgroup('endo', { nameEn: 'Gutta percha points', nameTh: '' }) === 'GP');
+check('autosub: group without subgroups → null', autoAssignSubgroup('teeth', { nameEn: 'MAJOR DENT', nameTh: '' }) === null);
 
 console.log(fails === 0 ? '\nAll checks PASSED' : `\n${fails} check(s) FAILED`);
 if (fails) process.exit(1);
