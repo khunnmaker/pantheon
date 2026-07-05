@@ -210,6 +210,11 @@ export const setAlias = (sku: string, alias: string) =>
 
 // ── Catalog groups (merchandising taxonomy) ─────────────────────────────
 export type Pillar = 'lab' | 'digital' | 'clinical' | 'equipment';
+export interface SubGroupInfo {
+  code: string; // 2-letter, within its group (e.g. "AL" → IMAL01)
+  nameTh: string;
+  nameEn: string;
+}
 export interface CatalogGroupInfo {
   key: string;
   code: string; // 2-letter product-code prefix (e.g. "IM" → IM01)
@@ -217,6 +222,7 @@ export interface CatalogGroupInfo {
   nameEn: string;
   pillar: Pillar;
   count: number;
+  subgroups: SubGroupInfo[];
 }
 export interface GroupProduct {
   sku: string;
@@ -224,6 +230,7 @@ export interface GroupProduct {
   nameTh: string;
   photoSku: string | null;
   catalogGroup: string | null;
+  catalogSubgroup: string | null;
   alias: string | null;
   stock: number | null; // remaining qty (null = unknown)
   reorderPoint: number | null;
@@ -240,10 +247,10 @@ export const getGroupProducts = (opts: { group?: string; filter?: 'all' | 'unass
   return authed<{ products: GroupProduct[] }>(`/api/stock/groups/products?${p.toString()}`);
 };
 
-// Auto-assign products to groups by keyword/category rules. onlyUnassigned=true keeps
-// manual assignments; false re-runs on everything.
+// Auto-assign products to groups + sub-groups by keyword/category rules. onlyUnassigned=true
+// keeps manual assignments; false re-runs on everything.
 export const autoAssignGroups = (onlyUnassigned: boolean) =>
-  authed<{ ok: boolean; assigned: number; unassigned: number; scanned: number }>('/api/stock/groups/auto-assign', {
+  authed<{ ok: boolean; assigned: number; subAssigned: number; unassigned: number; scanned: number }>('/api/stock/groups/auto-assign', {
     method: 'POST',
     body: JSON.stringify({ onlyUnassigned }),
   });
@@ -252,6 +259,13 @@ export const setProductGroup = (sku: string, group: string | null) =>
   authed<{ ok: boolean; sku: string; group: string | null }>('/api/stock/groups/set-product', {
     method: 'POST',
     body: JSON.stringify({ sku, group }),
+  });
+
+// Set/clear one product's sub-group (2-letter code valid for its group).
+export const setSubgroup = (sku: string, subgroup: string | null) =>
+  authed<{ ok: boolean; sku: string; subgroup: string | null }>('/api/stock/groups/set-subgroup', {
+    method: 'POST',
+    body: JSON.stringify({ sku, subgroup }),
   });
 
 export const setFamilyGroup = (family: string, group: string | null) =>

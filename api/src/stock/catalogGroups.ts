@@ -62,6 +62,157 @@ export const CATALOG_GROUPS: CatalogGroup[] = [
 export const GROUP_KEYS = new Set(CATALOG_GROUPS.map((g) => g.key));
 export const GROUP_CODE = new Map(CATALOG_GROUPS.map((g) => [g.key, g.code]));
 
+// ── Sub-groups ───────────────────────────────────────────────────────────
+// A second level under a group: a 2-letter code (unique WITHIN its group) + names. The
+// product code becomes group + subgroup + number → "IMAL01" (impression/alginate). Only
+// groups that benefit are subdivided; others have no subgroups (code stays group-level).
+export interface SubGroup {
+  code: string; // 2-letter, unique within the parent group
+  nameTh: string;
+  nameEn: string;
+}
+
+export const SUBGROUPS: Record<string, SubGroup[]> = {
+  impression: [
+    { code: 'AL', nameTh: 'อัลจิเนต', nameEn: 'Alginate' },
+    { code: 'PV', nameTh: 'ซิลิโคน (PVS)', nameEn: 'PVS / Silicone' },
+    { code: 'PE', nameTh: 'โพลีอีเทอร์', nameEn: 'Polyether' },
+    { code: 'TR', nameTh: 'ถาดพิมพ์ปาก', nameEn: 'Trays' },
+    { code: 'BR', nameTh: 'วัสดุกัดสบ', nameEn: 'Bite Registration' },
+  ],
+  acrylic: [
+    { code: 'SC', nameTh: 'เซลฟ์เคียว (แข็งเร็ว)', nameEn: 'Self-cure' },
+    { code: 'HC', nameTh: 'ฮีทเคียว (ต้ม)', nameEn: 'Heat-cure' },
+    { code: 'TM', nameTh: 'ผงทำถาดพิมพ์', nameEn: 'Tray Material' },
+    { code: 'OP', nameTh: 'ผงออร์โธ', nameEn: 'Ortho Plast' },
+    { code: 'MO', nameTh: 'โมโนเมอร์', nameEn: 'Monomer' },
+  ],
+  endo: [
+    { code: 'FI', nameTh: 'ไฟล์/เครื่องขยายคลอง', nameEn: 'Files' },
+    { code: 'GP', nameTh: 'กัตตาเปอร์ชา', nameEn: 'Gutta Percha' },
+    { code: 'SE', nameTh: 'ซีลเลอร์', nameEn: 'Sealers' },
+    { code: 'PA', nameTh: 'เปเปอร์พอยต์', nameEn: 'Paper Points' },
+    { code: 'IR', nameTh: 'น้ำยาล้างคลอง', nameEn: 'Irrigants' },
+  ],
+  lab_finishing: [
+    { code: 'DI', nameTh: 'หัวกรอเพชร', nameEn: 'Diamonds' },
+    { code: 'CA', nameTh: 'หัวกรอคาร์ไบด์/สตีล', nameEn: 'Carbide / Steel' },
+    { code: 'ST', nameTh: 'หินขัด', nameEn: 'Stones' },
+    { code: 'PO', nameTh: 'ยางขัด/สักหลาด', nameEn: 'Polishers' },
+    { code: 'SA', nameTh: 'ผ้าทราย/กระดาษทราย', nameEn: 'Sand Cloth' },
+    { code: 'MA', nameTh: 'ก้านแมนเดรล', nameEn: 'Mandrels' },
+    { code: 'BR', nameTh: 'แปรงขัด', nameEn: 'Brushes' },
+    { code: 'PU', nameTh: 'ผงขัด (พูมิช)', nameEn: 'Pumice' },
+  ],
+  surgery: [
+    { code: 'BL', nameTh: 'ใบมีดผ่าตัด', nameEn: 'Blades' },
+    { code: 'SU', nameTh: 'ไหมเย็บแผล', nameEn: 'Sutures' },
+    { code: 'FO', nameTh: 'คีมถอนฟัน', nameEn: 'Forceps' },
+    { code: 'EL', nameTh: 'ที่งัดราก', nameEn: 'Elevators' },
+    { code: 'BG', nameTh: 'กระดูกเทียม/เมมเบรน', nameEn: 'Bone Graft / Membrane' },
+    { code: 'RE', nameTh: 'อุปกรณ์ถ่างปาก', nameEn: 'Retractors' },
+  ],
+  ppe: [
+    { code: 'GL', nameTh: 'ถุงมือ', nameEn: 'Gloves' },
+    { code: 'MK', nameTh: 'หน้ากาก', nameEn: 'Masks' },
+    { code: 'GO', nameTh: 'เสื้อกาวน์', nameEn: 'Gowns' },
+    { code: 'GA', nameTh: 'ผ้าก๊อซ', nameEn: 'Gauze' },
+    { code: 'SU', nameTh: 'ดูดน้ำลาย', nameEn: 'Suction' },
+    { code: 'CA', nameTh: 'หมวกคลุมผม', nameEn: 'Caps' },
+  ],
+  wax: [
+    { code: 'BW', nameTh: 'แว็กซ์ฐาน (ชมพู)', nameEn: 'Base Plate Wax' },
+    { code: 'UW', nameTh: 'ยูทิลิตี้แว็กซ์', nameEn: 'Utility Wax' },
+    { code: 'SW', nameTh: 'สติกกี้แว็กซ์', nameEn: 'Sticky Wax' },
+    { code: 'OC', nameTh: 'แผ่นเรียงฟัน/สบฟัน', nameEn: 'Occlusal Plates' },
+  ],
+  investment: [
+    { code: 'IN', nameTh: 'ปูนหุ้ม', nameEn: 'Investment' },
+    { code: 'PN', nameTh: 'หมุด/ตะปู', nameEn: 'Pins & Nails' },
+    { code: 'SA', nameTh: 'เลื่อย/อุปกรณ์', nameEn: 'Saws & Tools' },
+  ],
+};
+
+// Valid sub codes per group (for validation).
+export const SUBGROUP_CODES: Record<string, Set<string>> = Object.fromEntries(
+  Object.entries(SUBGROUPS).map(([g, subs]) => [g, new Set(subs.map((s) => s.code))]),
+);
+
+// Server-only auto-assign rules per group (FIRST match wins). Separate from SUBGROUPS so the
+// RegExp is never serialized to the client.
+const SUBGROUP_RULES: Record<string, Array<{ sub: string; re: RegExp }>> = {
+  impression: [
+    { sub: 'AL', re: /alginmax|cromax|gelmax|alginate|ผงพิมพ์ปาก|อัลจิเนต/i },
+    { sub: 'PE', re: /polyether|โพลีอีเทอร์|impregum/i },
+    { sub: 'PV', re: /\bpvs\b|\bvps\b|silicone|ซิลิโคน|putty|ormadent|ormaplus|ormamax|polyvinyl/i },
+    { sub: 'BR', re: /bite|registration|กัดสบ|สร้างการกัด/i },
+    { sub: 'TR', re: /tray|ถาดพิมพ์|full arch|พิมพ์ปาก/i },
+  ],
+  acrylic: [
+    { sub: 'TM', re: /tray material/i },
+    { sub: 'OP', re: /ortho ?(plast|dppf|pmf)|ผงสี.*ortho|ผงสีชมพู/i },
+    { sub: 'HC', re: /heat ?cure|ต้ม/i },
+    { sub: 'SC', re: /self ?cure|cold ?cure|แข็งเร็ว|ไม่ต้ม/i },
+    { sub: 'MO', re: /monomer|โมโนเมอร์|น้ำยา/i },
+  ],
+  endo: [
+    { sub: 'GP', re: /gutta|กัตตา/i },
+    { sub: 'PA', re: /paper ?point|เปเปอร์/i },
+    { sub: 'SE', re: /sealer|ซีลเลอร์/i },
+    { sub: 'IR', re: /irrigant|naocl|edta|น้ำยาล้างคลอง/i },
+    { sub: 'FI', re: /k-?file|h-?file|\bfile|reamer|ไฟล์|broach|เครื่องขยายคลอง|paste carrier|lentulo/i },
+  ],
+  lab_finishing: [
+    { sub: 'DI', re: /diamond|เพชร/i },
+    { sub: 'CA', re: /carbide|steel|\bhp\d/i },
+    { sub: 'MA', re: /mandrel|แมนเดล|ก้าน/i },
+    { sub: 'PU', re: /pumice|ทรายขัด/i },
+    { sub: 'SA', re: /ผ้าทราย|sand|saitex|sandpaper|abrasive/i },
+    { sub: 'ST', re: /\bstone\b|หินขัด/i },
+    { sub: 'BR', re: /brush|แปรง/i },
+    { sub: 'PO', re: /polisher|felt|สักหลาด|buff|ยางขัด|ผ้าขัด|ขัดงาน/i },
+  ],
+  surgery: [
+    { sub: 'BL', re: /blade|ใบมีด|scalpel/i },
+    { sub: 'SU', re: /suture|ไหมเย็บ|เย็บไหม|เข็มเย็บ|novosyn/i },
+    { sub: 'FO', re: /forceps|คีมถอน/i },
+    { sub: 'EL', re: /elevator|ที่งัด/i },
+    { sub: 'BG', re: /bone graft|กระดูกเทียม|membrane|เมมเบรน/i },
+    { sub: 'RE', re: /retractor|ถ่างปาก|เปิดปาก/i },
+  ],
+  ppe: [
+    { sub: 'GL', re: /glove|ถุงมือ/i },
+    { sub: 'MK', re: /\bmask\b|หน้ากาก/i },
+    { sub: 'GO', re: /gown|เสื้อกาวน์|กาวน์/i },
+    { sub: 'GA', re: /gauze|ผ้าก๊อซ|ก๊อซ/i },
+    { sub: 'SU', re: /suction|ดูดน้ำลาย/i },
+    { sub: 'CA', re: /\bcap\b|หมวก|non ?woven/i },
+  ],
+  wax: [
+    { sub: 'OC', re: /occlusal|เรียงฟัน|แผ่นวัด/i },
+    { sub: 'SW', re: /sticky/i },
+    { sub: 'UW', re: /utility/i },
+    { sub: 'BW', re: /pink wax|base ?plate|แว็กซ์.*ชมพู|\bwax\b|แว็กซ์/i },
+  ],
+  investment: [
+    { sub: 'PN', re: /\bpin|\bnail|ตะปู|หมุด/i },
+    { sub: 'SA', re: /\bsaw\b|เลื่อย/i },
+    { sub: 'IN', re: /bellavest|wirovest|begosol|investment|ปูนหุ้ม/i },
+  ],
+};
+
+// Suggest a sub-group code for a product within its group, or null (no rule / group has no subs).
+export function autoAssignSubgroup(
+  groupKey: string,
+  p: { nameEn: string; nameTh: string; keywords?: string[] },
+): string | null {
+  const rules = SUBGROUP_RULES[groupKey];
+  if (!rules) return null;
+  const hay = `${p.nameEn} ${p.nameTh} ${(p.keywords ?? []).join(' ')}`.toLowerCase();
+  for (const r of rules) if (r.re.test(hay)) return r.sub;
+  return null;
+}
+
 // Ordered auto-assign rules (FIRST match wins → specific before general). Each tests the
 // lowercased "nameEn + nameTh + keywords" of a product. Tuned to Prominent's ACTUAL catalog
 // (which has clinical items — endo files, blades, dam, fluoride — hiding in category 07).

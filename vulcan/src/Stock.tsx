@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import {
   Boxes, Search, Upload, History, LogOut, AlertTriangle, Check, Loader2,
   Package, RefreshCw, ChevronRight, X, LayoutDashboard, PackageX, PackageCheck,
-  HelpCircle, Clock, ArrowRight, Crown, Tag, Wand2, Layers,
+  HelpCircle, Clock, ArrowRight, Crown, Tag, Wand2, Layers, Pencil,
 } from 'lucide-react';
 
 // Portal-back link (Jupiter). URL from build-time env; hidden when unset, so it is completely
@@ -15,7 +15,7 @@ import {
   getSummary, getStockList, adjustStock, setReorderPoint, renameProduct, getImports, getAdjustments,
   previewImport, applyImport, clearSession, API_URL, flatSku,
   generateAliases, setAlias,
-  getGroups, getGroupProducts, autoAssignGroups, setProductGroup,
+  getGroups, getGroupProducts, autoAssignGroups, setProductGroup, setSubgroup,
 } from './lib/api';
 
 type Tab = 'dashboard' | 'stock' | 'import' | 'history' | 'alias' | 'group';
@@ -1220,6 +1220,94 @@ function GroupSelect({
   );
 }
 
+// One reviewable product row: group + sub-group pickers, remaining stock, and inline name edit.
+function GroupProductRow({
+  product, groups, onChangeGroup, onChangeSubgroup, onRenamed,
+}: {
+  product: GroupProduct;
+  groups: CatalogGroupInfo[];
+  onChangeGroup: (sku: string, group: string | null) => void;
+  onChangeSubgroup: (sku: string, sub: string | null) => void;
+  onRenamed: (sku: string, nameTh: string, nameEn: string) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [nameTh, setNameTh] = useState(product.nameTh);
+  const [nameEn, setNameEn] = useState(product.nameEn);
+  const [saving, setSaving] = useState(false);
+  const subs = groups.find((g) => g.key === product.catalogGroup)?.subgroups ?? [];
+
+  async function saveName() {
+    setSaving(true);
+    try {
+      await renameProduct(product.sku, nameEn.trim(), nameTh.trim());
+      onRenamed(product.sku, nameTh.trim(), nameEn.trim());
+      setEditing(false);
+    } catch { /* keep editor open on failure */ } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="py-2">
+      <div className="flex items-center gap-2.5">
+        <Thumb photoSku={product.photoSku} size={34} />
+        <div className="min-w-0 flex-1">
+          <div className="text-sm text-slate-700 truncate">{product.nameTh || product.nameEn || flatSku(product.sku)}</div>
+          <div className="text-[10px] text-slate-400 font-mono">
+            {product.alias && <span className="text-indigo-600 font-semibold">{product.alias} · </span>}
+            {flatSku(product.sku)}
+            {product.nameEn && product.nameTh && <span className="text-slate-300"> · {product.nameEn}</span>}
+          </div>
+        </div>
+        <button
+          onClick={() => { setEditing((v) => !v); setNameTh(product.nameTh); setNameEn(product.nameEn); }}
+          title="แก้ชื่อ"
+          className={`shrink-0 p-1.5 rounded-lg border ${editing ? 'bg-indigo-50 border-indigo-300 text-indigo-600' : 'border-slate-200 text-slate-400 hover:text-slate-600'}`}
+        >
+          <Pencil size={13} />
+        </button>
+        <StockPill stock={product.stock} reorderPoint={product.reorderPoint} />
+        {subs.length > 0 && (
+          <select
+            value={product.catalogSubgroup ?? ''}
+            onChange={(e) => onChangeSubgroup(product.sku, e.target.value || null)}
+            className="shrink-0 w-28 px-2 py-1 rounded-lg border border-slate-300 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-indigo-400"
+          >
+            <option value="">— ชนิด —</option>
+            {subs.map((s) => (
+              <option key={s.code} value={s.code}>{s.nameTh}</option>
+            ))}
+          </select>
+        )}
+        <GroupSelect groups={groups} value={product.catalogGroup} onChange={(g) => onChangeGroup(product.sku, g)} />
+      </div>
+      {editing && (
+        <div className="flex flex-wrap items-center gap-2 mt-2 pl-11">
+          <input
+            value={nameTh}
+            onChange={(e) => setNameTh(e.target.value)}
+            placeholder="ชื่อไทย"
+            className="flex-1 min-w-[140px] px-2 py-1 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+          />
+          <input
+            value={nameEn}
+            onChange={(e) => setNameEn(e.target.value)}
+            placeholder="ชื่ออังกฤษ"
+            className="flex-1 min-w-[140px] px-2 py-1 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+          />
+          <button
+            onClick={saveName}
+            disabled={saving}
+            className="px-3 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-medium flex items-center gap-1 disabled:opacity-50"
+          >
+            {saving ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} บันทึกชื่อ
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function GroupTab() {
   const [groups, setGroups] = useState<CatalogGroupInfo[]>([]);
   const [total, setTotal] = useState(0);
@@ -1269,9 +1357,10 @@ function GroupTab() {
   }
 
   async function changeProduct(sku: string, group: string | null) {
-    // optimistic: update the row, then drop it if it no longer belongs to the open bucket
+    // optimistic: update the row (changing group clears the sub-group), then drop it if it no
+    // longer belongs to the open bucket.
     setProducts((ps) => {
-      const updated = ps.map((p) => (p.sku === sku ? { ...p, catalogGroup: group } : p));
+      const updated = ps.map((p) => (p.sku === sku ? { ...p, catalogGroup: group, catalogSubgroup: null } : p));
       if (sel === 'unassigned') return updated.filter((p) => p.catalogGroup === null);
       if (sel) return updated.filter((p) => p.catalogGroup === sel);
       return updated;
@@ -1282,6 +1371,19 @@ function GroupTab() {
     } catch {
       if (sel) loadProducts(sel, q); // revert to server truth on failure
     }
+  }
+
+  async function changeSubgroup(sku: string, sub: string | null) {
+    setProducts((ps) => ps.map((p) => (p.sku === sku ? { ...p, catalogSubgroup: sub } : p)));
+    try {
+      await setSubgroup(sku, sub);
+    } catch {
+      if (sel) loadProducts(sel, q);
+    }
+  }
+
+  function patchName(sku: string, nameTh: string, nameEn: string) {
+    setProducts((ps) => ps.map((p) => (p.sku === sku ? { ...p, nameTh, nameEn } : p)));
   }
 
   const byPillar = (pl: Pillar) => groups.filter((g) => g.pillar === pl);
@@ -1378,19 +1480,14 @@ function GroupTab() {
           ) : (
             <div className="divide-y divide-slate-100 max-h-[60vh] overflow-auto">
               {products.map((p) => (
-                <div key={p.sku} className="flex items-center gap-2.5 py-2">
-                  <Thumb photoSku={p.photoSku} size={34} />
-                  <div className="min-w-0 flex-1">
-                    <div className="text-sm text-slate-700 truncate">{p.nameTh || p.nameEn || flatSku(p.sku)}</div>
-                    <div className="text-[10px] text-slate-400 font-mono">
-                      {p.alias && <span className="text-indigo-600 font-semibold">{p.alias} · </span>}
-                      {flatSku(p.sku)}
-                      {p.nameEn && p.nameTh && <span className="text-slate-300"> · {p.nameEn}</span>}
-                    </div>
-                  </div>
-                  <StockPill stock={p.stock} reorderPoint={p.reorderPoint} />
-                  <GroupSelect groups={groups} value={p.catalogGroup} onChange={(g) => changeProduct(p.sku, g)} />
-                </div>
+                <GroupProductRow
+                  key={p.sku}
+                  product={p}
+                  groups={groups}
+                  onChangeGroup={changeProduct}
+                  onChangeSubgroup={changeSubgroup}
+                  onRenamed={patchName}
+                />
               ))}
             </div>
           )}

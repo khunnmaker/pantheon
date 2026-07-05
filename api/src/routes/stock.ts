@@ -6,7 +6,7 @@ import { searchProducts } from '../catalog/match.js';
 import { toStockRow } from '../stock/helpers.js';
 import { decodeExpressBytes, parseExpressReport, type ParsedStockRow } from '../stock/parseExpressReport.js';
 import { buildGroupAliases, groupOf } from '../stock/aliases.js';
-import { CATALOG_GROUPS, GROUP_KEYS, autoAssignGroup } from '../stock/catalogGroups.js';
+import { CATALOG_GROUPS, GROUP_KEYS, SUBGROUPS, SUBGROUP_CODES, autoAssignGroup, autoAssignSubgroup } from '../stock/catalogGroups.js';
 
 // Attach the short alias (e.g. "TR34") to a set of rows in one query. Generic so any
 // {sku, alias?} shape (StockRow, etc.) can reuse it.
@@ -412,7 +412,7 @@ export async function stockRoutes(app: FastifyInstance) {
     const regenerate = (req.body as { regenerate?: boolean }).regenerate === true;
     const products = await prisma.product.findMany({
       where: { status: 'active', catalogGroup: { not: null } },
-      select: { sku: true, catalogGroup: true },
+      select: { sku: true, catalogGroup: true, catalogSubgroup: true },
     });
     const existing = await prisma.productAlias.findMany();
     const keep = regenerate ? {} : Object.fromEntries(existing.map((e) => [e.sku, e.alias]));
@@ -518,7 +518,7 @@ export async function stockRoutes(app: FastifyInstance) {
     });
     const byKey = new Map(counts.map((c) => [c.catalogGroup ?? '', c._count._all]));
     const total = counts.reduce((n, c) => n + c._count._all, 0);
-    const groups = CATALOG_GROUPS.map((g) => ({ ...g, count: byKey.get(g.key) ?? 0 }));
+    const groups = CATALOG_GROUPS.map((g) => ({ ...g, count: byKey.get(g.key) ?? 0, subgroups: SUBGROUPS[g.key] ?? [] }));
     return { groups, total, unassigned: byKey.get('') ?? 0 };
   });
 
@@ -553,54 +553,85 @@ export async function stockRoutes(app: FastifyInstance) {
     return {
       products: products.map((p) => ({
         sku: p.sku, nameEn: p.nameEn, nameTh: p.nameTh, photoSku: p.photoSku,
-        catalogGroup: p.catalogGroup, alias: aliasBySku.get(p.sku) ?? null,
+        catalogGroup: p.catalogGroup, catalogSubgroup: p.catalogSubgroup,
+        alias: aliasBySku.get(p.sku) ?? null,
         stock: p.stock, reorderPoint: p.reorderPoint,
       })),
     };
   });
 
-  // POST /api/stock/groups/auto-assign { onlyUnassigned? } — run the keyword/category rules
-  // over the catalog. onlyUnassigned=true (default) fills only products with no group yet;
-  // false re-runs on everything (overwrites). Never touches the SKU.
+  // POST /api/stock/groups/auto-assign { onlyUnassigned? } — run the keyword/category rules.
+  // onlyUnassigned=true (default): fill GROUP for products with none, and fill SUBGROUP for any
+  // grouped product still missing one. false: recompute both for everything. Never touches SKU.
   app.post('/api/stock/groups/auto-assign', async (req) => {
     const onlyUnassigned = (req.body as { onlyUnassigned?: boolean }).onlyUnassigned !== false;
-    const products = await prisma.product.findMany({
+    const CHUNK = 200;
+    // Write a sku→value map bucketed by value (one updateMany per distinct value).
+    const writeBucketed = async (bySku: Map<string, string>, field: 'catalogGroup' | 'catalogSubgroup') => {
+      const byVal = new Map<string, string[]>();
+      for (const [sku, v] of bySku) { if (!byVal.has(v)) byVal.set(v, []); byVal.get(v)!.push(sku); }
+      let n = 0;
+      for (const [v, skus] of byVal) {
+        for (let i = 0; i < skus.length; i += CHUNK) {
+          const res = await prisma.product.updateMany({ where: { sku: { in: skus.slice(i, i + CHUNK) } }, data: { [field]: v } });
+          n += res.count;
+        }
+      }
+      return n;
+    };
+
+    // ── GROUP pass ──
+    const groupScope = await prisma.product.findMany({
       where: onlyUnassigned ? { status: 'active', catalogGroup: null } : { status: 'active' },
       select: { sku: true, nameEn: true, nameTh: true, keywords: true },
     });
-    // Bucket by target group so we can write with one updateMany per group.
-    const bySku = new Map<string, string>();
-    for (const p of products) {
-      const g = autoAssignGroup(p);
-      if (g) bySku.set(p.sku, g);
-    }
-    const byGroup = new Map<string, string[]>();
-    for (const [sku, g] of bySku) {
-      if (!byGroup.has(g)) byGroup.set(g, []);
-      byGroup.get(g)!.push(sku);
-    }
-    let assigned = 0;
-    for (const [g, skus] of byGroup) {
-      const CHUNK = 200;
-      for (let i = 0; i < skus.length; i += CHUNK) {
-        const res = await prisma.product.updateMany({ where: { sku: { in: skus.slice(i, i + CHUNK) } }, data: { catalogGroup: g } });
-        assigned += res.count;
-      }
-    }
+    const groupBySku = new Map<string, string>();
+    for (const p of groupScope) { const g = autoAssignGroup(p); if (g) groupBySku.set(p.sku, g); }
+    const assigned = await writeBucketed(groupBySku, 'catalogGroup');
+
+    // ── SUBGROUP pass ── (after groups are written, so newly-grouped items are included)
+    const subScope = await prisma.product.findMany({
+      where: { status: 'active', catalogGroup: { not: null }, ...(onlyUnassigned ? { catalogSubgroup: null } : {}) },
+      select: { sku: true, nameEn: true, nameTh: true, keywords: true, catalogGroup: true },
+    });
+    const subBySku = new Map<string, string>();
+    for (const p of subScope) { const s = autoAssignSubgroup(p.catalogGroup!, p); if (s) subBySku.set(p.sku, s); }
+    const subAssigned = await writeBucketed(subBySku, 'catalogSubgroup');
+
     const stillNull = await prisma.product.count({ where: { status: 'active', catalogGroup: null } });
-    return { ok: true, assigned, unassigned: stillNull, scanned: products.length };
+    return { ok: true, assigned, subAssigned, unassigned: stillNull, scanned: groupScope.length };
   });
 
   // POST /api/stock/groups/set-product { sku, group } — set/clear one product's group.
+  // Changing the group clears any sub-group (a sub code only makes sense within its group).
   app.post('/api/stock/groups/set-product', async (req, reply) => {
     const body = req.body as { sku?: string; group?: string | null };
     const sku = String(body.sku ?? '').trim();
     if (!sku || !SKU_RE.test(sku)) return reply.code(400).send({ error: 'bad_sku' });
     const group = body.group === null || body.group === '' || body.group === undefined ? null : String(body.group);
     if (group !== null && !GROUP_KEYS.has(group)) return reply.code(400).send({ error: 'bad_group' });
-    const res = await prisma.product.updateMany({ where: { sku }, data: { catalogGroup: group } });
-    if (res.count === 0) return reply.code(404).send({ error: 'unknown_sku' });
+    const existing = await prisma.product.findUnique({ where: { sku }, select: { catalogGroup: true } });
+    if (!existing) return reply.code(404).send({ error: 'unknown_sku' });
+    const clearSub = existing.catalogGroup !== group;
+    await prisma.product.update({ where: { sku }, data: { catalogGroup: group, ...(clearSub ? { catalogSubgroup: null } : {}) } });
     return { ok: true, sku, group };
+  });
+
+  // POST /api/stock/groups/set-subgroup { sku, subgroup } — set/clear one product's sub-group
+  // (a 2-letter code that must be valid for the product's current group).
+  app.post('/api/stock/groups/set-subgroup', async (req, reply) => {
+    const body = req.body as { sku?: string; subgroup?: string | null };
+    const sku = String(body.sku ?? '').trim();
+    if (!sku || !SKU_RE.test(sku)) return reply.code(400).send({ error: 'bad_sku' });
+    const sub = body.subgroup === null || body.subgroup === '' || body.subgroup === undefined ? null : String(body.subgroup);
+    const product = await prisma.product.findUnique({ where: { sku }, select: { catalogGroup: true } });
+    if (!product) return reply.code(404).send({ error: 'unknown_sku' });
+    if (sub !== null) {
+      if (!product.catalogGroup) return reply.code(400).send({ error: 'no_group' });
+      if (!SUBGROUP_CODES[product.catalogGroup]?.has(sub)) return reply.code(400).send({ error: 'bad_subgroup' });
+    }
+    await prisma.product.update({ where: { sku }, data: { catalogSubgroup: sub } });
+    return { ok: true, sku, subgroup: sub };
   });
 
   // POST /api/stock/groups/set-family { family, group } — set the group for every product

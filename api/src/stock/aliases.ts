@@ -1,43 +1,51 @@
 // Product alias generation. A product's canonical key is its dashed SKU ("07-10-09",
 // shared with Express — never changed). An ALIAS is a short human code staff can type/read.
 //
-// GROUP-BASED codes (current scheme): alias = <2-letter group code> + running number within
-// the group, e.g. IM01 (impression), EN12 (endo). Self-describing by category. See
-// buildGroupAliases + catalogGroups.ts. (The older FAMILY-based buildAliases — prefix +
-// item segment, e.g. "TR34" — is kept below for its unit test / reference.)
+// GROUP-BASED codes (current scheme): alias = <2-letter group code>[<2-letter subgroup>]<num>,
+// numbered within the (group, subgroup) bucket. e.g. IM01 (impression, no sub), IMAL01
+// (impression/alginate), EN12 (endo). Self-describing by category. See catalogGroups.ts.
+// (The older FAMILY-based buildAliases — "TR34" — is kept below for its unit test / reference.)
 
-import { GROUP_CODE } from './catalogGroups.js';
+import { GROUP_CODE, SUBGROUP_CODES } from './catalogGroups.js';
 
 export interface AliasAssignment {
   sku: string;
   alias: string;
   groupKey: string;
-  prefix: string;
+  prefix: string; // the alpha prefix (group code, or group+subgroup code)
+}
+
+// The alpha prefix for a product's code: group code, plus its subgroup code when it has a
+// valid one for that group (e.g. "IM" or "IMAL"). null if the product has no/invalid group.
+export function codePrefix(catalogGroup: string | null, catalogSubgroup: string | null): string | null {
+  if (!catalogGroup || !GROUP_CODE.has(catalogGroup)) return null;
+  const g = GROUP_CODE.get(catalogGroup)!;
+  const sub = catalogSubgroup && SUBGROUP_CODES[catalogGroup]?.has(catalogSubgroup) ? catalogSubgroup : '';
+  return g + sub;
 }
 
 // Build group-based codes. Deterministic: same input → same output. Only products WITH a
-// catalogGroup get a code (ungrouped → excluded — assign a group first). `keep` (sku→alias)
-// preserves existing codes and APPENDS new items after the group's current max number, so
-// codes stay stable as products are added; without it, every group renumbers from 1.
+// (valid) catalogGroup get a code. Numbering is per PREFIX bucket (group, or group+subgroup),
+// so IMAL01/IMAL02 and IM01/IM02 coexist. `keep` (sku→alias) preserves existing codes and
+// APPENDS new items after the bucket's current max, so codes stay stable as items are added.
 export function buildGroupAliases(
-  products: { sku: string; catalogGroup: string | null }[],
+  products: { sku: string; catalogGroup: string | null; catalogSubgroup?: string | null }[],
   opts?: { keep?: Record<string, string> },
 ): AliasAssignment[] {
   const keep = opts?.keep ?? {};
-  // Group members by catalogGroup, in ascending SKU order for stable numbering.
   const sorted = [...products].sort((a, b) => (a.sku < b.sku ? -1 : a.sku > b.sku ? 1 : 0));
-  const byGroup = new Map<string, { sku: string }[]>();
+  // Bucket by resolved prefix (group or group+subgroup), in ascending SKU order.
+  const byPrefix = new Map<string, { sku: string; groupKey: string }[]>();
   for (const p of sorted) {
-    if (!p.catalogGroup || !GROUP_CODE.has(p.catalogGroup)) continue;
-    if (!byGroup.has(p.catalogGroup)) byGroup.set(p.catalogGroup, []);
-    byGroup.get(p.catalogGroup)!.push({ sku: p.sku });
+    const prefix = codePrefix(p.catalogGroup, p.catalogSubgroup ?? null);
+    if (!prefix) continue;
+    if (!byPrefix.has(prefix)) byPrefix.set(prefix, []);
+    byPrefix.get(prefix)!.push({ sku: p.sku, groupKey: p.catalogGroup! });
   }
 
   const out: AliasAssignment[] = [];
-  for (const [groupKey, members] of byGroup) {
-    const code = GROUP_CODE.get(groupKey)!;
-    const codeRe = new RegExp(`^${code}(\\d+)$`);
-    // Which numbers are already used in this group (by a KEPT alias for one of its members)?
+  for (const [prefix, members] of byPrefix) {
+    const codeRe = new RegExp(`^${prefix}(\\d+)$`);
     const used = new Set<number>();
     for (const m of members) {
       const k = keep[m.sku];
@@ -50,11 +58,11 @@ export function buildGroupAliases(
       used.add(next);
       return next;
     };
-    const width = Math.max(2, String(members.length).length); // 2 digits, or more for 100+
+    const width = Math.max(2, String(members.length).length);
     for (const m of members) {
       const k = keep[m.sku];
       const n = k && codeRe.test(k) ? parseInt(codeRe.exec(k)![1], 10) : nextFree();
-      out.push({ sku: m.sku, alias: `${code}${String(n).padStart(width, '0')}`, groupKey, prefix: code });
+      out.push({ sku: m.sku, alias: `${prefix}${String(n).padStart(width, '0')}`, groupKey: m.groupKey, prefix });
     }
   }
   return out;
