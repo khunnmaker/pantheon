@@ -39,6 +39,10 @@ export const EMPLOYEES = [
   { slug: 'pin', name: 'พิณ', apps: ['ceres'] },
   { slug: 'lekmaeban', name: 'เล็กแม่บ้าน', apps: ['ceres'] }, // housekeeper — enters expenses like everyone
   { slug: 'da', name: 'ด้า', apps: ['ceres'] },
+  // Finance team (การเงิน) — owner-granted Minerva + Juno + Ceres (2026-07-05). Juno's route
+  // gate was widened from supervisor-only to requireApp('juno') so the juno grant admits them.
+  { slug: 'benz', name: 'Benz', apps: ['minerva', 'juno', 'ceres'] },
+  { slug: 'meow', name: 'Meow', apps: ['minerva', 'juno', 'ceres'] },
 ] as const;
 
 export const employeeEmail = (slug: string): string => `${slug}@prominent.local`;

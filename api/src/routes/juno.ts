@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { prisma } from '../db/prisma.js';
-import { requireAuth, requireRole } from '../auth/middleware.js';
+import { requireAuth, requireApp } from '../auth/middleware.js';
 import { parseKbiz } from '../bank/parseKbiz.js';
 import { parseKshop } from '../bank/parseKshop.js';
 import { makeUniqueDedupeKeys } from '../bank/dedupe.js';
@@ -14,8 +14,8 @@ import { readSlipFromBuffer } from '../llm/readSlip.js';
 
 // Juno finance API. Reads the Payment table (written by Minerva's /to-finance hook) and
 // owns the finance lifecycle: verify → record, flag-queue triage, tax-invoice tracking,
-// and reporting/export. INCOME / LINE-slip only for the MVP. Gated to supervisor for v1
-// (finance logs in as Dr. M — the owner chose to reuse the supervisor role). See JUNO_BRIEF.md.
+// and reporting/export. INCOME / LINE-slip only for the MVP. Access = requireApp('juno'):
+// supervisor (Dr. M) + any employee granted 'juno' (the Finance team — Benz/Meow). See JUNO_BRIEF.md.
 //
 // PHASE B (see JUNO_PROCESS_BRIEF.md): bank import (KBIZ + K SHOP) + reconciliation
 // against checked (RE-carrying) Payments. Owner downloads both files every Wed/Sat;
@@ -357,7 +357,7 @@ async function runAutoMatcher(txnIds?: string[]): Promise<{ matched: number; che
 
 export async function junoRoutes(app: FastifyInstance) {
   app.addHook('preHandler', requireAuth);
-  app.addHook('preHandler', requireRole('supervisor'));
+  app.addHook('preHandler', requireApp('juno'));
 
   // GET /api/juno/summary — headline counts for the Juno dashboard / login landing.
   app.get('/api/juno/summary', async () => {
@@ -721,7 +721,7 @@ export async function junoRoutes(app: FastifyInstance) {
   // large bodyLimit, preHandler-only auth would let an anonymous client make the server
   // buffer+parse a multi-MB payload first.
   app.post('/api/juno/bank/import/preview', {
-    onRequest: [requireAuth, requireRole('supervisor')],
+    onRequest: [requireAuth, requireApp('juno')],
     bodyLimit: 17 * 1024 * 1024, // ~15MB cap after base64 inflation, plus envelope headroom
     config: { rateLimit: { max: 10, timeWindow: '1 minute' } },
   }, async (req, reply) => {
