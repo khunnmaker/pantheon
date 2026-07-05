@@ -9,13 +9,20 @@ import { hasAppAccess, type Agent, type AppName } from './lib/api';
 
 const CURRENT: AppName = 'vulcan';
 
-// URL for each OTHER suite app, from the same VITE_*_URL convention as VITE_PORTAL_URL.
-// The current app needs no URL (it is just the active label).
+// Suite app URLs: VITE_*_URL env override (for the future custom-domain cutover), with the
+// current Railway production URL as a built-in default so the switcher works everywhere
+// without per-service env config. Ceres has no service yet → env-only (stays hidden).
+const APP_URL = {
+  minerva: import.meta.env.VITE_MINERVA_URL ?? 'https://heroic-contentment-production-16e7.up.railway.app',
+  vulcan: import.meta.env.VITE_VULCAN_URL ?? 'https://vulcan-production-dbba.up.railway.app',
+  juno: import.meta.env.VITE_JUNO_URL ?? 'https://juno-production-5cea.up.railway.app',
+  ceres: import.meta.env.VITE_CERES_URL as string | undefined,
+};
 const APPS: { app: AppName; label: string; url: string | undefined }[] = [
-  { app: 'minerva', label: 'Minerva', url: import.meta.env.VITE_MINERVA_URL },
-  { app: 'vulcan', label: 'Vulcan', url: undefined },
-  { app: 'juno', label: 'Juno', url: import.meta.env.VITE_JUNO_URL },
-  { app: 'ceres', label: 'Ceres', url: import.meta.env.VITE_CERES_URL },
+  { app: 'minerva', label: 'Minerva', url: APP_URL.minerva },
+  { app: 'vulcan', label: 'Vulcan', url: APP_URL.vulcan },
+  { app: 'juno', label: 'Juno', url: APP_URL.juno },
+  { app: 'ceres', label: 'Ceres', url: APP_URL.ceres },
 ];
 
 export default function AppSwitcher({ agent }: { agent: Agent }) {
