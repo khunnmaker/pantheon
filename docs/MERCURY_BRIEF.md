@@ -18,7 +18,7 @@ Mercury **retires the two manual purchase-order skills** and closes the buy→st
 | Decision | Choice |
 |---|---|
 | Architecture | **Two nodes.** Cloud-Mercury (team portal, non-secret) + Local-Mercury (owner, all secrets, on-prem local DB). Even **vendor names and POs stay local.** The team orders by name or **alias**; only local-Mercury unmasks the alias and emails the order. |
-| Email sender | **khunnakrit.ratc@gmail.com** — POs sent from the owner's Gmail (from local-Mercury). |
+| Email sender | **purchasing@prominentdental.com** — a Google Workspace address the owner created 2026-07-04 (a free send-as alias on his one paid Workspace seat). POs sent from it via local-Mercury. |
 | Send control | **Review, then send** — Mercury drafts the PO + email; owner approves; then it sends. Never auto-send (matches the skills). |
 | v1 scope | **All four:** PO builder + Gmail send · supplier master + price lists (local) · goods-receipt → Vulcan stock · reorder suggestions from Vulcan low-stock. |
 
@@ -64,8 +64,8 @@ Three parties, two narrow doorways. Local-Mercury's only outbound contacts are c
 
 - Build a **clean English PO** grouped by vendor. Reuse the skills' rules: **Taiwan orders split normal vs special** against reference classification, **product picture per line**, English-only, item name + order qty + unit split, **CC list**, no internal code column.
 - Attachment = **PDF** (Excel optional). Product pictures embedded/attached for Taiwan per `/purchase-orders-taiwan`.
-- **Send from khunnakrit.ratc@gmail.com** via Gmail API (OAuth) or SMTP app-password, credential stored **locally** on the owner's machine. **Review-then-send**: local-Mercury shows the composed email + PO; owner approves; it sends; marks the requests `ordered` (status flows back to cloud so the team sees "สั่งแล้ว"). **Never auto-send.**
-- Flag for the owner (don't decide): sending vendor POs from a personal Gmail works but a dedicated `purchasing@`/business address reads more professional and is shareable — offer it as a later upgrade; for v1 it's his Gmail per his choice.
+- **Send from purchasing@prominentdental.com** (Google Workspace) via Gmail API (OAuth) or SMTP app-password, credential stored **locally** on the owner's machine. **Review-then-send**: local-Mercury shows the composed email + PO; owner approves; it sends; marks the requests `ordered` (status flows back to cloud so the team sees "สั่งแล้ว"). **Never auto-send.**
+- **Build-time setup (owner + build session):** the send credential. Recommended = a Gmail API OAuth client (a Google Cloud project on the Workspace org → OAuth consent + client, then a one-time local authorize that stores a refresh token on the owner's machine — revocable if the machine is lost). Simpler fallback = a Workspace SMTP app-password. `purchasing@` is a send-as alias on the owner's paid seat, so Mercury authenticates as that seat and sets From=purchasing@ (verified send-as). Also add `sales@`/`info@` the same free-alias way if wanted later.
 
 ## 7. Goods-receipt → Vulcan
 
