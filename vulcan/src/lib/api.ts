@@ -290,3 +290,59 @@ export const setFamilyGroup = (family: string, group: string | null) =>
     method: 'POST',
     body: JSON.stringify({ family, group }),
   });
+
+// ── Name-normalization review (ตรวจทาน tab) ─────────────────────────────
+// A staged proposed English name awaiting review. The live nameEn is untouched until the
+// proposal is APPROVED. status: pending (awaiting) | approved (now live) | rejected (dropped).
+export type ProposalStatus = 'pending' | 'approved' | 'rejected';
+export interface NameProposalRow {
+  sku: string;
+  nameEn: string; // the LIVE (current) English name
+  nameTh: string;
+  photoSku: string | null;
+  proposedNameEn: string | null; // the normalized candidate
+  status: ProposalStatus;
+  needsReview: boolean; // flagged for team review (ambiguous shade/variant)
+  catalogGroup: string | null;
+  catalogSubgroup: string | null;
+  stock: number | null;
+  reorderPoint: number | null;
+  alias: string | null;
+}
+export interface ProposalSummary {
+  pending: number;
+  review: number; // pending AND flagged (ต้องตรวจสอบ)
+  approved: number;
+  rejected: number;
+  total: number; // every product carrying a proposal
+}
+export type ProposalFilter = 'pending' | 'review' | 'approved' | 'rejected' | 'all';
+
+export const getProposalSummary = () => authed<ProposalSummary>('/api/stock/proposals/summary');
+
+export const getProposals = (filter: ProposalFilter, q: string) =>
+  authed<{ products: NameProposalRow[] }>(
+    `/api/stock/proposals?filter=${filter}&q=${encodeURIComponent(q)}`,
+  );
+
+// Seed the staging column from the committed proposals file. Idempotent (only fills rows with
+// no proposal yet). Returns how many were newly loaded. Never changes a live name.
+export const loadProposals = () =>
+  authed<{ ok: boolean; loaded: number; skipped: number; available: number; total: number }>('/api/stock/proposals/load', {
+    method: 'POST',
+  });
+
+// Approve (→ writes the live name), reject, or edit-and-keep-pending one proposal.
+// nameEn overrides the stored candidate (edit-then-approve, or edit-and-keep in one call).
+export const decideProposal = (sku: string, action: 'approve' | 'reject' | 'edit', nameEn?: string) =>
+  authed<{ ok: boolean; product: NameProposalRow }>('/api/stock/proposals/decide', {
+    method: 'POST',
+    body: JSON.stringify({ sku, action, ...(nameEn !== undefined ? { nameEn } : {}) }),
+  });
+
+// Approve every pending, NON-flagged proposal at once. Flagged (ต้องตรวจสอบ) ones are never touched.
+export const bulkApproveSafe = () =>
+  authed<{ ok: boolean; approved: number }>('/api/stock/proposals/decide-bulk', {
+    method: 'POST',
+    body: JSON.stringify({ scope: 'safe' }),
+  });

@@ -373,10 +373,18 @@ model Product {
   // Sub-group 2-letter code WITHIN the group (e.g. "AL" alginate under impression). null =
   // none. The product code becomes group + subgroup + number → "IMAL01".
   catalogSubgroup String?
+  // ── Name-normalization review (Vulcan ตรวจทาน tab) ──────────────────────
+  // A STAGED normalized English name awaiting supervisor review. The live nameEn is left
+  // untouched until the proposal is APPROVED in-app; approving copies proposedNameEn → nameEn.
+  // Seeded from api/src/catalog/nameProposals.ts via POST /api/stock/proposals/load.
+  proposedNameEn      String? // the normalized candidate (null = no proposal loaded)
+  proposalStatus      String  @default("none") // none | pending | approved | rejected
+  proposalNeedsReview Boolean @default(false) // flagged for team review (e.g. ambiguous shade code)
   updatedAt    DateTime  @updatedAt
 
   @@index([status])
   @@index([catalogGroup])
+  @@index([proposalStatus])
 }
 
 // Short human-friendly code per product (e.g. "TR34") that resolves to the canonical SKU.
