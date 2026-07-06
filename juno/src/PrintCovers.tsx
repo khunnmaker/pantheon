@@ -11,12 +11,9 @@ const COMPANY_HEADER = 'Prominent — ใบปะหน้าใบเสร็
 const fmtDate = (iso: string) =>
   new Date(iso).toLocaleDateString('th-TH', { day: '2-digit', month: 'short', year: '2-digit' });
 
-// One cover per RE: a payment carrying N RE numbers (one transfer paying several receipts)
-// prints N covers, each showing exactly ONE RE (large) plus the shared payment details.
-interface CoverItem {
-  payment: Payment;
-  reNumber: string;
-}
+// One cover per RECEIPT (payment): a payment carrying N RE numbers prints a SINGLE cover that
+// lists all N of them, because it's one physical receipt going into the file (owner decision
+// 2026-07-06). Several separate receipts still print one cover each.
 
 // A4 portrait, 2×2 grid of A6 (105×148.5mm) quadrants with dashed cut guides. window.print()
 // fires on mount; onDone fires after the browser's print dialog closes (afterprint) so the
@@ -34,14 +31,12 @@ export default function PrintCovers({ payments, onDone }: { payments: Payment[];
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Expand each payment into one cover item per RE it carries (payments with none are
-  // skipped — the caller already filters to reNumbers.length > 0, but stay defensive here).
-  const items: CoverItem[] = payments.flatMap((p) =>
-    p.reNumbers.length > 0 ? p.reNumbers.map((reNumber) => ({ payment: p, reNumber })) : [],
-  );
+  // One cover per payment that carries at least one RE (the caller already filters to
+  // reNumbers.length > 0, but stay defensive here).
+  const items: Payment[] = payments.filter((p) => p.reNumbers.length > 0);
 
   // group into pages of 4 (one A4 sheet = 2×2 quadrants)
-  const pages: CoverItem[][] = [];
+  const pages: Payment[][] = [];
   for (let i = 0; i < items.length; i += 4) pages.push(items.slice(i, i + 4));
 
   return (
@@ -90,7 +85,7 @@ export default function PrintCovers({ payments, onDone }: { payments: Payment[];
       <div className="bg-slate-200 py-6 flex flex-col items-center gap-6">
         {pages.map((group, pi) => (
           <div key={pi} className="print-page shadow-lg">
-            {group.map((item) => <Cover key={`${item.payment.id}-${item.reNumber}`} item={item} />)}
+            {group.map((p) => <Cover key={p.id} payment={p} />)}
             {/* pad the last page to 4 quadrants so the grid + cut guides stay regular */}
             {Array.from({ length: 4 - group.length }).map((_, i) => (
               <div key={`blank-${i}`} className="print-quadrant" />
@@ -102,14 +97,20 @@ export default function PrintCovers({ payments, onDone }: { payments: Payment[];
   );
 }
 
-function Cover({ item: { payment: p, reNumber } }: { item: CoverItem }) {
+function Cover({ payment: p }: { payment: Payment }) {
+  const multi = p.reNumbers.length > 1;
+  // one RE → large; a few → medium; many → small & wrapped, so a receipt paying several
+  // RE numbers can never blow the numbers out of the ¼-A4 quadrant.
+  const reSize = p.reNumbers.length === 1 ? 'text-2xl' : p.reNumbers.length <= 3 ? 'text-lg' : 'text-sm';
   return (
     <div className="print-quadrant">
       <div className="text-[9px] font-bold text-slate-500 mb-2">{COMPANY_HEADER}</div>
 
       <div className="mb-2">
-        <div className="text-[8px] text-slate-400">เลขที่ใบเสร็จ</div>
-        <div className="text-2xl font-bold tracking-wide">RE {reNumber}</div>
+        <div className="text-[8px] text-slate-400">เลขที่ใบเสร็จ{multi ? ` (${p.reNumbers.length} เลข)` : ''}</div>
+        <div className={`${reSize} font-bold tracking-wide leading-tight flex flex-wrap gap-x-2`}>
+          {p.reNumbers.map((re) => <span key={re}>RE {re}</span>)}
+        </div>
       </div>
 
       <Row label="วันที่" value={fmtDate(p.createdAt)} />

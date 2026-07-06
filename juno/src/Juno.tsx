@@ -243,11 +243,11 @@ function PaymentsView({ view, onChanged, canDelete, isCeo }: { view: Exclude<Vie
     onChanged();
   }
 
-  // The daily flow: filter today + ตรวจแล้ว → one click prints the whole stack. A payment with
-  // N REs prints N covers (one per RE — see PrintCovers), so the toolbar count is the total
-  // cover count, not the payment count.
+  // The daily flow: filter today + ตรวจแล้ว → one click prints the whole stack. One cover per
+  // RECEIPT now — a receipt paying several RE prints a single sheet listing them all (owner
+  // decision 2026-07-06, see PrintCovers) — so the toolbar count is just the printable-row count.
   const verifiedInView = rows.filter((r) => r.status === 'verified' && r.reNumbers.length > 0);
-  const coverCountInView = verifiedInView.reduce((sum, r) => sum + r.reNumbers.length, 0);
+  const coverCountInView = verifiedInView.length;
 
   // ── Row multi-select + bulk actions ───────────────────────────────────────
   const checkedRows = rows.filter((r) => checkedIds.has(r.id));
@@ -394,7 +394,7 @@ function PaymentsView({ view, onChanged, canDelete, isCeo }: { view: Exclude<Vie
               className="flex items-center gap-1 px-3 py-2 rounded-lg bg-sky-600 text-white text-sm hover:bg-sky-700 disabled:opacity-40 disabled:hover:bg-sky-600 disabled:cursor-not-allowed"
               title={verifiedInView.length === 0
                 ? 'ยังไม่มีรายการที่ตรวจแล้ว (มีเลข RE) ในตัวกรองนี้ — ตรวจรายการก่อนจึงจะพิมพ์ใบปะหน้าได้'
-                : 'พิมพ์ใบปะหน้าทุกรายการที่ตรวจแล้วในรายการที่กรองอยู่นี้ (ใบละ 1 เลข RE)'}
+                : 'พิมพ์ใบปะหน้าทุกรายการที่ตรวจแล้วในรายการที่กรองอยู่นี้ (ใบละ 1 ใบเสร็จ)'}
             >
               <Printer size={15} /> พิมพ์ใบปะหน้า ({coverCountInView})
             </button>
