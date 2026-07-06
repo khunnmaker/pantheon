@@ -15,34 +15,38 @@ import { env } from '../env.js';
 //   md         — Nee, implicit access to Ceres (management side) only.
 //   employee   — all staff; per-person app access via Agent.apps (owner-edited, Jupiter's
 //                admin UI — boot-sync never overwrites it on an existing row).
+// `group` + `gender` are DISPLAY metadata for the suite login screens (role-grouped tiles +
+// cute avatars) — they mirror Jupiter's portal grouping and have nothing to do with auth.
 export const TIER_ACCOUNTS = [
-  { email: 'drm@prominent.local', name: 'Dr. M', role: 'supervisor', pwEnvs: ['SEED_PASSWORD'] },
-  { email: 'md@prominent.local', name: 'Nee', role: 'md', pwEnvs: ['MD_PASSWORD', 'CERES_MD_PASSWORD'] }, // first non-empty wins; using the 2nd logs a deprecation warn
+  { email: 'drm@prominent.local', name: 'Dr. M', role: 'supervisor', pwEnvs: ['SEED_PASSWORD'], group: 'ceo', gender: 'male' },
+  { email: 'md@prominent.local', name: 'Nee', role: 'md', pwEnvs: ['MD_PASSWORD', 'CERES_MD_PASSWORD'], group: 'md', gender: 'female' }, // first non-empty wins; using the 2nd logs a deprecation warn
 ] as const;
 
 // Every employee, each with their own 6-digit PIN (EMPLOYEE_PINS) and a per-person set of
 // app grants. NOTE: นี (Nee) is the MD tier account above — she is NOT an employee row (the
 // old MESSENGERS list wrongly included her under a "nee" slug; fixed here).
+// `group` + `gender`: DISPLAY metadata for the login screens (see TIER_ACCOUNTS note). The
+// group mirrors Jupiter's portal grouping — note นุ่น displays under MD and พิณ/เล็ก under Others.
 export const EMPLOYEES = [
-  { slug: 'nadeer', name: 'NaDeer', apps: ['minerva', 'ceres'] },
-  { slug: 'anny', name: 'Anny', apps: ['minerva', 'ceres'] },
-  { slug: 'noey', name: 'Noey', apps: ['minerva', 'ceres'] },
-  { slug: 'ta', name: 'ต้า', apps: ['ceres'] },
-  { slug: 'arm', name: 'อาร์ม', apps: ['ceres'] },
-  { slug: 'man', name: 'แมน', apps: ['ceres'] },
-  { slug: 'boonson', name: 'บุญสอน', apps: ['ceres'] },
-  { slug: 'kaew', name: 'แก้ว', apps: ['ceres'] },
-  { slug: 'lungko', name: 'ลุงโก๊ะ', apps: ['ceres'] },
-  { slug: 'wong', name: 'วง', apps: ['ceres'] },
-  { slug: 'paeng', name: 'แป๋ง', apps: ['ceres'] },
-  { slug: 'nun', name: 'นุ่น', apps: ['ceres'] },
-  { slug: 'pin', name: 'พิณ', apps: ['ceres'] },
-  { slug: 'lekmaeban', name: 'เล็กแม่บ้าน', apps: ['ceres'] }, // housekeeper — enters expenses like everyone
-  { slug: 'da', name: 'ด้า', apps: ['ceres'] },
+  { slug: 'nadeer', name: 'NaDeer', apps: ['minerva', 'ceres'], group: 'sales', gender: 'female' },
+  { slug: 'anny', name: 'Anny', apps: ['minerva', 'ceres'], group: 'sales', gender: 'female' },
+  { slug: 'noey', name: 'Noey', apps: ['minerva', 'ceres'], group: 'sales', gender: 'female' },
+  { slug: 'ta', name: 'ต้า', apps: ['ceres'], group: 'messengers', gender: 'male' },
+  { slug: 'arm', name: 'อาร์ม', apps: ['ceres'], group: 'messengers', gender: 'male' },
+  { slug: 'man', name: 'แมน', apps: ['ceres'], group: 'messengers', gender: 'male' },
+  { slug: 'boonson', name: 'บุญสอน', apps: ['ceres'], group: 'messengers', gender: 'male' },
+  { slug: 'kaew', name: 'แก้ว', apps: ['ceres'], group: 'messengers', gender: 'male' },
+  { slug: 'lungko', name: 'ลุงโก๊ะ', apps: ['ceres'], group: 'messengers', gender: 'male' },
+  { slug: 'wong', name: 'วง', apps: ['ceres'], group: 'messengers', gender: 'male' },
+  { slug: 'paeng', name: 'แป๋ง', apps: ['ceres'], group: 'messengers', gender: 'male' },
+  { slug: 'nun', name: 'นุ่น', apps: ['ceres'], group: 'md', gender: 'female' },
+  { slug: 'pin', name: 'พิณ', apps: ['ceres'], group: 'others', gender: 'male' },
+  { slug: 'lekmaeban', name: 'เล็กแม่บ้าน', apps: ['ceres'], group: 'others', gender: 'female' }, // housekeeper — enters expenses like everyone
+  { slug: 'da', name: 'ด้า', apps: ['ceres'], group: 'messengers', gender: 'male' },
   // Finance team (การเงิน) — owner-granted Minerva + Juno + Ceres (2026-07-05). Juno's route
   // gate was widened from supervisor-only to requireApp('juno') so the juno grant admits them.
-  { slug: 'benz', name: 'Benz', apps: ['minerva', 'juno', 'ceres'] },
-  { slug: 'meow', name: 'Meow', apps: ['minerva', 'juno', 'ceres'] },
+  { slug: 'benz', name: 'Benz', apps: ['minerva', 'juno', 'ceres'], group: 'finance', gender: 'female' },
+  { slug: 'meow', name: 'Meow', apps: ['minerva', 'juno', 'ceres'], group: 'finance', gender: 'female' },
 ] as const;
 
 export const employeeEmail = (slug: string): string => `${slug}@prominent.local`;
