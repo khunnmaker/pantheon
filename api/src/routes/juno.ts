@@ -400,6 +400,37 @@ export async function junoRoutes(app: FastifyInstance) {
     return { payment: toRow(p) };
   });
 
+  // DELETE /api/juno/payments/:id — CEO-ONLY permanent hard delete. Contrast with
+  // POST /status {status:'void'}, which only soft-deletes (the row stays, filterable back
+  // in). This is the true "gone forever" override — supervisor only, not even md, so it is
+  // gated EXPLICITLY here rather than relying on the plugin's requireApp('juno') hook (which
+  // now also admits md since Juno access was widened). Any status is deletable; there is no
+  // such thing as "too far along to delete" for the CEO override.
+  app.delete<{ Params: { id: string } }>('/api/juno/payments/:id', async (req, reply) => {
+    if (req.agent?.role !== 'supervisor') return reply.code(403).send({ error: 'forbidden' });
+
+    const existing = await prisma.payment.findUnique({
+      where: { id: req.params.id },
+      select: { id: true, bankMatches: { select: { bankTxnId: true } } },
+    });
+    if (!existing) return reply.code(404).send({ error: 'not_found' });
+
+    // Capture linked bank lines BEFORE deleting — PaymentBankMatch rows cascade-delete with
+    // the Payment (schema onDelete: Cascade), so this is the last chance to know which
+    // BankTxns need their matchStatus recomputed afterward.
+    const linkedBankTxnIds = [...new Set(existing.bankMatches.map((m) => m.bankTxnId))];
+
+    await prisma.payment.delete({ where: { id: req.params.id } });
+
+    // A previously-matched bank line has just lost this link; it may now have zero links
+    // left, in which case it must fall back to 'unmatched' — recomputeTxnMatchStatus already
+    // knows to leave it 'matched' if another link or a manual refText still covers it.
+    await Promise.all(linkedBankTxnIds.map((id) => recomputeTxnMatchStatus(id)));
+
+    req.log.info({ paymentId: req.params.id, by: req.agent?.id }, 'payment hard-deleted');
+    return { ok: true };
+  });
+
   // POST /api/juno/payments { source, customerCode, customerName, amount, note?, senderName?,
   // bank?, transferAt?, ref?, slipUrl?, chequeNo?, chequeBank?, chequeDueDate?, taxInvoice? } —
   // FIN/CEO hand-add a payment that didn't arrive via Minerva's /to-finance LINE hook (see

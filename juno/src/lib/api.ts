@@ -237,6 +237,12 @@ export const setStatus = (id: string, status: PaymentStatus) =>
     body: JSON.stringify({ status }),
   });
 
+// CEO-only permanent delete (contrast with setStatus(id, 'void'), which only soft-deletes —
+// the row stays and can be un-voided). Server 403s anyone but supervisor. Any status is
+// deletable; there is no "too far along" guard here, matching the server.
+export const deletePayment = (id: string) =>
+  authed<{ ok: boolean }>(`/api/juno/payments/${id}`, { method: 'DELETE' });
+
 // cash/cheque settle control (the เงินสด/เช็ค tab's drawer section) — '' reverts (ยกเลิก).
 export const settlePayment = (id: string, state: SettleState) =>
   authed<{ ok: boolean; payment: Payment }>(`/api/juno/payments/${id}/settle`, {

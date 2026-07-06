@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Landmark, LogOut, Search, Download, Flag, FileText, Inbox, BarChart3, Scale,
   Loader2, AlertTriangle, CheckCircle2, X, RefreshCw, ExternalLink, Ban, Crown, Printer,
-  Undo2, ClipboardCheck, CheckCheck, Banknote, Plus, Paperclip, Check,
+  Undo2, ClipboardCheck, CheckCheck, Banknote, Plus, Paperclip, Check, Trash2,
 } from 'lucide-react';
 
 // Portal-back link (Jupiter). URL from build-time env; the link is hidden when unset, so it
@@ -11,6 +11,7 @@ const PORTAL_URL: string | undefined = import.meta.env.VITE_PORTAL_URL;
 import {
   getSummary, getPayments, setStatus, setFlag, verifyPayment, getReport, downloadCsv, baht,
   clearSession, getBankSummary, createPayment, settlePayment, uploadSlip, fileToBase64, readManualSlip,
+  deletePayment,
   type Agent, type Payment, type PaymentStatus, type Summary,
   type Report, type PaymentFilter, type CustomerType, type PaymentSource, type SettleState,
 } from './lib/api';
@@ -43,6 +44,9 @@ function Badge({ children, cls }: { children: React.ReactNode; cls: string }) {
 export default function Juno({ agent, onLogout }: { agent: Agent; onLogout: () => void }) {
   const [view, setView] = useState<View>('inbox');
   const [summary, setSummary] = useState<Summary | null>(null);
+  // ลบถาวร (permanent delete) is the CEO-only override — even md, who can now open Juno,
+  // cannot delete. Mirrors the server's `req.agent?.role !== 'supervisor'` gate exactly.
+  const canDelete = agent.role === 'supervisor';
   // unmatched-in bank txn count — the badge on the กระทบยอด tab (phase B)
   const [bankUnmatched, setBankUnmatched] = useState<number | undefined>(undefined);
 
@@ -108,7 +112,7 @@ export default function Juno({ agent, onLogout }: { agent: Agent; onLogout: () =
         ) : view === 'recon' ? (
           <Recon />
         ) : (
-          <PaymentsView view={view} onChanged={refreshSummary} />
+          <PaymentsView view={view} onChanged={refreshSummary} canDelete={canDelete} />
         )}
       </main>
     </div>
@@ -116,7 +120,7 @@ export default function Juno({ agent, onLogout }: { agent: Agent; onLogout: () =
 }
 
 // ── Payments list + detail (inbox / flags share this) ──────────────────────
-function PaymentsView({ view, onChanged }: { view: Exclude<View, 'reports' | 'recon'>; onChanged: () => void }) {
+function PaymentsView({ view, onChanged, canDelete }: { view: Exclude<View, 'reports' | 'recon'>; onChanged: () => void; canDelete: boolean }) {
   const [q, setQ] = useState('');
   const [status, setStatusFilter] = useState<'all' | PaymentStatus>('all');
   const [from, setFrom] = useState('');
@@ -138,6 +142,8 @@ function PaymentsView({ view, onChanged }: { view: Exclude<View, 'reports' | 're
   const [bulkResult, setBulkResult] = useState('');
   // inline "ยืนยันการยกเลิก N รายการ?" confirm before batch-void runs
   const [bulkVoidConfirm, setBulkVoidConfirm] = useState(false);
+  // inline "ลบถาวร N รายการ — กู้คืนไม่ได้" confirm before batch-delete runs (CEO-only)
+  const [bulkDeleteConfirm, setBulkDeleteConfirm] = useState(false);
 
   const filter: PaymentFilter = {
     q: q.trim() || undefined,
@@ -176,7 +182,7 @@ function PaymentsView({ view, onChanged }: { view: Exclude<View, 'reports' | 're
   // Row checkboxes are cleared whenever the list reloads/filters change or the tab switches —
   // a stale selection referring to rows no longer on screen would be confusing/dangerous for
   // bulk actions (owner requirement).
-  useEffect(() => { setCheckedIds(new Set()); setBulkResult(''); setBulkVoidConfirm(false); }, [view, q, status, from, to]);
+  useEffect(() => { setCheckedIds(new Set()); setBulkResult(''); setBulkVoidConfirm(false); setBulkDeleteConfirm(false); }, [view, q, status, from, to]);
 
   // Reflect a drawer action back into the list + selected row without a full reload.
   function applyUpdate(p: Payment) {
@@ -187,6 +193,21 @@ function PaymentsView({ view, onChanged }: { view: Exclude<View, 'reports' | 're
     } else {
       setRows((prev) => prev.map((r) => (r.id === p.id ? p : r)));
     }
+    onChanged();
+  }
+
+  // Reflect a drawer ลบถาวร back into the list: unlike applyUpdate, the row is GONE — drop it
+  // from `rows`, drop it from any bulk selection, and close the drawer (there's no updated
+  // payment to show anymore).
+  function applyDelete(id: string) {
+    setRows((prev) => prev.filter((r) => r.id !== id));
+    setCheckedIds((prev) => {
+      if (!prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
+    setSelected(null);
     onChanged();
   }
 
@@ -221,6 +242,7 @@ function PaymentsView({ view, onChanged }: { view: Exclude<View, 'reports' | 're
   function clearSelection() {
     setCheckedIds(new Set());
     setBulkVoidConfirm(false);
+    setBulkDeleteConfirm(false);
     setBulkResult('');
   }
 
@@ -235,6 +257,7 @@ function PaymentsView({ view, onChanged }: { view: Exclude<View, 'reports' | 're
     setBulkResult(`สำเร็จ ${okCount}/${targets.length}`);
     setBulkBusy(false);
     setBulkVoidConfirm(false);
+    setBulkDeleteConfirm(false);
     setCheckedIds(new Set());
     load();
     onChanged();
@@ -254,6 +277,15 @@ function PaymentsView({ view, onChanged }: { view: Exclude<View, 'reports' | 're
       return;
     }
     void runBulk(checkedRows, (p) => setStatus(p.id, 'void'));
+  }
+  // CEO-only: true hard delete (contrast with bulkVoid, a soft-delete). Server 403s anyone
+  // but supervisor, but the button itself is hidden below unless canDelete anyway.
+  function bulkDelete() {
+    if (!bulkDeleteConfirm) {
+      setBulkDeleteConfirm(true);
+      return;
+    }
+    void runBulk(checkedRows, (p) => deletePayment(p.id));
   }
 
   if (printQueue) {
@@ -389,6 +421,36 @@ function PaymentsView({ view, onChanged }: { view: Exclude<View, 'reports' | 're
               <Ban size={14} /> ยกเลิก
             </button>
           )}
+          {/* ลบถาวร — CEO-only, permanent, additional to (not instead of) ยกเลิก above */}
+          {canDelete && (
+            bulkDeleteConfirm ? (
+              <span className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-rose-900/40">
+                <AlertTriangle size={14} /> ลบถาวร {checkedIds.size} รายการ — กู้คืนไม่ได้
+                <button
+                  onClick={bulkDelete}
+                  disabled={bulkBusy}
+                  className="px-2 py-0.5 rounded bg-rose-600 hover:bg-rose-500 font-semibold disabled:opacity-40"
+                >
+                  ยืนยันลบ
+                </button>
+                <button
+                  onClick={() => setBulkDeleteConfirm(false)}
+                  disabled={bulkBusy}
+                  className="px-2 py-0.5 rounded bg-white/10 hover:bg-white/20 disabled:opacity-40"
+                >
+                  ยกเลิก
+                </button>
+              </span>
+            ) : (
+              <button
+                onClick={bulkDelete}
+                disabled={bulkBusy}
+                className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-rose-600/90 hover:bg-rose-600 disabled:opacity-40"
+              >
+                <Trash2 size={14} /> ลบถาวร
+              </button>
+            )
+          )}
           {bulkBusy && <Loader2 size={15} className="animate-spin" />}
           {bulkResult && <span className="text-xs bg-white/10 px-2 py-1 rounded-lg">{bulkResult}</span>}
           <button
@@ -489,8 +551,10 @@ function PaymentsView({ view, onChanged }: { view: Exclude<View, 'reports' | 're
             payment={selected}
             onClose={() => setSelected(null)}
             onUpdate={applyUpdate}
+            onDelete={applyDelete}
             onPrint={(p) => setPrintQueue([p])}
             showExpressConfirm={view === 'cashcheque'}
+            canDelete={canDelete}
           />
         )}
       </div>
@@ -783,17 +847,19 @@ function AddPaymentModal({ onClose, onSaved }: { onClose: () => void; onSaved: (
 // transfers reach 'recorded' via the CEO's bulk-confirm in กระทบยอด instead (owner decision
 // 2026-07-05, JUNO bulk-actions brief §3). Cash/cheque have no bank reconciliation step, so
 // they keep the per-row action here.
-function Detail({ payment, onClose, onUpdate, onPrint, showExpressConfirm }: {
-  payment: Payment; onClose: () => void; onUpdate: (p: Payment) => void; onPrint: (p: Payment) => void;
-  showExpressConfirm: boolean;
+function Detail({ payment, onClose, onUpdate, onDelete, onPrint, showExpressConfirm, canDelete }: {
+  payment: Payment; onClose: () => void; onUpdate: (p: Payment) => void; onDelete: (id: string) => void;
+  onPrint: (p: Payment) => void; showExpressConfirm: boolean; canDelete: boolean;
 }) {
   const [busy, setBusy] = useState('');
   const [flagNote, setFlagNote] = useState('');
   const [flagOpen, setFlagOpen] = useState(false);
   const [error, setError] = useState('');
   const [checkOpen, setCheckOpen] = useState(false);
+  // inline "ลบรายการนี้ถาวร? กู้คืนไม่ได้" confirm before ลบถาวร runs (CEO-only)
+  const [deleteConfirm, setDeleteConfirm] = useState(false);
   useEffect(() => {
-    setFlagOpen(false); setFlagNote(''); setError('');
+    setFlagOpen(false); setFlagNote(''); setError(''); setDeleteConfirm(false);
   }, [payment.id]);
 
   async function run(key: string, fn: () => Promise<{ payment: Payment }>) {
@@ -807,6 +873,23 @@ function Detail({ payment, onClose, onUpdate, onPrint, showExpressConfirm }: {
       setError((e as Error).message === 'unauthorized' ? 'เซสชันหมดอายุ — กรุณาเข้าสู่ระบบใหม่' : 'บันทึกไม่สำเร็จ — ลองใหม่อีกครั้ง');
     } finally {
       setBusy('');
+    }
+  }
+
+  // ลบถาวร (CEO-only permanent delete) — separate from `run` above: there's no updated
+  // Payment to hand back (the row is gone), so this calls onDelete + onClose instead of
+  // onUpdate. Server 403s anyone but supervisor; the button itself is hidden unless canDelete.
+  async function runDelete() {
+    setBusy('delete');
+    setError('');
+    try {
+      await deletePayment(payment.id);
+      onDelete(payment.id);
+      onClose();
+    } catch (e) {
+      setError((e as Error).message === 'unauthorized' ? 'เซสชันหมดอายุ — กรุณาเข้าสู่ระบบใหม่' : 'ลบไม่สำเร็จ — ลองใหม่อีกครั้ง');
+      setBusy('');
+      setDeleteConfirm(false);
     }
   }
 
@@ -898,6 +981,18 @@ function Detail({ payment, onClose, onUpdate, onPrint, showExpressConfirm }: {
                 disabled: p.status === 'void',
                 danger: true,
               })}
+              {/* ลบถาวร — CEO-only permanent delete. Visually separated (border + own red) from
+                  ⊘ ยกเลิก above: that soft-deletes (row stays, restorable); this is forever. */}
+              {canDelete && (
+                <button
+                  disabled={busy !== ''}
+                  onClick={() => setDeleteConfirm((v) => !v)}
+                  title="ลบถาวร (กู้คืนไม่ได้)"
+                  className="p-1.5 rounded-lg border border-rose-200 text-rose-600 hover:bg-rose-50 disabled:opacity-30 shrink-0 ml-1 pl-2 border-l-2"
+                >
+                  {busy === 'delete' ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}
+                </button>
+              )}
               <button onClick={onClose} title="ปิด" className="p-1.5 text-slate-400 hover:text-slate-600 shrink-0"><X size={18} /></button>
             </div>
           </div>
@@ -918,6 +1013,27 @@ function Detail({ payment, onClose, onUpdate, onPrint, showExpressConfirm }: {
                 className="px-2.5 py-1.5 rounded-lg text-xs font-medium bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100 disabled:opacity-40 whitespace-nowrap"
               >
                 ติดธง
+              </button>
+            </div>
+          )}
+          {/* transient ลบถาวร confirm row — CEO-only, mirrors the flag-note row's inline style */}
+          {canDelete && deleteConfirm && (
+            <div className="mt-2 flex items-center gap-1.5 p-2 rounded-lg bg-rose-50 border border-rose-200">
+              <AlertTriangle size={14} className="text-rose-600 shrink-0" />
+              <span className="text-xs text-rose-700 flex-1">ลบรายการนี้ถาวร? กู้คืนไม่ได้</span>
+              <button
+                disabled={busy !== ''}
+                onClick={() => void runDelete()}
+                className="px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-rose-600 text-white hover:bg-rose-700 disabled:opacity-40 whitespace-nowrap"
+              >
+                ยืนยันลบ
+              </button>
+              <button
+                disabled={busy !== ''}
+                onClick={() => setDeleteConfirm(false)}
+                className="px-2.5 py-1.5 rounded-lg text-xs font-medium bg-white text-slate-600 border border-slate-200 hover:bg-slate-50 disabled:opacity-40 whitespace-nowrap"
+              >
+                ยกเลิก
               </button>
             </div>
           )}
