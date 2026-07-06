@@ -46,18 +46,30 @@ function decodeKbizBytes(buf: Buffer): string {
   return utf8.replace(/^﻿/, '');
 }
 
-// DD-MM-YY (Gregorian, 26 -> 2026) + optional HH:MM. Time is empty on the Beginning
-// Balance row — callers pass '' and get midnight, which is fine since that row is skipped
-// before txnAt is ever used for matching.
+// DD-MM-YY (Gregorian, 26 -> 2026) + optional HH:MM — the pristine bank export format.
+// Also tolerates a file that was accidentally opened + re-saved in Excel, which reformats
+// dates/times to the machine locale and strips leading zeros (e.g. "01-07-26" -> "1/7/2026",
+// "02:24" -> "2:24"): 1-2 digit day/month, "-" or "/" separator, 2-or-4-digit year, and
+// 1-2 digit hour. Always interpreted DAY-FIRST (the bank + Thai locale are day-first). A
+// 4-digit year >=2500 is treated as Buddhist era, mirroring normalizeSlipDate's convention
+// in finance/normalize.ts. Time is empty on the Beginning Balance row — callers pass '' and
+// get midnight, which is fine since that row is skipped before txnAt is ever used for
+// matching.
 function parseKbizDateTime(dateRaw: string, timeRaw: string): Date | null {
-  const dm = dateRaw.trim().match(/^(\d{2})-(\d{2})-(\d{2})$/);
+  const dm = dateRaw.trim().match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{2}|\d{4})$/);
   if (!dm) return null;
-  const [, dd, mm, yy] = dm;
-  const yyyy = 2000 + Number(yy);
-  const tm = timeRaw.trim().match(/^(\d{2}):(\d{2})$/);
-  const hh = tm ? tm[1] : '00';
-  const min = tm ? tm[2] : '00';
-  const d = new Date(`${yyyy}-${mm}-${dd}T${hh}:${min}:00+07:00`);
+  const [, ddRaw, mmRaw, yearRaw] = dm;
+  const dd = Number(ddRaw);
+  const mm = Number(mmRaw);
+  if (dd < 1 || dd > 31 || mm < 1 || mm > 12) return null;
+
+  let yyyy = yearRaw.length <= 2 ? 2000 + Number(yearRaw) : Number(yearRaw);
+  if (yyyy >= 2500) yyyy -= 543; // Buddhist -> Gregorian
+
+  const tm = timeRaw.trim().match(/^(\d{1,2}):(\d{2})$/);
+  const hh = tm ? tm[1].padStart(2, '0') : '00';
+  const min = tm ? tm[2].padStart(2, '0') : '00';
+  const d = new Date(`${yyyy}-${mmRaw.padStart(2, '0')}-${ddRaw.padStart(2, '0')}T${hh}:${min}:00+07:00`);
   return Number.isNaN(d.getTime()) ? null : d;
 }
 

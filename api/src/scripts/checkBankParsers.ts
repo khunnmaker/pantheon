@@ -106,6 +106,84 @@ const FIXTURES_DIR = new URL('../bank/fixtures/', import.meta.url);
   check(result.rows.every((r) => /^\d+\.\d{2}$/.test(r.amount)), 'kbiz fixture: every amount is a clean "N.NN" string (commas stripped)');
 }
 
+// ── Fixture: KBIZ, Excel-mangled ────────────────────────────────────────────
+// Same rows as kbiz.sample.csv, but as if the file had been opened + re-saved in Excel:
+// dates reformatted to the machine locale with leading zeros stripped ("01-07-26" ->
+// "1/7/2026"), times with a stripped leading zero on the hour ("02:24" -> "2:24"), and the
+// long reference code turned into scientific notation ("26070308150301530998" ->
+// "2.60703E+19", untouched by the parser either way since that column isn't read). Must
+// parse to the SAME transaction count and SAME first-row txnAt as the pristine fixture —
+// this is the whole point of the hardening.
+{
+  const pristineBuf = readFileSync(new URL('kbiz.sample.csv', FIXTURES_DIR));
+  const pristine = parseKbiz(pristineBuf);
+
+  const buf = readFileSync(new URL('kbiz.excel.sample.csv', FIXTURES_DIR));
+  const result = parseKbiz(buf);
+
+  check(result.source === 'kbiz', 'kbiz excel-mangled fixture: source === kbiz');
+  check(result.parsed === pristine.parsed, `kbiz excel-mangled fixture: parsed === pristine.parsed (${pristine.parsed}) (got ${result.parsed})`);
+  check(result.excluded === pristine.excluded, `kbiz excel-mangled fixture: excluded === pristine.excluded (${pristine.excluded}) (got ${result.excluded})`);
+  check(result.rows.length === pristine.rows.length, `kbiz excel-mangled fixture: rows.length === pristine.rows.length (${pristine.rows.length}) (got ${result.rows.length})`);
+  check(result.rows.length === 7, `kbiz excel-mangled fixture: rows.length === 7 (got ${result.rows.length})`);
+
+  // Same first-row txnAt as the pristine fixture (01-07-26 02:24 == 1/7/2026 2:24).
+  check(
+    result.rows[0]?.txnAt.getTime() === pristine.rows[0]?.txnAt.getTime(),
+    `kbiz excel-mangled fixture: first-row txnAt matches pristine fixture (pristine=${pristine.rows[0]?.txnAt.toISOString()}, got=${result.rows[0]?.txnAt.toISOString()})`,
+  );
+  check(
+    result.rows[0]?.txnAt.toISOString() === new Date('2026-07-01T02:24:00+07:00').toISOString(),
+    `kbiz excel-mangled fixture: first-row txnAt === 2026-07-01T02:24 +07:00 (got ${result.rows[0]?.txnAt.toISOString()})`,
+  );
+
+  // Single-digit hour with no leading zero (Automatic Deposit row "3:07", was "03:07").
+  const smartRow = result.rows.find((r) => r.amount === '16404.24');
+  check(
+    smartRow?.txnAt.toISOString() === new Date('2026-07-02T03:07:00+07:00').toISOString(),
+    `kbiz excel-mangled fixture: single-digit-hour "3:07" parses to 03:07 (got ${smartRow?.txnAt.toISOString()})`,
+  );
+
+  // Every row's txnAt lines up 1:1 with the pristine fixture's (same order, same rows).
+  check(
+    result.rows.every((r, i) => r.txnAt.getTime() === pristine.rows[i]?.txnAt.getTime()),
+    'kbiz excel-mangled fixture: every row txnAt matches the pristine fixture row-for-row',
+  );
+  check(
+    result.rows.every((r, i) => r.amount === pristine.rows[i]?.amount && r.direction === pristine.rows[i]?.direction),
+    'kbiz excel-mangled fixture: every row amount + direction matches the pristine fixture row-for-row',
+  );
+}
+
+// ── parseKshopDateTime tolerance (Excel-mangled datetime) ───────────────────
+// K SHOP applies the same day-first tolerance as KBIZ. Exercised directly against a
+// synthetic K SHOP buffer (rather than a checked-in fixture file) since the shape of the
+// change is identical to KBIZ's and is already covered end-to-end there.
+{
+  const pristineText = readFileSync(new URL('kshop.sample.csv', FIXTURES_DIR), 'utf8');
+  const mangledText = pristineText
+    .replace(/(\d{2})-(\d{2})-(\d{4}) 09:21:29/, '1/7/2026 9:21:29') // strip leading zeros, "-" -> "/"
+    .replace(/(\d{2})-(\d{2})-(\d{4}) 09:32:15/, '1/7/2026 9:32') // also drop seconds (short datetime format)
+    .replace(/(\d{2})-(\d{2})-(\d{4}) 10:10:44/, '1/7/2026 10:10:44'); // double-digit hour unaffected
+
+  const pristine = parseKshop(pristineText);
+  const result = parseKshop(mangledText);
+
+  check(result.rows.length === pristine.rows.length, `kshop excel-mangled: rows.length === pristine.rows.length (${pristine.rows.length}) (got ${result.rows.length})`);
+  check(result.parsed === pristine.parsed, `kshop excel-mangled: parsed === pristine.parsed (${pristine.parsed}) (got ${result.parsed})`);
+
+  const row1 = result.rows.find((r) => r.amount === '8820.00');
+  check(
+    row1?.txnAt.toISOString() === new Date('2026-07-01T09:21:29+07:00').toISOString(),
+    `kshop excel-mangled: "1/7/2026 9:21:29" parses to 2026-07-01T09:21:29 +07:00 (got ${row1?.txnAt.toISOString()})`,
+  );
+  const row2 = result.rows.find((r) => r.amount === '720.00');
+  check(
+    row2?.txnAt.toISOString() === new Date('2026-07-01T09:32:00+07:00').toISOString(),
+    `kshop excel-mangled: "1/7/2026 9:32" (no seconds) parses to 2026-07-01T09:32:00 +07:00 (got ${row2?.txnAt.toISOString()})`,
+  );
+}
+
 // ── dedupeKey behavior ───────────────────────────────────────────────────────
 {
   const a = computeDedupeKey('kshop', new Date('2026-07-02T17:08:29+07:00'), '6072.00', 'x');
