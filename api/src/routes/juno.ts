@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { prisma } from '../db/prisma.js';
-import { requireAuth, requireApp } from '../auth/middleware.js';
+import { requireAuth, requireApp, requireRole } from '../auth/middleware.js';
 import { parseKbiz } from '../bank/parseKbiz.js';
 import { parseKshop } from '../bank/parseKshop.js';
 import { makeUniqueDedupeKeys } from '../bank/dedupe.js';
@@ -622,6 +622,10 @@ export async function junoRoutes(app: FastifyInstance) {
   app.post<{ Params: { id: string } }>('/api/juno/payments/:id/flag', async (req, reply) => {
     const body = z.object({ flagged: z.boolean(), note: z.string().max(600).optional() }).safeParse(req.body);
     if (!body.success) return reply.code(400).send({ error: 'invalid_body' });
+    // "Solving" (clearing) a flag is CEO-only; finance may RAISE a flag but not resolve it.
+    if (body.data.flagged === false && req.agent?.role !== 'supervisor') {
+      return reply.code(403).send({ error: 'forbidden' });
+    }
     const extra = body.data.note?.trim();
     const tag = extra ? `[finance] ${extra}` : null;
     const updated = await prisma.$executeRaw`
@@ -656,7 +660,8 @@ export async function junoRoutes(app: FastifyInstance) {
     to: z.string().max(40).optional(),
     groupBy: z.enum(['day', 'rep', 'bank', 'customer']).optional(),
   });
-  app.get('/api/juno/reports', async (req, reply) => {
+  // Reports — CEO-only (finance staff do slip work + reconciliation, not reporting).
+  app.get('/api/juno/reports', { preHandler: requireRole('supervisor') }, async (req, reply) => {
     const parsed = reportsQuerySchema.safeParse(req.query ?? {});
     if (!parsed.success) return reply.code(400).send({ error: 'invalid_query' });
     const q = parsed.data;
@@ -693,7 +698,8 @@ export async function junoRoutes(app: FastifyInstance) {
   // GET /api/juno/export.csv?q=&status=&flagged=&tax=&from=&to=&noVoid= — one-click sheet-style
   // export. Same filters as the inbox (shared buildListWhere so this can never drift from it
   // again). Excel-friendly (UTF-8 BOM so Thai renders in Excel).
-  app.get('/api/juno/export.csv', async (req, reply) => {
+  // CSV export — CEO-only.
+  app.get('/api/juno/export.csv', { preHandler: requireRole('supervisor') }, async (req, reply) => {
     const parsed = listFilterSchema.safeParse(req.query ?? {});
     if (!parsed.success) return reply.code(400).send({ error: 'invalid_query' });
     const where = buildListWhere(parsed.data);
@@ -752,7 +758,7 @@ export async function junoRoutes(app: FastifyInstance) {
   // large bodyLimit, preHandler-only auth would let an anonymous client make the server
   // buffer+parse a multi-MB payload first.
   app.post('/api/juno/bank/import/preview', {
-    onRequest: [requireAuth, requireApp('juno')],
+    onRequest: [requireAuth, requireRole('supervisor')], // bank import is CEO-only
     bodyLimit: 17 * 1024 * 1024, // ~15MB cap after base64 inflation, plus envelope headroom
     config: { rateLimit: { max: 10, timeWindow: '1 minute' } },
   }, async (req, reply) => {
@@ -822,7 +828,7 @@ export async function junoRoutes(app: FastifyInstance) {
   // POST /api/juno/bank/import/apply { token } — apply a previewed import: insert the NEW
   // BankTxns (dup rows are skipped — the same reasoning as Vulcan's apply), write a
   // BankImport audit row, then run the auto-matcher over the freshly inserted lines.
-  app.post('/api/juno/bank/import/apply', async (req, reply) => {
+  app.post('/api/juno/bank/import/apply', { preHandler: requireRole('supervisor') }, async (req, reply) => {
     const body = z.object({ token: z.string().min(1) }).safeParse(req.body);
     if (!body.success) return reply.code(400).send({ error: 'missing_token' });
     const staged = bankPreviews.get(body.data.token);
