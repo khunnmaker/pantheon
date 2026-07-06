@@ -10,7 +10,7 @@ export const API_URL: string = import.meta.env.VITE_API_URL ?? 'http://localhost
 // grant (`apps`), exactly as the server gates it (see hasAppAccess in apps.ts). supervisor →
 // everything; md → ceres only; employee → their own `apps` list.
 export type Role = 'supervisor' | 'md' | 'employee';
-export type AppName = 'minerva' | 'vulcan' | 'juno' | 'ceres';
+export type AppName = 'minerva' | 'vulcan' | 'juno' | 'ceres' | 'mercury';
 export interface Agent {
   id: string;
   email: string;
@@ -26,6 +26,7 @@ export interface Badges {
   juno?: { toVerify: number };
   vulcan?: { lowStock: number };
   ceres?: { awaitingAction: number };
+  mercury?: { pending: number };
 }
 
 const TOKEN_KEY = 'jupiter_token';

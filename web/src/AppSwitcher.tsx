@@ -8,7 +8,7 @@
 // (it is the current app OR its VITE_<APP>_URL build-time env is set). Until those envs are
 // configured on Railway, only the current app's label shows — fully inert, no visual change.
 import { useEffect, useRef, useState } from 'react';
-import { Bot, Boxes, Wallet, Coins, ChevronDown } from 'lucide-react';
+import { Bot, Boxes, Wallet, Coins, ShoppingCart, ChevronDown } from 'lucide-react';
 import { hasAppAccess, type Agent, type AppName } from './lib/api';
 
 const CURRENT: AppName = 'minerva';
@@ -21,12 +21,14 @@ const APP_URL = {
   vulcan: import.meta.env.VITE_VULCAN_URL ?? 'https://vulcan-production-dbba.up.railway.app',
   juno: import.meta.env.VITE_JUNO_URL ?? 'https://juno-production-5cea.up.railway.app',
   ceres: import.meta.env.VITE_CERES_URL as string | undefined,
+  mercury: import.meta.env.VITE_MERCURY_URL as string | undefined,
 };
 const APPS: { app: AppName; label: string; url: string | undefined }[] = [
   { app: 'minerva', label: 'Minerva', url: APP_URL.minerva },
   { app: 'vulcan', label: 'Vulcan', url: APP_URL.vulcan },
   { app: 'juno', label: 'Juno', url: APP_URL.juno },
   { app: 'ceres', label: 'Ceres', url: APP_URL.ceres },
+  { app: 'mercury', label: 'Mercury', url: APP_URL.mercury },
 ];
 
 const APP_ICON: Record<AppName, typeof Bot> = {
@@ -34,6 +36,7 @@ const APP_ICON: Record<AppName, typeof Bot> = {
   vulcan: Boxes,
   juno: Wallet,
   ceres: Coins,
+  mercury: ShoppingCart,
 };
 
 export default function AppSwitcher({ agent }: { agent: Agent }) {

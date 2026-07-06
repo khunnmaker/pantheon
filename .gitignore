@@ -26,6 +26,8 @@ juno/vite.config.js
 juno/vite.config.d.ts
 jupiter/vite.config.js
 jupiter/vite.config.d.ts
+mercury/vite.config.js
+mercury/vite.config.d.ts
 
 # downloaded LINE image content
 api/uploads/

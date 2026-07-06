@@ -16,7 +16,7 @@ export const ALL_ROLES = ['supervisor', 'md', 'employee'] as const;
 const TOKEN_ROLES = ['supervisor', 'md', 'employee', 'agent', 'messenger'] as const;
 type TokenRole = (typeof TOKEN_ROLES)[number];
 
-export type AppName = 'minerva' | 'vulcan' | 'juno' | 'ceres';
+export type AppName = 'minerva' | 'vulcan' | 'juno' | 'ceres' | 'mercury';
 
 // What we put inside the signed token (and hydrate onto each request).
 export interface AuthedAgent {

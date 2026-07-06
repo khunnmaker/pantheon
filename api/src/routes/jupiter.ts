@@ -33,7 +33,7 @@ import { ceresRole } from '../ceres/auth.js';
 // a cache slot, which is negligible at this team size.
 const CACHE_TTL_MS = 30_000;
 
-type BadgeBucket = { minerva?: { pending: number }; juno?: { toVerify: number }; vulcan?: { lowStock: number }; ceres?: { awaitingAction: number } };
+type BadgeBucket = { minerva?: { pending: number }; juno?: { toVerify: number }; vulcan?: { lowStock: number }; ceres?: { awaitingAction: number }; mercury?: { pending: number } };
 const cache = new Map<string, { at: number; value: BadgeBucket }>();
 
 // Minerva "pending" = customers whose LATEST message is a customer message that is still
@@ -71,6 +71,11 @@ async function vulcanLowStock(): Promise<number> {
 // Juno to-verify = Payment rows still in 'received' (not yet verified). Indexed on status.
 async function junoToVerify(): Promise<number> {
   return prisma.payment.count({ where: { status: 'received' } });
+}
+
+// Mercury pending = purchase requests still awaiting action ('pending'). Indexed on status.
+async function mercuryPending(): Promise<number> {
+  return prisma.mercuryRequest.count({ where: { status: 'pending' } });
 }
 
 // Ceres "awaiting action" — computed per the CALLER's Ceres persona so the badge matches
@@ -122,11 +127,12 @@ export async function jupiterRoutes(app: FastifyInstance) {
           : ceresMessengerAwaiting(agent.email);
 
     // Compute ONLY the badges this caller may see; an app they can't enter is never queried.
-    const [pending, lowStock, toVerify, awaitingAction] = await Promise.all([
+    const [pending, lowStock, toVerify, awaitingAction, mercuryPend] = await Promise.all([
       can('minerva') ? minervaPending() : Promise.resolve(null),
       can('vulcan') ? vulcanLowStock() : Promise.resolve(null),
       can('juno') ? junoToVerify() : Promise.resolve(null),
       ceresAwaiting,
+      can('mercury') ? mercuryPending() : Promise.resolve(null),
     ]);
 
     const value: BadgeBucket = {};
@@ -134,6 +140,7 @@ export async function jupiterRoutes(app: FastifyInstance) {
     if (lowStock !== null) value.vulcan = { lowStock };
     if (toVerify !== null) value.juno = { toVerify };
     if (awaitingAction !== null) value.ceres = { awaitingAction };
+    if (mercuryPend !== null) value.mercury = { pending: mercuryPend };
 
     cache.set(cacheKey, { at: Date.now(), value });
     return value;

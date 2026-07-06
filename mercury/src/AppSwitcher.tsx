@@ -11,11 +11,11 @@ import { useEffect, useRef, useState } from 'react';
 import { Bot, Boxes, Wallet, Coins, ShoppingCart, ChevronDown } from 'lucide-react';
 import { hasAppAccess, type Agent, type AppName } from './lib/api';
 
-const CURRENT: AppName = 'juno';
+const CURRENT: AppName = 'mercury';
 
 // Suite app URLs: VITE_*_URL env override (for the future custom-domain cutover), with the
 // current Railway production URL as a built-in default so the switcher works everywhere
-// without per-service env config. Ceres has no service yet → env-only (stays hidden).
+// without per-service env config. Apps with no service yet → env-only (stay hidden).
 const APP_URL = {
   minerva: import.meta.env.VITE_MINERVA_URL ?? 'https://heroic-contentment-production-16e7.up.railway.app',
   vulcan: import.meta.env.VITE_VULCAN_URL ?? 'https://vulcan-production-dbba.up.railway.app',
@@ -66,9 +66,13 @@ export default function AppSwitcher({ agent }: { agent: Agent }) {
   }, [open]);
 
   // Nothing to switch to → render the brand exactly as it looked before the switcher existed:
-  // just the plain "Juno" text, no icon, no chevron, non-interactive.
+  // the ShoppingCart icon + "Mercury" text, no chevron, non-interactive.
   if (items.length <= 1) {
-    return <span className="font-bold text-lg">Juno</span>;
+    return (
+      <div className="flex items-center gap-2 text-orange-700 font-bold">
+        <ShoppingCart size={22} /> Mercury
+      </div>
+    );
   }
 
   const others = items.filter((a) => a.app !== CURRENT);
@@ -80,10 +84,10 @@ export default function AppSwitcher({ agent }: { agent: Agent }) {
         onClick={() => setOpen((v) => !v)}
         aria-haspopup="menu"
         aria-expanded={open}
-        className="flex items-center gap-1 font-bold text-lg hover:opacity-80"
+        className="flex items-center gap-2 text-orange-700 font-bold hover:opacity-80"
       >
-        <Wallet size={20} />
-        Juno
+        <ShoppingCart size={22} />
+        Mercury
         <ChevronDown size={14} />
       </button>
       {open && (
@@ -99,7 +103,7 @@ export default function AppSwitcher({ agent }: { agent: Agent }) {
                 href={a.url}
                 role="menuitem"
                 title={`ไปที่ ${a.label}`}
-                className="flex items-center gap-2 px-3 py-2 text-sm text-slate-600 hover:bg-emerald-50 hover:text-emerald-700"
+                className="flex items-center gap-2 px-3 py-2 text-sm text-slate-600 hover:bg-orange-50 hover:text-orange-700"
               >
                 <Icon size={16} />
                 {a.label}

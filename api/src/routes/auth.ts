@@ -11,7 +11,7 @@ const loginBody = z.object({
   password: z.string().min(1),
 });
 
-const APP_NAMES = ['minerva', 'vulcan', 'juno', 'ceres'] as const;
+const APP_NAMES = ['minerva', 'vulcan', 'juno', 'ceres', 'mercury'] as const;
 
 export async function authRoutes(app: FastifyInstance) {
   // POST /api/auth/login — { email, password } -> { token, agent }. Any role may log in here;

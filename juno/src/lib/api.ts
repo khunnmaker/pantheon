@@ -18,7 +18,7 @@ export interface Agent {
 }
 
 // Suite apps the switcher can link to. Keep in sync with AppName in api/src/auth/jwt.ts.
-export type AppName = 'minerva' | 'vulcan' | 'juno' | 'ceres';
+export type AppName = 'minerva' | 'vulcan' | 'juno' | 'ceres' | 'mercury';
 
 // Mirror of the server's hasAppAccess (api/src/auth/jwt.ts): supervisor → everything;
 // md → Ceres + Minerva + Juno; employee → their own per-person grant list. A stored agent from

@@ -754,6 +754,39 @@ model CeresCategory {
   sortOrder         Int     @default(0)
 }
 
+// ─── Mercury (procurement / buy-side) — CLOUD node tables only ───────────
+// Cloud-Mercury is the team/phone-facing reorder board (mirror of Vulcan on the buy side).
+// SECRETS-FREE BY CONSTRUCTION: these rows carry NO vendor, cost, real name, or real SKU — a
+// full dump of this DB reveals only aliases + quantities + who-ordered, never a supplier
+// identity or a price. Vendor/SecretMap/PurchaseOrder live ONLY in the separate local-Mercury
+// DB (Phase 2) and are never migrated into this shared schema. See docs/MERCURY_BRIEF.md §3/§5/§8.
+model MercuryItem {
+  id          String   @id @default(cuid())
+  displayName String // ordinary item name OR an opaque alias ("วัตถุดิบ A-17"); never the real name
+  isSecret    Boolean  @default(false) // secret items resolve to a real vendor ONLY in local-Mercury
+  vulcanSku   String? // dashed Product.sku for ordinary stocked items; NULL for secret items
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  @@index([active])
+}
+
+// A team purchase REQUEST (item/alias + qty). Non-secret. Local-Mercury pulls pending rows,
+// resolves aliases → real vendor locally, and flows status back (ordered/received/cancelled).
+model MercuryRequest {
+  id            String    @id @default(cuid())
+  itemId        String // → MercuryItem.id (bare FK column, house style — no @relation)
+  qty           String    @default("") // Juno/suite number-as-String convention
+  requestedById String? // → Agent.id (bare column, NOT @relation — mirrors Payment.salesAgentId etc.)
+  note          String    @default("")
+  status        String    @default("pending") // pending | ordered | received | cancelled
+  createdAt     DateTime  @default(now())
+  orderedAt     DateTime?
+  receivedAt    DateTime?
+
+  @@index([status])
+}
+
 // ─── DEFERRED TO M3: pgvector embedding tables (spec §5 note) ────────────
 // Activate in M3 once the database has the `vector` extension. Steps:
 //   1. add `previewFeatures = ["postgresqlExtensions"]` to the generator
