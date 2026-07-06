@@ -272,7 +272,7 @@ export const setAlias = (sku: string, alias: string) =>
   });
 
 // ── Catalog groups (merchandising taxonomy) ─────────────────────────────
-export type Pillar = 'lab' | 'digital' | 'clinical' | 'equipment';
+export type Pillar = 'lab' | 'digital' | 'clinical' | 'equipment' | 'review';
 export interface SubGroupInfo {
   code: string; // 2-letter, within its group (e.g. "AL" → IMAL01)
   nameTh: string;

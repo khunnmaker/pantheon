@@ -1203,8 +1203,9 @@ const PILLAR_LABEL: Record<Pillar, string> = {
   digital: 'ดิจิทัล',
   clinical: 'คลินิก',
   equipment: 'อุปกรณ์และของใช้',
+  review: 'รอตัดสินใจ / ตรวจสอบภายหลัง',
 };
-const PILLAR_ORDER: Pillar[] = ['lab', 'digital', 'clinical', 'equipment'];
+const PILLAR_ORDER: Pillar[] = ['lab', 'digital', 'clinical', 'equipment', 'review'];
 
 // A <select> of every group (optgroup'd by pillar) + a blank "unassigned" option.
 function GroupSelect({

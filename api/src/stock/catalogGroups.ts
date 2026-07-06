@@ -4,7 +4,7 @@
 // code-defined (a fixed vocabulary); a product's assignment is stored in
 // Product.catalogGroup. See docs research + memory dental-catalog-taxonomy.
 
-export type Pillar = 'lab' | 'digital' | 'clinical' | 'equipment';
+export type Pillar = 'lab' | 'digital' | 'clinical' | 'equipment' | 'review';
 
 export interface CatalogGroup {
   key: string;
@@ -57,6 +57,10 @@ export const CATALOG_GROUPS: CatalogGroup[] = [
   { key: 'clinical_equipment', code: 'CE', nameTh: 'เครื่องมือคลินิก', nameEn: 'Clinical Small Equipment', pillar: 'equipment' },
   { key: 'dental_unit', code: 'UN', nameTh: 'ยูนิตและเก้าอี้ทำฟัน', nameEn: 'Chairs & Dental Units', pillar: 'equipment' },
   { key: 'sterilizer', code: 'ST', nameTh: 'เครื่องนึ่งฆ่าเชื้อ', nameEn: 'Sterilization Equipment', pillar: 'equipment' },
+  // ── Review / holding ── a manual "park it here to decide later" bucket. It has NO auto-assign
+  // rule (nothing lands here automatically) and NO sub-groups; the team dumps unsure items in and
+  // revisits them. Distinct from "ยังไม่จัด" (catalogGroup = null = never looked at).
+  { key: 'review', code: 'RV', nameTh: 'รอตรวจสอบ', nameEn: 'To review / Undecided', pillar: 'review' },
 ];
 
 export const GROUP_KEYS = new Set(CATALOG_GROUPS.map((g) => g.key));
