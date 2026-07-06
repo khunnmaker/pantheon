@@ -85,7 +85,7 @@ export default function Login({ onLogin }: { onLogin: (agent: Agent) => void }) 
       <div className="bg-white rounded-md shadow-sm border border-slate-200 max-w-md w-full p-5">
         <div className="flex items-center gap-2 text-violet-700 mb-1">
           <Crown size={24} />
-          <h1 className="text-xl font-bold tracking-tight">Jupiter</h1>
+          <h1 className="text-xl font-bold tracking-tight">The Pantheon</h1>
         </div>
         <p className="text-sm text-slate-500 mb-5">พอร์ทัลทีมงาน · เลือกชื่อเพื่อเข้าสู่ระบบ</p>
 

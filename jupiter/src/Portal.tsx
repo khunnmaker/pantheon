@@ -35,7 +35,7 @@ export default function Portal({ agent, onLogout }: { agent: Agent; onLogout: ()
         <div className="max-w-3xl mx-auto px-4 h-14 flex items-center justify-between">
           <div className="flex items-center gap-2 text-violet-700">
             <Crown size={22} />
-            <span className="font-bold text-lg">Jupiter</span>
+            <span className="font-bold text-lg">The Pantheon</span>
             <span className="text-slate-400 text-sm hidden sm:inline">· พอร์ทัลทีมงาน</span>
           </div>
           <div className="flex items-center gap-3 text-sm">

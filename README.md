@@ -1,12 +1,37 @@
-# Minerva — LINE AI Customer-Reply Assistant (human-in-the-loop)
+# The Pantheon — Prominent's internal software suite
+
+**The Pantheon** is the internal software suite for **Prominent** (dental distribution,
+Thailand): a family of apps, each named for a Roman deity, running on one shared PostgreSQL
+database, one API, and one login. Each app is its own frontend + Railway service; Minerva's
+`api/` is the single source of truth and the **sole** database migrator (migrations are
+add-only).
+
+> This monorepo began as **Minerva** (the flagship — still the repo/remote name) and grew into
+> the full pantheon. The suite-wide brand is **The Pantheon**; the individual apps keep their
+> deity names.
+
+| App | Deity role | What it does | Status |
+|-----|-----------|--------------|--------|
+| **Jupiter** | king · portal | Staff front door — one login, app tiles, live "pending work" badges, app-switcher | Live |
+| **Minerva** | wisdom · sales | LINE AI customer-reply console (human-in-the-loop); catalog + stock quoting | Live (flagship) |
+| **Vulcan** | forge · stock | Inventory: stock import, reorder points, low-stock, dashboard | Live |
+| **Juno** | ledger · income | Money-in: LINE payment slips, bank reconciliation, tax invoices, reports | Live |
+| **Ceres** | harvest · expenses | Money-out: petty cash + staff expenses with an approval flow | Built · awaiting deploy |
+| **Venus** | relations · CRM | 360° customer view — segments, reorder timing, churn signals | In progress |
+| **Diana** | the hunt · B2B | Public login-gated B2B catalog (prominentdental.com) | Early |
+| **Mercury** | trade · procurement | Buy-side ordering; closes the buy → stock loop into Vulcan | Planned |
+
+The portal (Jupiter) is branded **"The Pantheon"** to users; internally it stays the `jupiter`
+service. Auth is unified suite-wide (supervisor / MD / employee with per-person app grants).
+
+---
+
+## Minerva — LINE AI Customer-Reply Assistant (human-in-the-loop)
 
 Internal tool for **Prominent** (dental distribution, Thailand). Customer questions on LINE
 are answered by staff, **assisted** by an AI that drafts replies from a curated knowledge
 base. The AI **never sends automatically** — a logged-in staff member reviews/edits/approves
 every reply. The system remembers each customer (3-layer memory) and learns from staff edits.
-
-> This repository is built milestone-by-milestone per `BUILD_SPEC_LINE_AI_Reply.md`.
-> **Current status: M0 — Scaffold.**
 
 ## Stack
 - **Backend:** Node.js + TypeScript, Fastify. `@line/bot-sdk`, `@anthropic-ai/sdk`.
