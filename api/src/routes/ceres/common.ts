@@ -37,6 +37,7 @@ export function toExpenseRow(
     amount: string; spentAt: Date; receiptUploadId: string | null; receiptSha: string;
     ocrAmount: string; ocrVendor: string; ocrDate: string; status: string;
     approvedById: string | null; approvedAt: Date | null; rejectReason: string;
+    voidedById: string | null; voidedAt: Date | null; voidReason: string;
     settlementId: string | null; aiVerdict: string; note: string; createdAt: Date;
   },
   base: string,
@@ -62,6 +63,9 @@ export function toExpenseRow(
     approvedById: e.approvedById,
     approvedAt: e.approvedAt ? e.approvedAt.toISOString() : null,
     rejectReason: e.rejectReason,
+    voidedById: e.voidedById,
+    voidedAt: e.voidedAt ? e.voidedAt.toISOString() : null,
+    voidReason: e.voidReason,
     settlementId: e.settlementId,
     aiVerdict: e.aiVerdict,
     note: e.note,

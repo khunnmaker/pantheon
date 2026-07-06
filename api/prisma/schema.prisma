@@ -582,10 +582,15 @@ model CeresExpense {
   ocrAmount       String    @default("")
   ocrVendor       String    @default("")
   ocrDate         String    @default("")
-  status          String    @default("pending") // pending | approved | settled | rejected
+  status          String    @default("pending") // pending | approved | settled | rejected | void
   approvedById    String?
   approvedAt      DateTime?
   rejectReason    String    @default("")
+  // void = soft-delete by md/ceo; the row is kept (struck-through, excluded from every
+  // total/board/settlement) so a closed day's books stay auditable. Never hard-deleted.
+  voidedById      String?
+  voidedAt        DateTime?
+  voidReason      String    @default("")
   settlementId    String?
   aiVerdict       String    @default("")     // "" | ok | flagged (post-hoc AI review, wired later)
   aiReviewId      String?
