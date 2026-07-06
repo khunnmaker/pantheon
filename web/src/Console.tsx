@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import {
   User, LogOut, Clock, Inbox, Loader2, ShieldCheck, MessageSquare,
   Send, Check, CheckCircle2, RefreshCw, Brain, GraduationCap, Wand2, Pencil, AlertTriangle, Search,
-  Download, Paperclip, Camera, Banknote, X, ChevronDown, ChevronUp, Crown, Pin, CornerUpLeft,
+  Download, Paperclip, Camera, Banknote, X, ChevronDown, ChevronUp, Crown, Pin, CornerUpLeft, Volume2, VolumeX,
 } from 'lucide-react';
 import {
   getQueue, getCustomers, getCustomer, searchCustomers, clearSession, regenerateDraft, rewriteText, sendReply, setNickname, setCategory, setStage, STAGES,
@@ -510,6 +510,38 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<CustomerDetail | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
+  // Notification sound on inbound customer messages (per-browser mute, throttled).
+  const [soundOn, setSoundOn] = useState(() => localStorage.getItem('minerva_sound_off') !== '1');
+  const soundOnRef = useRef(soundOn);
+  soundOnRef.current = soundOn;
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const lastSoundRef = useRef(0);
+  const playChime = useCallback(() => {
+    if (!soundOnRef.current) return;
+    const now = Date.now();
+    if (now - lastSoundRef.current < 1500) return; // avoid a burst of dings
+    lastSoundRef.current = now;
+    try {
+      let ctx = audioCtxRef.current;
+      if (!ctx) { ctx = new AudioContext(); audioCtxRef.current = ctx; }
+      if (ctx.state === 'suspended') void ctx.resume();
+      const t0 = ctx.currentTime;
+      const notes: Array<[number, number]> = [[880, 0], [1174.66, 0.12]]; // A5 → D6, "ติ๊ง-ติ๊ง"
+      for (const [freq, delay] of notes) {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.value = freq;
+        const start = t0 + delay;
+        gain.gain.setValueAtTime(0.0001, start);
+        gain.gain.exponentialRampToValueAtTime(0.22, start + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.18);
+        osc.connect(gain).connect(ctx.destination);
+        osc.start(start);
+        osc.stop(start + 0.2);
+      }
+    } catch { /* audio unavailable — ignore */ }
+  }, []);
 
   const [editText, setEditText] = useState('');
   const [sending, setSending] = useState(false);
@@ -643,6 +675,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
       if (err.message === 'unauthorized') logout();
     };
     const onMessage = (payload: { customer: CustomerLite }) => {
+      playChime(); // ding on any inbound customer message
       refreshLists().catch(() => undefined);
       if (selectedRef.current === payload.customer.id) loadDetail(payload.customer.id).catch(() => undefined);
     };
@@ -680,7 +713,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
       socket.off('conversation:update', onConversation);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [refreshLists, loadDetail, refreshLearned]);
+  }, [refreshLists, loadDetail, refreshLearned, playChime]);
 
   useEffect(() => {
     selectedRef.current = selectedId;
@@ -1245,6 +1278,12 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                 {learned.length > 0 && <span className="absolute -top-0.5 -right-0.5 text-[10px] bg-amber-400 text-white rounded-full px-1 leading-tight">{learned.length}</span>}
               </button>
               <div className="flex-1" />
+              <button type="button"
+                onClick={() => setSoundOn((v) => { const nv = !v; localStorage.setItem('minerva_sound_off', nv ? '0' : '1'); return nv; })}
+                title={soundOn ? 'เสียงแจ้งเตือน: เปิด (คลิกเพื่อปิด)' : 'เสียงแจ้งเตือน: ปิด (คลิกเพื่อเปิด)'}
+                className={'p-2 rounded-xl hover:bg-slate-100 ' + (soundOn ? 'text-sky-600' : 'text-slate-300')}>
+                {soundOn ? <Volume2 size={17} /> : <VolumeX size={17} />}
+              </button>
               {PORTAL_URL && (
                 <a href={PORTAL_URL} title="กลับพอร์ทัล Jupiter" className="p-2 rounded-xl text-slate-400 hover:text-violet-600 hover:bg-slate-100"><Crown size={17} /></a>
               )}
