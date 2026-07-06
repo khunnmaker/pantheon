@@ -109,7 +109,6 @@ export default function Stock({ agent, onLogout }: { agent: Agent; onLogout: () 
       <header className="bg-white border-b border-slate-200 sticky top-0 z-10">
         <div className="max-w-6xl mx-auto px-4 py-3 flex items-center gap-4">
           <div className="flex items-center gap-2 text-indigo-700 font-bold">
-            <Boxes size={22} /> Vulcan
             <AppSwitcher agent={agent} />
           </div>
           <nav className="flex gap-1 text-sm">
