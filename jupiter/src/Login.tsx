@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { Crown, LogIn, Loader2, AlertTriangle, ShieldCheck, ArrowLeft } from 'lucide-react';
+import { LogIn, Loader2, AlertTriangle, ShieldCheck, ArrowLeft } from 'lucide-react';
+import PantheonMark from './PantheonMark';
 import { login, setSession, type Agent } from './lib/api';
 import { ROLE_GROUPS, SUPERVISOR_EMAIL, type Person, type RoleGroup } from './lib/roster';
 import { memberAvatar, teamAvatar } from './lib/avatar';
@@ -85,7 +86,7 @@ export default function Login({ onLogin }: { onLogin: (agent: Agent) => void }) 
       <div className="bg-white rounded-md shadow-sm border border-slate-200 max-w-md w-full p-5">
         <div className="flex flex-col items-center text-center mb-5">
           <div className="w-16 h-16 rounded-2xl bg-violet-600 flex items-center justify-center shadow-sm mb-3">
-            <Crown size={32} className="text-white" />
+            <PantheonMark className="w-8 h-8 text-white" />
           </div>
           <h1 className="text-2xl font-bold tracking-tight text-violet-800">The Pantheon</h1>
           <p className="text-sm text-slate-500 mt-1">พอร์ทัลทีมงาน · เลือกชื่อเพื่อเข้าสู่ระบบ</p>

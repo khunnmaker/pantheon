@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Wallet, Loader2, AlertTriangle, LogIn, ArrowLeft, ShieldCheck } from 'lucide-react';
+import { Loader2, AlertTriangle, LogIn, ArrowLeft, ShieldCheck } from 'lucide-react';
+import PantheonMark from './PantheonMark';
 import { login, setSession, getLogins, type Agent, type LoginName } from './lib/api';
 import { groupLogins, type GroupMeta } from './lib/loginGroups';
 import { memberAvatar, teamAvatar } from './lib/avatar';
@@ -12,11 +13,13 @@ export default function Login({ onLogin }: { onLogin: (agent: Agent) => void }) 
 
   return (
     <div className="min-h-screen bg-slate-100 font-sans text-slate-800 flex flex-col items-center px-4 py-8">
-      <div className="flex items-center gap-2 text-amber-700 mb-1">
-        <Wallet size={26} />
-        <h1 className="text-2xl font-bold">Ceres</h1>
+      <div className="flex flex-col items-center text-center mb-6">
+        <div className="w-16 h-16 rounded-2xl bg-violet-600 flex items-center justify-center shadow-sm mb-3">
+          <PantheonMark className="w-8 h-8 text-white" />
+        </div>
+        <h1 className="text-2xl font-bold tracking-tight text-violet-800">Ceres</h1>
+        <p className="text-sm text-slate-500 mt-1">ระบบค่าใช้จ่าย</p>
       </div>
-      <p className="text-sm text-slate-500 mb-6">ระบบค่าใช้จ่าย</p>
 
       <div className="w-full max-w-md">
         {manual ? (
