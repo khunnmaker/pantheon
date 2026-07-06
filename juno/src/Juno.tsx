@@ -22,7 +22,7 @@ import AppSwitcher from './AppSwitcher';
 // No ใบกำกับภาษี tab: Prominent issues a tax invoice on EVERY sale (in Express, as part of
 // recording), so a "requested" queue would contain everything and filter nothing. The invoice
 // details captured off the slip flow (name/address/tax-ID) still show in the drawer.
-type View = 'inbox' | 'flags' | 'reports' | 'recon' | 'cashcheque';
+type View = 'inbox' | 'flags' | 'reports' | 'recon';
 
 // Thai-locale date/time display for the inbox + drawer (house pattern, vulcan/src/Stock.tsx).
 const fmtDate = (iso: string) => new Date(iso).toLocaleDateString('th-TH', { day: '2-digit', month: 'short', year: '2-digit' });
@@ -39,6 +39,32 @@ const STATUS_META: Record<PaymentStatus, { label: string; cls: string }> = {
 const CUSTOMER_TYPES: CustomerType[] = ['โอนก่อนส่ง', 'เครดิต', 'เก็บปลายทาง'];
 function Badge({ children, cls }: { children: React.ReactNode; cls: string }) {
   return <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-semibold ${cls}`}>{children}</span>;
+}
+
+// ช่องทาง (payment-method) list cell — transfer shows the bank name (unchanged from before);
+// cash/cheque show their method label plus a รอฝาก/รอเคลียร์ badge until settled (folds the old
+// separate เงินสด/เช็ค tab's method-at-a-glance info into this one column, owner decision 2026-07-06).
+function MethodCell({ p }: { p: Payment }) {
+  if (p.source === 'cash') {
+    return (
+      <div className="flex items-center gap-1 max-w-[110px]">
+        <span className="truncate">เงินสด</span>
+        {p.settleState === '' && <Badge cls="bg-amber-100 text-amber-700">รอฝาก</Badge>}
+      </div>
+    );
+  }
+  if (p.source === 'cheque') {
+    return (
+      <div className="flex items-center gap-1 max-w-[110px]">
+        <span className="truncate" title={p.chequeBank ? `เช็ค · ${p.chequeBank}` : 'เช็ค'}>
+          {p.chequeBank ? `เช็ค · ${p.chequeBank}` : 'เช็ค'}
+        </span>
+        {p.settleState === '' && <Badge cls="bg-amber-100 text-amber-700">รอเคลียร์</Badge>}
+      </div>
+    );
+  }
+  // line / manual_transfer — unchanged bank-name treatment
+  return <div className="max-w-[110px] truncate" title={p.bank}>{p.bank}</div>;
 }
 
 export default function Juno({ agent, onLogout }: { agent: Agent; onLogout: () => void }) {
@@ -63,7 +89,6 @@ export default function Juno({ agent, onLogout }: { agent: Agent; onLogout: () =
 
   const tabs: { key: View; label: string; icon: React.ReactNode; count?: number }[] = [
     { key: 'inbox', label: 'รายการรับเงิน', icon: <Inbox size={16} />, count: summary?.total },
-    { key: 'cashcheque', label: 'เงินสด/เช็ค', icon: <Banknote size={16} />, count: summary?.cashChequePending },
     { key: 'flags', label: 'ปักธง', icon: <Flag size={16} />, count: summary?.flagged },
     { key: 'recon', label: 'กระทบยอด', icon: <Scale size={16} />, count: bankUnmatched },
     // รายงาน is CEO-only (server 403s /reports + /export.csv for non-supervisor) — omit the tab
@@ -102,7 +127,7 @@ export default function Juno({ agent, onLogout }: { agent: Agent; onLogout: () =
             >
               {t.icon} {t.label}
               {typeof t.count === 'number' && t.count > 0 && (
-                <span className={`ml-1 px-1.5 rounded-full text-xs ${t.key === 'flags' || t.key === 'recon' || t.key === 'cashcheque' ? 'bg-rose-100 text-rose-700' : 'bg-slate-100 text-slate-600'}`}>
+                <span className={`ml-1 px-1.5 rounded-full text-xs ${t.key === 'flags' || t.key === 'recon' ? 'bg-rose-100 text-rose-700' : 'bg-slate-100 text-slate-600'}`}>
                   {t.count}
                 </span>
               )}
@@ -128,6 +153,9 @@ export default function Juno({ agent, onLogout }: { agent: Agent; onLogout: () =
 function PaymentsView({ view, onChanged, canDelete, isCeo }: { view: Exclude<View, 'reports' | 'recon'>; onChanged: () => void; canDelete: boolean; isCeo: boolean }) {
   const [q, setQ] = useState('');
   const [status, setStatusFilter] = useState<'all' | PaymentStatus>('all');
+  // วิธีรับเงิน (payment-method) filter — inbox only, folds the old separate เงินสด/เช็ค tab
+  // into this one list (owner decision 2026-07-06): ทุกวิธี / ธนาคาร (transfer) / เงินสด / เช็ค.
+  const [method, setMethod] = useState<'all' | 'transfer' | 'cash' | 'cheque'>('all');
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
   const [rows, setRows] = useState<Payment[]>([]);
@@ -154,11 +182,10 @@ function PaymentsView({ view, onChanged, canDelete, isCeo }: { view: Exclude<Vie
     q: q.trim() || undefined,
     from: from || undefined,
     to: to || undefined,
-    // the flags tab is a pre-filtered queue; the inbox honours the status dropdown;
-    // the เงินสด/เช็ค tab shows every hand-added cash/cheque row regardless of status
+    // the flags tab is a pre-filtered queue; the inbox honours the status + วิธีรับเงิน dropdowns
     ...(view === 'flags' ? { flagged: true } : {}),
     ...(view === 'inbox' ? { status } : {}),
-    ...(view === 'cashcheque' ? { source: 'cashcheque' } : {}),
+    ...(view === 'inbox' && method !== 'all' ? { source: method } : {}),
   };
 
   const load = useCallback(() => {
@@ -174,7 +201,7 @@ function PaymentsView({ view, onChanged, canDelete, isCeo }: { view: Exclude<Vie
       .catch(() => setError('โหลดข้อมูลไม่สำเร็จ'))
       .finally(() => setLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [view, q, status, from, to]);
+  }, [view, q, status, method, from, to]);
 
   useEffect(() => {
     const t = setTimeout(load, 250); // debounce the search box
@@ -187,7 +214,7 @@ function PaymentsView({ view, onChanged, canDelete, isCeo }: { view: Exclude<Vie
   // Row checkboxes are cleared whenever the list reloads/filters change or the tab switches —
   // a stale selection referring to rows no longer on screen would be confusing/dangerous for
   // bulk actions (owner requirement).
-  useEffect(() => { setCheckedIds(new Set()); setBulkResult(''); setBulkVoidConfirm(false); setBulkDeleteConfirm(false); }, [view, q, status, from, to]);
+  useEffect(() => { setCheckedIds(new Set()); setBulkResult(''); setBulkVoidConfirm(false); setBulkDeleteConfirm(false); }, [view, q, status, method, from, to]);
 
   // Reflect a drawer action back into the list + selected row without a full reload.
   function applyUpdate(p: Payment) {
@@ -335,6 +362,19 @@ function PaymentsView({ view, onChanged, canDelete, isCeo }: { view: Exclude<Vie
               {(['received', 'verified', 'recorded', 'void'] as PaymentStatus[]).map((s) => (
                 <option key={s} value={s}>{STATUS_META[s].label}</option>
               ))}
+            </select>
+          )}
+          {view === 'inbox' && (
+            <select
+              value={method}
+              onChange={(e) => setMethod(e.target.value as 'all' | 'transfer' | 'cash' | 'cheque')}
+              className="px-2 py-2 rounded-lg border border-slate-300 text-sm bg-white"
+              title="วิธีรับเงิน"
+            >
+              <option value="all">ทุกวิธี</option>
+              <option value="transfer">ธนาคาร</option>
+              <option value="cash">เงินสด</option>
+              <option value="cheque">เช็ค</option>
             </select>
           )}
           <input type="date" value={from} onChange={(e) => setFrom(e.target.value)}
@@ -505,7 +545,7 @@ function PaymentsView({ view, onChanged, canDelete, isCeo }: { view: Exclude<Vie
                   <th className="text-left font-medium px-3 py-2">วันที่</th>
                   <th className="text-left font-medium px-3 py-2">ลูกค้า</th>
                   <th className="text-right font-medium px-3 py-2">ยอด</th>
-                  <th className="text-left font-medium px-3 py-2 hidden md:table-cell w-[120px]">ธนาคาร</th>
+                  <th className="text-left font-medium px-3 py-2 hidden md:table-cell w-[120px]">ช่องทาง</th>
                   <th className="text-left font-medium px-3 py-2 hidden md:table-cell">RE</th>
                   <th className="text-left font-medium px-3 py-2">สถานะ</th>
                 </tr>
@@ -535,7 +575,7 @@ function PaymentsView({ view, onChanged, canDelete, isCeo }: { view: Exclude<Vie
                       {baht(p.amountNum)}
                       {p.mismatch && <AlertTriangle size={13} className="inline ml-1 text-rose-500" />}
                     </td>
-                    <td className="px-3 py-2 text-slate-500 hidden md:table-cell"><div className="max-w-[110px] truncate" title={p.bank}>{p.bank}</div></td>
+                    <td className="px-3 py-2 text-slate-500 hidden md:table-cell"><MethodCell p={p} /></td>
                     <td className="px-3 py-2 text-slate-500 hidden md:table-cell whitespace-nowrap">
                       {p.reNumbers.length > 0 ? (
                         <span className="max-w-[130px] truncate inline-block align-bottom" title={p.reNumbers.join(' / ')}>
@@ -566,7 +606,6 @@ function PaymentsView({ view, onChanged, canDelete, isCeo }: { view: Exclude<Vie
             onUpdate={applyUpdate}
             onDelete={applyDelete}
             onPrint={(p) => setPrintQueue([p])}
-            showExpressConfirm={view === 'cashcheque'}
             canDelete={canDelete}
             isCeo={isCeo}
           />
@@ -857,14 +896,16 @@ function AddPaymentModal({ onClose, onSaved }: { onClose: () => void; onSaved: (
 }
 
 // ── Slip verifier + action drawer ──────────────────────────────────────────
-// showExpressConfirm: the ✓✓ ยืนยันใน Express icon only shows on the เงินสด/เช็ค tab —
-// transfers reach 'recorded' via the CEO's bulk-confirm in กระทบยอด instead (owner decision
-// 2026-07-05, JUNO bulk-actions brief §3). Cash/cheque have no bank reconciliation step, so
-// they keep the per-row action here.
-function Detail({ payment, onClose, onUpdate, onDelete, onPrint, showExpressConfirm, canDelete, isCeo }: {
+// showExpressConfirm: the ✓✓ ยืนยันใน Express icon shows for cash/cheque rows regardless of
+// which queue they're viewed in (inbox/flags — the separate เงินสด/เช็ค tab is gone, folded
+// into the one รายการรับเงิน list, owner decision 2026-07-06) — transfers reach 'recorded' via
+// the CEO's bulk-confirm in กระทบยอด instead (owner decision 2026-07-05, JUNO bulk-actions
+// brief §3). Cash/cheque have no bank reconciliation step, so they keep the per-row action here.
+function Detail({ payment, onClose, onUpdate, onDelete, onPrint, canDelete, isCeo }: {
   payment: Payment; onClose: () => void; onUpdate: (p: Payment) => void; onDelete: (id: string) => void;
-  onPrint: (p: Payment) => void; showExpressConfirm: boolean; canDelete: boolean; isCeo: boolean;
+  onPrint: (p: Payment) => void; canDelete: boolean; isCeo: boolean;
 }) {
+  const showExpressConfirm = payment.source === 'cash' || payment.source === 'cheque';
   const [busy, setBusy] = useState('');
   const [flagNote, setFlagNote] = useState('');
   const [flagOpen, setFlagOpen] = useState(false);
@@ -979,7 +1020,7 @@ function Detail({ payment, onClose, onUpdate, onDelete, onPrint, showExpressConf
                 disabled: p.status === 'void',
                 active: p.status === 'verified',
               })}
-              {/* ✓✓ ยืนยันใน Express: เงินสด/เช็ค tab only — see the showExpressConfirm note above */}
+              {/* ✓✓ ยืนยันใน Express: cash/cheque rows only — see the showExpressConfirm note above */}
               {showExpressConfirm && rail('recorded', STATUS_META.recorded.label, <CheckCheck size={16} />, () => run('recorded', () => setStatus(p.id, 'recorded')), {
                 disabled: p.status === 'recorded' || p.status === 'void',
                 active: p.status === 'recorded',
