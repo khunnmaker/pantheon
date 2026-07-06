@@ -685,6 +685,16 @@ export async function venusRoutes(app: FastifyInstance) {
 
     const note = await prisma.venusNote.findUnique({ where: { customerCode: code } });
 
+    // AI suggestion card (VENUS_BRIEF.md §7, Phase 3 stage 2) — READ-ONLY here: this route
+    // never generates a card, it only serves whatever the weekly batch (venus-generate-cards.ts
+    // / api/src/venus/cards.ts) already wrote. Null when no card exists yet (no active signal,
+    // or the LLM wasn't available at generation time) — the UI treats that as "nothing extra to
+    // show", not an error.
+    const card = await prisma.venusCard.findUnique({
+      where: { customerCode: code },
+      select: { text: true, createdAt: true },
+    });
+
     const precautions = {
       credit: customer.creditDays != null
         ? `เครดิต ${customer.creditDays} วัน${customer.creditTermsNorm ? ` (${customer.creditTermsNorm})` : ''}`
@@ -695,7 +705,14 @@ export async function venusRoutes(app: FastifyInstance) {
       note: note ? { text: note.text, authorName: note.authorName, updatedAt: note.updatedAt } : null,
     };
 
-    return { customer, stats, purchases, productCycles, precautions };
+    return {
+      customer,
+      stats,
+      purchases,
+      productCycles,
+      precautions,
+      aiCard: card ? { text: card.text, createdAt: card.createdAt } : null,
+    };
   });
 
   // PUT /api/venus/customers/:code/note — upsert the manual pinned ข้อควรระวัง note

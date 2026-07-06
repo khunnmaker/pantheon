@@ -829,6 +829,24 @@ model VenusNote {
   updatedAt    DateTime @updatedAt
 }
 
+// Weekly AI suggestion card (VENUS_BRIEF.md §7 "AI cards"). ONE row per customer,
+// fully OVERWRITTEN each generator run (derived narration, not an audit ledger — same
+// "derived, not append-only" reasoning as CustomerStats). Generated ONLY for customers
+// with >=1 active signal (api/src/venus/cards.ts: activeSignals()); the rules layer
+// (CustomerStats badges) is the product, this is just the narrator on top — track-and-tell,
+// never auto-sent to a customer. `signalsJson` stores the EXACT signal list the card text
+// was built from, for audit (so a rep/supervisor can see what the AI was and wasn't told —
+// it may only restate these, never invent numbers/prices/products, see cards.ts). Keyed on
+// the Express customer `code`, same soft-link convention as VenusNote/SaleDoc (no FK).
+model VenusCard {
+  id           String   @id @default(cuid())
+  customerCode String   @unique
+  text         String
+  signalsJson  Json
+  model        String   @default("")
+  createdAt    DateTime @default(now())
+}
+
 // ─── DEFERRED TO M3: pgvector embedding tables (spec §5 note) ────────────
 // Activate in M3 once the database has the `vector` extension. Steps:
 //   1. add `previewFeatures = ["postgresqlExtensions"]` to the generator

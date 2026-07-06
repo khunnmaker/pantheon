@@ -2,12 +2,12 @@ import { useEffect, useState } from 'react';
 import {
   ArrowLeft, Loader2, AlertTriangle, MapPin, Phone, User, CreditCard, Truck, Hash,
   ShoppingCart, MessageCircle, Wallet, StickyNote, Clock, ChevronDown, ChevronUp,
-  ShieldAlert, PackageSearch, TrendingUp, TrendingDown, Pin, Save,
+  ShieldAlert, PackageSearch, TrendingUp, TrendingDown, Pin, Save, Sparkles,
 } from 'lucide-react';
 import {
   getCustomer, saveNote, trendArrow, trendColor, formatBaht, formatDate,
   type VenusCustomer, type CustomerStats, type Purchase, type ProductCycle, type CustomerPrecautions,
-  type CustomerNote,
+  type CustomerNote, type AiCard,
 } from './lib/api';
 import { CreditChip, SegmentChip } from './CustomerList';
 
@@ -27,6 +27,7 @@ export default function CustomerDetail({ code, onBack }: { code: string; onBack:
   const [purchases, setPurchases] = useState<Purchase[]>([]);
   const [productCycles, setProductCycles] = useState<ProductCycle[]>([]);
   const [precautions, setPrecautions] = useState<CustomerPrecautions | null>(null);
+  const [aiCard, setAiCard] = useState<AiCard | null>(null);
   const [busy, setBusy] = useState(true);
   const [err, setErr] = useState('');
   const [tab, setTab] = useState<Tab>('overview');
@@ -43,6 +44,7 @@ export default function CustomerDetail({ code, onBack }: { code: string; onBack:
         setPurchases(r.purchases);
         setProductCycles(r.productCycles);
         setPrecautions(r.precautions);
+        setAiCard(r.aiCard);
       })
       .catch((e) => setErr(e instanceof Error && e.message.includes('404') ? 'ไม่พบลูกค้ารายนี้' : 'โหลดข้อมูลลูกค้าไม่สำเร็จ'))
       .finally(() => setBusy(false));
@@ -78,7 +80,7 @@ export default function CustomerDetail({ code, onBack }: { code: string; onBack:
             <TabButton active={tab === 'notes'} onClick={() => setTab('notes')} icon={<StickyNote size={15} />} label="โน้ต" />
           </div>
 
-          {tab === 'overview' && <Overview customer={customer} stats={stats} precautions={precautions} />}
+          {tab === 'overview' && <Overview customer={customer} stats={stats} precautions={precautions} aiCard={aiCard} />}
           {tab === 'purchases' && <Purchases purchases={purchases} productCycles={productCycles} />}
           {tab === 'chat' && <ComingSoon label="ประวัติแชทจะเชื่อมกับคอนโซล Minerva" />}
           {tab === 'payments' && <ComingSoon label="รายการชำระเงินละเอียดจะดึงจาก Juno (สรุปแสดงในแท็บภาพรวมแล้ว)" />}
@@ -204,11 +206,12 @@ function NoteEditor({
 }
 
 function Overview({
-  customer: c, stats, precautions,
+  customer: c, stats, precautions, aiCard,
 }: {
   customer: VenusCustomer;
   stats: CustomerStats | null;
   precautions: CustomerPrecautions | null;
+  aiCard: AiCard | null;
 }) {
   const rows: { icon: React.ReactNode; label: string; value: string }[] = [
     { icon: <MapPin size={15} />, label: 'ที่อยู่', value: c.address || '—' },
@@ -292,6 +295,23 @@ function Overview({
       ) : (
         <div className="bg-white rounded-2xl border border-dashed border-slate-300 p-5 text-center text-slate-400 text-sm">
           ยังไม่มีข้อมูลยอดขายสำหรับลูกค้ารายนี้ — ยังไม่คำนวณ RFM
+        </div>
+      )}
+
+      {/* AI suggestion card (VENUS_BRIEF.md §7, Phase 3 stage 2): a narration of the signals
+          already shown as badges above — NOT a new source of truth. Only rendered when a
+          card exists (the batch only writes one per customer with >=1 active signal); when
+          absent, the badges above remain the fallback (nothing shown here). */}
+      {aiCard && (
+        <div className="bg-rose-50 rounded-2xl border border-rose-200 p-5">
+          <div className="flex items-center gap-2 mb-2">
+            <Sparkles size={15} className="text-rose-500" />
+            <h3 className="text-sm font-semibold text-rose-700">คำแนะนำจาก AI (ตรวจสอบก่อนใช้)</h3>
+          </div>
+          <p className="text-sm text-slate-700 leading-relaxed">{aiCard.text}</p>
+          <div className="mt-2 text-[11px] text-rose-400">
+            อาจไม่สมบูรณ์—ตรวจสอบก่อนใช้ · สร้างเมื่อ {formatDate(aiCard.createdAt)}
+          </div>
         </div>
       )}
 
