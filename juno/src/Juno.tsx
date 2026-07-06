@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   LogOut, Search, Download, Flag, FileText, Inbox, BarChart3, Scale,
   Loader2, AlertTriangle, CheckCircle2, X, RefreshCw, ExternalLink, Ban, Crown, Printer,
-  Undo2, ClipboardCheck, CheckCheck, Banknote, Plus, Paperclip, Check, Trash2,
+  Undo2, ClipboardCheck, CheckCheck, Banknote, Plus, Paperclip, Check, Trash2, HandCoins,
 } from 'lucide-react';
 
 // Portal-back link (Jupiter). URL from build-time env; the link is hidden when unset, so it
@@ -11,7 +11,7 @@ const PORTAL_URL: string | undefined = import.meta.env.VITE_PORTAL_URL;
 import {
   getSummary, getPayments, setStatus, setFlag, verifyPayment, getReport, downloadCsv, baht,
   clearSession, getBankSummary, createPayment, settlePayment, uploadSlip, fileToBase64, readManualSlip,
-  deletePayment,
+  deletePayment, confirmReceived,
   type Agent, type Payment, type PaymentStatus, type Summary,
   type Report, type PaymentFilter, type CustomerType, type PaymentSource, type SettleState,
 } from './lib/api';
@@ -22,7 +22,9 @@ import AppSwitcher from './AppSwitcher';
 // No ใบกำกับภาษี tab: Prominent issues a tax invoice on EVERY sale (in Express, as part of
 // recording), so a "requested" queue would contain everything and filter nothing. The invoice
 // details captured off the slip flow (name/address/tax-ID) still show in the drawer.
-type View = 'inbox' | 'flags' | 'reports' | 'recon';
+// 'receive' = CEO-only "รอยืนยันรับเงิน" (task 1): unconfirmed cash/cheque awaiting the CEO's
+// physical receipt confirmation — separate from เงินสด/เช็ค settle state, folded into inbox/flags.
+type View = 'inbox' | 'flags' | 'reports' | 'recon' | 'receive';
 
 // Thai-locale date/time display for the inbox + drawer (house pattern, vulcan/src/Stock.tsx).
 const fmtDate = (iso: string) => new Date(iso).toLocaleDateString('th-TH', { day: '2-digit', month: 'short', year: '2-digit' });
@@ -89,6 +91,9 @@ export default function Juno({ agent, onLogout }: { agent: Agent; onLogout: () =
 
   const tabs: { key: View; label: string; icon: React.ReactNode; count?: number }[] = [
     { key: 'inbox', label: 'รายการรับเงิน', icon: <Inbox size={16} />, count: summary?.total },
+    // รอยืนยันรับเงิน is CEO-only (server 403s POST /receive for non-supervisor; the confirm
+    // action itself mirrors the delete gate) — omit the tab for finance/MD so it's never shown.
+    ...(isCeo ? [{ key: 'receive' as const, label: 'รอยืนยันรับเงิน', icon: <HandCoins size={16} />, count: summary?.awaitingReceive }] : []),
     { key: 'flags', label: 'ปักธง', icon: <Flag size={16} />, count: summary?.flagged },
     { key: 'recon', label: 'กระทบยอด', icon: <Scale size={16} />, count: bankUnmatched },
     // รายงาน is CEO-only (server 403s /reports + /export.csv for non-supervisor) — omit the tab
@@ -127,7 +132,7 @@ export default function Juno({ agent, onLogout }: { agent: Agent; onLogout: () =
             >
               {t.icon} {t.label}
               {typeof t.count === 'number' && t.count > 0 && (
-                <span className={`ml-1 px-1.5 rounded-full text-xs ${t.key === 'flags' || t.key === 'recon' ? 'bg-rose-100 text-rose-700' : 'bg-slate-100 text-slate-600'}`}>
+                <span className={`ml-1 px-1.5 rounded-full text-xs ${t.key === 'flags' || t.key === 'recon' || t.key === 'receive' ? 'bg-rose-100 text-rose-700' : 'bg-slate-100 text-slate-600'}`}>
                   {t.count}
                 </span>
               )}
@@ -186,6 +191,8 @@ function PaymentsView({ view, onChanged, canDelete, isCeo }: { view: Exclude<Vie
     ...(view === 'flags' ? { flagged: true } : {}),
     ...(view === 'inbox' ? { status } : {}),
     ...(view === 'inbox' && method !== 'all' ? { source: method } : {}),
+    // รอยืนยันรับเงิน tab (task 1): a fixed queue — no extra filters, just the pending list.
+    ...(view === 'receive' ? { pendingReceive: true } : {}),
   };
 
   const load = useCallback(() => {
@@ -219,8 +226,9 @@ function PaymentsView({ view, onChanged, canDelete, isCeo }: { view: Exclude<Vie
   // Reflect a drawer action back into the list + selected row without a full reload.
   function applyUpdate(p: Payment) {
     setSelected(p);
-    // a row may drop out of the pre-filtered flag queue (unflagged) → refetch it
-    if (view === 'flags' && !p.flagged) {
+    // a row may drop out of the pre-filtered flag queue (unflagged) or the รอยืนยันรับเงิน
+    // queue (just confirmed received) → refetch it rather than leave a stale row showing
+    if ((view === 'flags' && !p.flagged) || (view === 'receive' && !!p.receivedAt)) {
       load();
     } else {
       setRows((prev) => prev.map((r) => (r.id === p.id ? p : r)));
@@ -1026,11 +1034,22 @@ function Detail({ payment, onClose, onUpdate, onDelete, onPrint, canDelete, isCe
                 disabled: p.status === 'void',
                 active: p.status === 'verified',
               })}
-              {/* ✓✓ ยืนยันใน Express: cash/cheque rows only — see the showExpressConfirm note above */}
-              {showExpressConfirm && rail('recorded', STATUS_META.recorded.label, <CheckCheck size={16} />, () => run('recorded', () => setStatus(p.id, 'recorded')), {
-                disabled: p.status === 'recorded' || p.status === 'void',
-                active: p.status === 'recorded',
-              })}
+              {/* ✓✓ ยืนยันใน Express: cash/cheque rows only — see the showExpressConfirm note above.
+                  Task 1 hard gate: also disabled until the CEO has confirmed physical receipt
+                  (server 409s received_required the same way) — with a why-tooltip so it doesn't
+                  read as broken. */}
+              {showExpressConfirm && rail(
+                'recorded',
+                p.status !== 'recorded' && p.status !== 'void' && !p.receivedAt
+                  ? 'ต้องให้ CEO ยืนยันรับเงินก่อนจึงจะยืนยันใน Express ได้'
+                  : STATUS_META.recorded.label,
+                <CheckCheck size={16} />,
+                () => run('recorded', () => setStatus(p.id, 'recorded')),
+                {
+                  disabled: p.status === 'recorded' || p.status === 'void' || !p.receivedAt,
+                  active: p.status === 'recorded',
+                },
+              )}
               {rail('print', p.reNumbers.length > 0 ? 'พิมพ์ใบปะหน้า' : 'พิมพ์ใบปะหน้า (ต้องมีเลข RE ก่อน)', <Printer size={16} />, () => onPrint(p), {
                 disabled: p.reNumbers.length === 0,
               })}
@@ -1167,7 +1186,7 @@ function Detail({ payment, onClose, onUpdate, onDelete, onPrint, canDelete, isCe
             {/* cash/cheque: not a bank transfer, so it's verified HERE via a settle control
                 instead of reconciling in กระทบยอด (decision 4). */}
             {(p.source === 'cash' || p.source === 'cheque') && (
-              <CashChequeSection payment={p} busy={busy} run={run} />
+              <CashChequeSection payment={p} busy={busy} run={run} isCeo={isCeo} />
             )}
           </div>
         </div>
@@ -1197,14 +1216,16 @@ const SETTLE_META: Record<'cash' | 'cheque', { pending: string; done: string; ac
   cash: { pending: 'รอฝาก', done: 'ฝากธนาคารแล้ว', action: 'ฝากธนาคารแล้ว', state: 'deposited' },
   cheque: { pending: 'รอเคลียร์', done: 'เคลียร์แล้ว', action: 'เคลียร์แล้ว', state: 'cleared' },
 };
-function CashChequeSection({ payment: p, busy, run }: {
+function CashChequeSection({ payment: p, busy, run, isCeo }: {
   payment: Payment;
   busy: string;
   run: (key: string, fn: () => Promise<{ payment: Payment }>) => Promise<void>;
+  isCeo: boolean;
 }) {
   const kind = p.source as 'cash' | 'cheque';
   const meta = SETTLE_META[kind];
   const settled = p.settleState !== '';
+  const received = !!p.receivedAt;
   const field = (lbl: string, value: React.ReactNode) => (
     <div>
       <div className="text-xs text-slate-400">{lbl}</div>
@@ -1244,6 +1265,37 @@ function CashChequeSection({ payment: p, busy, run }: {
             {busy === 'settle' ? <Loader2 size={12} className="animate-spin" /> : <Undo2 size={12} />} ยกเลิก
           </button>
         )}
+      </div>
+
+      {/* CEO receipt-verify gate (task 1) — SEPARATE from the settle control above (that's the
+          banking deposit/clear state; a cheque's KBiz auto-clear does NOT satisfy this gate).
+          This is a hard prerequisite for the ✓✓ ยืนยันใน Express rail action (see its disabled
+          condition above). Non-CEO sees the status read-only — the confirm action is
+          supervisor-only server-side, mirroring ลบถาวร's gate. */}
+      <div className="mt-3 pt-3 border-t border-dashed border-slate-200">
+        <div className="text-xs text-slate-400 mb-1.5">การรับเงินจริง (ยืนยันโดย CEO)</div>
+        <div className="flex items-center gap-2 flex-wrap">
+          <Badge cls={received ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}>
+            {received ? `ได้รับแล้ว · ${fmtDate(p.receivedAt!)}` : 'รอ CEO ยืนยัน'}
+          </Badge>
+          {isCeo && (received ? (
+            <button
+              disabled={busy !== ''}
+              onClick={() => void run('receive', () => confirmReceived(p.id, false))}
+              className="px-2.5 py-1 rounded-lg text-xs font-medium bg-slate-100 text-slate-600 border border-slate-200 hover:bg-slate-200 disabled:opacity-40 flex items-center gap-1"
+            >
+              {busy === 'receive' ? <Loader2 size={12} className="animate-spin" /> : <Undo2 size={12} />} ยกเลิกการยืนยัน
+            </button>
+          ) : (
+            <button
+              disabled={busy !== ''}
+              onClick={() => void run('receive', () => confirmReceived(p.id, true))}
+              className="px-2.5 py-1 rounded-lg text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 disabled:opacity-40 flex items-center gap-1"
+            >
+              {busy === 'receive' ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} ยืนยันรับเงินแล้ว
+            </button>
+          ))}
+        </div>
       </div>
     </div>
   );

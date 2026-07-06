@@ -52,6 +52,7 @@ function toRow(p: {
   status: string; flagged: boolean; verifiedById: string | null; verifiedAt: Date | null;
   createdAt: Date; reNumber: string; reNumbers: string[]; receiptName: string; customerType: string;
   source: string; settleState: string; settledAt: Date | null;
+  receivedAt: Date | null; receivedBy: string | null;
   chequeNo: string; chequeBank: string; chequeDueDate: string;
 }) {
   return {
@@ -89,6 +90,10 @@ function toRow(p: {
     source: p.source,
     settleState: p.settleState,
     settledAt: p.settledAt ? p.settledAt.toISOString() : null,
+    // CEO receipt-verify gate (task 1) — SEPARATE from settleState/settledAt above. See
+    // POST /payments/:id/receive.
+    receivedAt: p.receivedAt ? p.receivedAt.toISOString() : null,
+    receivedBy: p.receivedBy,
     chequeNo: p.chequeNo,
     chequeBank: p.chequeBank,
     chequeDueDate: p.chequeDueDate,
@@ -108,16 +113,28 @@ const listFilterSchema = z.object({
   // 'transfer' = line + manual_transfer (reconciles in กระทบยอด); 'cashcheque' = cash + cheque
   // (verified in the เงินสด/เช็ค tab); a concrete value narrows to exactly that source.
   source: z.enum(['all', 'transfer', 'cashcheque', 'line', 'manual_transfer', 'cash', 'cheque']).optional(),
+  // CEO-only "รอยืนยันรับเงิน" tab (task 1): unconfirmed cash/cheque. Forces its own
+  // source/receivedAt/status filter and ignores status/source below — see buildListWhere.
+  pendingReceive: z.enum(['true']).optional(),
 });
 function buildListWhere(q: z.infer<typeof listFilterSchema>): Record<string, unknown> {
   const where: Record<string, unknown> = {};
-  if (q.status && q.status !== 'all') where.status = q.status;
+  const pendingReceive = q.pendingReceive === 'true';
+  if (pendingReceive) {
+    // "รอยืนยันรับเงิน" is a fixed queue — force source/receivedAt/status and ignore the
+    // status/source dropdowns below entirely (the frontend never sends them alongside it).
+    where.source = { in: ['cash', 'cheque'] };
+    where.receivedAt = null;
+    where.status = { not: 'void' };
+  } else if (q.status && q.status !== 'all') where.status = q.status;
   else if (q.noVoid === '1') where.status = { not: 'void' };
   if (q.flagged === '1') where.flagged = true;
   if (q.tax && q.tax !== 'all') where.taxInvoiceStatus = q.tax;
   // flag/tax queues exclude voided rows to match the summary badges (§7a)
   if ((q.flagged === '1' || (q.tax && q.tax !== 'all')) && !where.status) where.status = { not: 'void' };
-  if (q.source === 'transfer') where.source = { in: ['line', 'manual_transfer'] };
+  if (pendingReceive) {
+    // already forced above — skip the source dropdown entirely for this queue.
+  } else if (q.source === 'transfer') where.source = { in: ['line', 'manual_transfer'] };
   else if (q.source === 'cashcheque') where.source = { in: ['cash', 'cheque'] };
   else if (q.source && q.source !== 'all') where.source = q.source;
   const range = thaiDayRange(q.from, q.to);
@@ -361,7 +378,7 @@ export async function junoRoutes(app: FastifyInstance) {
 
   // GET /api/juno/summary — headline counts for the Juno dashboard / login landing.
   app.get('/api/juno/summary', async () => {
-    const [total, received, verified, recorded, flagged, taxRequested, cashChequePending] = await Promise.all([
+    const [total, received, verified, recorded, flagged, taxRequested, cashChequePending, awaitingReceive] = await Promise.all([
       prisma.payment.count(),
       prisma.payment.count({ where: { status: 'received' } }),
       prisma.payment.count({ where: { status: 'verified' } }),
@@ -370,8 +387,12 @@ export async function junoRoutes(app: FastifyInstance) {
       prisma.payment.count({ where: { taxInvoiceStatus: 'requested', status: { not: 'void' } } }),
       // เงินสด/เช็ค tab badge: hand-added cash/cheque rows not yet deposited/cleared.
       prisma.payment.count({ where: { source: { in: ['cash', 'cheque'] }, settleState: '', status: { not: 'void' } } }),
+      // รอยืนยันรับเงิน tab badge (task 1): cash/cheque the CEO hasn't yet confirmed he
+      // physically received — SEPARATE from cashChequePending above (that's the banking
+      // deposit/clear state; this is the receipt-verify gate).
+      prisma.payment.count({ where: { source: { in: ['cash', 'cheque'] }, receivedAt: null, status: { not: 'void' } } }),
     ]);
-    return { total, received, verified, recorded, flagged, taxRequested, cashChequePending };
+    return { total, received, verified, recorded, flagged, taxRequested, cashChequePending, awaitingReceive };
   });
 
   // GET /api/juno/payments?q=&status=&flagged=&tax=&from=&to=&limit=
@@ -538,20 +559,57 @@ export async function junoRoutes(app: FastifyInstance) {
     return { ok: true, payment: toRow(p) };
   });
 
+  // POST /api/juno/payments/:id/receive { received } — CEO-ONLY receipt-verify gate (task 1):
+  // the CEO confirms he PHYSICALLY received the cash/cheque. SEPARATE from /settle above (the
+  // banking deposit/clear state) — a cheque's KBiz auto-clear does NOT satisfy this; only this
+  // route does. This is a hard prerequisite for ยืนยันใน Express (see POST /status below, which
+  // 409s status->'recorded' for cash/cheque while receivedAt is null). received=false is the
+  // undo path (ยกเลิกการยืนยัน), clearing the stamp — mirrors /settle's '' revert.
+  app.post<{ Params: { id: string } }>('/api/juno/payments/:id/receive', async (req, reply) => {
+    if (req.agent?.role !== 'supervisor') return reply.code(403).send({ error: 'forbidden' });
+
+    const body = z.object({ received: z.boolean() }).safeParse(req.body);
+    if (!body.success) return reply.code(400).send({ error: 'invalid_body' });
+    const cur = await prisma.payment.findUnique({ where: { id: req.params.id }, select: { id: true, source: true } });
+    if (!cur) return reply.code(404).send({ error: 'not_found' });
+    if (cur.source !== 'cash' && cur.source !== 'cheque') return reply.code(409).send({ error: 'not_cash_cheque' });
+
+    const p = await prisma.payment.update({
+      where: { id: req.params.id },
+      data: {
+        receivedAt: body.data.received ? new Date() : null,
+        receivedBy: body.data.received ? (req.agent?.email ?? null) : null,
+      },
+    });
+    return { ok: true, payment: toRow(p) };
+  });
+
   // POST /api/juno/payments/:id/status { status } — advance the lifecycle.
   // Moving to recorded stamps who/when; received/void clear the stamps (a payment moved back
   // to received, or voided, must not still read as verified-by-someone). A voided payment is
   // locked — it must be explicitly restored to 'received' before re-verifying. 'verified' is
   // NOT reachable here — the check dialog (POST /verify) is the only path, since FIN must
   // supply the RE number; this route 409s that target so the UI is forced through the modal.
+  // Task 1 gate: cash/cheque cannot reach 'recorded' (ยืนยันใน Express) until the CEO has
+  // confirmed physical receipt (POST /payments/:id/receive) — transfers are unaffected.
   app.post<{ Params: { id: string } }>('/api/juno/payments/:id/status', async (req, reply) => {
     const body = z.object({ status: z.enum(STATUSES) }).safeParse(req.body);
     if (!body.success) return reply.code(400).send({ error: 'invalid_status' });
     if (body.data.status === 'verified') return reply.code(409).send({ error: 'use_verify' });
-    const cur = await prisma.payment.findUnique({ where: { id: req.params.id }, select: { id: true, status: true } });
+    const cur = await prisma.payment.findUnique({
+      where: { id: req.params.id },
+      select: { id: true, status: true, source: true, receivedAt: true },
+    });
     if (!cur) return reply.code(404).send({ error: 'not_found' });
     if (cur.status === 'void' && body.data.status === 'recorded') {
       return reply.code(409).send({ error: 'void_locked' });
+    }
+    if (
+      body.data.status === 'recorded' &&
+      (cur.source === 'cash' || cur.source === 'cheque') &&
+      cur.receivedAt === null
+    ) {
+      return reply.code(409).send({ error: 'received_required' });
     }
     const advancing = body.data.status === 'recorded';
     const p = await prisma.payment.update({

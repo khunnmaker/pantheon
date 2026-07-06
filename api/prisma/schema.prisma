@@ -209,60 +209,66 @@ model FinanceAudit {
 // of scope (future, same table). Customer name/code are SNAPSHOT here so history stays stable
 // if the Customer is renamed.
 model Payment {
-  id            String    @id @default(cuid())
+  id               String             @id @default(cuid())
   // link + snapshot
-  customerId    String?
-  customerCode  String    @default("") // e.g. ร001 (join key across the Deities)
-  customerName  String    @default("") // "ชื่อ": assigned nickname else LINE name, at time of payment
-  senderName    String    @default("") // "ชื่อผู้โอน": the name parsed off the slip
+  customerId       String?
+  customerCode     String             @default("") // e.g. ร001 (join key across the Deities)
+  customerName     String             @default("") // "ชื่อ": assigned nickname else LINE name, at time of payment
+  senderName       String             @default("") // "ชื่อผู้โอน": the name parsed off the slip
   // money (String to match the free-text OCR/entry flow; sums parse on read)
-  amount        String    @default("") // confirmed baht amount (staff-entered)
-  ocrAmount     String    @default("") // what the OCR read (for the mismatch flag)
-  bank          String    @default("") // account received into
-  transferAt    String    @default("") // when the customer transferred (as-shown on slip)
-  ref           String    @default("") // transfer reference no.
+  amount           String             @default("") // confirmed baht amount (staff-entered)
+  ocrAmount        String             @default("") // what the OCR read (for the mismatch flag)
+  bank             String             @default("") // account received into
+  transferAt       String             @default("") // when the customer transferred (as-shown on slip)
+  ref              String             @default("") // transfer reference no.
   // the slip itself
-  slipMessageId String? @unique // the Minerva Message this came from — one Payment per slip (idempotent re-forward)
-  slipUrl       String    @default("") // tokenized public link to the slip image (Minerva hosts it)
+  slipMessageId    String?            @unique // the Minerva Message this came from — one Payment per slip (idempotent re-forward)
+  slipUrl          String             @default("") // tokenized public link to the slip image (Minerva hosts it)
   // tax invoice
-  taxInvoice       String @default("") // ใบกำกับภาษี: name / address / tax-id (free text), blank if not requested
-  taxInvoiceStatus String @default("none") // none | requested | issued
+  taxInvoice       String             @default("") // ใบกำกับภาษี: name / address / tax-id (free text), blank if not requested
+  taxInvoiceStatus String             @default("none") // none | requested | issued
   // who forwarded it (sales)
-  salesAgentId String?
-  salesName    String    @default("")
-  note         String    @default("") // หมายเหตุ
+  salesAgentId     String?
+  salesName        String             @default("")
+  note             String             @default("") // หมายเหตุ
   // finance lifecycle (Juno owns this)
-  status       String    @default("received") // received | verified | recorded | void
-  flagged      Boolean   @default(false) // true when ocrAmount != amount, or raised by finance
-  verifiedById String? // finance user who last advanced it
-  verifiedAt   DateTime?
-  createdAt    DateTime  @default(now()) // when Minerva forwarded it
+  status           String             @default("received") // received | verified | recorded | void
+  flagged          Boolean            @default(false) // true when ocrAmount != amount, or raised by finance
+  verifiedById     String? // finance user who last advanced it
+  verifiedAt       DateTime?
+  createdAt        DateTime           @default(now()) // when Minerva forwarded it
   // FIN check data (entered in Juno's check dialog when the RE is issued in Express)
   // DEPRECATED: kept only as a join mirror = reNumbers.join('/'), for back-compat search
   // (buildListWhere's `contains` filter) and the CSV export column. Never write it directly —
   // always derive it from reNumbers. See reNumbers below for the real (list) source of truth.
-  reNumber     String @default("") // receipt no.(s), bare 7 digits, joined with '/' if >1
+  reNumber         String             @default("") // receipt no.(s), bare 7 digits, joined with '/' if >1
   // one payment can cover several REs (e.g. one transfer paying several receipts); one RE can
   // also be split across several payments — so this is a plain list, not a relation. Each entry
   // is bare 7 digits (see POST /verify's normalization).
-  reNumbers    String[] @default([])
-  receiptName  String @default("") // official name on the RE (may differ from customerName)
-  customerType String @default("") // โอนก่อนส่ง | เครดิต | เก็บปลายทาง | "" (unset)
+  reNumbers        String[]           @default([])
+  receiptName      String             @default("") // official name on the RE (may differ from customerName)
+  customerType     String             @default("") // โอนก่อนส่ง | เครดิต | เก็บปลายทาง | "" (unset)
   // bank reconciliation (phase B): denormalized true while >=1 PaymentBankMatch link exists
-  reconciled   Boolean @default(false)
-  bankMatches  PaymentBankMatch[]
+  reconciled       Boolean            @default(false)
+  bankMatches      PaymentBankMatch[]
   // how the row entered Juno. 'line' = Minerva LINE slip (default, all existing rows);
   // the rest are hand-added in Juno. transfer types reconcile in กระทบยอด; cash/cheque
   // are verified in the เงินสด/เช็ค tab instead.
-  source        String  @default("line") // line | manual_transfer | cash | cheque
+  source           String             @default("line") // line | manual_transfer | cash | cheque
   // cash/cheque banking state (blank for transfers). cash: '' -> deposited; cheque: '' -> cleared.
-  settleState   String  @default("")     // '' | deposited | cleared
-  settledAt     DateTime?
-  settledById   String?
+  settleState      String             @default("") // '' | deposited | cleared
+  settledAt        DateTime?
+  settledById      String?
+  // CEO receipt-verify gate (task 1) — SEPARATE from settleState above: the CEO must confirm he
+  // physically received the cash/cheque before it can be ยืนยันใน Express (status->'recorded').
+  // null = not yet confirmed. A cheque's KBiz auto-clear (settleState->'cleared') is a separate
+  // banking event and does NOT set these — only POST /payments/:id/receive (supervisor-only) does.
+  receivedAt       DateTime?
+  receivedBy       String?
   // cheque details (source='cheque' only)
-  chequeNo      String  @default("")
-  chequeBank    String  @default("")
-  chequeDueDate String  @default("")     // as-typed (free text, like transferAt)
+  chequeNo         String             @default("")
+  chequeBank       String             @default("")
+  chequeDueDate    String             @default("") // as-typed (free text, like transferAt)
 
   @@index([status])
   @@index([flagged])
@@ -285,7 +291,7 @@ model Payment {
 // Audit row for each bank-file import (preview→apply, mirrors Vulcan's StockImport).
 model BankImport {
   id           String   @id @default(cuid())
-  source       String   // kbiz | kshop
+  source       String // kbiz | kshop
   fileName     String   @default("")
   importedAt   DateTime @default(now())
   importedBy   String?
@@ -299,23 +305,23 @@ model BankImport {
 // One bank line (KBIZ statement row or K SHOP transaction row). dedupeKey makes
 // re-importing an overlapping export range a no-op instead of a duplicate.
 model BankTxn {
-  id          String    @id @default(cuid())
-  source      String    // kbiz | kshop
-  txnAt       DateTime
-  amount      String    @default("") // baht "1234.56" (house String style, matches Payment.amount)
-  direction   String    @default("in") // in | out
-  channel     String    @default("")
-  description String    @default("") // KBIZ Descriptions / kshop "Payment"
-  details     String    @default("") // KBIZ Details / kshop payer·bank·terminal
-  payerName   String    @default("")
-  payerBank   String    @default("")
-  dedupeKey   String    @unique // sha256("source|txnAt ISO|amount|details"), "|n" suffix on within-file collisions
-  importId    String
-  matchStatus String    @default("unmatched") // unmatched | matched
-  refText     String    @default("") // manual refs (cheque no. / บิล 38/13 / Shopee / RE list) — non-empty marks matched
+  id                   String             @id @default(cuid())
+  source               String // kbiz | kshop
+  txnAt                DateTime
+  amount               String             @default("") // baht "1234.56" (house String style, matches Payment.amount)
+  direction            String             @default("in") // in | out
+  channel              String             @default("")
+  description          String             @default("") // KBIZ Descriptions / kshop "Payment"
+  details              String             @default("") // KBIZ Details / kshop payer·bank·terminal
+  payerName            String             @default("")
+  payerBank            String             @default("")
+  dedupeKey            String             @unique // sha256("source|txnAt ISO|amount|details"), "|n" suffix on within-file collisions
+  importId             String
+  matchStatus          String             @default("unmatched") // unmatched | matched
+  refText              String             @default("") // manual refs (cheque no. / บิล 38/13 / Shopee / RE list) — non-empty marks matched
   expressConfirmedAt   DateTime?
   expressConfirmedById String?
-  matches     PaymentBankMatch[]
+  matches              PaymentBankMatch[]
 
   @@index([txnAt])
   @@index([matchStatus])
@@ -353,34 +359,34 @@ model QuickReply {
 // price=0 means "unknown" (the AI must NOT quote it; defer to staff). Variant
 // SKUs (color/size) share a photo via photoSku (resolved to the cell's lead SKU).
 model Product {
-  sku          String    @id // e.g. "07-10-09"
-  nameEn       String    @default("")
-  nameTh       String    @default("")
-  price        Int       @default(0) // baht; 0 = unknown
-  promo        String    @default("") // e.g. "ซื้อ 9 แถม 1"
-  note         String    @default("") // pack/size/weight
-  page         Int? // catalog page
-  photoSku     String? // SKU whose photo file represents this product (self or lead variant)
-  keywords     String[] // search terms (tokenized names) for matching
-  status       String    @default("active") // active | archived
-  stock        Int? // remaining quantity from the latest stock snapshot (null = unknown)
-  stockAt      DateTime? // the date the stock figure is as-of (snapshot date)
+  sku                 String    @id // e.g. "07-10-09"
+  nameEn              String    @default("")
+  nameTh              String    @default("")
+  price               Int       @default(0) // baht; 0 = unknown
+  promo               String    @default("") // e.g. "ซื้อ 9 แถม 1"
+  note                String    @default("") // pack/size/weight
+  page                Int? // catalog page
+  photoSku            String? // SKU whose photo file represents this product (self or lead variant)
+  keywords            String[] // search terms (tokenized names) for matching
+  status              String    @default("active") // active | archived
+  stock               Int? // remaining quantity from the latest stock snapshot (null = unknown)
+  stockAt             DateTime? // the date the stock figure is as-of (snapshot date)
   // Vulcan low-stock threshold (null = no threshold set). Low = stock != null && stock <= reorderPoint.
-  reorderPoint Int?
+  reorderPoint        Int?
   // Merchandising group key (see api/src/stock/catalogGroups.ts), e.g. "acrylic" | "endo".
   // null = not yet assigned. Independent of the Express category in the SKU.
-  catalogGroup String?
+  catalogGroup        String?
   // Sub-group 2-letter code WITHIN the group (e.g. "AL" alginate under impression). null =
   // none. The product code becomes group + subgroup + number → "IMAL01".
-  catalogSubgroup String?
+  catalogSubgroup     String?
   // ── Name-normalization review (Vulcan ตรวจทาน tab) ──────────────────────
   // A STAGED normalized English name awaiting supervisor review. The live nameEn is left
   // untouched until the proposal is APPROVED in-app; approving copies proposedNameEn → nameEn.
   // Seeded from api/src/catalog/nameProposals.ts via POST /api/stock/proposals/load.
   proposedNameEn      String? // the normalized candidate (null = no proposal loaded)
-  proposalStatus      String  @default("none") // none | pending | approved | rejected
-  proposalNeedsReview Boolean @default(false) // flagged for team review (e.g. ambiguous shade code)
-  updatedAt    DateTime  @updatedAt
+  proposalStatus      String    @default("none") // none | pending | approved | rejected
+  proposalNeedsReview Boolean   @default(false) // flagged for team review (e.g. ambiguous shade code)
+  updatedAt           DateTime  @updatedAt
 
   @@index([status])
   @@index([catalogGroup])
@@ -537,22 +543,22 @@ model ProductEnrichment {
 
 model CeresParty {
   id         String  @id @default(cuid())
-  name       String  @unique          // ต้า, อาร์ม, … or carrier bucket J&T, LALAMOVE Prom …
+  name       String  @unique // ต้า, อาร์ม, … or carrier bucket J&T, LALAMOVE Prom …
   kind       String  @default("person") // person | carrier
-  agentEmail String?                  // login link for persons (m-<slug>@prominent.local)
+  agentEmail String? // login link for persons (m-<slug>@prominent.local)
   active     Boolean @default(true)
   sortOrder  Int     @default(0)
 }
 
 model CashAccount {
-  id   String @id                     // literal ids: "pettyCash", "bank"
+  id   String @id // literal ids: "pettyCash", "bank"
   name String @default("")
 }
 
 model CashMovement {
   id            String   @id @default(cuid())
   accountId     String   @default("pettyCash")
-  type          String                 // deposit | advance | refund | topup
+  type          String // deposit | advance | refund | topup
   partyId       String?
   partyName     String   @default("") // snapshot
   entity        String   @default("") // PROM | DENL | "" (movements need no entity)
@@ -561,6 +567,7 @@ model CashMovement {
   createdById   String?
   createdByName String   @default("")
   createdAt     DateTime @default(now())
+
   @@index([accountId, createdAt])
   @@index([partyId])
   @@index([type])
@@ -574,11 +581,11 @@ model CeresExpense {
   enteredByName   String    @default("")
   entity          String    @default("PROM") // PROM | DENL
   category        String    @default("")
-  customerNote    String    @default("")     // "ลูกค้า: X" for shipping categories
+  customerNote    String    @default("") // "ลูกค้า: X" for shipping categories
   amount          String    @default("")
   spentAt         DateTime  @default(now())
   receiptUploadId String?
-  receiptSha      String    @default("")     // sha256 of the receipt image (duplicate detection)
+  receiptSha      String    @default("") // sha256 of the receipt image (duplicate detection)
   ocrAmount       String    @default("")
   ocrVendor       String    @default("")
   ocrDate         String    @default("")
@@ -592,10 +599,11 @@ model CeresExpense {
   voidedAt        DateTime?
   voidReason      String    @default("")
   settlementId    String?
-  aiVerdict       String    @default("")     // "" | ok | flagged (post-hoc AI review, wired later)
+  aiVerdict       String    @default("") // "" | ok | flagged (post-hoc AI review, wired later)
   aiReviewId      String?
   note            String    @default("")
   createdAt       DateTime  @default(now())
+
   @@index([status])
   @@index([partyId])
   @@index([settlementId])
@@ -605,7 +613,7 @@ model CeresExpense {
 
 model CeresRevision {
   id            String   @id @default(cuid())
-  subjectType   String                 // expense | paymentRequest
+  subjectType   String // expense | paymentRequest
   subjectId     String
   changedById   String?
   changedByName String   @default("")
@@ -613,18 +621,19 @@ model CeresRevision {
   after         Json
   reason        String   @default("")
   createdAt     DateTime @default(now())
+
   @@index([subjectType, subjectId])
 }
 
 model CeresSettlement {
-  id           String   @id @default(cuid())
-  dayKey       String   @unique        // Thai day "YYYY-MM-DD"; one close per day
+  id           String                @id @default(cuid())
+  dayKey       String                @unique // Thai day "YYYY-MM-DD"; one close per day
   closedById   String?
-  closedByName String   @default("")
-  boxBefore    String   @default("")   // box balance before close (computed snapshot)
-  boxAfter     String   @default("")
-  note         String   @default("")
-  createdAt    DateTime @default(now())
+  closedByName String                @default("")
+  boxBefore    String                @default("") // box balance before close (computed snapshot)
+  boxAfter     String                @default("")
+  note         String                @default("")
+  createdAt    DateTime              @default(now())
   lines        CeresSettlementLine[]
 }
 
@@ -638,6 +647,7 @@ model CeresSettlementLine {
   expenses     String          @default("")
   refunds      String          @default("")
   outstanding  String          @default("") // carried forward
+
   @@index([settlementId])
   @@index([partyId])
 }
@@ -662,6 +672,7 @@ model CeresPaymentRequest {
   paidAt              DateTime?
   paidRef             String    @default("")
   createdAt           DateTime  @default(now())
+
   @@index([status])
   @@index([recurringTemplateId])
   @@index([createdAt])
@@ -684,13 +695,14 @@ model CeresRecurringTemplate {
 
 model CeresAIReview {
   id            String   @id @default(cuid())
-  subjectType   String                 // expense | paymentRequest
+  subjectType   String // expense | paymentRequest
   subjectId     String
-  verdict       String                 // approve | flag | escalate | error
+  verdict       String // approve | flag | escalate | error
   reasoning     String   @default("")
   policyVersion String   @default("")
   model         String   @default("")
   createdAt     DateTime @default(now())
+
   @@index([subjectType, subjectId])
 }
 
@@ -726,6 +738,7 @@ model CeresStatementLine {
   refText        String    @default("")
   reconciledById String?
   reconciledAt   DateTime?
+
   @@index([txnAt])
   @@index([matchStatus])
   @@index([direction])
@@ -735,7 +748,7 @@ model CeresCategory {
   id                String  @id @default(cuid())
   name              String  @unique
   kind              String  @default("general") // shipping | fuel | toll | general
-  ceiling           String  @default("")        // per-item baht ceiling for AI policy; "" = none
+  ceiling           String  @default("") // per-item baht ceiling for AI policy; "" = none
   needsCustomerNote Boolean @default(false)
   active            Boolean @default(true)
   sortOrder         Int     @default(0)

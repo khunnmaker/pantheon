@@ -72,6 +72,11 @@ export interface Payment {
   source: PaymentSource;
   settleState: SettleState;
   settledAt: string | null;
+  // CEO receipt-verify gate (task 1) — SEPARATE from settleState/settledAt above (that's the
+  // banking deposit/clear state). null = the CEO hasn't yet confirmed physical receipt. See
+  // confirmReceived. A cheque's KBiz auto-clear does NOT set these.
+  receivedAt: string | null;
+  receivedBy: string | null;
   chequeNo: string;
   chequeBank: string;
   chequeDueDate: string;
@@ -85,6 +90,8 @@ export interface Summary {
   flagged: number;
   taxRequested: number;
   cashChequePending: number;
+  // รอยืนยันรับเงิน tab badge (task 1): cash/cheque awaiting the CEO's receipt confirmation.
+  awaitingReceive: number;
 }
 
 export interface ReportGroup {
@@ -111,6 +118,8 @@ export interface PaymentFilter {
   excludeVoid?: boolean; // Reports CSV: match the on-screen report, which excludes voids
   // 'transfer' = line + manual_transfer (inbox/flags); 'cashcheque' = cash + cheque (new tab)
   source?: SourceFilter;
+  // รอยืนยันรับเงิน tab (task 1): unconfirmed cash/cheque — server ignores status/source when set.
+  pendingReceive?: boolean;
 }
 
 const TOKEN_KEY = 'juno_token';
@@ -198,6 +207,7 @@ function filterQuery(f: PaymentFilter): string {
   if (f.to) p.set('to', f.to);
   if (f.excludeVoid) p.set('noVoid', '1');
   if (f.source && f.source !== 'all') p.set('source', f.source);
+  if (f.pendingReceive) p.set('pendingReceive', 'true');
   const s = p.toString();
   return s ? `?${s}` : '';
 }
@@ -248,6 +258,15 @@ export const settlePayment = (id: string, state: SettleState) =>
   authed<{ ok: boolean; payment: Payment }>(`/api/juno/payments/${id}/settle`, {
     method: 'POST',
     body: JSON.stringify({ state }),
+  });
+
+// CEO-only receipt-verify gate (task 1): confirms physical receipt of cash/cheque — a hard
+// prerequisite for ยืนยันใน Express (see STATUS_META.recorded's rail gate in Juno.tsx). Server
+// 403s anyone but supervisor. received=false is the undo (ยกเลิกการยืนยัน), clearing the stamp.
+export const confirmReceived = (id: string, received: boolean) =>
+  authed<{ ok: boolean; payment: Payment }>(`/api/juno/payments/${id}/receive`, {
+    method: 'POST',
+    body: JSON.stringify({ received }),
   });
 
 // Reuses Minerva's staff-upload endpoint (see api/src/routes/messages.ts POST /api/uploads)
