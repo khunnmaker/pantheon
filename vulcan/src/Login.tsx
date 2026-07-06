@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
-import { LogIn, Loader2, AlertTriangle, ArrowLeft } from 'lucide-react';
-import PantheonMark from './PantheonMark';
+import { Boxes, LogIn, Loader2, AlertTriangle, ArrowLeft } from 'lucide-react';
 import { login, setSession, getLogins, type Agent, type LoginCard } from './lib/api';
 import { groupLogins, type GroupMeta } from './lib/loginGroups';
 import { memberAvatar, teamAvatar } from './lib/avatar';
@@ -94,13 +93,11 @@ export default function Login({ onLogin }: { onLogin: (agent: Agent) => void }) 
   return (
     <div className="min-h-screen bg-slate-100 flex items-center justify-center p-6 font-sans text-slate-800">
       <div className="bg-white rounded-2xl shadow-sm border border-slate-200 max-w-md w-full p-6">
-        <div className="flex flex-col items-center text-center mb-5">
-          <div className="w-16 h-16 rounded-2xl bg-violet-600 flex items-center justify-center shadow-sm mb-3">
-            <PantheonMark className="w-8 h-8 text-white" />
-          </div>
-          <h1 className="text-2xl font-bold tracking-tight text-violet-800">Vulcan</h1>
-          <p className="text-sm text-slate-500 mt-1">จัดการสต็อกสินค้า · เลือกชื่อเพื่อเข้าสู่ระบบ</p>
+        <div className="flex items-center gap-2 text-indigo-700 mb-1">
+          <Boxes size={24} />
+          <h1 className="text-xl font-bold">Vulcan</h1>
         </div>
+        <p className="text-sm text-slate-500 mb-5">จัดการสต็อกสินค้า · เลือกชื่อเพื่อเข้าสู่ระบบ</p>
 
         {view === 'list' ? (
           <>
