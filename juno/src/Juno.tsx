@@ -58,9 +58,9 @@ export default function Juno({ agent, onLogout }: { agent: Agent; onLogout: () =
 
   const tabs: { key: View; label: string; icon: React.ReactNode; count?: number }[] = [
     { key: 'inbox', label: 'รายการรับเงิน', icon: <Inbox size={16} />, count: summary?.total },
+    { key: 'cashcheque', label: 'เงินสด/เช็ค', icon: <Banknote size={16} />, count: summary?.cashChequePending },
     { key: 'flags', label: 'ปักธง', icon: <Flag size={16} />, count: summary?.flagged },
     { key: 'recon', label: 'กระทบยอด', icon: <Scale size={16} />, count: bankUnmatched },
-    { key: 'cashcheque', label: 'เงินสด/เช็ค', icon: <Banknote size={16} />, count: summary?.cashChequePending },
     { key: 'reports', label: 'รายงาน', icon: <BarChart3 size={16} /> },
   ];
 
