@@ -47,17 +47,21 @@ export default function PrintCovers({ payments, onDone }: { payments: Payment[];
         }
         .print-page {
           width: 105mm;
-          height: 148mm;
           box-sizing: border-box;
-          padding: 8mm;
+          padding: 7mm;
           page-break-after: always;
+          break-after: page;
           background: white;
           display: flex;
           flex-direction: column;
           font-family: inherit;
-          overflow: hidden;
         }
-        .print-page:last-child { page-break-after: auto; }
+        .print-page:last-child { page-break-after: auto; break-after: auto; }
+        /* Full A6-page look in the on-screen preview only. In PRINT the page has NO fixed height,
+           so a cover flows to its natural height (~110mm) and can never be pushed past the 148mm
+           sheet onto a 2nd page (the earlier height:148mm + mt-auto pinned ผู้จัดทำ to the exact
+           bottom edge, which a hair of printer margin bumped over). */
+        @media screen { .print-page { min-height: 148mm; } }
       `}</style>
 
       <div className="print-covers-toolbar sticky top-0 z-10 bg-white border-b border-slate-200 px-4 py-2 flex items-center justify-between">
@@ -78,35 +82,54 @@ export default function PrintCovers({ payments, onDone }: { payments: Payment[];
 
 function Cover({ payment: p }: { payment: Payment }) {
   const multi = p.reNumbers.length > 1;
-  // one RE → large; a few → medium; many → smaller & wrapped, so a receipt paying several
-  // RE numbers can never blow the numbers out of the A6 page.
+  // one RE → text-4xl (matches รหัสลูกค้า + จำนวนเงิน); several REs scale down & wrap so they
+  // can never blow the numbers off the page.
   const reSize = p.reNumbers.length === 1 ? 'text-4xl' : p.reNumbers.length <= 3 ? 'text-2xl' : 'text-lg';
   return (
     <div className="print-page shadow-lg">
-      <div className="text-sm font-bold text-slate-500 mb-3">{COMPANY_HEADER}</div>
+      <div className="text-sm font-bold text-slate-500 mb-2">{COMPANY_HEADER}</div>
 
-      <div className="mb-3">
-        <div className="text-xs text-slate-400">เลขที่ใบเสร็จ{multi ? ` (${p.reNumbers.length} เลข)` : ''}</div>
+      <BigField label={`เลขที่ใบเสร็จ${multi ? ` (${p.reNumbers.length} เลข)` : ''}`}>
         <div className={`${reSize} font-bold tracking-wide leading-tight flex flex-wrap gap-x-3`}>
           {p.reNumbers.map((re) => <span key={re}>RE {re}</span>)}
         </div>
-      </div>
+      </BigField>
 
       <Row label="วันที่" value={fmtDate(p.createdAt)} />
-      {/* ลูกค้า name on its own single line; รหัสลูกค้า is its OWN bigger row below it, and the
-          amount is enlarged, so the two identifiers staff match on (code + จำนวนเงิน) stand out
-          (owner 2026-07-06). */}
       <Row label="ลูกค้า" value={p.customerName || '—'} />
-      {p.customerCode && <Row label="รหัสลูกค้า" value={<span className="font-bold text-xl">{p.customerCode}</span>} />}
+
+      {/* รหัสลูกค้า + จำนวนเงิน render as BIG figures at the SAME size as the RE number — these
+          three are what staff match a cover against its receipt on (owner 2026-07-06). */}
+      {p.customerCode && (
+        <BigField label="รหัสลูกค้า">
+          <div className="text-4xl font-bold tracking-wide leading-tight">{p.customerCode}</div>
+        </BigField>
+      )}
+
       <Row label="ชื่อบนใบเสร็จ" value={p.receiptName || '—'} />
       <Row label="ประเภทลูกค้า" value={p.customerType || '—'} />
-      <Row label="จำนวนเงิน" value={<span className="font-bold text-3xl">{baht(p.amountNum)}</span>} />
+
+      <BigField label="จำนวนเงิน">
+        <div className="text-4xl font-bold tracking-tight leading-tight">{baht(p.amountNum)}</div>
+      </BigField>
+
       <Row label="ช่องทาง" value={p.bank || '—'} />
       <Row label="พนักงานขาย" value={p.salesName || '—'} />
 
-      <div className="mt-auto pt-4 text-sm text-slate-500">
+      <div className="mt-6 text-sm text-slate-500">
         ผู้จัดทำ: ______________________
       </div>
+    </div>
+  );
+}
+
+// A prominent figure block: a small label above a large value. Used for the three numbers staff
+// match on — RE, รหัสลูกค้า, จำนวนเงิน — so they're visually parallel and equally big.
+function BigField({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="mb-2">
+      <div className="text-xs text-slate-400">{label}</div>
+      {children}
     </div>
   );
 }
