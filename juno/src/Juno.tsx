@@ -384,11 +384,17 @@ function PaymentsView({ view, onChanged, canDelete, isCeo }: { view: Exclude<Vie
           <button onClick={load} className="p-2 rounded-lg border border-slate-300 text-slate-500 hover:bg-slate-50" title="รีเฟรช">
             <RefreshCw size={15} />
           </button>
-          {view === 'inbox' && verifiedInView.length > 0 && (
+          {/* Stays visible on the inbox regardless of the วิธีรับเงิน filter — it just disables
+              (greys out) when the current filter has nothing verified-with-RE to print, so it
+              never silently disappears when you switch method (owner report 2026-07-06). */}
+          {view === 'inbox' && (
             <button
               onClick={() => setPrintQueue(verifiedInView)}
-              className="flex items-center gap-1 px-3 py-2 rounded-lg bg-sky-600 text-white text-sm hover:bg-sky-700"
-              title="พิมพ์ใบปะหน้าทุกรายการที่ตรวจแล้วในรายการที่กรองอยู่นี้ (ใบละ 1 เลข RE)"
+              disabled={verifiedInView.length === 0}
+              className="flex items-center gap-1 px-3 py-2 rounded-lg bg-sky-600 text-white text-sm hover:bg-sky-700 disabled:opacity-40 disabled:hover:bg-sky-600 disabled:cursor-not-allowed"
+              title={verifiedInView.length === 0
+                ? 'ยังไม่มีรายการที่ตรวจแล้ว (มีเลข RE) ในตัวกรองนี้ — ตรวจรายการก่อนจึงจะพิมพ์ใบปะหน้าได้'
+                : 'พิมพ์ใบปะหน้าทุกรายการที่ตรวจแล้วในรายการที่กรองอยู่นี้ (ใบละ 1 เลข RE)'}
             >
               <Printer size={15} /> พิมพ์ใบปะหน้า ({coverCountInView})
             </button>
