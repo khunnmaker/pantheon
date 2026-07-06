@@ -261,9 +261,15 @@ export async function venusRoutes(app: FastifyInstance) {
       let docsCreated = 0;
       let docsUpdated = 0;
       let linesWritten = 0;
-      const CHUNK = 50;
+      const CHUNK = 100;
       for (let i = 0; i < staged.docs.length; i += CHUNK) {
         const slice = staged.docs.slice(i, i + CHUNK);
+        // Prefetch which docNos already exist (one query/chunk) for the created/updated split,
+        // instead of a findUnique per doc inside the transaction.
+        const sliceDocNos = slice.map((d) => d.docNo);
+        const existingDocNos = new Set(
+          (await prisma.saleDoc.findMany({ where: { docNo: { in: sliceDocNos } }, select: { docNo: true } })).map((r) => r.docNo),
+        );
         await prisma.$transaction(async (tx) => {
           for (const d of slice) {
             if (!d.date) continue; // no valid date to import against — should not happen post-parse
@@ -281,13 +287,12 @@ export async function venusRoutes(app: FastifyInstance) {
               delivered: d.delivered,
               reference: d.reference,
             };
-            const existing = await tx.saleDoc.findUnique({ where: { docNo: d.docNo }, select: { id: true } });
             const saleDoc = await tx.saleDoc.upsert({
               where: { docNo: d.docNo },
               create: { docNo: d.docNo, ...data },
               update: data,
             });
-            if (existing) docsUpdated++; else docsCreated++;
+            if (existingDocNos.has(d.docNo)) docsUpdated++; else docsCreated++;
 
             // Replace this doc's lines wholesale (idempotent on re-import).
             await tx.saleLine.deleteMany({ where: { saleDocId: saleDoc.id } });
@@ -308,7 +313,7 @@ export async function venusRoutes(app: FastifyInstance) {
               linesWritten += d.lines.length;
             }
           }
-        });
+        }, { timeout: 60000 }); // bounded chunk; 60s headroom so network latency can't trip the 5s default
       }
 
       return {
