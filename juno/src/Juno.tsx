@@ -3,6 +3,7 @@ import {
   LogOut, Search, Download, Flag, FileText, Inbox, BarChart3, Scale,
   Loader2, AlertTriangle, CheckCircle2, X, RefreshCw, ExternalLink, Ban, Crown, Printer,
   Undo2, ClipboardCheck, CheckCheck, Banknote, Plus, Paperclip, Check, Trash2, HandCoins, Percent,
+  PenLine,
 } from 'lucide-react';
 
 // Portal-back link (Jupiter). URL from build-time env; the link is hidden when unset, so it
@@ -11,10 +12,10 @@ const PORTAL_URL: string | undefined = import.meta.env.VITE_PORTAL_URL;
 import {
   getSummary, getPayments, setStatus, setFlag, verifyPayment, getReport, downloadCsv, baht,
   clearSession, getBankSummary, createPayment, settlePayment, uploadSlip, fileToBase64, readManualSlip,
-  deletePayment, confirmReceived, getWhtSummary,
+  deletePayment, confirmReceived, getWhtSummary, updatePayment,
   type Agent, type Payment, type PaymentStatus, type Summary,
   type Report, type PaymentFilter, type CustomerType, type PaymentSource, type SettleState,
-  type WhtRate, type WhtSummary,
+  type WhtRate, type WhtSummary, type EditPaymentBody,
 } from './lib/api';
 import PrintCovers from './PrintCovers';
 import Recon from './Recon';
@@ -966,6 +967,181 @@ function AddPaymentModal({ onClose, onSaved }: { onClose: () => void; onSaved: (
   );
 }
 
+// ── Edit-payment modal (แก้ไขรายละเอียด) ──────────────────────────────────────
+// Fixes a typo'd DESCRIPTIVE field on an existing payment — same field set + styling as
+// AddPaymentModal above, pre-filled from `payment` and PATCHing instead of POSTing. Deliberately
+// excludes source/RE(check-data)/customerType/WHT/status/settle — those stay in their own
+// dialogs/routes (CheckDialog, the rail buttons, CashChequeSection). Available to every Juno
+// user (no isCeo/canDelete gate — see the rail button in Detail).
+function EditPaymentModal({ payment, onClose, onSaved }: {
+  payment: Payment; onClose: () => void; onSaved: (p: Payment) => void;
+}) {
+  const [customerCode, setCustomerCode] = useState(payment.customerCode);
+  const [customerName, setCustomerName] = useState(payment.customerName);
+  const [senderName, setSenderName] = useState(payment.senderName);
+  const [amount, setAmount] = useState(payment.amount);
+  const [bank, setBank] = useState(payment.bank);
+  const [transferAt, setTransferAt] = useState(payment.transferAt);
+  const [ref, setRef] = useState(payment.ref);
+  const [salesName, setSalesName] = useState(payment.salesName);
+  const [note, setNote] = useState(payment.note);
+  const [taxInvoice, setTaxInvoice] = useState(payment.taxInvoice);
+  // เช็คธนาคาร-only
+  const [chequeNo, setChequeNo] = useState(payment.chequeNo);
+  const [chequeBank, setChequeBank] = useState(payment.chequeBank);
+  const [chequeDueDate, setChequeDueDate] = useState(payment.chequeDueDate);
+
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState('');
+
+  // Flipped false on unmount so a slow save response after the modal is dismissed can't set
+  // state on an unmounted component — mirrors AddPaymentModal's liveRef guard.
+  const liveRef = useRef(true);
+  useEffect(() => () => { liveRef.current = false; }, []);
+
+  const amountNum = parseFloat(amount.replace(/[^\d.-]/g, ''));
+  const amountValid = Number.isFinite(amountNum) && amountNum > 0;
+  const valid = amountValid && customerName.trim() !== '';
+  const amountChanged = amount.trim() !== payment.amount;
+
+  async function save() {
+    if (!valid || saving) return;
+    setSaving(true);
+    setErr('');
+    try {
+      const patch: EditPaymentBody = {
+        customerCode: customerCode.trim(),
+        customerName: customerName.trim(),
+        senderName: senderName.trim(),
+        amount: amount.trim(),
+        bank: bank.trim(),
+        transferAt: transferAt.trim(),
+        ref: ref.trim(),
+        salesName: salesName.trim(),
+        note: note.trim(),
+        taxInvoice: taxInvoice.trim(),
+        ...(payment.source === 'cheque'
+          ? { chequeNo: chequeNo.trim(), chequeBank: chequeBank.trim(), chequeDueDate: chequeDueDate.trim() }
+          : {}),
+      };
+      const { payment: updated } = await updatePayment(payment.id, patch);
+      if (!liveRef.current) return;
+      onSaved(updated);
+    } catch (e) {
+      if (!liveRef.current) return;
+      setErr((e as Error).message === 'unauthorized' ? 'เซสชันหมดอายุ — กรุณาเข้าสู่ระบบใหม่' : 'บันทึกไม่สำเร็จ — ลองใหม่อีกครั้ง');
+    } finally {
+      if (liveRef.current) setSaving(false);
+    }
+  }
+
+  const input = 'w-full mt-0.5 px-2.5 py-1.5 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400';
+  const label = 'text-xs text-slate-500';
+
+  return (
+    <div className="fixed inset-0 z-40 bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl p-4 w-full max-w-md space-y-3 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+        <div className="font-semibold text-slate-800 flex items-center gap-1.5">
+          <PenLine size={16} className="text-emerald-700" /> แก้ไขรายละเอียด
+        </div>
+
+        <div className="grid grid-cols-2 gap-2">
+          <label className="block">
+            <span className={label}>รหัสลูกค้า</span>
+            <input value={customerCode} onChange={(e) => setCustomerCode(e.target.value)} placeholder="เช่น ร103" className={input} />
+          </label>
+          <label className="block">
+            <span className={label}>ชื่อลูกค้า</span>
+            <input value={customerName} onChange={(e) => setCustomerName(e.target.value)} placeholder="ชื่อลูกค้า" className={input} />
+          </label>
+        </div>
+        <label className="block">
+          <span className={label}>ผู้โอน</span>
+          <input value={senderName} onChange={(e) => setSenderName(e.target.value)} placeholder="ชื่อผู้โอน" className={input} />
+        </label>
+        <label className="block">
+          <span className={label}>จำนวนเงิน</span>
+          <input
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
+            placeholder="0.00"
+            inputMode="decimal"
+            className={`${input} ${amount && !amountValid ? 'border-rose-300 focus:ring-rose-300' : ''}`}
+          />
+          {/* Reconciliation note: `reconciled` isn't in the client DTO, so this can't tell
+              whether a bank match actually exists — shown whenever the amount changes at all.
+              If one WAS linked against the old amount, the PATCH route detaches it server-side
+              (see the route's comment) so a wrong figure can't leave a stale reconciliation
+              behind; if none existed, this is a harmless heads-up. */}
+          {amountChanged && (
+            <div className="mt-1 text-xs text-amber-600">แก้ยอดแล้วต้องกระทบยอดใหม่ (ถ้าเคยจับคู่ธนาคารไว้ ระบบจะยกเลิกการจับคู่เดิมให้)</div>
+          )}
+        </label>
+        <div className="grid grid-cols-2 gap-2">
+          <label className="block">
+            <span className={label}>ธนาคาร</span>
+            <input value={bank} onChange={(e) => setBank(e.target.value)} placeholder="กสิกร / ไทยพาณิชย์" className={input} />
+          </label>
+          <label className="block">
+            <span className={label}>วันเวลาโอน</span>
+            <input value={transferAt} onChange={(e) => setTransferAt(e.target.value)} placeholder="27/06/2026 14:30" className={input} />
+          </label>
+        </div>
+        <label className="block">
+          <span className={label}>เลขอ้างอิง</span>
+          <input value={ref} onChange={(e) => setRef(e.target.value)} className={input} />
+        </label>
+        <label className="block">
+          <span className={label}>พนักงานขาย</span>
+          <input value={salesName} onChange={(e) => setSalesName(e.target.value)} placeholder="ชื่อพนักงานขาย" className={input} />
+        </label>
+
+        {payment.source === 'cheque' && (
+          <div className="grid grid-cols-2 gap-2">
+            <label className="block">
+              <span className={label}>เลขที่เช็ค</span>
+              <input value={chequeNo} onChange={(e) => setChequeNo(e.target.value)} className={input} />
+            </label>
+            <label className="block">
+              <span className={label}>ธนาคาร (เช็ค)</span>
+              <input value={chequeBank} onChange={(e) => setChequeBank(e.target.value)} className={input} />
+            </label>
+            <label className="block col-span-2">
+              <span className={label}>วันที่บนเช็ค</span>
+              <input value={chequeDueDate} onChange={(e) => setChequeDueDate(e.target.value)} placeholder="เช่น 04/07/26" className={input} />
+            </label>
+          </div>
+        )}
+
+        <label className="block">
+          <span className={label}>ใบกำกับภาษี</span>
+          <textarea value={taxInvoice} onChange={(e) => setTaxInvoice(e.target.value)} rows={3}
+            placeholder="ชื่อ / ที่อยู่ / เลขประจำตัวผู้เสียภาษี 13 หลัก (ถ้าลูกค้าขอ)"
+            className={`${input} resize-none`} />
+        </label>
+        <label className="block">
+          <span className={label}>หมายเหตุ</span>
+          <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="หมายเหตุเพิ่มเติม (ถ้ามี)" className={input} />
+        </label>
+
+        {err && <div className="text-xs text-rose-600 bg-rose-50 border border-rose-200 rounded-lg p-2">{err}</div>}
+
+        <div className="flex justify-end gap-2 pt-1">
+          <button type="button" onClick={onClose} className="px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 text-sm">ยกเลิก</button>
+          <button
+            type="button"
+            onClick={save}
+            disabled={!valid || saving}
+            className="px-4 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold flex items-center gap-1 disabled:opacity-50"
+          >
+            {saving ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={13} />} บันทึก
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Slip verifier + action drawer ──────────────────────────────────────────
 // showExpressConfirm: the ✓✓ ยืนยันใน Express icon shows for cash/cheque rows regardless of
 // which queue they're viewed in (inbox/flags — the separate เงินสด/เช็ค tab is gone, folded
@@ -982,6 +1158,9 @@ function Detail({ payment, onClose, onUpdate, onDelete, onPrint, canDelete, isCe
   const [flagOpen, setFlagOpen] = useState(false);
   const [error, setError] = useState('');
   const [checkOpen, setCheckOpen] = useState(false);
+  // แก้ไขรายละเอียด (typo-fix modal) — available to every Juno user, unlike checkOpen's dialog
+  // (which is gated by nothing extra either, but this one edits plain descriptive fields only).
+  const [editOpen, setEditOpen] = useState(false);
   // inline "ลบรายการนี้ถาวร? กู้คืนไม่ได้" confirm before ลบถาวร runs (CEO-only)
   const [deleteConfirm, setDeleteConfirm] = useState(false);
   useEffect(() => {
@@ -1110,6 +1289,13 @@ function Detail({ payment, onClose, onUpdate, onDelete, onPrint, canDelete, isCe
               {rail('print', p.reNumbers.length > 0 ? 'พิมพ์ใบปะหน้า' : 'พิมพ์ใบปะหน้า (ต้องมีเลข RE ก่อน)', <Printer size={16} />, () => onPrint(p), {
                 disabled: p.reNumbers.length === 0,
               })}
+              {/* แก้ไขรายละเอียด — fix a typo'd descriptive field (customer code/name, sender,
+                  amount, bank, transfer date, ref, sales, note, tax invoice, cheque fields).
+                  Open to every Juno user (no isCeo/canDelete gate — routine FIN work, contrast
+                  with ลบถาวร below), same as the server route. No status guard — a typo-fix is
+                  not a lifecycle action, so it's allowed even on a voided row (matches the
+                  server, which has no status check either). */}
+              {rail('edit', 'แก้ไขรายละเอียด', <PenLine size={16} />, () => setEditOpen(true))}
               {/* Flag toggle: raising (ติดธง) is finance-allowed; clearing (เคลียร์ธง) is CEO-only
                   (server 403s flagged===false for non-supervisor). So a flagged row shows the clear
                   button only for CEO; an unflagged row shows the raise button for everyone. */}
@@ -1270,6 +1456,17 @@ function Detail({ payment, onClose, onUpdate, onDelete, onPrint, canDelete, isCe
             onSaved={(updated) => {
               onUpdate(updated);
               setCheckOpen(false);
+            }}
+          />
+        )}
+
+        {editOpen && (
+          <EditPaymentModal
+            payment={p}
+            onClose={() => setEditOpen(false)}
+            onSaved={(updated) => {
+              onUpdate(updated);
+              setEditOpen(false);
             }}
           />
         )}

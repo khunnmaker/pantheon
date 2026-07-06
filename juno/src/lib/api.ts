@@ -252,6 +252,33 @@ export const createPayment = (body: CreatePaymentBody) =>
     body: JSON.stringify(body),
   });
 
+// แก้ไขรายละเอียด (see EditPaymentModal): correct a typo'd descriptive field on an EXISTING
+// payment — customer code/name, sender, amount, bank, transfer date, ref, sales, note, tax
+// invoice, and (cheque only) the cheque fields. Every field optional — send only what changed.
+// Available to any Juno user (server gates this the same as the rest of the file, NOT
+// supervisor-only — contrast with deletePayment below). Deliberately excludes source/status/
+// flagged/RE-check/WHT/settle fields — those have their own dedicated routes.
+export interface EditPaymentBody {
+  customerCode?: string;
+  customerName?: string;
+  senderName?: string;
+  amount?: string;
+  bank?: string;
+  transferAt?: string;
+  ref?: string;
+  salesName?: string;
+  note?: string;
+  taxInvoice?: string;
+  chequeNo?: string;
+  chequeBank?: string;
+  chequeDueDate?: string;
+}
+export const updatePayment = (id: string, patch: EditPaymentBody) =>
+  authed<{ ok: boolean; payment: Payment }>(`/api/juno/payments/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(patch),
+  });
+
 export const setStatus = (id: string, status: PaymentStatus) =>
   authed<{ ok: boolean; payment: Payment }>(`/api/juno/payments/${id}/status`, {
     method: 'POST',

@@ -502,6 +502,84 @@ export async function junoRoutes(app: FastifyInstance) {
     return { ok: true };
   });
 
+  // PATCH /api/juno/payments/:id { customerCode?, customerName?, senderName?, amount?, bank?,
+  // transferAt?, ref?, salesName?, note?, taxInvoice?, chequeNo?, chequeBank?, chequeDueDate? } —
+  // แก้ไขรายละเอียด: let any Juno user (FIN/MD/CEO — same requireApp('juno') gate as the rest of
+  // this file, NOT supervisor-only) fix typos on an existing payment — wrong customer code/name,
+  // a mis-typed sender/bank/ref, etc. This is routine data-entry correction, unlike the CEO-only
+  // ลบถาวร above. Every field is OPTIONAL (partial update) — the client sends only what changed.
+  //
+  // Deliberately EXCLUDED (not editable here — each has its own route/owner):
+  //   id/source/slipUrl (identity + provenance), status/flagged (lifecycle, see /status /flag),
+  //   reNumber(s)/receiptName/customerType/whtRate/whtAmount (FIN's check data, see /verify),
+  //   settleState/receivedAt (banking/receipt gates, see /settle /receive), verifiedById/At
+  //   (stamped by /status /verify only).
+  const editPaymentBodySchema = z.object({
+    customerCode: z.string().max(40).optional(),
+    customerName: z.string().max(200).optional(),
+    senderName: z.string().max(200).optional(),
+    amount: z.string().max(40).optional(),
+    bank: z.string().max(120).optional(),
+    transferAt: z.string().max(60).optional(),
+    ref: z.string().max(80).optional(),
+    salesName: z.string().max(200).optional(),
+    note: z.string().max(600).optional(),
+    taxInvoice: z.string().max(600).optional(),
+    chequeNo: z.string().max(60).optional(),
+    chequeBank: z.string().max(120).optional(),
+    chequeDueDate: z.string().max(60).optional(),
+  });
+  app.patch<{ Params: { id: string } }>('/api/juno/payments/:id', async (req, reply) => {
+    const body = editPaymentBodySchema.safeParse(req.body);
+    if (!body.success) return reply.code(400).send({ error: 'invalid_body' });
+
+    const existing = await prisma.payment.findUnique({
+      where: { id: req.params.id },
+      select: { id: true, amount: true, bankMatches: { select: { bankTxnId: true } } },
+    });
+    if (!existing) return reply.code(404).send({ error: 'not_found' });
+
+    // Build `data` from only the keys the client actually sent (partial update) — an omitted
+    // field must NOT be clobbered back to ''. Every value trimmed, matching the create route's
+    // convention. amount gets an extra positive-number check (same rule as POST /payments) so a
+    // typo fix can't silently null out the reconciled figure.
+    const data: Record<string, string> = {};
+    for (const key of Object.keys(body.data) as (keyof typeof body.data)[]) {
+      const v = body.data[key];
+      if (v !== undefined) data[key] = v.trim();
+    }
+    if (data.amount !== undefined) {
+      const amountNum = parseFloat(data.amount);
+      if (!Number.isFinite(amountNum) || amountNum <= 0) return reply.code(400).send({ error: 'invalid_amount' });
+    }
+
+    // Amount ↔ reconciliation: a bank match was linked against the OLD amount (amountsEqual
+    // in runAutoMatcher/suggestions), so changing the amount can leave a stale/wrong match
+    // sitting on the row. Keep this surgical — only touch matches when amount actually changed,
+    // and only for THIS payment's links (mirrors the DELETE route's capture-then-recompute
+    // pattern, just without deleting the Payment itself). Folding `reconciled: false` into the
+    // SAME update as the field edits (rather than a second write) keeps this to one payment
+    // UPDATE either way.
+    const amountChanged = data.amount !== undefined && data.amount !== existing.amount;
+    const detaching = amountChanged && existing.bankMatches.length > 0;
+    const p = await prisma.payment.update({
+      where: { id: req.params.id },
+      data: detaching ? { ...data, reconciled: false } : data,
+    });
+
+    if (detaching) {
+      const bankTxnIds = [...new Set(existing.bankMatches.map((m) => m.bankTxnId))];
+      await prisma.paymentBankMatch.deleteMany({ where: { paymentId: req.params.id } });
+      await Promise.all(bankTxnIds.map((id) => recomputeTxnMatchStatus(id)));
+      req.log.info(
+        { paymentId: req.params.id, by: req.agent?.id, detachedMatches: bankTxnIds.length },
+        'payment amount edited — detached stale bank match(es)',
+      );
+    }
+
+    return { ok: true, payment: toRow(p) };
+  });
+
   // POST /api/juno/payments { source, customerCode, customerName, amount, note?, senderName?,
   // bank?, transferAt?, ref?, slipUrl?, chequeNo?, chequeBank?, chequeDueDate?, taxInvoice? } —
   // FIN/CEO hand-add a payment that didn't arrive via Minerva's /to-finance LINE hook (see
