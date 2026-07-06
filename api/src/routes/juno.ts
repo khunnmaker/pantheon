@@ -302,11 +302,12 @@ async function runAutoMatcher(txnIds?: string[]): Promise<{ matched: number; che
       select: { id: true, amount: true, whtAmount: true, transferAt: true, createdAt: true },
     }),
     prisma.payment.findMany({
-      // Pass 1 (cheques, below) intentionally still matches on the raw gross `amount` — a
-      // cheque is banked at face value, WHT (if any) is settled separately, never netted off
-      // the cheque deposit itself. Left untouched; whtAmount is not selected here.
+      // Pass 1 (cheques, below) also amount-matches against netOf: a customer who withholds
+      // tax writes the cheque for the NET, so its deposit lands short by the WHT just like a
+      // transfer. whtAmount '' (every non-WHT cheque) → netOf === gross, so this is unchanged
+      // for the normal case.
       where: { source: 'cheque', reconciled: false, status: { not: 'void' } },
-      select: { id: true, amount: true, chequeNo: true },
+      select: { id: true, amount: true, chequeNo: true, whtAmount: true },
     }),
   ]);
   const linkTargets = txnIds ? new Set(txnIds) : null;
@@ -332,7 +333,7 @@ async function runAutoMatcher(txnIds?: string[]): Promise<{ matched: number; che
       const matches: string[] = [];
       for (const p of chequePayments) {
         if (normChq(p.chequeNo) !== key) continue;
-        if (!amountsEqual(t.amount, p.amount)) continue;
+        if (!amountsEqual(t.amount, String(netOf(p)))) continue;
         matches.push(p.id);
       }
       chequeTxnCandidates.set(t.id, matches);
