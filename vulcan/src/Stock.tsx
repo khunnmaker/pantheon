@@ -17,6 +17,7 @@ import {
   previewImport, applyImport, logout as logoutSuite, API_URL, flatSku,
   generateAliases, setAlias,
   getGroups, getGroupProducts, autoAssignGroups, setProductGroup, setSubgroup,
+  setProductsGroup, setSubgroups,
   type NameProposalRow, type ProposalSummary, type ProposalFilter,
   getProposalSummary, getProposals, loadProposals, decideProposal, bulkApproveSafe,
 } from './lib/api';
@@ -1230,10 +1231,12 @@ function GroupSelect({
 
 // One reviewable product row: group + sub-group pickers, remaining stock, and inline name edit.
 function GroupProductRow({
-  product, groups, onChangeGroup, onChangeSubgroup, onRenamed,
+  product, groups, checked, onToggleSelect, onChangeGroup, onChangeSubgroup, onRenamed,
 }: {
   product: GroupProduct;
   groups: CatalogGroupInfo[];
+  checked: boolean;
+  onToggleSelect: (sku: string) => void;
   onChangeGroup: (sku: string, group: string | null) => void;
   onChangeSubgroup: (sku: string, sub: string | null) => void;
   onRenamed: (sku: string, nameTh: string, nameEn: string) => void;
@@ -1256,8 +1259,14 @@ function GroupProductRow({
   }
 
   return (
-    <div className="py-2">
+    <div className={`py-2 ${checked ? 'bg-indigo-50/60 -mx-4 px-4' : ''}`}>
       <div className="flex items-center gap-2.5">
+        <input
+          type="checkbox"
+          checked={checked}
+          onChange={() => onToggleSelect(product.sku)}
+          className="shrink-0 w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-400 cursor-pointer"
+        />
         <Thumb photoSku={product.photoSku} size={34} />
         <div className="min-w-0 flex-1">
           <div className="text-sm text-slate-700 truncate">{product.nameTh || product.nameEn || flatSku(product.sku)}</div>
@@ -1327,6 +1336,10 @@ function GroupTab() {
   const [products, setProducts] = useState<GroupProduct[]>([]);
   const [prodLoading, setProdLoading] = useState(false);
   const [q, setQ] = useState('');
+  // batch selection: SKUs ticked in the open bucket
+  const [selected, setSelected] = useState<Set<string>>(() => new Set());
+  const [batchBusy, setBatchBusy] = useState(false);
+  const [batchNote, setBatchNote] = useState('');
 
   const loadGroups = useCallback(async () => {
     try {
@@ -1353,6 +1366,22 @@ function GroupTab() {
     const t = setTimeout(() => loadProducts(sel, q), 250);
     return () => clearTimeout(t);
   }, [sel, q, loadProducts]);
+
+  // Keep selection within the current view: drop it when the bucket or search changes.
+  useEffect(() => { setSelected(new Set()); setBatchNote(''); }, [sel, q]);
+  // Prune selection to rows still present. A per-row move (changeProduct) filters a SKU out of
+  // `products` without changing [sel, q]; it must NOT linger in `selected` and get swept into a
+  // later batch acting on a row the supervisor can no longer see.
+  useEffect(() => {
+    setSelected((s) => {
+      if (s.size === 0) return s;
+      const visible = new Set(products.map((p) => p.sku));
+      let changed = false;
+      const n = new Set<string>();
+      for (const sku of s) { if (visible.has(sku)) n.add(sku); else changed = true; }
+      return changed ? n : s;
+    });
+  }, [products]);
 
   async function auto(redo: boolean) {
     if (redo && !window.confirm('จัดกลุ่มใหม่ทั้งหมด? การจัดด้วยมือจะถูกเขียนทับ')) return;
@@ -1392,6 +1421,51 @@ function GroupTab() {
 
   function patchName(sku: string, nameTh: string, nameEn: string) {
     setProducts((ps) => ps.map((p) => (p.sku === sku ? { ...p, nameTh, nameEn } : p)));
+  }
+
+  // ── batch selection ──
+  function toggleSelect(sku: string) {
+    setSelected((s) => { const n = new Set(s); if (n.has(sku)) n.delete(sku); else n.add(sku); return n; });
+  }
+  const allSelected = products.length > 0 && products.every((p) => selected.has(p.sku));
+  // True size of the open bucket (from the uncapped groupBy), vs how many rows actually loaded.
+  const bucketTotal = sel === 'unassigned' ? unassigned : (groups.find((g) => g.key === sel)?.count ?? products.length);
+  // Loaded fewer than the bucket holds (only possible if a bucket ever exceeds the fetch cap) —
+  // "select all" would then miss the overflow, so we say so instead of moving a silent subset.
+  const truncated = !q.trim() && products.length < bucketTotal;
+  function toggleAll() {
+    setSelected(allSelected ? new Set() : new Set(products.map((p) => p.sku)));
+  }
+  async function batchGroup(group: string | null) {
+    const skus = [...selected];
+    if (skus.length === 0) return;
+    const name = group === null ? 'ยังไม่จัดกลุ่ม' : groups.find((x) => x.key === group)?.nameTh ?? group;
+    if (!window.confirm(`ย้าย ${skus.length.toLocaleString('th-TH')} รายการไปที่ “${name}”?`)) return;
+    setBatchBusy(true);
+    setBatchNote('');
+    try {
+      const res = await setProductsGroup(skus, group);
+      setSelected(new Set());
+      setBatchNote(`ย้าย ${res.updated.toLocaleString('th-TH')} รายการไปที่ “${name}” แล้ว`);
+      await loadGroups();
+      if (sel) await loadProducts(sel, q);
+    } catch { setBatchNote('ทำรายการไม่สำเร็จ ลองใหม่อีกครั้ง'); } finally { setBatchBusy(false); }
+  }
+  async function batchSubgroup(sub: string | null) {
+    const skus = [...selected];
+    if (skus.length === 0) return;
+    setBatchBusy(true);
+    setBatchNote('');
+    try {
+      const res = await setSubgroups(skus, sub);
+      setSelected(new Set());
+      setBatchNote(
+        sub === null
+          ? `ล้างชนิด ${res.updated.toLocaleString('th-TH')} รายการ`
+          : `ตั้งชนิด ${res.updated.toLocaleString('th-TH')} รายการ${res.skipped > 0 ? ` · ข้าม ${res.skipped.toLocaleString('th-TH')} รายการ (คนละกลุ่ม)` : ''}`,
+      );
+      if (sel) await loadProducts(sel, q);
+    } catch { setBatchNote('ทำรายการไม่สำเร็จ ลองใหม่อีกครั้ง'); } finally { setBatchBusy(false); }
   }
 
   const byPillar = (pl: Pillar) => groups.filter((g) => g.pillar === pl);
@@ -1480,7 +1554,68 @@ function GroupTab() {
                 className="w-full pl-9 pr-3 py-2 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
               />
             </div>
+            {products.length > 0 && (
+              <button
+                onClick={toggleAll}
+                className="px-3 py-2 rounded-xl border border-slate-300 bg-white text-slate-600 hover:bg-slate-50 text-sm whitespace-nowrap"
+              >
+                {allSelected ? 'ล้างที่เลือก' : truncated ? `เลือกที่โหลด (${products.length.toLocaleString('th-TH')})` : `เลือกทั้งหมด (${products.length.toLocaleString('th-TH')})`}
+              </button>
+            )}
           </div>
+
+          {selected.size > 0 && (
+            <div className="flex flex-wrap items-center gap-2 mb-3 p-2.5 rounded-xl bg-indigo-50 border border-indigo-200">
+              <span className="text-sm font-semibold text-indigo-800 shrink-0">เลือก {selected.size.toLocaleString('th-TH')} รายการ</span>
+              <span className="text-sm text-slate-500 shrink-0">→</span>
+              <select
+                value=""
+                disabled={batchBusy}
+                onChange={(e) => { const v = e.target.value; if (!v) return; batchGroup(v === '__clear__' ? null : v); }}
+                className="shrink-0 w-48 px-2 py-1.5 rounded-lg border border-slate-300 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-indigo-400 disabled:opacity-50"
+              >
+                <option value="">ย้ายไปกลุ่ม…</option>
+                {PILLAR_ORDER.map((pl) => (
+                  <optgroup key={pl} label={PILLAR_LABEL[pl]}>
+                    {groups.filter((g) => g.pillar === pl).map((g) => (<option key={g.key} value={g.key}>{g.nameTh}</option>))}
+                  </optgroup>
+                ))}
+                <option value="__clear__">— ล้างกลุ่ม (ยังไม่จัด) —</option>
+              </select>
+              {sel && sel !== 'unassigned' && (groups.find((x) => x.key === sel)?.subgroups.length ?? 0) > 0 && (
+                <select
+                  value=""
+                  disabled={batchBusy}
+                  onChange={(e) => { const v = e.target.value; if (!v) return; batchSubgroup(v === '__clear__' ? null : v); }}
+                  className="shrink-0 w-40 px-2 py-1.5 rounded-lg border border-slate-300 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-indigo-400 disabled:opacity-50"
+                >
+                  <option value="">ตั้งชนิด (subgroup)…</option>
+                  {(groups.find((x) => x.key === sel)?.subgroups ?? []).map((s) => (<option key={s.code} value={s.code}>{s.nameTh}</option>))}
+                  <option value="__clear__">— ล้างชนิด —</option>
+                </select>
+              )}
+              {batchBusy && <Loader2 size={15} className="animate-spin text-indigo-500 shrink-0" />}
+              <button
+                onClick={() => setSelected(new Set())}
+                disabled={batchBusy}
+                className="ml-auto text-xs text-slate-500 hover:text-slate-700 flex items-center gap-1 disabled:opacity-50"
+              >
+                <X size={13} /> ยกเลิก
+              </button>
+            </div>
+          )}
+
+          {truncated && (
+            <div className="mb-3 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-1.5 flex items-center gap-1.5">
+              <AlertTriangle size={13} className="shrink-0" /> โหลด {products.length.toLocaleString('th-TH')} จาก {bucketTotal.toLocaleString('th-TH')} รายการ — “เลือกทั้งหมด” จะเลือกเฉพาะที่โหลด ใช้ช่องค้นหาเพื่อจัดการส่วนที่เหลือ
+            </div>
+          )}
+          {batchNote && (
+            <div className="mb-3 text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-1.5 flex items-center gap-1.5">
+              <Check size={13} className="shrink-0" /> {batchNote}
+            </div>
+          )}
+
           {prodLoading ? (
             <div className="text-slate-400 py-6 text-center"><Loader2 size={16} className="animate-spin inline" /></div>
           ) : products.length === 0 ? (
@@ -1492,6 +1627,8 @@ function GroupTab() {
                   key={p.sku}
                   product={p}
                   groups={groups}
+                  checked={selected.has(p.sku)}
+                  onToggleSelect={toggleSelect}
                   onChangeGroup={changeProduct}
                   onChangeSubgroup={changeSubgroup}
                   onRenamed={patchName}

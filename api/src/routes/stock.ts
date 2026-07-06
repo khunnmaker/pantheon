@@ -530,7 +530,10 @@ export async function stockRoutes(app: FastifyInstance) {
   // review list, each with its current group + alias. group=<key> filters to that group.
   app.get('/api/stock/groups/products', async (req) => {
     const { group, filter, q, limit } = req.query as { group?: string; filter?: string; q?: string; limit?: string };
-    const take = Math.min(Math.max(Number(limit) || 300, 1), 1000);
+    // Load the whole bucket by default so "select all" in the batch UI really covers everything —
+    // the cap sits above the full active catalog (~1187) so even the all-unassigned bucket (before
+    // auto-assign) loads completely. The UI still shows a "loaded N of M" warning if it ever caps.
+    const take = Math.min(Math.max(Number(limit) || 2000, 1), 2000);
     const query = String(q ?? '').trim();
 
     const where: Record<string, unknown> = { status: 'active' };
@@ -651,6 +654,79 @@ export async function stockRoutes(app: FastifyInstance) {
       data: { catalogGroup: group },
     });
     return { ok: true, family, group, updated: res.count };
+  });
+
+  // POST /api/stock/groups/set-products { skus: string[], group } — set/clear the group for MANY
+  // products at once (batch move from the จัดกลุ่ม tab). Changing a product's group clears its
+  // sub-group (a sub code only makes sense within its group); we clear it only for the rows whose
+  // group actually changes, so re-tagging within the same group keeps existing sub-groups.
+  app.post('/api/stock/groups/set-products', async (req, reply) => {
+    const body = req.body as { skus?: unknown; group?: string | null };
+    const skus = Array.isArray(body.skus)
+      ? [...new Set(body.skus.filter((s): s is string => typeof s === 'string' && SKU_RE.test(s)))]
+      : [];
+    if (skus.length === 0) return reply.code(400).send({ error: 'no_skus' });
+    if (skus.length > 2000) return reply.code(413).send({ error: 'too_many' });
+    const group = body.group === null || body.group === '' || body.group === undefined ? null : String(body.group);
+    if (group !== null && !GROUP_KEYS.has(group)) return reply.code(400).send({ error: 'bad_group' });
+
+    const CHUNK = 200;
+    let updated = 0;
+    for (let i = 0; i < skus.length; i += CHUNK) {
+      const slice = skus.slice(i, i + CHUNK);
+      // clear the sub-group only where the group is actually changing
+      await prisma.product.updateMany({
+        where: { sku: { in: slice }, status: 'active', NOT: { catalogGroup: group } },
+        data: { catalogSubgroup: null },
+      });
+      const res = await prisma.product.updateMany({
+        where: { sku: { in: slice }, status: 'active' },
+        data: { catalogGroup: group },
+      });
+      updated += res.count;
+    }
+    return { ok: true, group, updated };
+  });
+
+  // POST /api/stock/groups/set-subgroups { skus: string[], subgroup } — set/clear the sub-group for
+  // MANY products at once. On SET, only products whose CURRENT group actually defines that sub-code
+  // are changed (the rest are skipped, not errored) so a batch from a mixed selection stays valid.
+  app.post('/api/stock/groups/set-subgroups', async (req, reply) => {
+    const body = req.body as { skus?: unknown; subgroup?: string | null };
+    const skus = Array.isArray(body.skus)
+      ? [...new Set(body.skus.filter((s): s is string => typeof s === 'string' && SKU_RE.test(s)))]
+      : [];
+    if (skus.length === 0) return reply.code(400).send({ error: 'no_skus' });
+    if (skus.length > 2000) return reply.code(413).send({ error: 'too_many' });
+    const sub = body.subgroup === null || body.subgroup === '' || body.subgroup === undefined ? null : String(body.subgroup);
+
+    const CHUNK = 200;
+    if (sub === null) {
+      let updated = 0;
+      for (let i = 0; i < skus.length; i += CHUNK) {
+        const res = await prisma.product.updateMany({
+          where: { sku: { in: skus.slice(i, i + CHUNK) }, status: 'active' },
+          data: { catalogSubgroup: null },
+        });
+        updated += res.count;
+      }
+      return { ok: true, subgroup: null, updated, skipped: 0 };
+    }
+    // set: keep only the SKUs whose current group defines this sub-code
+    const prods = await prisma.product.findMany({
+      where: { sku: { in: skus }, status: 'active' },
+      select: { sku: true, catalogGroup: true },
+    });
+    const valid = prods.filter((p) => p.catalogGroup && SUBGROUP_CODES[p.catalogGroup]?.has(sub)).map((p) => p.sku);
+    let updated = 0;
+    for (let i = 0; i < valid.length; i += CHUNK) {
+      const res = await prisma.product.updateMany({
+        where: { sku: { in: valid.slice(i, i + CHUNK) }, status: 'active' },
+        data: { catalogSubgroup: sub },
+      });
+      updated += res.count;
+    }
+    return { ok: true, subgroup: sub, updated, skipped: skus.length - valid.length };
   });
 
   // ─── Name-normalization review (ตรวจทาน) ───────────────────────────────

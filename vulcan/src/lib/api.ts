@@ -337,6 +337,21 @@ export const setFamilyGroup = (family: string, group: string | null) =>
     body: JSON.stringify({ family, group }),
   });
 
+// Batch set/clear the group for many products at once (group=null clears → ยังไม่จัด).
+export const setProductsGroup = (skus: string[], group: string | null) =>
+  authed<{ ok: boolean; group: string | null; updated: number }>('/api/stock/groups/set-products', {
+    method: 'POST',
+    body: JSON.stringify({ skus, group }),
+  });
+
+// Batch set/clear the sub-group for many products (subgroup=null clears). On set, only products
+// whose current group defines that sub-code are changed; skipped counts the rest.
+export const setSubgroups = (skus: string[], subgroup: string | null) =>
+  authed<{ ok: boolean; subgroup: string | null; updated: number; skipped: number }>('/api/stock/groups/set-subgroups', {
+    method: 'POST',
+    body: JSON.stringify({ skus, subgroup }),
+  });
+
 // ── Name-normalization review (ตรวจทาน tab) ─────────────────────────────
 // A staged proposed English name awaiting review. The live nameEn is untouched until the
 // proposal is APPROVED. status: pending (awaiting) | approved (now live) | rejected (dropped).
