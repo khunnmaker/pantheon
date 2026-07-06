@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import { X } from 'lucide-react';
 import { baht, type Payment } from './lib/api';
 
-// Printable ¼-A4 cover letters — FIN staples one to every printed RE for the physical file.
+// Printable A6 cover letters — FIN staples one to every printed RE for the physical file.
 // The owner may adjust the legal name later; keep it in ONE constant.
 const COMPANY_HEADER = 'Prominent — ใบปะหน้าใบเสร็จ';
 
@@ -14,11 +14,11 @@ const fmtDate = (iso: string) =>
 // One cover per RECEIPT (payment): a payment carrying N RE numbers prints a SINGLE cover that
 // lists all N of them, because it's one physical receipt going into the file (owner decision
 // 2026-07-06). Several separate receipts still print one cover each.
-
-// A4 portrait, 2×2 grid of A6 (105×148.5mm) quadrants with dashed cut guides. window.print()
-// fires on mount; onDone fires after the browser's print dialog closes (afterprint) so the
-// caller can drop back to the inbox. The screen view renders the exact same mm-sized pages
-// (scrolled) so FIN can eyeball the layout before printing — no separate preview markup.
+//
+// One A6 page (105×148mm) PER cover (owner decision 2026-07-06 — was 4-up on A4). window.print()
+// fires on mount; onDone fires after the browser's print dialog closes (afterprint) so the caller
+// can drop back to the inbox. The screen view renders the exact same mm-sized pages (scrolled) so
+// FIN can eyeball the layout before printing — no separate preview markup.
 export default function PrintCovers({ payments, onDone }: { payments: Payment[]; onDone: () => void }) {
   useEffect(() => {
     const t = setTimeout(() => window.print(), 50); // let the DOM paint before the print dialog opens
@@ -32,17 +32,13 @@ export default function PrintCovers({ payments, onDone }: { payments: Payment[];
   }, []);
 
   // One cover per payment that carries at least one RE (the caller already filters to
-  // reNumbers.length > 0, but stay defensive here).
+  // reNumbers.length > 0, but stay defensive here) — one A6 page each.
   const items: Payment[] = payments.filter((p) => p.reNumbers.length > 0);
-
-  // group into pages of 4 (one A4 sheet = 2×2 quadrants)
-  const pages: Payment[][] = [];
-  for (let i = 0; i < items.length; i += 4) pages.push(items.slice(i, i + 4));
 
   return (
     <div className="print-covers">
       <style>{`
-        @page { size: A4 portrait; margin: 0; }
+        @page { size: A6 portrait; margin: 0; }
         @media print {
           body * { visibility: hidden; }
           .print-covers, .print-covers * { visibility: visible; }
@@ -50,32 +46,23 @@ export default function PrintCovers({ payments, onDone }: { payments: Payment[];
           .print-covers-toolbar { display: none; }
         }
         .print-page {
-          width: 210mm;
-          height: 297mm;
-          display: grid;
-          grid-template-columns: 1fr 1fr;
-          grid-template-rows: 1fr 1fr;
-          page-break-after: always;
-          background: white;
-        }
-        .print-page:last-child { page-break-after: auto; }
-        .print-quadrant {
           width: 105mm;
-          height: 148.5mm;
+          height: 148mm;
           box-sizing: border-box;
           padding: 8mm;
-          border: 1px dashed #cbd5e1;
-          margin: -0.5px; /* dashed guides shared between adjacent quadrants don't double up */
+          page-break-after: always;
+          background: white;
           display: flex;
           flex-direction: column;
           font-family: inherit;
           overflow: hidden;
         }
+        .print-page:last-child { page-break-after: auto; }
       `}</style>
 
       <div className="print-covers-toolbar sticky top-0 z-10 bg-white border-b border-slate-200 px-4 py-2 flex items-center justify-between">
         <div className="text-sm text-slate-600">
-          ตัวอย่างใบปะหน้า {items.length} ใบ ({pages.length} แผ่น) — กำลังเปิดหน้าต่างพิมพ์…
+          ตัวอย่างใบปะหน้า {items.length} แผ่น (A6 · ใบละ 1 แผ่น) — กำลังเปิดหน้าต่างพิมพ์…
         </div>
         <button onClick={onDone} className="text-slate-400 hover:text-slate-600 flex items-center gap-1 text-sm">
           <X size={16} /> ปิด
@@ -83,15 +70,7 @@ export default function PrintCovers({ payments, onDone }: { payments: Payment[];
       </div>
 
       <div className="bg-slate-200 py-6 flex flex-col items-center gap-6">
-        {pages.map((group, pi) => (
-          <div key={pi} className="print-page shadow-lg">
-            {group.map((p) => <Cover key={p.id} payment={p} />)}
-            {/* pad the last page to 4 quadrants so the grid + cut guides stay regular */}
-            {Array.from({ length: 4 - group.length }).map((_, i) => (
-              <div key={`blank-${i}`} className="print-quadrant" />
-            ))}
-          </div>
-        ))}
+        {items.map((p) => <Cover key={p.id} payment={p} />)}
       </div>
     </div>
   );
@@ -100,10 +79,10 @@ export default function PrintCovers({ payments, onDone }: { payments: Payment[];
 function Cover({ payment: p }: { payment: Payment }) {
   const multi = p.reNumbers.length > 1;
   // one RE → large; a few → medium; many → small & wrapped, so a receipt paying several
-  // RE numbers can never blow the numbers out of the ¼-A4 quadrant.
+  // RE numbers can never blow the numbers out of the A6 page.
   const reSize = p.reNumbers.length === 1 ? 'text-2xl' : p.reNumbers.length <= 3 ? 'text-lg' : 'text-sm';
   return (
-    <div className="print-quadrant">
+    <div className="print-page shadow-lg">
       <div className="text-[9px] font-bold text-slate-500 mb-2">{COMPANY_HEADER}</div>
 
       <div className="mb-2">
@@ -128,7 +107,7 @@ function Cover({ payment: p }: { payment: Payment }) {
   );
 }
 
-// Two-line clamp (ellipsis) so a long Thai name can never blow out the ¼-A4 quadrant.
+// Two-line clamp (ellipsis) so a long Thai name can never blow out the A6 page.
 function clamp(text: string): React.ReactNode {
   return (
     <span
