@@ -33,6 +33,15 @@ prisma/*.db-journal
 !.env.example
 gmail-token*.json
 
+# ── Cloud connection (holds a live suite JWT — NEVER commit) ─────────────
+.mercury-connection.json
+
+# ── Generated PO PDFs + any sample product images (local outputs) ────────
+po-output/
+*.pdf
+# sample product images used to test the PDF image embed (never commit)
+sample-images/
+
 # logs / editor / os
 *.log
 .DS_Store

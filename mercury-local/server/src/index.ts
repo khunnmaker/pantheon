@@ -9,6 +9,14 @@ import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import { prisma } from './db.js';
 import { PORT, PKG_ROOT } from './env.js';
+import {
+  loadConnection,
+  saveConnection,
+  clearConnection,
+  toStatus,
+} from './connection.js';
+import { cloudLogin, CloudError, fixturePath } from './cloud.js';
+import { syncPending, resolveShadow, buildPosFromPending, generatePoPdf } from './po.js';
 
 const app = express();
 app.use(express.json());
@@ -212,7 +220,100 @@ app.delete(
   }),
 );
 
-// ── Purchase orders (read-only scaffold; the builder comes next chunk) ──────
+// ── Cloud connection (owner-only auth: reuse the suite supervisor login) ────
+// GET /api/connection — redacted status (never returns the token).
+app.get(
+  '/api/connection',
+  h(async (_req, res) => {
+    res.json({ status: toStatus(loadConnection()), usingFixture: !!fixturePath() });
+  }),
+);
+
+// POST /api/connection — { baseUrl, email, password }. Reuses the suite login → JWT, stores
+// baseUrl + token in the gitignored .mercury-connection.json. Password is NEVER stored.
+app.post(
+  '/api/connection',
+  h(async (req, res) => {
+    const b = req.body ?? {};
+    const baseUrl = String(b.baseUrl ?? '').trim();
+    const email = String(b.email ?? '').trim();
+    const password = String(b.password ?? '');
+    if (!baseUrl) return res.status(400).json({ error: 'baseUrl required' });
+    if (!/^https?:\/\//i.test(baseUrl)) return res.status(400).json({ error: 'baseUrl must be http(s)://…' });
+    if (!email || !password) return res.status(400).json({ error: 'email + password required' });
+    try {
+      const { token, agentName, agentEmail } = await cloudLogin(baseUrl, email, password);
+      saveConnection({
+        baseUrl,
+        token,
+        agentName,
+        agentEmail,
+        connectedAt: new Date().toISOString(),
+      });
+      res.json({ ok: true, status: toStatus(loadConnection()) });
+    } catch (e) {
+      if (e instanceof CloudError) return res.status(e.status).json({ error: e.message });
+      throw e;
+    }
+  }),
+);
+
+// DELETE /api/connection — forget the stored base URL + token.
+app.delete(
+  '/api/connection',
+  h(async (_req, res) => {
+    clearConnection();
+    res.json({ ok: true });
+  }),
+);
+
+// POST /api/sync — pull pending requests + items from cloud (or the fixture), refresh the shadow.
+app.post(
+  '/api/sync',
+  h(async (_req, res) => {
+    const conn = loadConnection();
+    // Fixture mode works even with no connection (offline proof); otherwise require a connection.
+    if (!conn && !fixturePath())
+      return res.status(409).json({ error: 'not connected — set up the cloud connection first' });
+    try {
+      const result = await syncPending(conn?.baseUrl ?? '', conn?.token ?? '');
+      res.json({ ok: true, ...result, usingFixture: !!fixturePath() });
+    } catch (e) {
+      if (e instanceof CloudError) return res.status(e.status).json({ error: e.message });
+      throw e;
+    }
+  }),
+);
+
+// GET /api/pending — the local shadow of pending requests (non-secret cloud fields).
+app.get(
+  '/api/pending',
+  h(async (_req, res) => {
+    const pending = await prisma.pendingRequest.findMany({ orderBy: { syncedAt: 'desc' } });
+    res.json({ pending });
+  }),
+);
+
+// GET /api/resolve-preview — resolve the shadow against the SecretMap WITHOUT creating POs.
+// Returns resolved lines (grouped-friendly) + the unresolved/unmapped list (surfaced, not dropped).
+app.get(
+  '/api/resolve-preview',
+  h(async (_req, res) => {
+    const { resolved, unresolved } = await resolveShadow();
+    res.json({ resolved, unresolved });
+  }),
+);
+
+// POST /api/build-pos — resolve → group by vendor → create draft POs; returns created + unresolved.
+app.post(
+  '/api/build-pos',
+  h(async (_req, res) => {
+    const result = await buildPosFromPending();
+    res.json({ ok: true, ...result });
+  }),
+);
+
+// ── Purchase orders ─────────────────────────────────────────────────────────
 app.get(
   '/api/purchase-orders',
   h(async (_req, res) => {
@@ -221,6 +322,34 @@ app.get(
       include: { vendor: true, lines: true },
     });
     res.json({ orders });
+  }),
+);
+
+// POST /api/purchase-orders/:id/pdf — generate the PO PDF (English, Taiwan split, per-line images).
+app.post(
+  '/api/purchase-orders/:id/pdf',
+  h(async (req, res) => {
+    try {
+      const path = await generatePoPdf(req.params.id);
+      res.json({ ok: true, pdfPath: path, url: `/api/purchase-orders/${req.params.id}/pdf` });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'pdf_failed';
+      if (msg === 'po_not_found') return res.status(404).json({ error: 'po not found' });
+      if (msg === 'po_has_no_vendor') return res.status(409).json({ error: 'po has no vendor' });
+      throw e;
+    }
+  }),
+);
+
+// GET /api/purchase-orders/:id/pdf — serve the generated PDF inline (link/preview in the UI).
+app.get(
+  '/api/purchase-orders/:id/pdf',
+  h(async (req, res) => {
+    const po = await prisma.purchaseOrder.findUnique({ where: { id: req.params.id } });
+    if (!po?.pdfPath || !existsSync(po.pdfPath))
+      return res.status(404).json({ error: 'pdf not generated yet' });
+    res.setHeader('content-type', 'application/pdf');
+    res.sendFile(po.pdfPath);
   }),
 );
 

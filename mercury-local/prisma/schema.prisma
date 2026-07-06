@@ -55,6 +55,30 @@ model SecretMap {
   @@index([vendorId])
 }
 
+// A local shadow of a pending cloud MercuryRequest, refreshed on Sync. LOCAL-ONLY. Stores only
+// the non-secret cloud fields (id, itemId, qty, note, requestedById, status, timestamps) PLUS a
+// denormalised copy of the cloud MercuryItem it points at (displayName/isSecret/vulcanSku) so PO
+// drafts can be seeded and resolved offline. The alias→real-item resolution happens against the
+// local SecretMap at build time — never stored here. Sync upserts by cloudRequestId.
+model PendingRequest {
+  id             String   @id @default(cuid())
+  cloudRequestId String   @unique // → cloud MercuryRequest.id
+  itemId         String // → cloud MercuryItem.id (join key to SecretMap.cloudItemId)
+  qty            String   @default("") // number-as-String (suite convention)
+  note           String   @default("")
+  requestedById  String? // → cloud Agent.id (opaque here)
+  status         String   @default("pending") // mirrors the cloud request status
+  // Denormalised, NON-SECRET copy of the cloud MercuryItem (safe to hold locally).
+  itemDisplayName String  @default("")
+  itemIsSecret    Boolean @default(false)
+  itemVulcanSku   String? // null for secret items on the cloud row
+  cloudCreatedAt  String  @default("") // ISO string from the cloud (kept as text)
+  syncedAt        DateTime @default(now()) @updatedAt
+
+  @@index([status])
+  @@index([itemId])
+}
+
 // A purchase order (draft → sent). Built next chunk; this chunk scaffolds the tables so
 // the PO list screen reads real (empty) data.
 model PurchaseOrder {
@@ -75,14 +99,18 @@ model PurchaseOrder {
 
 // One line of a PO. A proper relational table (not JSON) so lines are queryable.
 model PurchaseOrderLine {
-  id          String        @id @default(cuid())
-  poId        String
-  po          PurchaseOrder @relation(fields: [poId], references: [id], onDelete: Cascade)
-  cloudItemId String
-  realName    String
-  realSku     String        @default("")
-  qty         String        @default("") // number-as-String
-  unitCost    String        @default("") // number-as-String
+  id             String        @id @default(cuid())
+  poId           String
+  po             PurchaseOrder @relation(fields: [poId], references: [id], onDelete: Cascade)
+  cloudItemId    String
+  realName       String
+  realSku        String        @default("")
+  qty            String        @default("") // number-as-String
+  unit           String        @default("") // order unit (pcs/box/…); shown in the PO "unit split" column
+  unitCost       String        @default("") // number-as-String
+  currency       String        @default("THB")
+  classification String        @default("normal") // normal | special — drives the Taiwan PO split
+  photoRef       String? // product picture path/URL — embedded per line in the PDF
 
   @@index([poId])
 }

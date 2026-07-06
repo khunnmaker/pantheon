@@ -1,14 +1,16 @@
 import { useState } from 'react';
-import { Building2, Boxes, FileText, Lock } from 'lucide-react';
+import { Building2, Boxes, FileText, Lock, RefreshCw } from 'lucide-react';
 import Vendors from './views/Vendors';
 import Items from './views/Items';
 import PurchaseOrders from './views/PurchaseOrders';
+import Sync from './views/Sync';
 
-type Tab = 'items' | 'vendors' | 'pos';
+type Tab = 'items' | 'vendors' | 'sync' | 'pos';
 
 const TABS: { key: Tab; label: string; icon: typeof Boxes }[] = [
   { key: 'items', label: 'รายการ / แผนที่ลับ', icon: Boxes },
   { key: 'vendors', label: 'ผู้ขาย', icon: Building2 },
+  { key: 'sync', label: 'ซิงค์ / สร้าง PO', icon: RefreshCw },
   { key: 'pos', label: 'ใบสั่งซื้อ', icon: FileText },
 ];
 
@@ -60,6 +62,7 @@ export default function App() {
       <main className="max-w-5xl mx-auto px-4 py-5">
         {tab === 'items' && <Items />}
         {tab === 'vendors' && <Vendors />}
+        {tab === 'sync' && <Sync />}
         {tab === 'pos' && <PurchaseOrders />}
       </main>
     </div>
