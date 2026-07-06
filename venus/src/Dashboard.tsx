@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
-import { Loader2, AlertTriangle, CalendarRange, TrendingUp, TrendingDown, PackageSearch, ShieldAlert, RefreshCw } from 'lucide-react';
+import { Loader2, AlertTriangle, CalendarRange, TrendingUp, TrendingDown, PackageSearch, ShieldAlert, RefreshCw, Sparkles } from 'lucide-react';
 import {
-  getDashboard, recompute, segmentColor, formatBaht, formatDate, trendArrow, trendColor, SEGMENTS,
+  getDashboard, recompute, generateCards, segmentColor, formatBaht, formatDate, trendArrow, trendColor, SEGMENTS,
   type DashboardResult,
 } from './lib/api';
 
@@ -37,6 +37,28 @@ export default function Dashboard({ onOpen, canManage }: { onOpen: (code: string
       setRecomputeErr(msg === 'forbidden' ? 'เฉพาะหัวหน้าเท่านั้น' : 'คำนวณใหม่ไม่สำเร็จ');
     } finally {
       setRecomputing(false);
+    }
+  }
+
+  const [generating, setGenerating] = useState(false);
+  const [genMsg, setGenMsg] = useState('');
+  async function onGenerateCards() {
+    setGenerating(true);
+    setGenMsg('');
+    try {
+      const r = await generateCards(15);
+      setGenMsg(
+        r.written > 0
+          ? `สร้างคำแนะนำ AI ${r.written} รายการ (ลูกค้าที่มีสัญญาณ ${r.candidates} ราย) — เปิดการ์ดลูกค้ารายมูลค่าสูงเพื่อดู`
+          : r.skippedNoLlm > 0
+          ? 'ยังไม่ได้ตั้งค่า AI key บนเซิร์ฟเวอร์ (ระบบยังทำงานได้ — จะแสดงเป็นแบดจ์สัญญาณแทน)'
+          : 'ไม่มีลูกค้าที่มีสัญญาณให้สร้างคำแนะนำ',
+      );
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : '';
+      setGenMsg(msg === 'forbidden' ? 'เฉพาะหัวหน้าเท่านั้น' : 'สร้างคำแนะนำไม่สำเร็จ');
+    } finally {
+      setGenerating(false);
     }
   }
 
@@ -79,12 +101,24 @@ export default function Dashboard({ onOpen, canManage }: { onOpen: (code: string
             {recomputing ? 'กำลังคำนวณ…' : 'คำนวณใหม่'}
           </button>
         )}
+        {canManage && (
+          <button
+            onClick={onGenerateCards}
+            disabled={generating}
+            title="สร้างคำแนะนำ AI สำหรับลูกค้ารายมูลค่าสูงที่มีสัญญาณ (ใช้เวลาสักครู่)"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-rose-300 text-rose-700 hover:bg-rose-50 text-xs font-semibold disabled:opacity-60 shrink-0"
+          >
+            {generating ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
+            {generating ? 'กำลังสร้าง…' : 'สร้างคำแนะนำ AI'}
+          </button>
+        )}
       </div>
       {recomputeErr && (
         <div className="flex items-center gap-1 text-rose-600 text-xs -mt-2 px-1">
           <AlertTriangle size={12} /> {recomputeErr}
         </div>
       )}
+      {genMsg && <div className="text-xs -mt-2 px-1 text-slate-600">{genMsg}</div>}
 
       {/* Segment distribution */}
       <section className="bg-white rounded-2xl border border-slate-200 p-5">

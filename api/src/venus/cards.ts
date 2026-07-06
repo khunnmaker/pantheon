@@ -270,6 +270,9 @@ export async function generateAllCards(
   const result: GenerateAllResult = { candidates: 0, written: 0, skippedNoLlm: 0, skippedError: 0 };
 
   const allStats = await prisma.customerStats.findMany({
+    // Highest-value customers first, so a bounded run (opts.limit — e.g. the on-demand
+    // button) narrates the customers that matter most; a full run covers everyone anyway.
+    orderBy: { m: 'desc' },
     select: {
       customerCode: true,
       segment: true,

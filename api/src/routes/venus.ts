@@ -7,6 +7,7 @@ import { requireAuth, requireRole, requireApp } from '../auth/middleware.js';
 import { decodeExpressBytes, parseArmast, type ParsedVenusCustomer } from '../venus/parseArmast.js';
 import { parseOesoc, type ParsedOesocDoc } from '../venus/parseOesoc.js';
 import { recomputeStats, type ReorderDueItem } from '../venus/stats.js';
+import { generateAllCards } from '../venus/cards.js';
 
 // Venus — 360° customer CRM. Stage A+B: backend foundation only (Express customer-master
 // import). See docs/VENUS_BRIEF.md. Track-and-tell only; this file has no sales data / no
@@ -390,6 +391,20 @@ export async function venusRoutes(app: FastifyInstance) {
     config: { rateLimit: { max: 5, timeWindow: '1 minute' } },
   }, async () => {
     const result = await recomputeStats(prisma);
+    return { ok: true, ...result };
+  });
+
+  // POST /api/venus/generate-cards { limit? } — supervisor-only. Generate AI suggestion
+  // cards for the top-value flagged customers (BOUNDED so it stays a sync request — the
+  // full base of ~2k is best done via the scheduled weekly job, not one HTTP call). Each
+  // card is one LLM call; fail-soft (no ANTHROPIC_API_KEY → 0 written, no error).
+  app.post('/api/venus/generate-cards', {
+    onRequest: [requireAuth, requireRole('supervisor')],
+    config: { rateLimit: { max: 3, timeWindow: '1 minute' } },
+  }, async (req) => {
+    const parsed = z.object({ limit: z.number().int().min(1).max(50).optional() }).safeParse(req.body ?? {});
+    const limit = parsed.success ? parsed.data.limit ?? 15 : 15;
+    const result = await generateAllCards(prisma, { limit });
     return { ok: true, ...result };
   });
 

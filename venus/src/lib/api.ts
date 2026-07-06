@@ -197,6 +197,21 @@ export interface RecomputeResult {
 }
 export const recompute = () => authed<RecomputeResult>('/api/venus/recompute', { method: 'POST' });
 
+// Supervisor-only: generate AI suggestion cards for the top-value flagged customers.
+// Bounded (one LLM call each); fail-soft — no key on the server → written 0, skippedNoLlm>0.
+export interface GenerateCardsResult {
+  ok: boolean;
+  candidates: number;
+  written: number;
+  skippedNoLlm: number;
+  skippedError: number;
+}
+export const generateCards = (limit = 15) =>
+  authed<GenerateCardsResult>('/api/venus/generate-cards', {
+    method: 'POST',
+    body: JSON.stringify({ limit }),
+  });
+
 const TOKEN_KEY = 'venus_token';
 const AGENT_KEY = 'venus_agent';
 
