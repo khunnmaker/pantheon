@@ -1,18 +1,19 @@
 import { useState } from 'react';
-import { Heart, LogOut, Crown, Users, Upload } from 'lucide-react';
+import { Heart, LogOut, Crown, Users, Upload, LayoutDashboard } from 'lucide-react';
 import { canImport, clearSession, type Agent } from './lib/api';
 import CustomerList from './CustomerList';
 import CustomerDetail from './CustomerDetail';
 import ImportCustomers from './ImportCustomers';
+import Dashboard from './Dashboard';
 
 // Portal-back link (Jupiter). URL from build-time env; hidden when unset, so it stays
 // completely inert until VITE_PORTAL_URL is configured (same convention as juno/vulcan).
 const PORTAL_URL: string | undefined = import.meta.env.VITE_PORTAL_URL;
 
-type View = { screen: 'list' } | { screen: 'detail'; code: string } | { screen: 'import' };
+type View = { screen: 'dashboard' } | { screen: 'list' } | { screen: 'detail'; code: string } | { screen: 'import' };
 
 export default function Venus({ agent, onLogout }: { agent: Agent; onLogout: () => void }) {
-  const [view, setView] = useState<View>({ screen: 'list' });
+  const [view, setView] = useState<View>({ screen: 'dashboard' });
   const showImport = canImport(agent);
 
   return (
@@ -41,6 +42,16 @@ export default function Venus({ agent, onLogout }: { agent: Agent; onLogout: () 
         </div>
         <div className="max-w-5xl mx-auto px-4 flex gap-1 overflow-x-auto">
           <button
+            onClick={() => setView({ screen: 'dashboard' })}
+            className={`flex items-center gap-1.5 px-3 py-2 text-sm font-medium border-b-2 whitespace-nowrap ${
+              view.screen === 'dashboard'
+                ? 'border-rose-600 text-rose-700'
+                : 'border-transparent text-slate-500 hover:text-slate-700'
+            }`}
+          >
+            <LayoutDashboard size={16} /> แดชบอร์ด
+          </button>
+          <button
             onClick={() => setView({ screen: 'list' })}
             className={`flex items-center gap-1.5 px-3 py-2 text-sm font-medium border-b-2 whitespace-nowrap ${
               view.screen === 'list' || view.screen === 'detail'
@@ -64,6 +75,9 @@ export default function Venus({ agent, onLogout }: { agent: Agent; onLogout: () 
       </header>
 
       <main className="max-w-5xl mx-auto px-4 py-5">
+        {view.screen === 'dashboard' && (
+          <Dashboard onOpen={(code) => setView({ screen: 'detail', code })} />
+        )}
         {view.screen === 'list' && (
           <CustomerList onOpen={(code) => setView({ screen: 'detail', code })} />
         )}

@@ -1,11 +1,12 @@
 import type { FastifyInstance } from 'fastify';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
+import { Prisma } from '@prisma/client';
 import { prisma } from '../db/prisma.js';
 import { requireAuth, requireRole, requireApp } from '../auth/middleware.js';
 import { decodeExpressBytes, parseArmast, type ParsedVenusCustomer } from '../venus/parseArmast.js';
 import { parseOesoc, type ParsedOesocDoc } from '../venus/parseOesoc.js';
-import { recomputeStats } from '../venus/stats.js';
+import { recomputeStats, type ReorderDueItem } from '../venus/stats.js';
 
 // Venus — 360° customer CRM. Stage A+B: backend foundation only (Express customer-master
 // import). See docs/VENUS_BRIEF.md. Track-and-tell only; this file has no sales data / no
@@ -23,6 +24,14 @@ const MAX_SALES_UPLOAD_BYTES = 16 * 1024 * 1024; // real OESOC export is ~13MB
 // the same stored searchKey — same convention as the SKU dash-insensitive search.
 function toSearchKey(code: string): string {
   return code.toLowerCase().replace(/[^0-9a-z฀-๿]/g, '');
+}
+
+// Same money-string convention as stats.ts / Ceres / Juno: baht amounts are stored as
+// strings and parsed on read, never as float columns.
+function parseMoney(s: string | null | undefined): number {
+  if (!s) return 0;
+  const n = parseFloat(String(s).replace(/,/g, ''));
+  return Number.isNaN(n) ? 0 : n;
 }
 
 // In-memory staging for previewed imports (same pattern as stock.ts / juno.ts bank
@@ -374,15 +383,23 @@ export async function venusRoutes(app: FastifyInstance) {
   app.addHook('onRequest', requireAuth);
   app.addHook('preHandler', requireApp('venus'));
 
-  // GET /api/venus/customers?q=&limit=&offset= — search by name/code (dash-insensitive
-  // via searchKey), paginated.
+  // GET /api/venus/customers?q=&limit=&offset=&segment= — search by name/code
+  // (dash-insensitive via searchKey), paginated. Left-joins CustomerStats (Prisma has no
+  // relation between VenusCustomer and CustomerStats — they're linked only by the shared
+  // `code`/`customerCode` string, same soft-link reasoning as SaleDoc — so the join is done
+  // in application code: fetch the page of customers, then fetch stats for just those
+  // codes) so each row can show a segment chip + `m` without an extra round trip per row.
+  // `?segment=` filters to customers whose CustomerStats.segment matches exactly.
   app.get('/api/venus/customers', async (req) => {
-    const { q, limit, offset } = req.query as { q?: string; limit?: string; offset?: string };
+    const { q, limit, offset, segment } = req.query as {
+      q?: string; limit?: string; offset?: string; segment?: string;
+    };
     const take = Math.min(Math.max(Number(limit) || 50, 1), 200);
     const skip = Math.max(Number(offset) || 0, 0);
     const query = String(q ?? '').trim();
+    const segmentFilter = String(segment ?? '').trim();
 
-    const where = query
+    const where: Record<string, unknown> = query
       ? {
           OR: [
             { searchKey: { contains: toSearchKey(query) } },
@@ -390,6 +407,16 @@ export async function venusRoutes(app: FastifyInstance) {
           ],
         }
       : {};
+
+    if (segmentFilter) {
+      // CustomerStats has no relation field on VenusCustomer, so filter by first resolving
+      // which codes carry that segment, then intersecting with the code column.
+      const codesInSegment = await prisma.customerStats.findMany({
+        where: { segment: segmentFilter },
+        select: { customerCode: true },
+      });
+      where.code = { in: codesInSegment.map((s) => s.customerCode) };
+    }
 
     const [total, customers] = await Promise.all([
       prisma.venusCustomer.count({ where }),
@@ -401,14 +428,229 @@ export async function venusRoutes(app: FastifyInstance) {
       }),
     ]);
 
-    return { total, customers };
+    const stats = customers.length
+      ? await prisma.customerStats.findMany({
+          where: { customerCode: { in: customers.map((c) => c.code) } },
+          select: { customerCode: true, segment: true, m: true },
+        })
+      : [];
+    const statsByCode = new Map(stats.map((s) => [s.customerCode, s]));
+
+    return {
+      total,
+      customers: customers.map((c) => ({
+        ...c,
+        segment: statsByCode.get(c.code)?.segment ?? null,
+        m: statsByCode.get(c.code)?.m ?? null,
+      })),
+    };
   });
 
-  // GET /api/venus/customers/:code — detail.
+  // GET /api/venus/dashboard — management lens (VENUS_BRIEF.md §8): data-coverage banner,
+  // segment distribution, at-risk list (ranked by M — "lose the biggest first"), top
+  // movers, and the opportunity queue (reorder-due customers). Pure reads over
+  // CustomerStats; nothing here recomputes — that's POST /api/venus/recompute.
+  app.get('/api/venus/dashboard', async () => {
+    const [totalCustomers, totalWithSales, segmentGroups, coverage] = await Promise.all([
+      prisma.venusCustomer.count(),
+      prisma.customerStats.count(),
+      prisma.customerStats.groupBy({ by: ['segment'], _count: { _all: true } }),
+      prisma.saleDoc.aggregate({ where: { void: false }, _min: { date: true }, _max: { date: true } }),
+    ]);
+
+    const segmentCounts: Record<string, number> = {};
+    for (const g of segmentGroups) {
+      if (g.segment) segmentCounts[g.segment] = g._count._all;
+    }
+
+    // At-risk: segment='เสี่ยงหาย' ordered by M desc — the brief's "lose the biggest first".
+    const atRiskRows = await prisma.customerStats.findMany({
+      where: { segment: 'เสี่ยงหาย' },
+      orderBy: { m: 'desc' },
+      take: 50,
+      select: { customerCode: true, m: true, f: true, rfmScore: true, trendPct: true, trendDir: true },
+    });
+    const atRiskCustomers = await prisma.venusCustomer.findMany({
+      where: { code: { in: atRiskRows.map((r) => r.customerCode) } },
+      select: { code: true, name: true },
+    });
+    const nameByCode = new Map(atRiskCustomers.map((c) => [c.code, c.name]));
+    const atRisk = atRiskRows.map((r) => ({
+      code: r.customerCode,
+      name: nameByCode.get(r.customerCode) ?? '',
+      m: r.m ?? 0,
+      f: r.f ?? 0,
+      rfmScore: r.rfmScore,
+      trendPct: r.trendPct ?? 0,
+      trendDir: r.trendDir ?? 'flat',
+    }));
+
+    // Top movers: only customers with meaningful prior-window activity (trendOrders != 0
+    // alone isn't enough signal — require some current or previous revenue via trendPct
+    // being non-trivial, i.e. exclude the "0 -> 0" / brand-new-with-no-baseline noise by
+    // requiring f >= 1, which CustomerStats rows already guarantee, plus a non-zero trend).
+    const moversUp = await prisma.customerStats.findMany({
+      where: { trendDir: 'up', trendPct: { gt: 0 } },
+      orderBy: { trendPct: 'desc' },
+      take: 10,
+      select: { customerCode: true, m: true, trendPct: true, trendDir: true, trendOrders: true },
+    });
+    const moversDown = await prisma.customerStats.findMany({
+      where: { trendDir: 'down', trendPct: { lt: 0 } },
+      orderBy: { trendPct: 'asc' },
+      take: 10,
+      select: { customerCode: true, m: true, trendPct: true, trendDir: true, trendOrders: true },
+    });
+    const moverCodes = [...moversUp, ...moversDown].map((r) => r.customerCode);
+    const moverCustomers = moverCodes.length
+      ? await prisma.venusCustomer.findMany({ where: { code: { in: moverCodes } }, select: { code: true, name: true } })
+      : [];
+    const moverNameByCode = new Map(moverCustomers.map((c) => [c.code, c.name]));
+    const toMover = (r: (typeof moversUp)[number]) => ({
+      code: r.customerCode,
+      name: moverNameByCode.get(r.customerCode) ?? '',
+      m: r.m ?? 0,
+      trendPct: r.trendPct ?? 0,
+      trendDir: r.trendDir ?? 'flat',
+      trendOrders: r.trendOrders ?? 0,
+    });
+
+    // Opportunity queue: customers with a non-empty reorderDue JSON array. Prisma cannot
+    // filter "JSON array non-empty" portably, so pull segment-agnostic candidates (anyone
+    // with a reorderDue value that isn't SQL NULL) and filter/flatten in application code —
+    // the CustomerStats table is per-customer (thousands of rows, not millions), so this is
+    // a cheap in-memory pass, not a scan concern.
+    const withReorder = await prisma.customerStats.findMany({
+      where: { reorderDue: { not: Prisma.JsonNull } },
+      select: { customerCode: true, reorderDue: true },
+    });
+    const reorderCustomers = withReorder.filter(
+      (r) => Array.isArray(r.reorderDue) && (r.reorderDue as unknown[]).length > 0,
+    );
+    const oppCustomers = reorderCustomers.length
+      ? await prisma.venusCustomer.findMany({
+          where: { code: { in: reorderCustomers.map((r) => r.customerCode) } },
+          select: { code: true, name: true },
+        })
+      : [];
+    const oppNameByCode = new Map(oppCustomers.map((c) => [c.code, c.name]));
+    const opportunityQueue = reorderCustomers
+      .map((r) => {
+        const items = r.reorderDue as unknown as ReorderDueItem[];
+        const mostOverdue = items.reduce((max, it) => (it.dueSinceDays > max ? it.dueSinceDays : max), 0);
+        return {
+          code: r.customerCode,
+          name: oppNameByCode.get(r.customerCode) ?? '',
+          reorderDue: items,
+          mostOverdue,
+        };
+      })
+      .sort((a, b) => b.mostOverdue - a.mostOverdue);
+
+    return {
+      coverage: { from: coverage._min.date, to: coverage._max.date },
+      segmentCounts,
+      totalCustomers,
+      totalWithSales,
+      atRisk,
+      topMovers: { up: moversUp.map(toMover), down: moversDown.map(toMover) },
+      opportunityQueue,
+    };
+  });
+
+  // GET /api/venus/customers/:code — enriched rep-lens detail: customer master data +
+  // CustomerStats (RFM/trend/reorder) + recent purchase timeline + a per-product cycle
+  // summary + the (Phase-1-only-so-far) precautions slot.
   app.get('/api/venus/customers/:code', async (req, reply) => {
     const { code } = req.params as { code: string };
     const customer = await prisma.venusCustomer.findUnique({ where: { code } });
     if (!customer) return reply.code(404).send({ error: 'not_found' });
-    return { customer };
+
+    const stats = await prisma.customerStats.findUnique({ where: { customerCode: code } });
+
+    const docs = await prisma.saleDoc.findMany({
+      where: { customerCode: code },
+      orderBy: { date: 'desc' },
+      take: 50,
+      include: { lines: true },
+    });
+
+    const skus = Array.from(new Set(docs.flatMap((d) => d.lines.map((l) => l.sku)).filter((s): s is string => !!s)));
+    const products = skus.length
+      ? await prisma.product.findMany({ where: { sku: { in: skus } }, select: { sku: true, nameEn: true, nameTh: true } })
+      : [];
+    const productBySku = new Map(products.map((p) => [p.sku, p]));
+
+    const purchases = docs.map((d) => ({
+      docNo: d.docNo,
+      date: d.date,
+      total: parseMoney(d.total),
+      docType: d.docType,
+      void: d.void,
+      lines: d.lines.map((l) => ({
+        sku: l.sku,
+        name: l.sku ? (productBySku.get(l.sku)?.nameTh || productBySku.get(l.sku)?.nameEn || null) : null,
+        qty: l.qty,
+        unit: null as string | null, // no unit field on SaleLine yet — slot for a later import enrichment
+        amount: parseMoney(l.amount),
+      })),
+    }));
+
+    // Per-product cycle summary: every SKU bought >=1 time (across ALL non-void docs
+    // returned above — the recent-50 window, same scope as `purchases`), with reorder
+    // status pulled from stats.reorderDue when that SKU is flagged there.
+    const reorderBySku = new Map(
+      (Array.isArray(stats?.reorderDue) ? (stats!.reorderDue as unknown as ReorderDueItem[]) : []).map((r) => [r.sku, r]),
+    );
+    interface Cycle { sku: string; name: string | null; count: number; lastPurchase: Date; totalQty: number }
+    const cyclesBySku = new Map<string, Cycle>();
+    for (const d of docs) {
+      if (d.void) continue;
+      for (const l of d.lines) {
+        if (!l.sku) continue;
+        const existing = cyclesBySku.get(l.sku);
+        if (existing) {
+          existing.count += 1;
+          existing.totalQty += l.qty;
+          if (d.date > existing.lastPurchase) existing.lastPurchase = d.date;
+        } else {
+          cyclesBySku.set(l.sku, {
+            sku: l.sku,
+            name: productBySku.get(l.sku)?.nameTh || productBySku.get(l.sku)?.nameEn || null,
+            count: 1,
+            totalQty: l.qty,
+            lastPurchase: d.date,
+          });
+        }
+      }
+    }
+    const productCycles = Array.from(cyclesBySku.values())
+      .map((c) => {
+        const due = reorderBySku.get(c.sku);
+        return {
+          sku: c.sku,
+          name: c.name,
+          count: c.count,
+          totalQty: c.totalQty,
+          lastPurchase: c.lastPurchase,
+          reorderStatus: due ? ('due' as const) : ('ok' as const),
+          reorderDue: due ?? null,
+        };
+      })
+      .sort((a, b) => b.lastPurchase.getTime() - a.lastPurchase.getTime());
+
+    // Precautions: only the credit one is wired (Phase 1 data). The other three (payment
+    // behavior from Juno, churn evidence beyond the segment chip itself, complaint tags)
+    // are later phases (brief §7) — left as explicit null slots rather than faked.
+    const precautions = {
+      credit: customer.creditDays != null
+        ? `เครดิต ${customer.creditDays} วัน${customer.creditTermsNorm ? ` (${customer.creditTermsNorm})` : ''}`
+        : customer.creditTermsNorm === 'CASH' ? 'เงินสด' : null,
+      payment: null as string | null, // Phase 3: from Juno
+      churn: null as string | null, // Phase 3: AI-narrated evidence beyond the segment chip
+      complaints: null as string | null, // Phase 3: AI-tagged from LINE history
+    };
+
+    return { customer, stats, purchases, productCycles, precautions };
   });
 }

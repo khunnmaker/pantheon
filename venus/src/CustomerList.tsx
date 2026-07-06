@@ -1,17 +1,19 @@
 import { useEffect, useRef, useState } from 'react';
 import { Search, Loader2, ChevronRight, ChevronLeft, AlertTriangle, Users } from 'lucide-react';
-import { getCustomers, creditLabel, type VenusCustomer } from './lib/api';
+import { getCustomers, creditLabel, segmentColor, SEGMENTS, type VenusCustomerListRow, type Segment } from './lib/api';
 
 const PAGE_SIZE = 50;
 
 // Debounced search over name + code (dash-insensitive, server-side via searchKey) —
 // paginated list/cards, mobile-friendly (reps live on phones). Tap a row to open the
-// rep-lens detail card (CustomerDetail).
+// rep-lens detail card (CustomerDetail). Segment filter + chip come from the left-joined
+// CustomerStats sliver the list endpoint now returns (segment, m).
 export default function CustomerList({ onOpen }: { onOpen: (code: string) => void }) {
   const [q, setQ] = useState('');
+  const [segment, setSegment] = useState<Segment | ''>('');
   const [offset, setOffset] = useState(0);
   const [total, setTotal] = useState(0);
-  const [customers, setCustomers] = useState<VenusCustomer[]>([]);
+  const [customers, setCustomers] = useState<VenusCustomerListRow[]>([]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -21,7 +23,7 @@ export default function CustomerList({ onOpen }: { onOpen: (code: string) => voi
     setErr('');
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => {
-      getCustomers({ q, limit: PAGE_SIZE, offset })
+      getCustomers({ q, segment, limit: PAGE_SIZE, offset })
         .then((r) => {
           setCustomers(r.customers);
           setTotal(r.total);
@@ -31,11 +33,15 @@ export default function CustomerList({ onOpen }: { onOpen: (code: string) => voi
     }, 250);
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [q, offset]);
+  }, [q, segment, offset]);
 
-  // Any change to the search text resets pagination back to page 1.
+  // Any change to the search text or segment filter resets pagination back to page 1.
   function onSearch(v: string) {
     setQ(v);
+    setOffset(0);
+  }
+  function onSegment(v: Segment | '') {
+    setSegment(v);
     setOffset(0);
   }
 
@@ -44,7 +50,7 @@ export default function CustomerList({ onOpen }: { onOpen: (code: string) => voi
 
   return (
     <div>
-      <div className="relative mb-4">
+      <div className="relative mb-2">
         <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
         <input
           value={q}
@@ -52,6 +58,28 @@ export default function CustomerList({ onOpen }: { onOpen: (code: string) => voi
           placeholder="ค้นหาชื่อลูกค้า หรือรหัสลูกค้า…"
           className="w-full pl-9 pr-3 py-2.5 rounded-xl border border-slate-300 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-rose-400"
         />
+      </div>
+
+      <div className="flex gap-1.5 overflow-x-auto mb-4 pb-1">
+        <button
+          onClick={() => onSegment('')}
+          className={`shrink-0 text-xs px-2.5 py-1 rounded-full font-medium border ${
+            segment === '' ? 'bg-rose-600 text-white border-rose-600' : 'bg-white text-slate-500 border-slate-200'
+          }`}
+        >
+          ทั้งหมด
+        </button>
+        {SEGMENTS.map((s) => (
+          <button
+            key={s}
+            onClick={() => onSegment(s)}
+            className={`shrink-0 text-xs px-2.5 py-1 rounded-full font-medium border ${
+              segment === s ? 'bg-rose-600 text-white border-rose-600' : `${segmentColor(s)} border-transparent`
+            }`}
+          >
+            {s}
+          </button>
+        ))}
       </div>
 
       {err && (
@@ -102,7 +130,7 @@ export default function CustomerList({ onOpen }: { onOpen: (code: string) => voi
   );
 }
 
-function CustomerRow({ customer: c, onOpen }: { customer: VenusCustomer; onOpen: () => void }) {
+function CustomerRow({ customer: c, onOpen }: { customer: VenusCustomerListRow; onOpen: () => void }) {
   return (
     <button
       onClick={onOpen}
@@ -111,14 +139,16 @@ function CustomerRow({ customer: c, onOpen }: { customer: VenusCustomer; onOpen:
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2 flex-wrap">
           <span className="font-semibold text-slate-800 truncate">{c.name || '(ไม่มีชื่อ)'}</span>
+          <SegmentChip segment={c.segment} />
           {c.custType && (
             <span className="text-[11px] px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-600">{c.custType}</span>
           )}
           <CreditChip norm={c.creditTermsNorm} />
         </div>
-        <div className="text-xs text-slate-400 font-mono mt-0.5">
-          {c.code}
-          {c.repCode && <span className="ml-2 font-sans text-slate-400">พนักงานขาย {c.repCode}</span>}
+        <div className="text-xs text-slate-400 font-mono mt-0.5 flex items-center gap-2 flex-wrap">
+          <span>{c.code}</span>
+          {c.repCode && <span className="font-sans text-slate-400">พนักงานขาย {c.repCode}</span>}
+          {c.m != null && <span className="font-sans text-slate-400">฿{c.m.toLocaleString('th-TH', { maximumFractionDigits: 0 })}</span>}
         </div>
       </div>
       <ChevronRight size={16} className="text-slate-300 shrink-0" />
@@ -126,7 +156,12 @@ function CustomerRow({ customer: c, onOpen }: { customer: VenusCustomer; onOpen:
   );
 }
 
-export function CreditChip({ norm }: { norm: VenusCustomer['creditTermsNorm'] }) {
+export function SegmentChip({ segment }: { segment: Segment | null | undefined }) {
+  if (!segment) return null;
+  return <span className={`text-[11px] px-1.5 py-0.5 rounded-full font-medium ${segmentColor(segment)}`}>{segment}</span>;
+}
+
+export function CreditChip({ norm }: { norm: VenusCustomerListRow['creditTermsNorm'] }) {
   if (!norm) return null;
   const cls =
     norm === 'CREDIT'

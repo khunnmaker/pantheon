@@ -41,6 +41,117 @@ export interface VenusCustomer {
   importedAt: string;
 }
 
+// The 5 Thai RFM segments (VENUS_BRIEF.md §6). Order here = display/severity order used
+// across the dashboard and segment chips.
+export type Segment = 'ลูกค้าชั้นดี' | 'ลูกค้าประจำ' | 'มาใหม่' | 'เสี่ยงหาย' | 'หายไปแล้ว';
+export const SEGMENTS: Segment[] = ['ลูกค้าชั้นดี', 'ลูกค้าประจำ', 'มาใหม่', 'เสี่ยงหาย', 'หายไปแล้ว'];
+
+// List rows are enriched with a left-joined CustomerStats sliver (segment + M) — see
+// GET /api/venus/customers in api/src/routes/venus.ts.
+export interface VenusCustomerListRow extends VenusCustomer {
+  segment: Segment | null;
+  m: number | null;
+}
+
+// Mirrors CustomerStats (api/prisma/schema.prisma) field-for-field.
+export interface ReorderDueItem {
+  sku: string;
+  lastPurchase: string;
+  medianGapDays: number;
+  dueSinceDays: number;
+  purchaseCount: number;
+}
+export interface CustomerStats {
+  customerCode: string;
+  r: number | null;
+  f: number | null;
+  m: number | null;
+  rfmScore: string | null;
+  segment: Segment | null;
+  trendPct: number | null;
+  trendDir: 'up' | 'down' | 'flat' | null;
+  trendOrders: number | null;
+  reorderDue: ReorderDueItem[] | null;
+  dataFrom: string | null;
+  dataTo: string | null;
+  computedAt: string;
+}
+
+export interface PurchaseLine {
+  sku: string | null;
+  name: string | null;
+  qty: number;
+  unit: string | null;
+  amount: number;
+}
+export interface Purchase {
+  docNo: string;
+  date: string;
+  total: number;
+  docType: string | null;
+  void: boolean;
+  lines: PurchaseLine[];
+}
+export interface ProductCycle {
+  sku: string;
+  name: string | null;
+  count: number;
+  totalQty: number;
+  lastPurchase: string;
+  reorderStatus: 'due' | 'ok';
+  reorderDue: ReorderDueItem | null;
+}
+export interface CustomerPrecautions {
+  credit: string | null;
+  payment: string | null;
+  churn: string | null;
+  complaints: string | null;
+}
+export interface CustomerDetailResult {
+  customer: VenusCustomer;
+  stats: CustomerStats | null;
+  purchases: Purchase[];
+  productCycles: ProductCycle[];
+  precautions: CustomerPrecautions;
+}
+
+// ── Management-lens dashboard ──────────────────────────────────────────────
+
+export interface DashboardAtRiskRow {
+  code: string;
+  name: string;
+  m: number;
+  f: number;
+  rfmScore: string | null;
+  trendPct: number;
+  trendDir: 'up' | 'down' | 'flat';
+}
+export interface DashboardMoverRow {
+  code: string;
+  name: string;
+  m: number;
+  trendPct: number;
+  trendDir: 'up' | 'down' | 'flat';
+  trendOrders: number;
+}
+export interface DashboardOpportunityRow {
+  code: string;
+  name: string;
+  reorderDue: ReorderDueItem[];
+  mostOverdue: number;
+}
+export interface DashboardResult {
+  coverage: { from: string | null; to: string | null };
+  segmentCounts: Partial<Record<Segment, number>>;
+  totalCustomers: number;
+  totalWithSales: number;
+  atRisk: DashboardAtRiskRow[];
+  topMovers: { up: DashboardMoverRow[]; down: DashboardMoverRow[] };
+  opportunityQueue: DashboardOpportunityRow[];
+}
+
+export const getDashboard = () => authed<DashboardResult>('/api/venus/dashboard');
+
 const TOKEN_KEY = 'venus_token';
 const AGENT_KEY = 'venus_agent';
 
@@ -134,19 +245,20 @@ export const canImport = (agent: Agent | null): boolean => agent?.role === 'supe
 
 export interface CustomerListResult {
   total: number;
-  customers: VenusCustomer[];
+  customers: VenusCustomerListRow[];
 }
 
-export const getCustomers = (params: { q?: string; limit?: number; offset?: number }) => {
+export const getCustomers = (params: { q?: string; limit?: number; offset?: number; segment?: Segment | '' }) => {
   const p = new URLSearchParams();
   if (params.q) p.set('q', params.q);
+  if (params.segment) p.set('segment', params.segment);
   p.set('limit', String(params.limit ?? 50));
   p.set('offset', String(params.offset ?? 0));
   return authed<CustomerListResult>(`/api/venus/customers?${p.toString()}`);
 };
 
 export const getCustomer = (code: string) =>
-  authed<{ customer: VenusCustomer }>(`/api/venus/customers/${encodeURIComponent(code)}`);
+  authed<CustomerDetailResult>(`/api/venus/customers/${encodeURIComponent(code)}`);
 
 // ── Import (supervisor only) — Express ARMAST customer-master preview→apply ─────
 
@@ -216,3 +328,32 @@ export const creditLabel = (norm: VenusCustomer['creditTermsNorm']): string => {
     default: return '—';
   }
 };
+
+// Color per segment (VENUS_BRIEF.md §6 order: best -> worst). Used for the segment chip on
+// the list row, the customer header, and the dashboard's segment distribution.
+export const segmentColor = (s: Segment | null | undefined): string => {
+  switch (s) {
+    case 'ลูกค้าชั้นดี': return 'bg-emerald-100 text-emerald-700';
+    case 'ลูกค้าประจำ': return 'bg-sky-100 text-sky-700';
+    case 'มาใหม่': return 'bg-violet-100 text-violet-700';
+    case 'เสี่ยงหาย': return 'bg-amber-100 text-amber-700';
+    case 'หายไปแล้ว': return 'bg-slate-200 text-slate-500';
+    default: return 'bg-slate-100 text-slate-400';
+  }
+};
+
+export const formatBaht = (n: number | null | undefined): string =>
+  n == null ? '—' : `฿${n.toLocaleString('th-TH', { maximumFractionDigits: 0 })}`;
+
+export const formatDate = (d: string | Date | null | undefined): string => {
+  if (!d) return '—';
+  const date = typeof d === 'string' ? new Date(d) : d;
+  if (Number.isNaN(date.getTime())) return '—';
+  return date.toLocaleDateString('th-TH', { year: 'numeric', month: 'short', day: 'numeric' });
+};
+
+export const trendArrow = (dir: 'up' | 'down' | 'flat' | null | undefined): string =>
+  dir === 'up' ? '▲' : dir === 'down' ? '▼' : '–';
+
+export const trendColor = (dir: 'up' | 'down' | 'flat' | null | undefined): string =>
+  dir === 'up' ? 'text-emerald-600' : dir === 'down' ? 'text-rose-600' : 'text-slate-400';
