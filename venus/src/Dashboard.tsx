@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
-import { Loader2, AlertTriangle, CalendarRange, TrendingUp, TrendingDown, PackageSearch, ShieldAlert } from 'lucide-react';
+import { Loader2, AlertTriangle, CalendarRange, TrendingUp, TrendingDown, PackageSearch, ShieldAlert, RefreshCw } from 'lucide-react';
 import {
-  getDashboard, segmentColor, formatBaht, formatDate, trendArrow, trendColor, SEGMENTS,
+  getDashboard, recompute, segmentColor, formatBaht, formatDate, trendArrow, trendColor, SEGMENTS,
   type DashboardResult,
 } from './lib/api';
 
@@ -9,19 +9,36 @@ import {
 // ("lose the biggest first"), top movers, and the opportunity queue (reorder-due
 // customers). Pure reads over CustomerStats via GET /api/venus/dashboard — nothing here
 // recomputes; that only happens via the supervisor's POST /api/venus/recompute.
-export default function Dashboard({ onOpen }: { onOpen: (code: string) => void }) {
+export default function Dashboard({ onOpen, canManage }: { onOpen: (code: string) => void; canManage?: boolean }) {
   const [data, setData] = useState<DashboardResult | null>(null);
   const [busy, setBusy] = useState(true);
   const [err, setErr] = useState('');
+  const [recomputing, setRecomputing] = useState(false);
+  const [recomputeErr, setRecomputeErr] = useState('');
 
-  useEffect(() => {
+  function load() {
     setBusy(true);
     setErr('');
     getDashboard()
       .then(setData)
       .catch(() => setErr('โหลดแดชบอร์ดไม่สำเร็จ'))
       .finally(() => setBusy(false));
-  }, []);
+  }
+  useEffect(() => { load(); }, []);
+
+  async function onRecompute() {
+    setRecomputing(true);
+    setRecomputeErr('');
+    try {
+      await recompute();
+      load();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : '';
+      setRecomputeErr(msg === 'forbidden' ? 'เฉพาะหัวหน้าเท่านั้น' : 'คำนวณใหม่ไม่สำเร็จ');
+    } finally {
+      setRecomputing(false);
+    }
+  }
 
   if (busy) {
     return (
@@ -43,7 +60,7 @@ export default function Dashboard({ onOpen }: { onOpen: (code: string) => void }
   return (
     <div className="space-y-4">
       {/* Data-coverage banner — a short window must never be misread as a real trend. */}
-      <div className="bg-white rounded-2xl border border-slate-200 px-4 py-3 flex items-center gap-2 text-sm text-slate-600">
+      <div className="bg-white rounded-2xl border border-slate-200 px-4 py-3 flex items-center gap-2 flex-wrap text-sm text-slate-600">
         <CalendarRange size={16} className="text-rose-500 shrink-0" />
         <span>
           ข้อมูลการขาย: <b>{formatDate(data.coverage.from)}</b> – <b>{formatDate(data.coverage.to)}</b>
@@ -51,7 +68,23 @@ export default function Dashboard({ onOpen }: { onOpen: (code: string) => void }
         <span className="ml-auto text-xs text-slate-400">
           ลูกค้าทั้งหมด {data.totalCustomers.toLocaleString('th-TH')} · มีข้อมูลการซื้อ {data.totalWithSales.toLocaleString('th-TH')} ราย
         </span>
+        {canManage && (
+          <button
+            onClick={onRecompute}
+            disabled={recomputing}
+            title="คำนวณกลุ่มลูกค้า/สัญญาณใหม่จากข้อมูลล่าสุด (อาจใช้เวลาสักครู่)"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold disabled:opacity-60 shrink-0"
+          >
+            {recomputing ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
+            {recomputing ? 'กำลังคำนวณ…' : 'คำนวณใหม่'}
+          </button>
+        )}
       </div>
+      {recomputeErr && (
+        <div className="flex items-center gap-1 text-rose-600 text-xs -mt-2 px-1">
+          <AlertTriangle size={12} /> {recomputeErr}
+        </div>
+      )}
 
       {/* Segment distribution */}
       <section className="bg-white rounded-2xl border border-slate-200 p-5">

@@ -87,7 +87,7 @@ export default function Venus({ agent, onLogout }: { agent: Agent; onLogout: () 
 
       <main className="max-w-5xl mx-auto px-4 py-5">
         {view.screen === 'dashboard' && (
-          <Dashboard onOpen={(code) => setView({ screen: 'detail', code })} />
+          <Dashboard onOpen={(code) => setView({ screen: 'detail', code })} canManage={showImport} />
         )}
         {view.screen === 'list' && (
           <CustomerList onOpen={(code) => setView({ screen: 'detail', code })} />

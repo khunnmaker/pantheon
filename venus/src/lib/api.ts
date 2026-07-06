@@ -188,6 +188,15 @@ export interface DashboardResult {
 
 export const getDashboard = () => authed<DashboardResult>('/api/venus/dashboard');
 
+// Supervisor-only: recompute the RFM/segments/trend/reorder/signal engine over all sales.
+// Synchronous + can take ~15–40s on a full base — the caller shows a spinner.
+export interface RecomputeResult {
+  ok: boolean;
+  customersProcessed: number;
+  segmentCounts: Record<string, number>;
+}
+export const recompute = () => authed<RecomputeResult>('/api/venus/recompute', { method: 'POST' });
+
 const TOKEN_KEY = 'venus_token';
 const AGENT_KEY = 'venus_agent';
 
