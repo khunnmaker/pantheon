@@ -1,17 +1,19 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import {
-  Bot, User, LogOut, Clock, Inbox, Wifi, WifiOff, Loader2, ShieldCheck, MessageSquare,
+  User, LogOut, Clock, Inbox, Loader2, ShieldCheck, MessageSquare,
   Send, Check, CheckCircle2, RefreshCw, Brain, GraduationCap, Wand2, Pencil, AlertTriangle, Search,
-  Download, Paperclip, Camera, Banknote, X, ChevronDown, ChevronUp, Crown,
+  Download, Paperclip, Camera, Banknote, X, ChevronDown, ChevronUp, Crown, Pin, CornerUpLeft, Volume2, VolumeX,
 } from 'lucide-react';
 import {
-  getQueue, getCustomers, getCustomer, searchCustomers, clearSession, regenerateDraft, rewriteText, sendReply, setNickname, setCategory, setStage, STAGES,
+  getQueue, getCustomers, getCustomer, searchCustomers, logout as logoutSuite, regenerateDraft, rewriteText, sendReply, setNickname, setCategory, setStage, STAGES,
+  pinCustomer, unpinCustomer,
   uploadAttachment, getLearned, getLearnedMetrics, promoteLearned, rejectLearned, endSession, API_URL, flatSku, getToken,
   getFinanceAudits, resolveFinanceAudit, type FinanceAudit,
   getQuickReplies, addQuickReply, deleteQuickReply, sendQuickReply, sendMessage, sendPhotoNow, searchCatalog, addProductToDraft, readSlip, sendToFinance,
   type Agent, type CustomerLite, type CustomerDetail, type Message, type LearnedAnswer, type LearnedMetrics, type PendingProduct, type QuickReply,
 } from './lib/api';
 import { getSocket, disconnectSocket } from './lib/socket';
+import AppSwitcher from './AppSwitcher';
 
 // Portal-back link (Jupiter). URL from build-time env; hidden when unset, so it is completely
 // inert until VITE_PORTAL_URL is configured (Phase 1 go-live / Phase 2 domains).
@@ -37,11 +39,42 @@ function fmtTime(t?: string) {
     return '';
   }
 }
+
+// Compact author + truncated text of a message, for a quoted-reply snippet / the "reply-to" bar.
+function quoteSnippet(m: Message | undefined): { author: string; text: string } {
+  if (!m) return { author: '', text: 'ข้อความที่ตอบกลับ' };
+  const author = m.role === 'customer' ? 'ลูกค้า' : m.agentName ? m.agentName : 'ทีมงาน';
+  const raw = (m.text ?? '').replace(/\s+/g, ' ').trim();
+  const text = raw.length > 60 ? raw.slice(0, 60) + '…' : raw || 'ข้อความ';
+  return { author, text };
+}
 const nameOf = (c: CustomerLite) => {
   const base = c.nickname || c.displayName || c.lineUserId;
   return c.code ? `${c.code} ${base}` : base;
 };
 const CATEGORIES = ['C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'Lab'];
+
+// Customer avatar: the LINE profile/group picture when present, else the generic person icon
+// in the grey circle. A broken/expired picture url falls back to the icon via onError. Sizes
+// the circle + icon from `size` (px) so it works in the list (32) and the header (28).
+function Avatar({ src, size = 32, className = '' }: { src?: string | null; size?: number; className?: string }) {
+  const [broken, setBroken] = useState(false);
+  // Reset the error state when the url changes (opening a different chat / lazy-backfill arriving).
+  useEffect(() => { setBroken(false); }, [src]);
+  const style = { width: size, height: size };
+  if (src && !broken) {
+    return (
+      <img src={src} alt="" style={style} onError={() => setBroken(true)}
+        className={'rounded-full object-cover bg-slate-200 shrink-0 ' + className} />
+    );
+  }
+  return (
+    <span style={style}
+      className={'rounded-full bg-slate-200 text-slate-600 flex items-center justify-center shrink-0 ' + className}>
+      <User size={Math.round(size * 0.47)} />
+    </span>
+  );
+}
 
 // A stored attachment (image/video/audio/file) fetched with the JWT (the content
 // endpoint stays auth-protected) and shown via an object URL: image/video/audio
@@ -477,7 +510,38 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<CustomerDetail | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
-  const [connected, setConnected] = useState(false);
+  // Notification sound on inbound customer messages (per-browser mute, throttled).
+  const [soundOn, setSoundOn] = useState(() => localStorage.getItem('minerva_sound_off') !== '1');
+  const soundOnRef = useRef(soundOn);
+  soundOnRef.current = soundOn;
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const lastSoundRef = useRef(0);
+  const playChime = useCallback(() => {
+    if (!soundOnRef.current) return;
+    const now = Date.now();
+    if (now - lastSoundRef.current < 1500) return; // avoid a burst of dings
+    lastSoundRef.current = now;
+    try {
+      let ctx = audioCtxRef.current;
+      if (!ctx) { ctx = new AudioContext(); audioCtxRef.current = ctx; }
+      if (ctx.state === 'suspended') void ctx.resume();
+      const t0 = ctx.currentTime;
+      const notes: Array<[number, number]> = [[880, 0], [1174.66, 0.12]]; // A5 → D6, "ติ๊ง-ติ๊ง"
+      for (const [freq, delay] of notes) {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.value = freq;
+        const start = t0 + delay;
+        gain.gain.setValueAtTime(0.0001, start);
+        gain.gain.exponentialRampToValueAtTime(0.22, start + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.18);
+        osc.connect(gain).connect(ctx.destination);
+        osc.start(start);
+        osc.stop(start + 0.2);
+      }
+    } catch { /* audio unavailable — ignore */ }
+  }, []);
 
   const [editText, setEditText] = useState('');
   const [sending, setSending] = useState(false);
@@ -486,6 +550,8 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
   const [rewriteNote, setRewriteNote] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [searchResults, setSearchResults] = useState<CustomerLite[] | null>(null);
+  const [pinnedIds, setPinnedIds] = useState<Set<string>>(new Set()); // this agent's pinned customer ids (private)
+  const [pinnedOpen, setPinnedOpen] = useState(true); // "ปักหมุด" section collapse state
   const [categoryFilters, setCategoryFilters] = useState<string[]>(() => [...CATEGORIES]); // all selected = show all
   const [catOpen, setCatOpen] = useState(false);
   const [stageFilters, setStageFilters] = useState<string[]>(() => [...STAGES]); // all selected = show all
@@ -509,6 +575,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
   const [freeText, setFreeText] = useState('');
   const [freeNeedsConfirm, setFreeNeedsConfirm] = useState(false);
   const [freeSending, setFreeSending] = useState(false);
+  const [replyingTo, setReplyingTo] = useState<string | null>(null); // Message.id being LINE-quote-replied
   const [freeProducts, setFreeProducts] = useState<PendingProduct[]>([]); // catalog photos picked in the answered-state composer (no draft to attach to)
   const [freeRewriting, setFreeRewriting] = useState(false);
   const [prodSearchOpen, setProdSearchOpen] = useState(false);
@@ -532,8 +599,9 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const refreshLists = useCallback(async () => {
-    const [{ customers: cs }, { queue }] = await Promise.all([getCustomers(), getQueue()]);
+    const [{ customers: cs, pinnedIds: pins }, { queue }] = await Promise.all([getCustomers(), getQueue()]);
     setCustomers(cs);
+    setPinnedIds(new Set(pins));
     setWaitingIds(new Set(queue.map((q) => q.customer.id)));
   }, []);
 
@@ -541,7 +609,12 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
     setLoadingDetail(true);
     try {
       const d = await getCustomer(id);
-      setDetail(d);
+      // Clear an in-progress quote-reply selection only when SWITCHING to a different customer —
+      // a same-customer reload (socket push / post-send refresh) must not drop the staff's pick.
+      setDetail((prev) => {
+        if (prev && prev.customer.id !== d.customer.id) setReplyingTo(null);
+        return d;
+      });
       setEditText(d.pendingDraft?.draftText ?? '');
       setNeedsConfirm(false);
       setQrConfirmId(null);
@@ -598,13 +671,11 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
     refreshLists().catch(() => undefined);
     refreshLearned().catch(() => undefined);
     const socket = getSocket();
-    const onConnect = () => setConnected(true);
-    const onDisconnect = () => setConnected(false);
     const onConnectError = (err: Error) => {
-      setConnected(false);
       if (err.message === 'unauthorized') logout();
     };
     const onMessage = (payload: { customer: CustomerLite }) => {
+      playChime(); // ding on any inbound customer message
       refreshLists().catch(() => undefined);
       if (selectedRef.current === payload.customer.id) loadDetail(payload.customer.id).catch(() => undefined);
     };
@@ -631,23 +702,18 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
         loadDetail(payload.customerId).catch(() => undefined);
       }
     };
-    socket.on('connect', onConnect);
-    socket.on('disconnect', onDisconnect);
     socket.on('connect_error', onConnectError);
     socket.on('message:new', onMessage);
     socket.on('draft:new', onDraft);
     socket.on('conversation:update', onConversation);
-    if (socket.connected) setConnected(true);
     return () => {
-      socket.off('connect', onConnect);
-      socket.off('disconnect', onDisconnect);
       socket.off('connect_error', onConnectError);
       socket.off('message:new', onMessage);
       socket.off('draft:new', onDraft);
       socket.off('conversation:update', onConversation);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [refreshLists, loadDetail, refreshLearned]);
+  }, [refreshLists, loadDetail, refreshLearned, playChime]);
 
   useEffect(() => {
     selectedRef.current = selectedId;
@@ -674,9 +740,33 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
     toastTimer.current = setTimeout(() => setToast(''), 2600);
   }
 
+  // Pin/unpin a customer chat for THIS agent (private). Optimistically flip local state,
+  // then persist; revert + toast on failure.
+  async function togglePin(id: string) {
+    const wasPinned = pinnedIds.has(id);
+    setPinnedIds((prev) => {
+      const next = new Set(prev);
+      if (wasPinned) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+    try {
+      if (wasPinned) await unpinCustomer(id);
+      else await pinCustomer(id);
+    } catch {
+      setPinnedIds((prev) => {
+        const next = new Set(prev);
+        if (wasPinned) next.add(id);
+        else next.delete(id);
+        return next;
+      });
+      flashToast('ปักหมุดไม่สำเร็จ');
+    }
+  }
+
   function logout() {
     disconnectSocket();
-    clearSession();
+    void logoutSuite(); // clears the shared SSO cookie + local session (fire-and-forget)
     onLogout();
   }
 
@@ -687,7 +777,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
     setSending(true);
     setError('');
     try {
-      const res = await sendReply(msgId, editText.trim(), needsConfirm, selectedProductSkus.length ? selectedProductSkus : undefined, upload?.uploadId);
+      const res = await sendReply(msgId, editText.trim(), needsConfirm, selectedProductSkus.length ? selectedProductSkus : undefined, upload?.uploadId, replyingTo ?? undefined);
       if ('needsConfirm' in res) {
         setNeedsConfirm(true);
         setError('คำตอบมีราคา — โปรดตรวจสอบตัวเลขแล้วกด "ยืนยันส่ง" อีกครั้ง');
@@ -699,6 +789,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
         if (selectedId) await loadDetail(selectedId);
         return;
       }
+      setReplyingTo(null); // sent — clear the quote-reply selection
       flashToast(res.dryRun ? 'บันทึกแล้ว (โหมดทดสอบ — ยังไม่ส่งจริงไป LINE)' : 'ส่งคำตอบไปยังลูกค้าแล้ว ✓');
       if (res.learnedCaptured) flashToast('ส่งแล้ว — คำตอบที่แก้ถูกเก็บเข้าคลังการเรียนรู้');
       await refreshLists();
@@ -819,7 +910,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
     setQrSending(true);
     setError('');
     try {
-      const res = await sendQuickReply(selectedId, q.id, qrConfirmId === q.id);
+      const res = await sendQuickReply(selectedId, q.id, qrConfirmId === q.id, replyingTo ?? undefined);
       if ('needsConfirm' in res) {
         setQrConfirmId(q.id);
         setError('ข้อความด่วนนี้มีราคา — กดอีกครั้งเพื่อยืนยันส่ง');
@@ -827,6 +918,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
       }
       setQrConfirmId(null);
       setQrOpen(false);
+      setReplyingTo(null); // sent — clear the quote-reply selection
       flashToast(res.dryRun ? `บันทึก "${q.label}" (โหมดทดสอบ)` : `ส่ง "${q.label}" ให้ลูกค้าแล้ว ✓`);
     } catch {
       setError('ส่งข้อความไม่สำเร็จ');
@@ -843,7 +935,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
     setError('');
     try {
       const skus = freeProducts.length ? freeProducts.map((p) => p.sku) : undefined;
-      const res = await sendMessage(selectedId, freeText.trim(), upload?.uploadId, freeNeedsConfirm, skus);
+      const res = await sendMessage(selectedId, freeText.trim(), upload?.uploadId, freeNeedsConfirm, skus, replyingTo ?? undefined);
       if ('needsConfirm' in res) {
         setFreeNeedsConfirm(true);
         setError('ข้อความมีราคา — โปรดตรวจสอบตัวเลขแล้วกดส่งอีกครั้งเพื่อยืนยัน');
@@ -853,6 +945,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
       setUpload(null);
       setFreeProducts([]);
       setFreeNeedsConfirm(false);
+      setReplyingTo(null); // sent — clear the quote-reply selection
       flashToast(res.dryRun ? 'บันทึกแล้ว (โหมดทดสอบ)' : 'ส่งข้อความให้ลูกค้าแล้ว ✓');
     } catch {
       setError('ส่งข้อความไม่สำเร็จ');
@@ -885,7 +978,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
   // duplicates). No draft exists here, so this does NOT call addProductToDraft — that
   // endpoint requires a pending draft and drives keyword-learning tied to a pending question.
   function addFreeProduct(p: PendingProduct) {
-    setFreeProducts((prev) => (prev.length >= 6 || prev.some((x) => x.sku === p.sku) ? prev : [...prev, p]));
+    setFreeProducts((prev) => (prev.length >= 20 || prev.some((x) => x.sku === p.sku) ? prev : [...prev, p]));
   }
   function removeFreeProduct(sku: string) {
     setFreeProducts((prev) => prev.filter((p) => p.sku !== sku));
@@ -1090,12 +1183,63 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
   }
 
   const draft = detail?.pendingDraft ?? null;
+  // "กำลังตอบกลับ" bar — shown above BOTH composers when a customer bubble is selected to
+  // quote-reply. Resolves the author + snippet from the loaded messages; ✕ clears the selection.
+  const replyingMsg = replyingTo ? detail?.messages.find((m) => m.id === replyingTo) : undefined;
+  const replyBar = replyingTo ? (() => {
+    const s = quoteSnippet(replyingMsg);
+    return (
+      <div className="flex items-center gap-2 text-[11px] bg-sky-50 border border-sky-200 rounded-lg px-2 py-1 text-slate-600">
+        <CornerUpLeft size={13} className="shrink-0 text-sky-500" />
+        <span className="min-w-0 truncate"><span className="font-semibold text-sky-800">กำลังตอบกลับ:</span> {s.author} · «{s.text}»</span>
+        <button type="button" onClick={() => setReplyingTo(null)} title="ยกเลิกการตอบกลับ" aria-label="ยกเลิกการตอบกลับ"
+          className="ml-auto shrink-0 text-slate-400 hover:text-slate-600"><X size={13} /></button>
+      </div>
+    );
+  })() : null;
   // Both filters are "exclude" style: all selected by default; deselecting a chip hides
   // only that group's customers; unstaged/uncategorized always show. (All = everyone.)
   const displayList = searchResults ?? customers.filter((c) =>
     (c.category == null || categoryFilters.includes(c.category)) &&
     (c.stage == null || stageFilters.includes(c.stage)),
   );
+  // This agent's pinned chats — from the FULL customer list so they show regardless of
+  // the category/stage filters (only meaningful when NOT searching; search is a flat list).
+  const pinnedList = searchResults === null ? customers.filter((c) => pinnedIds.has(c.id)) : [];
+
+  // One customer card — reused in both the "ปักหมุด" section and the normal list.
+  function renderCard(c: CustomerLite) {
+    const waiting = waitingIds.has(c.id);
+    const active = selectedId === c.id;
+    const pinned = pinnedIds.has(c.id);
+    return (
+      <button key={c.id} onClick={() => setSelectedId(c.id)}
+        className={'w-full text-left px-3 py-2 rounded-xl border transition ' + (active ? 'bg-sky-50 border-sky-300' : 'bg-white border-slate-100 hover:bg-slate-50')}>
+        <div className="flex items-center gap-2">
+          <Avatar src={c.pictureUrl} size={32} />
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-1">
+              <span className="font-medium text-sm truncate">{nameOf(c)}</span>
+              {waiting && <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0" title="รอตอบ" />}
+              <span className="ml-auto flex items-center gap-1 shrink-0">
+                {c.suggestedStage && c.suggestedStage !== c.stage && <span className="w-1.5 h-1.5 rounded-full bg-amber-400" title={'AI แนะนำ: ' + c.suggestedStage} />}
+                {c.stage && <span className="text-[9px] px-1 py-0.5 rounded bg-indigo-100 text-indigo-700">{c.stage}</span>}
+                {c.category && <span className="text-[9px] px-1 py-0.5 rounded bg-sky-100 text-sky-700">{c.category}</span>}
+                <span role="button" tabIndex={0}
+                  onClick={(e) => { e.stopPropagation(); void togglePin(c.id); }}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); void togglePin(c.id); } }}
+                  title={pinned ? 'เลิกปักหมุด' : 'ปักหมุด'} aria-label={pinned ? 'เลิกปักหมุด' : 'ปักหมุด'}
+                  className="shrink-0 cursor-pointer">
+                  <Pin size={13} className={pinned ? 'fill-sky-500 text-sky-500' : 'text-slate-300 hover:text-sky-500'} />
+                </span>
+              </span>
+            </div>
+            <div className="text-[11px] text-slate-400 flex items-center gap-1"><Clock size={10} /> {fmtTime(c.lastSeen)}</div>
+          </div>
+        </div>
+      </button>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-slate-100 p-3 sm:p-5 font-sans text-slate-800">
@@ -1125,7 +1269,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
           <div className="flex flex-col gap-3 min-h-0">
             {/* icon bar */}
             <div className="bg-white rounded-2xl shadow-sm border border-slate-200 flex items-center gap-1 px-2 py-2 shrink-0">
-              <div className="text-sky-700 px-1" title="Minerva"><Bot size={22} /></div>
+              <AppSwitcher agent={agent} />
               <button onClick={() => setView('console')} title="คอนโซล"
                 className={'p-2 rounded-xl ' + (view === 'console' ? 'bg-sky-600 text-white' : 'text-slate-500 hover:bg-slate-100')}><MessageSquare size={19} /></button>
               <button onClick={() => setView('learning')} title="การเรียนรู้"
@@ -1133,20 +1277,16 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                 <GraduationCap size={19} />
                 {learned.length > 0 && <span className="absolute -top-0.5 -right-0.5 text-[10px] bg-amber-400 text-white rounded-full px-1 leading-tight">{learned.length}</span>}
               </button>
-              {agent.role === 'supervisor' && (
-                <button onClick={() => setView('audit')} title="ตรวจสอบยอด (หัวหน้า)"
-                  className={'relative p-2 rounded-xl ' + (view === 'audit' ? 'bg-sky-600 text-white' : 'text-slate-500 hover:bg-slate-100')}>
-                  <Banknote size={19} />
-                  {audits.length > 0 && <span className="absolute -top-0.5 -right-0.5 text-[10px] bg-rose-500 text-white rounded-full px-1 leading-tight">{audits.length}</span>}
-                </button>
-              )}
               <div className="flex-1" />
+              <button type="button"
+                onClick={() => setSoundOn((v) => { const nv = !v; localStorage.setItem('minerva_sound_off', nv ? '0' : '1'); return nv; })}
+                title={soundOn ? 'เสียงแจ้งเตือน: เปิด (คลิกเพื่อปิด)' : 'เสียงแจ้งเตือน: ปิด (คลิกเพื่อเปิด)'}
+                className={'p-2 rounded-xl hover:bg-slate-100 ' + (soundOn ? 'text-sky-600' : 'text-slate-300')}>
+                {soundOn ? <Volume2 size={17} /> : <VolumeX size={17} />}
+              </button>
               {PORTAL_URL && (
                 <a href={PORTAL_URL} title="กลับพอร์ทัล Jupiter" className="p-2 rounded-xl text-slate-400 hover:text-violet-600 hover:bg-slate-100"><Crown size={17} /></a>
               )}
-              <span title={connected ? 'เชื่อมต่อสด' : 'ออฟไลน์'} className={'px-1 ' + (connected ? 'text-sky-600' : 'text-slate-300')}>
-                {connected ? <Wifi size={17} /> : <WifiOff size={17} />}
-              </span>
               <span title={agent.name + (agent.role === 'supervisor' ? ' (หัวหน้า)' : '')}
                 className="relative w-8 h-8 rounded-full bg-sky-600 text-white flex items-center justify-center text-xs font-bold shrink-0">
                 {agent.name.replace(/^คุณ/, '').charAt(0)}
@@ -1196,37 +1336,28 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                 {searchResults !== null && searchResults.length > 0 && (
                   <div className="px-1 pb-1 text-[11px] text-slate-400">ผลค้นหา {searchResults.length} ราย (รวมแชทที่จบแล้ว)</div>
                 )}
-                {displayList.length === 0 && (
+                {displayList.length === 0 && pinnedList.length === 0 && (
                   <div className="text-slate-400 text-sm text-center py-10 px-3">
                     {searchResults !== null ? 'ไม่พบลูกค้าที่ตรงกับคำค้นหา' : (
                       <>ยังไม่มีข้อความจากลูกค้า<br /><span className="text-xs">เมื่อมีข้อความเข้า LINE จะปรากฏที่นี่แบบเรียลไทม์</span></>
                     )}
                   </div>
                 )}
-                {displayList.map((c) => {
-                  const waiting = waitingIds.has(c.id);
-                  const active = selectedId === c.id;
-                  return (
-                    <button key={c.id} onClick={() => setSelectedId(c.id)}
-                      className={'w-full text-left px-3 py-2 rounded-xl border transition ' + (active ? 'bg-sky-50 border-sky-300' : 'bg-white border-slate-100 hover:bg-slate-50')}>
-                      <div className="flex items-center gap-2">
-                        <span className="w-8 h-8 rounded-full bg-slate-200 text-slate-600 flex items-center justify-center shrink-0"><User size={15} /></span>
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-1">
-                            <span className="font-medium text-sm truncate">{nameOf(c)}</span>
-                            {waiting && <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0" title="รอตอบ" />}
-                            <span className="ml-auto flex items-center gap-1 shrink-0">
-                              {c.suggestedStage && c.suggestedStage !== c.stage && <span className="w-1.5 h-1.5 rounded-full bg-amber-400" title={'AI แนะนำ: ' + c.suggestedStage} />}
-                              {c.stage && <span className="text-[9px] px-1 py-0.5 rounded bg-indigo-100 text-indigo-700">{c.stage}</span>}
-                              {c.category && <span className="text-[9px] px-1 py-0.5 rounded bg-sky-100 text-sky-700">{c.category}</span>}
-                            </span>
-                          </div>
-                          <div className="text-[11px] text-slate-400 flex items-center gap-1"><Clock size={10} /> {fmtTime(c.lastSeen)}</div>
-                        </div>
-                      </div>
+                {/* "ปักหมุด" — this agent's pinned chats, pinned above the queue regardless of
+                    answered-state or category/stage filters. Only when not searching. */}
+                {searchResults === null && pinnedList.length > 0 && (
+                  <div className="mb-1">
+                    <button type="button" onClick={() => setPinnedOpen((v) => !v)}
+                      className="w-full flex items-center gap-1 px-1 py-1 text-[11px] font-semibold text-sky-700">
+                      <Pin size={12} className="fill-sky-500 text-sky-500" />
+                      <span>ปักหมุด ({pinnedList.length})</span>
+                      {pinnedOpen ? <ChevronUp size={12} className="ml-auto text-slate-400" /> : <ChevronDown size={12} className="ml-auto text-slate-400" />}
                     </button>
-                  );
-                })}
+                    {pinnedOpen && <div className="space-y-1">{pinnedList.map((c) => renderCard(c))}</div>}
+                    <div className="border-b border-slate-200 mt-1" />
+                  </div>
+                )}
+                {(searchResults === null ? displayList.filter((c) => !pinnedIds.has(c.id)) : displayList).map((c) => renderCard(c))}
               </div>
             </div>
           </div>
@@ -1249,7 +1380,9 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
             <div className="bg-white rounded-2xl shadow-sm border border-slate-200 flex flex-col h-full">
               <div className="px-4 py-2.5 bg-sky-600 text-white rounded-t-2xl font-semibold flex items-center gap-2">
                 <div className="flex items-center gap-2 min-w-0 flex-1">
-                  <MessageSquare size={18} className="shrink-0" />
+                  {detail
+                    ? <Avatar src={detail.customer.pictureUrl} size={28} />
+                    : <MessageSquare size={18} className="shrink-0" />}
                   {nickEdit !== null ? (
                     <div className="flex items-center gap-1">
                       <input autoFocus value={nickEdit.code} onChange={(e) => setNickEdit({ ...nickEdit, code: e.target.value })}
@@ -1345,26 +1478,50 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                   <div className="flex-1 overflow-y-auto p-3 space-y-2 bg-sky-50"
                     onClick={(e) => { const img = (e.target as HTMLElement).closest('img[data-zoom]') as HTMLImageElement | null; if (img) setLightbox(img.currentSrc || img.src); }}>
                     {loadingDetail && !detail && <div className="flex justify-center py-8 text-slate-400"><Loader2 size={18} className="animate-spin" /></div>}
-                    {detail?.messages.map((m: Message) => (
+                    {detail?.messages.map((m: Message) => {
+                      // Quoted snippet (both directions): the message THIS bubble quote-replies to.
+                      const quoted = m.quotedMessageId
+                        ? detail.messages.find((q) => q.id === m.quotedMessageId)
+                        : undefined;
+                      const quotedSnip = m.quotedMessageId ? quoteSnippet(quoted) : null;
+                      // Tap a quotable customer text/sticker bubble to LINE-quote-reply it.
+                      const canReply = !!m.quotable;
+                      const isReplying = replyingTo === m.id;
+                      return (
                       <div key={m.id} className={m.role === 'customer' ? 'flex justify-start' : 'flex justify-end'}>
-                        <div className={'max-w-[78%] px-3 py-2 rounded-2xl text-sm whitespace-pre-wrap ' +
-                          (m.role === 'customer' ? 'bg-white border border-slate-200 rounded-tl-sm' : 'bg-sky-600 text-white rounded-tr-sm')}>
+                        <div onClick={canReply ? () => setReplyingTo((cur) => (cur === m.id ? null : m.id)) : undefined}
+                          title={canReply ? 'แตะเพื่อตอบกลับข้อความนี้' : undefined}
+                          className={'max-w-[78%] px-3 py-2 rounded-2xl text-sm whitespace-pre-wrap ' +
+                          (m.role === 'customer' ? 'bg-white border border-slate-200 rounded-tl-sm' : 'bg-sky-600 text-white rounded-tr-sm') +
+                          (canReply ? ' cursor-pointer' : '') +
+                          (isReplying ? ' ring-2 ring-sky-400' : '')}>
+                          {quotedSnip && (
+                            <div className={'mb-1 pl-2 border-l-2 text-[11px] leading-snug ' +
+                              (m.role === 'customer' ? 'border-slate-300 text-slate-500' : 'border-sky-200/70 text-sky-100/90')}>
+                              <span className="font-semibold">{quotedSnip.author}</span>
+                              <span className="opacity-90"> · {quotedSnip.text}</span>
+                            </div>
+                          )}
                           <MessageBody m={m} />
                           <div className={'text-[10px] mt-0.5 flex items-baseline justify-between gap-3 ' + (m.role === 'customer' ? 'text-slate-400' : 'text-sky-100')}>
-                            <span>{fmtTime(m.createdAt)}</span>
+                            <span className="flex items-center gap-1">
+                              {fmtTime(m.createdAt)}
+                              {canReply && <CornerUpLeft size={11} className={isReplying ? 'text-sky-500' : 'text-slate-300'} />}
+                            </span>
                             {m.role !== 'customer' && m.agentName && <span className="text-sky-100/80">— {m.agentName}</span>}
                           </div>
                           {m.role === 'customer' && m.attachmentType === 'image' && (
                             m.financeSentAt
                               ? <div className="mt-1 text-[10px] text-sky-600 font-medium flex items-center gap-1"><CheckCircle2 size={11} /> ส่งการเงินแล้ว</div>
-                              : <button type="button" onClick={() => setFinanceMsg(m.id)}
+                              : <button type="button" onClick={(e) => { e.stopPropagation(); setFinanceMsg(m.id); }}
                                   className="mt-1 text-[10px] px-2 py-1 rounded-lg bg-amber-100 hover:bg-amber-200 text-amber-800 font-medium flex items-center gap-1">
                                   <Banknote size={12} /> แจ้งการเงิน
                                 </button>
                           )}
                         </div>
                       </div>
-                    ))}
+                      );
+                    })}
                     <div ref={endRef} />
                   </div>
                     </div>{/* /LEFT column */}
@@ -1459,6 +1616,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                               </div>
                             </div>
                       )}
+                      {replyBar}
                       <textarea value={editText} onChange={(e) => { setEditText(e.target.value); setNeedsConfirm(false); setRewriteNote(null); }} rows={4}
                         className="w-full flex-1 min-h-[120px] p-3 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-sky-400 resize-none" placeholder="พิมพ์/แก้คำตอบก่อนส่ง… (วางรูป Ctrl+V ได้)" />
                       {rewriteNote && (
@@ -1586,6 +1744,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                           <button type="button" onClick={() => setUpload(null)} className="text-slate-400 hover:text-rose-500"><X size={14} /></button>
                         </div>
                       )}
+                      {replyBar}
                       <textarea value={freeText} onChange={(e) => { setFreeText(e.target.value); setFreeNeedsConfirm(false); setRewriteNote(null); }} rows={3}
                         className="w-full flex-1 min-h-[100px] p-3 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-sky-400 resize-none" placeholder="พิมพ์ข้อความถึงลูกค้า… (วางรูป Ctrl+V ได้)" />
                       {rewriteNote && (

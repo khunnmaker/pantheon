@@ -1,0 +1,53 @@
+# mercury-local — LOCAL, on-prem app. Holds ALL procurement secrets.
+# Commit ONLY source + config + the initial migration. NEVER a real secret or the .db.
+
+# dependencies
+node_modules/
+**/node_modules/
+
+# build output
+dist/
+build/
+client/dist/
+server/dist/
+*.tsbuildinfo
+# tsc -b emitted artifacts next to the vite config
+client/vite.config.js
+client/vite.config.d.ts
+# generated prisma client lives in node_modules/.prisma (already ignored); belt-and-suspenders:
+**/.prisma/
+server/src/generated/
+
+# ── LOCAL SECRETS — never commit ────────────────────────────────────────
+# the sqlite database (holds the alias→real-item map, vendor names, costs)
+*.db
+*.db-journal
+*.sqlite
+*.sqlite-journal
+prisma/*.db
+prisma/*.db-journal
+
+# env + Gmail OAuth credentials (Phase 2c) — NEVER commit a real token/client secret.
+.env
+**/.env
+!.env.example
+# the refresh token saved after "Connect Gmail"
+gmail-token*.json
+# the OAuth *client* JSON the owner downloads from GCP (holds client_id/secret)
+gmail-oauth-client*.json
+
+# ── Cloud connection (holds a live suite JWT — NEVER commit) ─────────────
+.mercury-connection.json
+
+# ── Generated PO PDFs + any sample product images (local outputs) ────────
+po-output/
+*.pdf
+# sample product images used to test the PDF image embed (never commit)
+sample-images/
+
+# logs / editor / os
+*.log
+.DS_Store
+.vscode/
+.idea/
+*.swp

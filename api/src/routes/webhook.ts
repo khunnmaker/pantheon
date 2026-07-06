@@ -19,6 +19,8 @@ interface LineMessage {
   fileName?: string; // for "file" messages
   fileSize?: number;
   mention?: { mentionees?: { isSelf?: boolean }[] }; // LINE @mention payload (text messages)
+  quoteToken?: string; // token to quote THIS message later (text/sticker only)
+  quotedMessageId?: string; // LINE channelMsgId of the message this one quote-replies to
 }
 interface LineEvent {
   type: string;
@@ -27,6 +29,17 @@ interface LineEvent {
 }
 interface LineWebhookBody {
   events?: LineEvent[];
+}
+
+// When a customer quote-replies one of OUR past messages, LINE gives the quoted message's
+// channelMsgId. Resolve it to OUR internal Message.id (null if we don't have that message).
+async function resolveQuotedMessageId(quotedChannelMsgId?: string): Promise<string | undefined> {
+  if (!quotedChannelMsgId) return undefined;
+  const quoted = await prisma.message.findFirst({
+    where: { channelMsgId: quotedChannelMsgId },
+    select: { id: true },
+  });
+  return quoted?.id ?? undefined;
 }
 
 export async function webhookRoutes(app: FastifyInstance) {
@@ -75,7 +88,14 @@ export async function webhookRoutes(app: FastifyInstance) {
         if (mtype === 'text') {
           const text = ev.message.text;
           if (!text) continue;
-          const result = await ingestCustomerText({ lineUserId, text, channelMsgId });
+          const quotedMessageId = await resolveQuotedMessageId(ev.message.quotedMessageId);
+          const result = await ingestCustomerText({
+            lineUserId,
+            text,
+            channelMsgId,
+            quoteToken: ev.message.quoteToken ?? undefined,
+            quotedMessageId,
+          });
           pushToConsole('message:new', {
             customer: result.customer,
             message: result.message,
@@ -94,12 +114,15 @@ export async function webhookRoutes(app: FastifyInstance) {
           const ref = `${ev.message.packageId ?? ''}/${ev.message.stickerId ?? ''}`;
           // LINE describes the sticker with keyword(s) (+ optional text on message stickers).
           const meaning = [ev.message.text, ...(ev.message.keywords ?? [])].filter(Boolean).join(', ');
+          const quotedMessageId = await resolveQuotedMessageId(ev.message.quotedMessageId);
           const result = await ingestCustomerText({
             lineUserId,
             text: meaning ? `[สติกเกอร์] ${meaning}` : '[สติกเกอร์]',
             channelMsgId,
             attachmentType: 'sticker',
             attachmentRef: ref,
+            quoteToken: ev.message.quoteToken ?? undefined,
+            quotedMessageId,
           });
           pushToConsole('message:new', {
             customer: result.customer,

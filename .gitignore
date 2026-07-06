@@ -28,6 +28,8 @@ jupiter/vite.config.js
 jupiter/vite.config.d.ts
 venus/vite.config.js
 venus/vite.config.d.ts
+mercury/vite.config.js
+mercury/vite.config.d.ts
 
 # downloaded LINE image content
 api/uploads/

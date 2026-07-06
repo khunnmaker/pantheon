@@ -8,7 +8,7 @@ export interface SendResult {
 }
 
 type LineOutMessage =
-  | { type: 'text'; text: string }
+  | { type: 'text'; text: string; quoteToken?: string }
   | { type: 'image'; originalContentUrl: string; previewImageUrl: string };
 
 const dryRunForced = () => env.LINE_DRY_RUN === '1' || env.LINE_DRY_RUN.toLowerCase() === 'true';
@@ -30,8 +30,13 @@ async function push(lineUserId: string, messages: LineOutMessage[]): Promise<Sen
   return { sent: true, dryRun: false, channelMsgId };
 }
 
-export async function sendLineText(lineUserId: string, text: string): Promise<SendResult> {
-  return push(lineUserId, [{ type: 'text', text }]);
+// quoteToken (optional): make the customer see a real LINE quote of an earlier message.
+export async function sendLineText(
+  lineUserId: string,
+  text: string,
+  quoteToken?: string,
+): Promise<SendResult> {
+  return push(lineUserId, [{ type: 'text', text, ...(quoteToken ? { quoteToken } : {}) }]);
 }
 
 // Image(s) only — no text bubble (LINE rejects empty text). For an instant photo send.
@@ -56,8 +61,9 @@ export async function sendLineReply(
   lineUserId: string,
   text: string,
   imageUrls: string[] = [],
+  quoteToken?: string,
 ): Promise<SendResult> {
-  const messages: LineOutMessage[] = [{ type: 'text', text }];
+  const messages: LineOutMessage[] = [{ type: 'text', text, ...(quoteToken ? { quoteToken } : {}) }];
   for (const url of imageUrls) {
     messages.push({ type: 'image', originalContentUrl: url, previewImageUrl: url });
   }

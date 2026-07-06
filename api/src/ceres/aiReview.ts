@@ -213,7 +213,7 @@ export async function reviewExpensePostHoc(expenseId: string): Promise<void> {
 
     if (expense.receiptSha) {
       const dupReceipt = await prisma.ceresExpense.findFirst({
-        where: { id: { not: expense.id }, receiptSha: expense.receiptSha, status: { not: 'rejected' } },
+        where: { id: { not: expense.id }, receiptSha: expense.receiptSha, status: { notIn: ['rejected', 'void'] } },
       });
       if (dupReceipt) flags.push('ใบเสร็จรูปเดียวกันถูกใช้ซ้ำ');
     }
@@ -224,7 +224,7 @@ export async function reviewExpensePostHoc(expenseId: string): Promise<void> {
         where: {
           id: { not: expense.id },
           partyName: expense.partyName,
-          status: { not: 'rejected' },
+          status: { notIn: ['rejected', 'void'] },
         },
       });
       const dup = candidates.find((c) => num(c.amount) === amount && thaiDayKey(c.spentAt) === dayKey);

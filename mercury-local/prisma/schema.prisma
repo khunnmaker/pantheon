@@ -1,0 +1,119 @@
+// mercury-local — LOCAL SQLite DB (single file). Holds ALL procurement secrets:
+// the alias→real-item map, real vendor names/emails, cost prices, classification.
+// This DB NEVER leaves the owner's machine and is NEVER migrated into the shared
+// Postgres schema. See docs/MERCURY_BRIEF.md §5 (local data model) + §8 (security).
+//
+// Number-as-String convention (suite-wide, per Juno): money/qty stored as String to
+// avoid float drift. Dashed SKU stored, bare displayed/searched (suite SKU convention).
+
+generator client {
+  provider = "prisma-client-js"
+  // Default output (node_modules/.prisma/client, re-exported by @prisma/client) so the client
+  // resolves identically from server/src (tsx dev) AND server/dist (built) — both find it via
+  // node_modules. Import it as `@prisma/client`.
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// A real supplier. LOCAL-ONLY — the cloud node must NEVER receive vendor names/emails.
+model Vendor {
+  id          String   @id @default(cuid())
+  name        String
+  email       String   @default("")
+  ccList      String   @default("") // comma-separated CC addresses for the PO email
+  country     String   @default("")
+  isTaiwan    Boolean  @default(false) // drives the normal/special PO split (Taiwan skill)
+  contactName String   @default("")
+  terms       String   @default("") // payment / delivery terms
+  notes       String   @default("")
+  createdAt   DateTime @default(now())
+
+  secretMaps     SecretMap[]
+  purchaseOrders PurchaseOrder[]
+}
+
+// The alias → real-item map. LOCAL-ONLY, the core secret table. cloudItemId points at a
+// cloud MercuryItem.id (free-text for now; cloud sync populates it in a later chunk).
+model SecretMap {
+  id             String   @id @default(cuid())
+  cloudItemId    String   @unique // → cloud MercuryItem.id
+  realName       String
+  vendorId       String
+  vendor         Vendor   @relation(fields: [vendorId], references: [id])
+  realSku        String   @default("") // dashed key stored; bare displayed/searched
+  unitCost       String   @default("") // number-as-String (suite convention)
+  currency       String   @default("THB")
+  leadTime       String? // e.g. "14 days"
+  moq            String? // minimum order quantity
+  classification String   @default("normal") // normal | special (Taiwan PO split)
+  photoRef       String? // path/ref to a product picture (embedded in Taiwan POs)
+  createdAt      DateTime @default(now())
+
+  @@index([vendorId])
+}
+
+// A local shadow of a pending cloud MercuryRequest, refreshed on Sync. LOCAL-ONLY. Stores only
+// the non-secret cloud fields (id, itemId, qty, note, requestedById, status, timestamps) PLUS a
+// denormalised copy of the cloud MercuryItem it points at (displayName/isSecret/vulcanSku) so PO
+// drafts can be seeded and resolved offline. The alias→real-item resolution happens against the
+// local SecretMap at build time — never stored here. Sync upserts by cloudRequestId.
+model PendingRequest {
+  id             String   @id @default(cuid())
+  cloudRequestId String   @unique // → cloud MercuryRequest.id
+  itemId         String // → cloud MercuryItem.id (join key to SecretMap.cloudItemId)
+  qty            String   @default("") // number-as-String (suite convention)
+  note           String   @default("")
+  requestedById  String? // → cloud Agent.id (opaque here)
+  status         String   @default("pending") // mirrors the cloud request status
+  // Denormalised, NON-SECRET copy of the cloud MercuryItem (safe to hold locally).
+  itemDisplayName String  @default("")
+  itemIsSecret    Boolean @default(false)
+  itemVulcanSku   String? // null for secret items on the cloud row
+  cloudCreatedAt  String  @default("") // ISO string from the cloud (kept as text)
+  syncedAt        DateTime @default(now()) @updatedAt
+
+  @@index([status])
+  @@index([itemId])
+}
+
+// A purchase order (draft → sent). The Gmail review-then-send flow (Phase 2c) flips status
+// draft → sent and stamps emailedAt on a successful send.
+model PurchaseOrder {
+  id        String    @id @default(cuid())
+  vendorId  String
+  vendor    Vendor    @relation(fields: [vendorId], references: [id])
+  poNumber  String?
+  status    String    @default("draft") // draft | sent
+  emailedAt DateTime? // set when the PO email was sent (Gmail API) — audit trail
+  pdfPath   String?
+  createdAt DateTime  @default(now())
+
+  lines PurchaseOrderLine[]
+
+  @@index([vendorId])
+  @@index([status])
+}
+
+// One line of a PO. A proper relational table (not JSON) so lines are queryable.
+model PurchaseOrderLine {
+  id             String        @id @default(cuid())
+  poId           String
+  po             PurchaseOrder @relation(fields: [poId], references: [id], onDelete: Cascade)
+  cloudItemId    String
+  // The cloud MercuryRequest this line came from. Kept so that on a successful send we can mark
+  // the underlying local PendingRequest 'ordered' (the cloud status push-back is Phase 3).
+  cloudRequestId String        @default("")
+  realName       String
+  realSku        String        @default("")
+  qty            String        @default("") // number-as-String
+  unit           String        @default("") // order unit (pcs/box/…); shown in the PO "unit split" column
+  unitCost       String        @default("") // number-as-String
+  currency       String        @default("THB")
+  classification String        @default("normal") // normal | special — drives the Taiwan PO split
+  photoRef       String? // product picture path/URL — embedded per line in the PDF
+
+  @@index([poId])
+}

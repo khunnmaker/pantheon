@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import { X } from 'lucide-react';
 import { baht, type Payment } from './lib/api';
 
-// Printable ¼-A4 cover letters — FIN staples one to every printed RE for the physical file.
+// Printable A6 cover letters — FIN staples one to every printed RE for the physical file.
 // The owner may adjust the legal name later; keep it in ONE constant.
 const COMPANY_HEADER = 'Prominent — ใบปะหน้าใบเสร็จ';
 
@@ -11,10 +11,14 @@ const COMPANY_HEADER = 'Prominent — ใบปะหน้าใบเสร็
 const fmtDate = (iso: string) =>
   new Date(iso).toLocaleDateString('th-TH', { day: '2-digit', month: 'short', year: '2-digit' });
 
-// A4 portrait, 2×2 grid of A6 (105×148.5mm) quadrants with dashed cut guides. window.print()
-// fires on mount; onDone fires after the browser's print dialog closes (afterprint) so the
-// caller can drop back to the inbox. The screen view renders the exact same mm-sized pages
-// (scrolled) so FIN can eyeball the layout before printing — no separate preview markup.
+// One cover per RECEIPT (payment): a payment carrying N RE numbers prints a SINGLE cover that
+// lists all N of them, because it's one physical receipt going into the file (owner decision
+// 2026-07-06). Several separate receipts still print one cover each.
+//
+// One A6 page (105×148mm) PER cover (owner decision 2026-07-06 — was 4-up on A4). window.print()
+// fires on mount; onDone fires after the browser's print dialog closes (afterprint) so the caller
+// can drop back to the inbox. The screen view renders the exact same mm-sized pages (scrolled) so
+// FIN can eyeball the layout before printing — no separate preview markup.
 export default function PrintCovers({ payments, onDone }: { payments: Payment[]; onDone: () => void }) {
   useEffect(() => {
     const t = setTimeout(() => window.print(), 50); // let the DOM paint before the print dialog opens
@@ -27,14 +31,14 @@ export default function PrintCovers({ payments, onDone }: { payments: Payment[];
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // group into pages of 4 (one A4 sheet = 2×2 quadrants)
-  const pages: Payment[][] = [];
-  for (let i = 0; i < payments.length; i += 4) pages.push(payments.slice(i, i + 4));
+  // One cover per payment that carries at least one RE (the caller already filters to
+  // reNumbers.length > 0, but stay defensive here) — one A6 page each.
+  const items: Payment[] = payments.filter((p) => p.reNumbers.length > 0);
 
   return (
     <div className="print-covers">
       <style>{`
-        @page { size: A4 portrait; margin: 0; }
+        @page { size: A6 portrait; margin: 0; }
         @media print {
           body * { visibility: hidden; }
           .print-covers, .print-covers * { visibility: visible; }
@@ -42,32 +46,27 @@ export default function PrintCovers({ payments, onDone }: { payments: Payment[];
           .print-covers-toolbar { display: none; }
         }
         .print-page {
-          width: 210mm;
-          height: 297mm;
-          display: grid;
-          grid-template-columns: 1fr 1fr;
-          grid-template-rows: 1fr 1fr;
-          page-break-after: always;
-          background: white;
-        }
-        .print-page:last-child { page-break-after: auto; }
-        .print-quadrant {
           width: 105mm;
-          height: 148.5mm;
           box-sizing: border-box;
-          padding: 8mm;
-          border: 1px dashed #cbd5e1;
-          margin: -0.5px; /* dashed guides shared between adjacent quadrants don't double up */
+          padding: 7mm;
+          page-break-after: always;
+          break-after: page;
+          background: white;
           display: flex;
           flex-direction: column;
           font-family: inherit;
-          overflow: hidden;
         }
+        .print-page:last-child { page-break-after: auto; break-after: auto; }
+        /* Full A6-page look in the on-screen preview only. In PRINT the page has NO fixed height,
+           so a cover flows to its natural height (~110mm) and can never be pushed past the 148mm
+           sheet onto a 2nd page (the earlier height:148mm + mt-auto pinned ผู้จัดทำ to the exact
+           bottom edge, which a hair of printer margin bumped over). */
+        @media screen { .print-page { min-height: 148mm; } }
       `}</style>
 
       <div className="print-covers-toolbar sticky top-0 z-10 bg-white border-b border-slate-200 px-4 py-2 flex items-center justify-between">
         <div className="text-sm text-slate-600">
-          ตัวอย่างใบปะหน้า {payments.length} รายการ ({pages.length} แผ่น) — กำลังเปิดหน้าต่างพิมพ์…
+          ตัวอย่างใบปะหน้า {items.length} แผ่น (A6 · ใบละ 1 แผ่น) — กำลังเปิดหน้าต่างพิมพ์…
         </div>
         <button onClick={onDone} className="text-slate-400 hover:text-slate-600 flex items-center gap-1 text-sm">
           <X size={16} /> ปิด
@@ -75,66 +74,56 @@ export default function PrintCovers({ payments, onDone }: { payments: Payment[];
       </div>
 
       <div className="bg-slate-200 py-6 flex flex-col items-center gap-6">
-        {pages.map((group, pi) => (
-          <div key={pi} className="print-page shadow-lg">
-            {group.map((p) => <Cover key={p.id} payment={p} />)}
-            {/* pad the last page to 4 quadrants so the grid + cut guides stay regular */}
-            {Array.from({ length: 4 - group.length }).map((_, i) => (
-              <div key={`blank-${i}`} className="print-quadrant" />
-            ))}
-          </div>
-        ))}
+        {items.map((p) => <Cover key={p.id} payment={p} />)}
       </div>
     </div>
   );
 }
 
 function Cover({ payment: p }: { payment: Payment }) {
+  const multi = p.reNumbers.length > 1;
+  // one RE → text-4xl (matches รหัสลูกค้า + จำนวนเงิน); several REs scale down & wrap right.
+  const reSize = p.reNumbers.length === 1 ? 'text-4xl' : p.reNumbers.length <= 3 ? 'text-2xl' : 'text-lg';
+  const big = 'text-4xl font-bold leading-tight';
   return (
-    <div className="print-quadrant">
-      <div className="text-[9px] font-bold text-slate-500 mb-2">{COMPANY_HEADER}</div>
+    <div className="print-page shadow-lg">
+      <div className="text-sm font-bold text-slate-500 mb-2">{COMPANY_HEADER}</div>
 
-      <div className="mb-2">
-        <div className="text-[8px] text-slate-400">เลขที่ใบเสร็จ</div>
-        <div className="text-2xl font-bold tracking-wide">RE {p.reNumber || '—'}</div>
-      </div>
+      {/* Every field is ONE line: label on the LEFT, value on the RIGHT (owner 2026-07-06). The
+          three figures staff match a cover to its receipt on — RE, รหัสลูกค้า, จำนวนเงิน — share
+          the same big size on the right. */}
+      <Line
+        label={`เลขที่ใบเสร็จ${multi ? ` (${p.reNumbers.length} เลข)` : ''}`}
+        valueClass={`${reSize} font-bold leading-tight`}
+        value={
+          <span className="inline-flex flex-wrap justify-end gap-x-3">
+            {p.reNumbers.map((re) => <span key={re}>RE {re}</span>)}
+          </span>
+        }
+      />
+      <Line label="วันที่" value={fmtDate(p.createdAt)} />
+      <Line label="ลูกค้า" value={p.customerName || '—'} />
+      {p.customerCode && <Line label="รหัสลูกค้า" value={p.customerCode} valueClass={big} />}
+      <Line label="ชื่อบนใบเสร็จ" value={p.receiptName || '—'} />
+      <Line label="ประเภทลูกค้า" value={p.customerType || '—'} />
+      <Line label="จำนวนเงิน" value={baht(p.amountNum)} valueClass={big} />
+      <Line label="ช่องทาง" value={p.bank || '—'} />
+      <Line label="พนักงานขาย" value={p.salesName || '—'} />
 
-      <Row label="วันที่" value={fmtDate(p.createdAt)} />
-      <Row label="ลูกค้า" value={<>{clamp(p.customerName)} {p.customerCode && <span className="text-slate-400">รหัส {p.customerCode}</span>}</>} />
-      <Row label="ชื่อบนใบเสร็จ" value={clamp(p.receiptName)} />
-      <Row label="ประเภทลูกค้า" value={p.customerType || '—'} />
-      <Row label="จำนวนเงิน" value={<span className="font-bold">{baht(p.amountNum)}</span>} />
-      <Row label="ช่องทาง" value={p.bank || '—'} />
-      <Row label="พนักงานขาย" value={p.salesName || '—'} />
-
-      <div className="mt-auto pt-3 text-[9px] text-slate-500">
+      <div className="mt-6 text-sm text-slate-500">
         ผู้จัดทำ: ______________________
       </div>
     </div>
   );
 }
 
-// Two-line clamp (ellipsis) so a long Thai name can never blow out the ¼-A4 quadrant.
-function clamp(text: string): React.ReactNode {
+// One field per line: label on the LEFT, value on the RIGHT (justified). valueClass overrides the
+// value size — RE / รหัสลูกค้า / จำนวนเงิน pass a big class; every other field defaults to text-base.
+function Line({ label, value, valueClass = 'text-base' }: { label: string; value: React.ReactNode; valueClass?: string }) {
   return (
-    <span
-      style={{
-        display: '-webkit-box',
-        WebkitLineClamp: 2,
-        WebkitBoxOrient: 'vertical',
-        overflow: 'hidden',
-      }}
-    >
-      {text || '—'}
-    </span>
-  );
-}
-
-function Row({ label, value }: { label: string; value: React.ReactNode }) {
-  return (
-    <div className="mb-1.5 text-[11px]">
-      <span className="text-slate-400">{label}: </span>
-      <span className="text-slate-800">{value}</span>
+    <div className="mb-2 flex items-baseline justify-between gap-4">
+      <span className="text-sm text-slate-400 shrink-0">{label}</span>
+      <span className={`text-slate-800 text-right min-w-0 ${valueClass}`}>{value}</span>
     </div>
   );
 }

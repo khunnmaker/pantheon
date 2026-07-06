@@ -29,6 +29,7 @@ import { ensureStock } from './db/ensureStock.js';
 import { ensureQuickReplies } from './db/ensureQuickReplies.js';
 import { ensureCeres } from './db/ensureCeres.js';
 import { ceresRoutes } from './routes/ceres/index.js';
+import { mercuryRoutes } from './routes/mercury/index.js';
 
 // Raw body is needed to verify the LINE webhook signature.
 declare module 'fastify' {
@@ -91,6 +92,7 @@ async function buildServer() {
   await app.register(jupiterRoutes);
   await app.register(ceresRoutes);
   await app.register(venusRoutes);
+  await app.register(mercuryRoutes);
 
   return app;
 }

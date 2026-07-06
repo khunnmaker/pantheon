@@ -46,8 +46,9 @@ async function resolveCustomerName(customer: {
 const replyBody = z.object({
   finalText: z.string().min(1),
   confirmNumbers: z.boolean().optional(),
-  attachProductSkus: z.array(z.string()).max(6).optional(), // catalog photos to attach
+  attachProductSkus: z.array(z.string()).max(20).optional(), // catalog photos to attach
   uploadId: z.string().max(80).optional(), // attach a staff-uploaded photo/file
+  replyToMessageId: z.string().max(60).optional(), // our Message.id to LINE-quote in this reply
 });
 
 const uploadBody = z.object({
@@ -297,6 +298,19 @@ export async function messageRoutes(app: FastifyInstance) {
 
     const draft = await prisma.draft.findUnique({ where: { messageId: customerMsg.id } });
 
+    // Optional LINE quote-reply: only honour replyToMessageId if it's a message of THIS customer
+    // that carries a quoteToken (inbound text/sticker). Otherwise send normally (no error) — the
+    // token rides the TEXT part of the reply, and quotedMessageId records what we replied to.
+    let quoteToken: string | undefined;
+    let quotedMessageId: string | undefined;
+    if (parsed.data.replyToMessageId) {
+      const quoted = await prisma.message.findUnique({ where: { id: parsed.data.replyToMessageId } });
+      if (quoted && quoted.customerId === customer.id && quoted.quoteToken) {
+        quoteToken = quoted.quoteToken;
+        quotedMessageId = quoted.id;
+      }
+    }
+
     // Resolve an optional attachment to send + record — a staff upload (photo/file)
     // OR a catalog product photo. Resolved BEFORE the message is created so the sent
     // attachment shows in the console (not just delivered to LINE). Images go as a
@@ -359,6 +373,7 @@ export async function messageRoutes(app: FastifyInstance) {
           agentId: agent.id,
           kbIds: draft?.usedKb ?? [],
           answersMessageId: customerMsg.id,
+          ...(quotedMessageId ? { quotedMessageId } : {}),
           ...(attach ?? {}),
         },
       });
@@ -372,7 +387,7 @@ export async function messageRoutes(app: FastifyInstance) {
     // Send via LINE (or dry-run). On failure, release the claim so it can retry.
     let sendResult;
     try {
-      sendResult = await sendLineReply(customer.lineUserId, sendText, imageUrls);
+      sendResult = await sendLineReply(customer.lineUserId, sendText, imageUrls, quoteToken);
     } catch (err) {
       req.log.error({ err }, 'LINE send failed');
       await prisma.message.delete({ where: { id: agentMessage.id } }).catch(() => undefined);

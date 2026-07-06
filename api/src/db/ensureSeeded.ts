@@ -15,30 +15,38 @@ import { env } from '../env.js';
 //   md         — Nee, implicit access to Ceres (management side) only.
 //   employee   — all staff; per-person app access via Agent.apps (owner-edited, Jupiter's
 //                admin UI — boot-sync never overwrites it on an existing row).
+// `group` + `gender` are DISPLAY metadata for the suite login screens (role-grouped tiles +
+// cute avatars) — they mirror Jupiter's portal grouping and have nothing to do with auth.
 export const TIER_ACCOUNTS = [
-  { email: 'drm@prominent.local', name: 'Dr. M', role: 'supervisor', pwEnvs: ['SEED_PASSWORD'] },
-  { email: 'md@prominent.local', name: 'Nee', role: 'md', pwEnvs: ['MD_PASSWORD', 'CERES_MD_PASSWORD'] }, // first non-empty wins; using the 2nd logs a deprecation warn
+  { email: 'drm@prominent.local', name: 'Dr. M', role: 'supervisor', pwEnvs: ['SEED_PASSWORD'], group: 'ceo', gender: 'male' },
+  { email: 'md@prominent.local', name: 'Nee', role: 'md', pwEnvs: ['MD_PASSWORD', 'CERES_MD_PASSWORD'], group: 'md', gender: 'female' }, // first non-empty wins; using the 2nd logs a deprecation warn
 ] as const;
 
 // Every employee, each with their own 6-digit PIN (EMPLOYEE_PINS) and a per-person set of
 // app grants. NOTE: นี (Nee) is the MD tier account above — she is NOT an employee row (the
 // old MESSENGERS list wrongly included her under a "nee" slug; fixed here).
+// `group` + `gender`: DISPLAY metadata for the login screens (see TIER_ACCOUNTS note). The
+// group mirrors Jupiter's portal grouping — note นุ่น displays under MD and พิณ/เล็ก under Others.
 export const EMPLOYEES = [
-  { slug: 'nadeer', name: 'NaDeer', apps: ['minerva', 'ceres'] },
-  { slug: 'anny', name: 'Anny', apps: ['minerva', 'ceres'] },
-  { slug: 'noey', name: 'Noey', apps: ['minerva', 'ceres'] },
-  { slug: 'ta', name: 'ต้า', apps: ['ceres'] },
-  { slug: 'arm', name: 'อาร์ม', apps: ['ceres'] },
-  { slug: 'man', name: 'แมน', apps: ['ceres'] },
-  { slug: 'boonson', name: 'บุญสอน', apps: ['ceres'] },
-  { slug: 'kaew', name: 'แก้ว', apps: ['ceres'] },
-  { slug: 'lungko', name: 'ลุงโก๊ะ', apps: ['ceres'] },
-  { slug: 'wong', name: 'วง', apps: ['ceres'] },
-  { slug: 'paeng', name: 'แป๋ง', apps: ['ceres'] },
-  { slug: 'nun', name: 'นุ่น', apps: ['ceres'] },
-  { slug: 'pin', name: 'พิณ', apps: ['ceres'] },
-  { slug: 'lekmaeban', name: 'เล็กแม่บ้าน', apps: ['ceres'] }, // housekeeper — enters expenses like everyone
-  { slug: 'da', name: 'ด้า', apps: ['ceres'] },
+  { slug: 'nadeer', name: 'NaDeer', apps: ['minerva', 'ceres'], group: 'sales', gender: 'female' },
+  { slug: 'anny', name: 'Anny', apps: ['minerva', 'ceres'], group: 'sales', gender: 'female' },
+  { slug: 'noey', name: 'Noey', apps: ['minerva', 'ceres'], group: 'sales', gender: 'female' },
+  { slug: 'ta', name: 'ต้า', apps: ['ceres'], group: 'messengers', gender: 'male' },
+  { slug: 'arm', name: 'อาร์ม', apps: ['ceres'], group: 'messengers', gender: 'male' },
+  { slug: 'man', name: 'แมน', apps: ['ceres'], group: 'messengers', gender: 'male' },
+  { slug: 'boonson', name: 'บุญสอน', apps: ['ceres'], group: 'messengers', gender: 'male' },
+  { slug: 'kaew', name: 'แก้ว', apps: ['ceres'], group: 'messengers', gender: 'male' },
+  { slug: 'lungko', name: 'ลุงโก๊ะ', apps: ['ceres'], group: 'messengers', gender: 'male' },
+  { slug: 'wong', name: 'วง', apps: ['ceres'], group: 'messengers', gender: 'male' },
+  { slug: 'paeng', name: 'แป๋ง', apps: ['ceres'], group: 'messengers', gender: 'male' },
+  { slug: 'nun', name: 'นุ่น', apps: ['minerva', 'juno', 'ceres'], group: 'md', gender: 'female' }, // Noon — MD side, same access as Nee
+  { slug: 'pin', name: 'พิณ', apps: ['ceres'], group: 'others', gender: 'male' },
+  { slug: 'lekmaeban', name: 'เล็กแม่บ้าน', apps: ['ceres'], group: 'others', gender: 'female' }, // housekeeper — enters expenses like everyone
+  { slug: 'da', name: 'ด้า', apps: ['ceres'], group: 'messengers', gender: 'male' },
+  // Finance team (การเงิน) — owner-granted Minerva + Juno + Ceres (2026-07-05). Juno's route
+  // gate was widened from supervisor-only to requireApp('juno') so the juno grant admits them.
+  { slug: 'benz', name: 'Benz', apps: ['minerva', 'juno', 'ceres'], group: 'finance', gender: 'female' },
+  { slug: 'meow', name: 'Meow', apps: ['minerva', 'juno', 'ceres'], group: 'finance', gender: 'female' },
 ] as const;
 
 export const employeeEmail = (slug: string): string => `${slug}@prominent.local`;
@@ -160,20 +168,24 @@ async function syncStaff(): Promise<void> {
       existing && (await verifyPassword(pin, existing.passwordHash))
         ? existing.passwordHash
         : await hashPassword(pin);
-    // apps: a NON-EMPTY grant list belongs to Jupiter's admin UI and is never overwritten.
-    // An EMPTY list on an existing row can only be a pre-unification account (the column
-    // arrived defaulted to {}) — backfill the roster defaults ONCE, or the live sales
-    // team would deploy straight into a console lock-out. To fully revoke someone,
-    // remove their PIN from EMPLOYEE_PINS (no login at all), not their last grant.
-    const backfillApps = existing && existing.apps.length === 0 ? { apps: [...e.apps] } : {};
+    // apps: the roster declaration is the FLOOR of a person's grants — every app listed in
+    // EMPLOYEES is applied as a UNION with whatever is already on the row (ADDITIVE: a declared
+    // grant is always present, but any extra grant added out-of-band survives). This lets an
+    // owner-requested grant change (edit EMPLOYEES) actually propagate to existing rows, while
+    // never removing a grant on deploy — so no one is ever locked out. To REVOKE, remove the
+    // app from EMPLOYEES here (it stops being re-added) or pull the PIN to kill the login entirely.
+    const mergedApps = existing
+      ? Array.from(new Set([...existing.apps, ...e.apps]))
+      : [...e.apps];
+    const appsGrew = existing !== null && mergedApps.length > existing.apps.length;
     await prisma.agent.upsert({
       where: { email },
-      update: { name: e.name, role: 'employee', passwordHash, ...backfillApps },
+      update: { name: e.name, role: 'employee', passwordHash, apps: mergedApps },
       create: { email, name: e.name, role: 'employee', passwordHash, apps: [...e.apps] },
     });
-    if (existing && existing.apps.length === 0) {
+    if (appsGrew) {
       // eslint-disable-next-line no-console
-      console.log(`[staff] backfilled default app grants for "${e.slug}" (${e.apps.join(', ')})`);
+      console.log(`[staff] applied declared app grants for "${e.slug}" → ${mergedApps.join(', ')}`);
     }
   }
 

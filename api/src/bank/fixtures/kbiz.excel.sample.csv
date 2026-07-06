@@ -1,0 +1,24 @@
+รายการเดินบัญชีเงินฝากออมทรัพย์ (มีรายละเอียด),,,,,,,,,,,,
+K-DEPOSIT STATEMENT OF SAVING ACCOUNT (WITH DETAIL),,,,,,,,,,,,
+,Ref. No. DD.048 : N26070308150301530998O/2569,Page 1/1,,,99,,,,,,,
+,Account,"SAMPLE CO.,LTD.
+99/9 ถ.ตัวอย่าง แขวงตัวอย่าง เขตตัวอย่าง กรุงเทพฯ 10000",,,,,Reference Code,,,,2.60703E+19,
+,,,,,,,Account Number,,,,000-0-00000-0,
+,,,,,,,Period,,,,1/7/2026 - 2/7/2026,
+,,,,,,,Owner Branch,,,,Sample Main Branch,
+,,,,,,,ENDING BALANCE,,,,,"100,000.00"
+,,,,,,,TOTAL WITHDRAWAL,,2,,ITEMS,"17,016.83"
+,,,,,,,TOTAL DEPOSIT,,7,,ITEMS,"25,000.00"
+,Date,"Time/
+Eff.Date",Descriptions,Withdrawal,,Deposit,,"Outstanding
+Balance",,Channel,,Details
+,1/7/2026,,Beginning Balance,,,,,"92,016.83",,,,
+,1/7/2026,2:24,Transfer Deposit,,,"2,425.00",,"94,441.83",,K BIZ,,From X5610 SAMPLE SUSTAINABLE CO.++
+,1/7/2026,9:13,Transfer Deposit,,,"2,627.00",,"97,068.83",,Internet/Mobile BBL,,From BBL X0824 SOMSAK TESTNAME MR++
+,1/7/2026,10:56,Transfer Deposit,,,"1,593.00",,"98,661.83",,K PLUS,,From X7375 MS. SAMPLE PAYER++
+,1/7/2026,11:18,Fee,16.83,,,,"98,645.00",,Automatic Transfer,,Cheque Collection Fee BBL 0426 Cheque No. 01590926
+,2/7/2026,17:28,Cheque Deposit,,,"1,165.00",,"99,810.00",,Automatic Transfer,,KBANK 0721 Cheque No. 26488913
+,2/7/2026,3:07,Automatic Deposit,,,"16,404.24",,"116,214.24",,Automatic Transfer,,From SMART SCB X9447 SAMPLE HOSPITAL FOUNDATION++
+,1/7/2026,23:14,Payment Received: Thai QR Payment,,,"32,438.60",,"148,652.84",,EDC/K SHOP/MYQR,,From KB000000000000 SAMPLE
+,2/7/2026,23:14,Payment Received: Thai QR Payment,,,"56,349.00",,"205,001.84",,EDC/K SHOP/MYQR,,From KB000000000000 SAMPLE
+,2/7/2026,19:37,Transfer Withdrawal,"17,000.00",,,,"188,001.84",,K BIZ,,"To X9354 SAMPLE CO.,LT++"

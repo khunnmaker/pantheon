@@ -55,6 +55,14 @@ export const APPS: AppDef[] = [
     accent: 'text-amber-600',
     badge: (b) => b.ceres?.awaitingAction ?? null,
   },
+  {
+    key: 'mercury',
+    name: 'Mercury',
+    job: 'จัดซื้อ · สั่งของ',
+    url: env.VITE_MERCURY_URL,
+    accent: 'text-orange-600',
+    badge: (b) => b.mercury?.pending ?? null,
+  },
 ];
 
 // Mirrors api/src/auth/jwt.ts hasAppAccess: supervisor → everything; md → ceres only;
@@ -69,7 +77,7 @@ export function hasAppAccess(agent: Agent, app: AppName): boolean {
 // Most-used-first display order. The supervisor's day starts in finance (verify slips) then
 // the console, stock, expenses; other accounts see whichever of these they're granted, in the
 // same relative order. Any app missing here sorts last (defensive; all four are listed).
-const ORDER: AppKey[] = ['juno', 'minerva', 'vulcan', 'ceres'];
+const ORDER: AppKey[] = ['juno', 'minerva', 'vulcan', 'ceres', 'mercury'];
 
 // The tiles this account should see: GRANTED (hasAppAccess) AND has a configured URL, in
 // most-used order. Grant-gated so tiles match the person's badges exactly.

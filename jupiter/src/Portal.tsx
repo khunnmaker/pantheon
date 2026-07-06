@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Crown, LogOut, Loader2, ExternalLink } from 'lucide-react';
-import { clearSession, getBadges, type Agent, type Badges } from './lib/api';
+import { logout as logoutSuite, getBadges, type Agent, type Badges } from './lib/api';
 import { tilesFor, type AppDef } from './lib/apps';
 
 // The portal home: a tile grid, one tile per app this account is GRANTED (with a configured
@@ -25,7 +25,7 @@ export default function Portal({ agent, onLogout }: { agent: Agent; onLogout: ()
   }, []);
 
   function logout() {
-    clearSession();
+    void logoutSuite(); // clears the shared SSO cookie + local session (fire-and-forget)
     onLogout();
   }
 
@@ -35,7 +35,7 @@ export default function Portal({ agent, onLogout }: { agent: Agent; onLogout: ()
         <div className="max-w-3xl mx-auto px-4 h-14 flex items-center justify-between">
           <div className="flex items-center gap-2 text-violet-700">
             <Crown size={22} />
-            <span className="font-bold text-lg">Jupiter</span>
+            <span className="font-bold text-lg">The Pantheon</span>
             <span className="text-slate-400 text-sm hidden sm:inline">· พอร์ทัลทีมงาน</span>
           </div>
           <div className="flex items-center gap-3 text-sm">

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { LogOut, Loader2, AlertTriangle, Plus, Pencil, Trash2, CheckCircle2, Crown } from 'lucide-react';
-import { listExpenses, deleteExpense, clearSession, type Expense, type ExpenseStatus, baht } from './lib/api';
+import { listExpenses, deleteExpense, logout as logoutSuite, type Expense, type ExpenseStatus, baht } from './lib/api';
 import { useCeres } from './lib/bootstrapContext';
 
 // Portal-back link (Jupiter). URL from build-time env; hidden when unset, so it is completely
@@ -13,6 +13,7 @@ const STATUS_META: Record<ExpenseStatus, { label: string; cls: string }> = {
   approved: { label: 'อนุมัติแล้ว', cls: 'bg-emerald-100 text-emerald-700' },
   settled: { label: 'ปิดยอดแล้ว', cls: 'bg-slate-200 text-slate-500' },
   rejected: { label: 'ตีกลับ', cls: 'bg-rose-100 text-rose-700' },
+  void: { label: 'ยกเลิกแล้ว', cls: 'bg-slate-100 text-slate-400' },
 };
 
 function todayStr(): string {
@@ -57,7 +58,7 @@ export default function MessengerHome() {
     return () => clearTimeout(t);
   }, [successMsg]);
 
-  const total = rows.filter((r) => r.status !== 'rejected').reduce((s, r) => s + r.amountNum, 0);
+  const total = rows.filter((r) => r.status !== 'rejected' && r.status !== 'void').reduce((s, r) => s + r.amountNum, 0);
 
   async function handleDelete(id: string) {
     setDeleteBusy(true);
@@ -85,7 +86,7 @@ export default function MessengerHome() {
             )}
             <button
               onClick={() => {
-                clearSession();
+                void logoutSuite();
                 onLogout();
               }}
               className="flex items-center gap-1 text-sm text-slate-500 hover:text-rose-600"

@@ -1,23 +1,37 @@
 import { useState } from 'react';
-import { Crown, LogIn, Loader2, AlertTriangle, ShieldCheck, ChevronDown, ChevronRight, ArrowLeft, Users } from 'lucide-react';
+import { Crown, LogIn, Loader2, AlertTriangle, ShieldCheck, ArrowLeft } from 'lucide-react';
 import { login, setSession, type Agent } from './lib/api';
-import { SUPERVISOR, AGENTS, MD, MESSENGERS, type Person } from './lib/roster';
+import { ROLE_GROUPS, SUPERVISOR_EMAIL, type Person, type RoleGroup } from './lib/roster';
+import { memberAvatar, teamAvatar } from './lib/avatar';
 
 const PIN_LEN = 6;
 
 // The "หัวหน้า" (boss) marker + shield are the SUPERVISOR's alone — not "anyone with a
 // password". Nee (MD) also logs in with a password now, so key the tag on identity, not cred.
-const isSupervisor = (p: Person) => p.email === SUPERVISOR.email;
+const isSupervisor = (p: Person) => p.email === SUPERVISOR_EMAIL;
 
-// Suite login standard: a card list of people. No credential box until a name is tapped;
-// then Dr. M types a password, everyone else a masked auto-submit 6-digit PIN. With ~18
-// accounts the 13 messengers collapse under "ทีมแมสเซนเจอร์"; supervisor/agents/MD stay top-level.
+// Suite login standard: no credential box until a name is tapped; then Dr. M & Nee (MD) type a
+// password, everyone else a masked auto-submit 6-digit PIN. The picker is a 3-level DRILL-DOWN:
+//   L1 departments (the 6 ROLE_GROUPS) → tap one hides its siblings and shows
+//   L2 that group's name cards → tap one hides its siblings and shows
+//   L3 the person + credential input.
+// Each deeper level has a back button that pops exactly ONE level (clears the deeper selection
+// first). State is minimal: selectedGroupId + selectedEmail, both nullable.
+//
+// VISUAL: a flat Windows-Phone / Metro-style TILE GRID. Solid-color squared tiles, bold white
+// text, tight uniform gaps, no shadows/gradients. Department accent color lives on each group in
+// roster.ts (RoleGroup.color, a Tailwind bg-* class) and threads down to the L2/L3 banners.
 export default function Login({ onLogin }: { onLogin: (agent: Agent) => void }) {
-  const [selected, setSelected] = useState<Person | null>(null);
+  const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
+  const [selectedEmail, setSelectedEmail] = useState<string | null>(null);
   const [secret, setSecret] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const [showMessengers, setShowMessengers] = useState(false);
+
+  // Derive the current group/person from the two ids — no duplicated object state to drift.
+  const group = selectedGroupId ? ROLE_GROUPS.find((g) => g.id === selectedGroupId) ?? null : null;
+  const selected =
+    group && selectedEmail ? group.members.find((p) => p.email === selectedEmail) ?? null : null;
 
   async function submit(person: Person, value: string) {
     if (!value || busy) return;
@@ -36,13 +50,24 @@ export default function Login({ onLogin }: { onLogin: (agent: Agent) => void }) 
     }
   }
 
-  function pick(p: Person) {
-    setSelected(p);
+  // L1 → L2: drill into a department (hides the other departments).
+  function pickGroup(g: RoleGroup) {
+    setSelectedGroupId(g.id);
+    setSelectedEmail(null);
     setSecret('');
     setError('');
   }
+  // L2 → L3: drill into a person (hides the other names).
+  function pickPerson(p: Person) {
+    if (p.comingSoon || !p.email) return; // disabled card — never selectable/submittable.
+    setSelectedEmail(p.email);
+    setSecret('');
+    setError('');
+  }
+  // Back pops exactly one level, clearing the deeper selection first, and resets typed secret/error.
   function back() {
-    setSelected(null);
+    if (selectedEmail) setSelectedEmail(null);
+    else setSelectedGroupId(null);
     setSecret('');
     setError('');
   }
@@ -56,30 +81,45 @@ export default function Login({ onLogin }: { onLogin: (agent: Agent) => void }) 
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-violet-50 to-slate-100 flex items-center justify-center p-6 font-sans text-slate-800">
-      <div className="bg-white rounded-2xl shadow-sm border border-violet-100 max-w-sm w-full p-6">
+    <div className="min-h-screen bg-slate-100 flex items-center justify-center p-6 font-sans text-slate-800">
+      <div className="bg-white rounded-md shadow-sm border border-slate-200 max-w-md w-full p-5">
         <div className="flex items-center gap-2 text-violet-700 mb-1">
           <Crown size={24} />
-          <h1 className="text-xl font-bold">Jupiter</h1>
+          <h1 className="text-xl font-bold tracking-tight">The Pantheon</h1>
         </div>
         <p className="text-sm text-slate-500 mb-5">พอร์ทัลทีมงาน · เลือกชื่อเพื่อเข้าสู่ระบบ</p>
 
-        {!selected ? (
-          <PersonList onPick={pick} showMessengers={showMessengers} setShowMessengers={setShowMessengers} />
-        ) : (
+        {!group ? (
+          // ── Level 1: departments (root, no back button) ──
+          <DepartmentGrid onPick={pickGroup} />
+        ) : !selected ? (
+          // ── Level 2: names within the selected department ──
           <div>
-            <button onClick={back} className="flex items-center gap-1 text-xs text-slate-400 hover:text-violet-600 mb-3">
-              <ArrowLeft size={13} /> เปลี่ยนชื่อ
-            </button>
-            <div className="flex items-center gap-2 mb-4">
-              <div className={`w-9 h-9 rounded-full text-white flex items-center justify-center text-sm font-bold ${isSupervisor(selected) ? 'bg-violet-600' : 'bg-slate-500'}`}>
-                {selected.label.charAt(0)}
-              </div>
-              <div>
-                <div className="font-semibold text-sm">{selected.label}</div>
-                {isSupervisor(selected) && (
-                  <div className="flex items-center gap-1 text-[11px] text-violet-600"><ShieldCheck size={11} /> หัวหน้า</div>
-                )}
+            <BackButton onClick={back} />
+            <div className={`${group.color} text-white rounded-md px-3 py-2 mb-3`}>
+              <span className="text-sm font-bold">{group.label}</span>
+            </div>
+            <NameGrid group={group} onPick={pickPerson} />
+          </div>
+        ) : (
+          // ── Level 3: the selected person + their credential input ──
+          <div>
+            <BackButton onClick={back} />
+            <div className={`${group.color} text-white rounded-md px-4 py-3 mb-4`}>
+              <div className="flex items-center gap-2">
+                <div className="w-12 h-12 rounded-md bg-white/25 overflow-hidden flex items-center justify-center shrink-0">
+                  <img
+                    src={memberAvatar(selected.email || selected.label, selected.gender)}
+                    alt=""
+                    className="w-full h-full object-cover"
+                  />
+                </div>
+                <div>
+                  <div className="font-bold text-base leading-tight">{selected.label}</div>
+                  {isSupervisor(selected) && (
+                    <div className="flex items-center gap-1 text-[11px] text-white/90"><ShieldCheck size={11} /> หัวหน้า</div>
+                  )}
+                </div>
               </div>
             </div>
 
@@ -92,12 +132,12 @@ export default function Login({ onLogin }: { onLogin: (agent: Agent) => void }) 
                   value={secret}
                   onChange={(e) => setSecret(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && submit(selected, secret)}
-                  className="w-full px-3 py-2 mb-3 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-violet-400"
+                  className="w-full px-3 py-2 mb-3 rounded-md border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-violet-400"
                 />
                 <button
                   onClick={() => submit(selected, secret)}
                   disabled={busy || !secret}
-                  className="w-full px-3 py-2 rounded-xl bg-violet-600 hover:bg-violet-700 text-white text-sm font-semibold flex items-center justify-center gap-1 disabled:opacity-50"
+                  className="w-full px-3 py-2.5 rounded-md bg-violet-600 hover:bg-violet-700 text-white text-sm font-semibold flex items-center justify-center gap-1 disabled:opacity-50"
                 >
                   {busy ? <Loader2 size={16} className="animate-spin" /> : <LogIn size={16} />} เข้าสู่ระบบ
                 </button>
@@ -113,7 +153,7 @@ export default function Login({ onLogin }: { onLogin: (agent: Agent) => void }) 
                   value={secret}
                   onChange={(e) => onPinChange(e.target.value)}
                   placeholder="••••••"
-                  className="w-full px-3 py-2 mb-1 rounded-xl border border-slate-300 text-center tracking-[0.5em] text-lg focus:outline-none focus:ring-2 focus:ring-violet-400"
+                  className="w-full px-3 py-2 mb-1 rounded-md border border-slate-300 text-center tracking-[0.5em] text-lg focus:outline-none focus:ring-2 focus:ring-violet-400"
                 />
                 <div className="h-5 flex items-center justify-center">
                   {busy && <Loader2 size={16} className="animate-spin text-violet-500" />}
@@ -133,49 +173,85 @@ export default function Login({ onLogin }: { onLogin: (agent: Agent) => void }) 
   );
 }
 
-function PersonCard({ p, onPick }: { p: Person; onPick: (p: Person) => void }) {
+// Finger-sized, obviously-tappable back button, placed consistently at the card's top-left.
+// Flat to match the Metro look — a simple "← กลับ" with no rounded pill.
+function BackButton({ onClick }: { onClick: () => void }) {
   return (
     <button
-      onClick={() => onPick(p)}
-      className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl border border-slate-200 hover:border-violet-300 hover:bg-violet-50 text-left"
+      onClick={onClick}
+      className="flex items-center gap-1 px-2 py-2 -ml-2 mb-3 rounded-md text-sm font-medium text-slate-500 hover:text-violet-600 hover:bg-slate-100"
     >
-      <div className={`w-8 h-8 rounded-full text-white flex items-center justify-center text-xs font-bold shrink-0 ${isSupervisor(p) ? 'bg-violet-600' : 'bg-slate-400'}`}>
-        {p.label.charAt(0)}
-      </div>
-      <span className="text-sm font-medium flex-1">{p.label}</span>
-      {isSupervisor(p) && <ShieldCheck size={14} className="text-violet-500" />}
-      <ChevronRight size={15} className="text-slate-300" />
+      <ArrowLeft size={16} /> กลับ
     </button>
   );
 }
 
-function PersonList({
-  onPick, showMessengers, setShowMessengers,
-}: {
-  onPick: (p: Person) => void;
-  showMessengers: boolean;
-  setShowMessengers: (v: boolean) => void;
-}) {
-  return (
-    <div className="space-y-2">
-      <PersonCard p={SUPERVISOR} onPick={onPick} />
-      {AGENTS.map((p) => <PersonCard key={p.email} p={p} onPick={onPick} />)}
-      <PersonCard p={MD} onPick={onPick} />
-
-      <button
-        onClick={() => setShowMessengers(!showMessengers)}
-        className="w-full flex items-center gap-2 px-3 py-2.5 rounded-xl border border-slate-200 hover:bg-slate-50 text-left text-sm font-medium text-slate-600"
+// Level 2 tile for one person. Neutral flat slate tiles with the person's initial avatar + name,
+// bottom-aligned Metro style. Dr. P stays a disabled/greyed tile ("เร็วๆ นี้", not tappable).
+function PersonTile({ p, onPick }: { p: Person; onPick: (p: Person) => void }) {
+  if (p.comingSoon) {
+    // Disabled "coming soon" tile — greyed, not tappable (no account provisioned yet).
+    return (
+      <div
+        aria-disabled="true"
+        className="aspect-square flex flex-col items-center justify-center gap-1.5 p-2 rounded-md bg-slate-100 opacity-70 cursor-not-allowed select-none"
       >
-        <Users size={15} className="text-slate-400" />
-        ทีมแมสเซนเจอร์
-        <span className="text-xs text-slate-400">({MESSENGERS.length})</span>
-        <span className="ml-auto">{showMessengers ? <ChevronDown size={16} /> : <ChevronRight size={16} />}</span>
-      </button>
-      {showMessengers && (
-        <div className="space-y-2 pl-2 border-l-2 border-violet-100">
-          {MESSENGERS.map((p) => <PersonCard key={p.email} p={p} onPick={onPick} />)}
+        <img
+          src={memberAvatar(p.label, p.gender)}
+          alt=""
+          className="w-20 h-20 rounded-full object-cover bg-slate-200 opacity-60 grayscale"
+        />
+        <div className="text-center">
+          <div className="text-sm font-bold text-slate-400 leading-tight">{p.label}</div>
+          <div className="text-[11px] text-slate-400">เร็วๆ นี้</div>
         </div>
-      )}
+      </div>
+    );
+  }
+  return (
+    <button
+      onClick={() => onPick(p)}
+      className="relative aspect-square flex flex-col items-center justify-center gap-2 p-2 rounded-md bg-slate-700 hover:bg-slate-800 text-white transition-colors"
+    >
+      {isSupervisor(p) && <ShieldCheck size={16} className="absolute top-2 right-2 text-white/90" />}
+      <img src={memberAvatar(p.email, p.gender)} alt="" className="w-24 h-24 rounded-full object-cover bg-white/15" />
+      <span className="text-sm font-bold leading-tight text-center">{p.label}</span>
+    </button>
+  );
+}
+
+// Level 2: the names inside one department, as a 2-col tile grid. An empty department (สโตร์)
+// shows a subtle empty state instead of tiles; the back button (caller-rendered) still returns to L1.
+function NameGrid({ group, onPick }: { group: RoleGroup; onPick: (p: Person) => void }) {
+  if (group.members.length === 0) {
+    return <div className="px-1 py-6 text-center text-xs text-slate-400">ยังไม่มีรายชื่อ</div>;
+  }
+  return (
+    <div className="grid grid-cols-2 gap-2">
+      {group.members.map((p) => (
+        <PersonTile key={p.email || p.label} p={p} onPick={onPick} />
+      ))}
+    </div>
+  );
+}
+
+// Level 1: the departments (root) as a 2-col grid of solid-color square Metro tiles. Each tile
+// shows the Thai label (bold, white, bottom-left) + the member count (small, top-right corner).
+// Tapping one drills into that group's names.
+function DepartmentGrid({ onPick }: { onPick: (g: RoleGroup) => void }) {
+  return (
+    <div className="grid grid-cols-2 gap-2">
+      {ROLE_GROUPS.map((g) => (
+        <button
+          key={g.id}
+          onClick={() => onPick(g)}
+          className={`${g.color} relative aspect-square flex flex-col items-center justify-center gap-2 p-2 rounded-md text-white hover:brightness-110 transition`}
+        >
+          <span className="absolute top-2 right-2.5 text-xs font-semibold text-white/80">{g.members.length}</span>
+          <img src={teamAvatar(g.id)} alt="" className="w-24 h-24 rounded-full bg-white/90 object-cover" />
+          <span className="text-base font-bold leading-tight text-center">{g.label}</span>
+        </button>
+      ))}
     </div>
   );
 }

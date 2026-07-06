@@ -23,13 +23,29 @@ import { BankParseError, type ParsedBankFile, type ParsedBankRow } from './types
 
 const HEADER_MARKER = 'TRANSACTION REPORT';
 
-// DD-MM-YYYY HH:MM:SS, Thai local time. Built with an explicit +07:00 offset so the
-// resulting Date is correct regardless of the server's TZ.
+// DD-MM-YYYY HH:MM:SS, Thai local time — the pristine K SHOP export format. Also tolerates
+// a file that was accidentally opened + re-saved in Excel, which reformats the datetime to
+// the machine locale and strips leading zeros (and commonly drops seconds in the default
+// short datetime format): 1-2 digit day/month/hour, "-" or "/" date separator, 2-or-4-digit
+// year, and optional ":SS" seconds (default "00" when absent). Always interpreted
+// DAY-FIRST (the bank + Thai locale are day-first). A 4-digit year >=2500 is treated as
+// Buddhist era, mirroring normalizeSlipDate's convention in finance/normalize.ts. Built
+// with an explicit +07:00 offset so the resulting Date is correct regardless of the
+// server's TZ.
 function parseKshopDateTime(s: string): Date | null {
-  const m = s.trim().match(/^(\d{2})-(\d{2})-(\d{4})\s+(\d{2}):(\d{2}):(\d{2})$/);
+  const m = s.trim().match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{2}|\d{4})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
   if (!m) return null;
-  const [, dd, mm, yyyy, hh, min, ss] = m;
-  const d = new Date(`${yyyy}-${mm}-${dd}T${hh}:${min}:${ss}+07:00`);
+  const [, ddRaw, mmRaw, yearRaw, hhRaw, min, ssRaw] = m;
+  const dd = Number(ddRaw);
+  const mm = Number(mmRaw);
+  if (dd < 1 || dd > 31 || mm < 1 || mm > 12) return null;
+
+  let yyyy = yearRaw.length <= 2 ? 2000 + Number(yearRaw) : Number(yearRaw);
+  if (yyyy >= 2500) yyyy -= 543; // Buddhist -> Gregorian
+
+  const hh = hhRaw.padStart(2, '0');
+  const ss = ssRaw ?? '00';
+  const d = new Date(`${yyyy}-${mmRaw.padStart(2, '0')}-${ddRaw.padStart(2, '0')}T${hh}:${min}:${ss}+07:00`);
   return Number.isNaN(d.getTime()) ? null : d;
 }
 

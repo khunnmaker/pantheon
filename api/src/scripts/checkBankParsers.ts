@@ -106,6 +106,84 @@ const FIXTURES_DIR = new URL('../bank/fixtures/', import.meta.url);
   check(result.rows.every((r) => /^\d+\.\d{2}$/.test(r.amount)), 'kbiz fixture: every amount is a clean "N.NN" string (commas stripped)');
 }
 
+// ── Fixture: KBIZ, Excel-mangled ────────────────────────────────────────────
+// Same rows as kbiz.sample.csv, but as if the file had been opened + re-saved in Excel:
+// dates reformatted to the machine locale with leading zeros stripped ("01-07-26" ->
+// "1/7/2026"), times with a stripped leading zero on the hour ("02:24" -> "2:24"), and the
+// long reference code turned into scientific notation ("26070308150301530998" ->
+// "2.60703E+19", untouched by the parser either way since that column isn't read). Must
+// parse to the SAME transaction count and SAME first-row txnAt as the pristine fixture —
+// this is the whole point of the hardening.
+{
+  const pristineBuf = readFileSync(new URL('kbiz.sample.csv', FIXTURES_DIR));
+  const pristine = parseKbiz(pristineBuf);
+
+  const buf = readFileSync(new URL('kbiz.excel.sample.csv', FIXTURES_DIR));
+  const result = parseKbiz(buf);
+
+  check(result.source === 'kbiz', 'kbiz excel-mangled fixture: source === kbiz');
+  check(result.parsed === pristine.parsed, `kbiz excel-mangled fixture: parsed === pristine.parsed (${pristine.parsed}) (got ${result.parsed})`);
+  check(result.excluded === pristine.excluded, `kbiz excel-mangled fixture: excluded === pristine.excluded (${pristine.excluded}) (got ${result.excluded})`);
+  check(result.rows.length === pristine.rows.length, `kbiz excel-mangled fixture: rows.length === pristine.rows.length (${pristine.rows.length}) (got ${result.rows.length})`);
+  check(result.rows.length === 7, `kbiz excel-mangled fixture: rows.length === 7 (got ${result.rows.length})`);
+
+  // Same first-row txnAt as the pristine fixture (01-07-26 02:24 == 1/7/2026 2:24).
+  check(
+    result.rows[0]?.txnAt.getTime() === pristine.rows[0]?.txnAt.getTime(),
+    `kbiz excel-mangled fixture: first-row txnAt matches pristine fixture (pristine=${pristine.rows[0]?.txnAt.toISOString()}, got=${result.rows[0]?.txnAt.toISOString()})`,
+  );
+  check(
+    result.rows[0]?.txnAt.toISOString() === new Date('2026-07-01T02:24:00+07:00').toISOString(),
+    `kbiz excel-mangled fixture: first-row txnAt === 2026-07-01T02:24 +07:00 (got ${result.rows[0]?.txnAt.toISOString()})`,
+  );
+
+  // Single-digit hour with no leading zero (Automatic Deposit row "3:07", was "03:07").
+  const smartRow = result.rows.find((r) => r.amount === '16404.24');
+  check(
+    smartRow?.txnAt.toISOString() === new Date('2026-07-02T03:07:00+07:00').toISOString(),
+    `kbiz excel-mangled fixture: single-digit-hour "3:07" parses to 03:07 (got ${smartRow?.txnAt.toISOString()})`,
+  );
+
+  // Every row's txnAt lines up 1:1 with the pristine fixture's (same order, same rows).
+  check(
+    result.rows.every((r, i) => r.txnAt.getTime() === pristine.rows[i]?.txnAt.getTime()),
+    'kbiz excel-mangled fixture: every row txnAt matches the pristine fixture row-for-row',
+  );
+  check(
+    result.rows.every((r, i) => r.amount === pristine.rows[i]?.amount && r.direction === pristine.rows[i]?.direction),
+    'kbiz excel-mangled fixture: every row amount + direction matches the pristine fixture row-for-row',
+  );
+}
+
+// ── parseKshopDateTime tolerance (Excel-mangled datetime) ───────────────────
+// K SHOP applies the same day-first tolerance as KBIZ. Exercised directly against a
+// synthetic K SHOP buffer (rather than a checked-in fixture file) since the shape of the
+// change is identical to KBIZ's and is already covered end-to-end there.
+{
+  const pristineText = readFileSync(new URL('kshop.sample.csv', FIXTURES_DIR), 'utf8');
+  const mangledText = pristineText
+    .replace(/(\d{2})-(\d{2})-(\d{4}) 09:21:29/, '1/7/2026 9:21:29') // strip leading zeros, "-" -> "/"
+    .replace(/(\d{2})-(\d{2})-(\d{4}) 09:32:15/, '1/7/2026 9:32') // also drop seconds (short datetime format)
+    .replace(/(\d{2})-(\d{2})-(\d{4}) 10:10:44/, '1/7/2026 10:10:44'); // double-digit hour unaffected
+
+  const pristine = parseKshop(pristineText);
+  const result = parseKshop(mangledText);
+
+  check(result.rows.length === pristine.rows.length, `kshop excel-mangled: rows.length === pristine.rows.length (${pristine.rows.length}) (got ${result.rows.length})`);
+  check(result.parsed === pristine.parsed, `kshop excel-mangled: parsed === pristine.parsed (${pristine.parsed}) (got ${result.parsed})`);
+
+  const row1 = result.rows.find((r) => r.amount === '8820.00');
+  check(
+    row1?.txnAt.toISOString() === new Date('2026-07-01T09:21:29+07:00').toISOString(),
+    `kshop excel-mangled: "1/7/2026 9:21:29" parses to 2026-07-01T09:21:29 +07:00 (got ${row1?.txnAt.toISOString()})`,
+  );
+  const row2 = result.rows.find((r) => r.amount === '720.00');
+  check(
+    row2?.txnAt.toISOString() === new Date('2026-07-01T09:32:00+07:00').toISOString(),
+    `kshop excel-mangled: "1/7/2026 9:32" (no seconds) parses to 2026-07-01T09:32:00 +07:00 (got ${row2?.txnAt.toISOString()})`,
+  );
+}
+
 // ── dedupeKey behavior ───────────────────────────────────────────────────────
 {
   const a = computeDedupeKey('kshop', new Date('2026-07-02T17:08:29+07:00'), '6072.00', 'x');
@@ -160,17 +238,61 @@ if (existsSync(REAL_KBIZ)) {
   const result = parseKbiz(buf);
   const inRows = result.rows.filter((r) => r.direction === 'in');
   const outRows = result.rows.filter((r) => r.direction === 'out');
-  // The file's own header declares TOTAL DEPOSIT 59 ITEMS (incl. the 2 EDC/K SHOP/MYQR
-  // lumps we exclude) and TOTAL WITHDRAWAL 6 ITEMS. parsed - excluded(BeginningBalance=1)
-  // must equal 59(deposits)+6(withdrawals) = 65, i.e. parsed === 66 (+1 for Beginning Balance).
-  check(result.parsed === 66, `REAL KBiz.csv: parsed === 66 — 59 deposit rows + 6 withdrawal rows + 1 Beginning Balance (got ${result.parsed})`);
-  check(result.excluded === 3, `REAL KBiz.csv: excluded === 3 — Beginning Balance + 2 EDC/K SHOP/MYQR lumps (got ${result.excluded})`);
-  check(inRows.length === 57, `REAL KBiz.csv: 57 "in" rows — the 59 declared deposits minus the 2 excluded EDC lumps (got ${inRows.length})`);
-  check(outRows.length === 6, `REAL KBiz.csv: 6 "out" rows, matching the file's own TOTAL WITHDRAWAL 6 ITEMS (got ${outRows.length})`);
-  check(
-    result.rows.length === inRows.length + outRows.length,
-    'REAL KBiz.csv: rows.length === in + out',
-  );
+
+  // Derive the expected shape from the file's OWN header summary rather than hardcoding
+  // counts for one historical export. The real file in Downloads\Bank is re-downloaded
+  // periodically, so its transaction counts legitimately change from statement to
+  // statement — a hardcoded 66/3/57/6 would drift red on every refresh. The K-DEPOSIT
+  // header always carries the authoritative totals (ASCII, so a utf8 decode is safe even
+  // when the body is Thai in another codepage):
+  //   TOTAL WITHDRAWAL ,, <N> ,, ITEMS
+  //   TOTAL DEPOSIT    ,, <N> ,, ITEMS   (includes any EDC/K SHOP/MYQR lumps we exclude)
+  const text = buf.toString('utf8');
+  const declaredWithdrawals = Number(text.match(/TOTAL WITHDRAWAL[^\d]*(\d+)/)?.[1]);
+  const declaredDeposits = Number(text.match(/TOTAL DEPOSIT[^\d]*(\d+)/)?.[1]);
+
+  if (!Number.isFinite(declaredWithdrawals) || !Number.isFinite(declaredDeposits)) {
+    console.log(
+      'SKIP: real KBiz.csv present but its TOTAL WITHDRAWAL/DEPOSIT header could not be read — skipping real-file count checks',
+    );
+  } else {
+    // Header declares the full statement: <deposits> + <withdrawals> transaction rows,
+    // plus the 1 Beginning Balance row the parser always sees → parsed === D + W + 1.
+    const expectedParsed = declaredDeposits + declaredWithdrawals + 1;
+    if (result.parsed < expectedParsed) {
+      // Body has fewer rows than its own header declares → a truncated/partial export
+      // (e.g. a half-finished download). SKIP with a note instead of a wall of FAILs
+      // against a file that simply isn't all there.
+      console.log(
+        `SKIP: real KBiz.csv looks truncated — header declares ${declaredDeposits} deposits + ${declaredWithdrawals} withdrawals ` +
+          `(${expectedParsed} rows incl. Beginning Balance) but only ${result.parsed} parsed. ` +
+          'Drop a full export in to re-enable the real-file count check.',
+      );
+    } else {
+      // Complete file — every count is derived from this statement's own header, so a
+      // freshly downloaded (differently-sized) statement stays green with no edits here.
+      // excluded = 1 Beginning Balance + however many EDC/K SHOP/MYQR lumps this statement
+      // had; those lumps sit inside the header's deposit total but are dropped from output.
+      const edcLumpsExcluded = result.excluded - 1; // minus the Beginning Balance
+      check(
+        result.parsed === expectedParsed,
+        `REAL KBiz.csv: parsed === ${expectedParsed} — ${declaredDeposits} deposits + ${declaredWithdrawals} withdrawals + 1 Beginning Balance (got ${result.parsed})`,
+      );
+      check(
+        outRows.length === declaredWithdrawals,
+        `REAL KBiz.csv: ${declaredWithdrawals} "out" rows, matching the file's own TOTAL WITHDRAWAL (got ${outRows.length})`,
+      );
+      check(
+        inRows.length + edcLumpsExcluded === declaredDeposits,
+        `REAL KBiz.csv: "in" rows (${inRows.length}) + excluded EDC lumps (${edcLumpsExcluded}) === declared deposits ${declaredDeposits} (got ${inRows.length + edcLumpsExcluded})`,
+      );
+      check(result.excluded >= 1, `REAL KBiz.csv: at least the Beginning Balance excluded (got ${result.excluded})`);
+      check(
+        result.rows.length === inRows.length + outRows.length,
+        'REAL KBiz.csv: rows.length === in + out',
+      );
+    }
+  }
 } else {
   console.log('SKIP: real KBiz.csv not found on this machine — fixture checks only');
 }

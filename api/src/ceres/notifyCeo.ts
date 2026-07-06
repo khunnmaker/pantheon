@@ -9,10 +9,12 @@ export async function notifyCeoEscalation(
   req: { payee: string; amount: string; entity: string; requestedByName: string },
   reasoning: string,
 ): Promise<void> {
-  if (!env.CERES_CEO_LINE_USER_ID) return;
+  // Suite-wide CEO_LINE_USER_ID, with the old Ceres-scoped name as a deprecated fallback.
+  const ceoLineUserId = env.CEO_LINE_USER_ID || env.CERES_CEO_LINE_USER_ID;
+  if (!ceoLineUserId) return;
   try {
     const text = `⚠️ Ceres รออนุมัติ: ${req.payee} ฿${req.amount} (${req.entity})\nโดย ${req.requestedByName}\n${reasoning}\nเปิด Ceres เพื่ออนุมัติ/ปฏิเสธ`;
-    await sendLineText(env.CERES_CEO_LINE_USER_ID, text);
+    await sendLineText(ceoLineUserId, text);
   } catch {
     // Notification is best-effort only — never let a LINE failure affect the request flow.
   }

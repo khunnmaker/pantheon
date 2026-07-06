@@ -4,8 +4,19 @@ import { prisma } from '../db/prisma.js';
 import { requireAuth, requireRole } from '../auth/middleware.js';
 import { searchProducts } from '../catalog/match.js';
 import { toStockRow } from '../stock/helpers.js';
+import { setStock } from '../stock/adjust.js';
 import { decodeExpressBytes, parseExpressReport, type ParsedStockRow } from '../stock/parseExpressReport.js';
-import { buildAliases, groupOf } from '../stock/aliases.js';
+import { buildGroupAliases, groupOf } from '../stock/aliases.js';
+import { CATALOG_GROUPS, GROUP_KEYS, SUBGROUPS, SUBGROUP_CODES, autoAssignGroup, autoAssignSubgroup } from '../stock/catalogGroups.js';
+import { NAME_PROPOSALS } from '../catalog/nameProposals.js';
+
+// Merge a product's name tokens (alnum + Thai, length >= 2) into its keyword set, deduped +
+// capped at 30. Shared by the rename route and the name-proposal review flow so an approved
+// name becomes searchable exactly like a manual rename.
+function mergeNameKeywords(existing: string[], nameEn: string, nameTh: string): string[] {
+  const toks = `${nameEn} ${nameTh}`.toLowerCase().split(/[^a-z0-9฀-๿]+/i).filter((t) => t.length >= 2);
+  return [...new Set([...existing, ...toks])].slice(0, 30);
+}
 
 // Attach the short alias (e.g. "TR34") to a set of rows in one query. Generic so any
 // {sku, alias?} shape (StockRow, etc.) can reuse it.
@@ -94,6 +105,7 @@ export async function stockRoutes(app: FastifyInstance) {
       if (filter === 'low') rows = rows.filter((r) => r.low);
       else if (filter === 'out') rows = rows.filter((r) => r.stock === 0);
       else if (filter === 'unknown') rows = rows.filter((r) => r.stock == null);
+      else if (filter === 'noname') rows = rows.filter((r) => !r.nameTh.trim());
       return { products: await withAliases(rows) };
     }
 
@@ -120,6 +132,12 @@ export async function stockRoutes(app: FastifyInstance) {
         orderBy: { sku: 'asc' },
         take,
       });
+    } else if (filter === 'noname') {
+      products = await prisma.product.findMany({
+        where: { status: 'active', nameTh: '' },
+        orderBy: { sku: 'asc' },
+        take,
+      });
     } else {
       products = await prisma.product.findMany({
         where: { status: 'active' },
@@ -133,11 +151,11 @@ export async function stockRoutes(app: FastifyInstance) {
 
   // POST /api/stock/adjust { sku, toQty, reason } — manual correction between imports.
   // Writes Product.stock (+ stockAt = now) and logs a StockAdjustment. toQty=null clears
-  // the stock to unknown. Never creates a catalog row — unknown SKU is rejected.
+  // the stock to unknown. Never creates a catalog row — unknown SKU is rejected. Delegates to
+  // the shared setStock helper (api/src/stock/adjust.ts) — the SINGLE stock-write path that
+  // Mercury goods-receipt also calls, so the write + audit shape is identical everywhere.
   app.post('/api/stock/adjust', async (req, reply) => {
     const body = req.body as { sku?: string; toQty?: unknown; reason?: string };
-    const sku = String(body.sku ?? '').trim();
-    if (!sku || !SKU_RE.test(sku)) return reply.code(400).send({ error: 'bad_sku' });
 
     let toQty: number | null;
     if (body.toQty === null || body.toQty === undefined || body.toQty === '') {
@@ -147,24 +165,20 @@ export async function stockRoutes(app: FastifyInstance) {
       if (!Number.isInteger(n) || n < 0) return reply.code(400).send({ error: 'bad_qty' });
       toQty = n;
     }
-    const reason = String(body.reason ?? '').trim();
 
-    const product = await prisma.product.findUnique({ where: { sku } });
-    if (!product) return reply.code(404).send({ error: 'unknown_sku' });
-    if (product.stock === toQty) {
-      return { ok: true, product: toStockRow(product), unchanged: true };
+    const result = await setStock({
+      sku: String(body.sku ?? ''),
+      toQty,
+      reason: String(body.reason ?? '').trim(),
+      agentId: req.agent?.id,
+    });
+    if (!result.ok) {
+      const code = result.error === 'unknown_sku' ? 404 : 400;
+      return reply.code(code).send({ error: result.error });
     }
-
-    const [updated] = await prisma.$transaction([
-      prisma.product.update({
-        where: { sku },
-        data: { stock: toQty, stockAt: new Date() },
-      }),
-      prisma.stockAdjustment.create({
-        data: { sku, fromQty: product.stock, toQty, reason, byAgentId: req.agent?.id },
-      }),
-    ]);
-    return { ok: true, product: toStockRow(updated) };
+    return result.unchanged
+      ? { ok: true, product: result.product, unchanged: true }
+      : { ok: true, product: result.product };
   });
 
   // POST /api/stock/reorder-point { sku, reorderPoint } — set/clear the low-stock
@@ -187,6 +201,21 @@ export async function stockRoutes(app: FastifyInstance) {
     const product = await prisma.product.findUnique({ where: { sku } });
     if (!product) return reply.code(404).send({ error: 'unknown_sku' });
     const updated = await prisma.product.update({ where: { sku }, data: { reorderPoint: rp } });
+    return { ok: true, product: toStockRow(updated) };
+  });
+
+  // POST /api/stock/catalog/name { sku, nameEn, nameTh } — rename a product. Merges the new
+  // name's tokens into keywords so Minerva's search finds it by the new name.
+  app.post('/api/stock/catalog/name', async (req, reply) => {
+    const body = req.body as { sku?: string; nameEn?: string; nameTh?: string };
+    const sku = String(body.sku ?? '').trim();
+    if (!sku || !SKU_RE.test(sku)) return reply.code(400).send({ error: 'bad_sku' });
+    const nameEn = String(body.nameEn ?? '').trim();
+    const nameTh = String(body.nameTh ?? '').trim();
+    const product = await prisma.product.findUnique({ where: { sku } });
+    if (!product) return reply.code(404).send({ error: 'unknown_sku' });
+    const keywords = mergeNameKeywords(product.keywords, nameEn, nameTh);
+    const updated = await prisma.product.update({ where: { sku }, data: { nameEn, nameTh, keywords } });
     return { ok: true, product: toStockRow(updated) };
   });
 
@@ -379,40 +408,46 @@ export async function stockRoutes(app: FastifyInstance) {
     return { groups };
   });
 
-  // POST /api/stock/aliases/generate { regenerate? } — auto-assign grouped aliases.
-  // fill (default): keep existing rows + prefixes, only assign products with no alias.
-  // regenerate: wipe + rebuild all (overwrites manual edits).
+  // POST /api/stock/aliases/generate { regenerate? } — (re)build GROUP-BASED codes:
+  // alias = <2-letter group code> + running number (e.g. IM01, EN12). Only products that
+  // HAVE a catalogGroup get a code. fill (default): keep existing codes + append new/regrouped
+  // items. regenerate: renumber every group from 1 (overwrites manual edits).
   app.post('/api/stock/aliases/generate', async (req) => {
     const regenerate = (req.body as { regenerate?: boolean }).regenerate === true;
     const products = await prisma.product.findMany({
-      where: { status: 'active' },
-      select: { sku: true, nameEn: true, nameTh: true },
+      where: { status: 'active', catalogGroup: { not: null } },
+      select: { sku: true, catalogGroup: true, catalogSubgroup: true },
     });
-    const write = async (rows: { sku: string; alias: string; groupKey: string; prefix: string }[]) => {
-      const CHUNK = 50;
-      for (let i = 0; i < rows.length; i += CHUNK) {
-        await prisma.productAlias.createMany({
-          data: rows.slice(i, i + CHUNK).map((a) => ({ sku: a.sku, alias: a.alias, groupKey: a.groupKey, prefix: a.prefix })),
-          skipDuplicates: true,
-        });
-      }
-    };
+    const existing = await prisma.productAlias.findMany();
+    const keep = regenerate ? {} : Object.fromEntries(existing.map((e) => [e.sku, e.alias]));
+    const assignments = buildGroupAliases(products, { keep });
+    const keepSkus = new Set(assignments.map((a) => a.sku));
 
+    let written = 0;
     if (regenerate) {
       await prisma.productAlias.deleteMany({});
-      const assignments = buildAliases(products);
-      await write(assignments);
-      return { ok: true, mode: 'regenerate', groups: new Set(assignments.map((a) => a.groupKey)).size, aliased: assignments.length };
+      const CHUNK = 100;
+      for (let i = 0; i < assignments.length; i += CHUNK) {
+        await prisma.productAlias.createMany({ data: assignments.slice(i, i + CHUNK), skipDuplicates: true });
+      }
+      written = assignments.length;
+    } else {
+      // Drop codes for products that are no longer grouped, then write only the changed ones.
+      const stale = existing.filter((e) => !keepSkus.has(e.sku)).map((e) => e.sku);
+      if (stale.length) await prisma.productAlias.deleteMany({ where: { sku: { in: stale } } });
+      const exBySku = new Map(existing.map((e) => [e.sku, e.alias]));
+      for (const a of assignments) {
+        if (exBySku.get(a.sku) === a.alias) continue;
+        await prisma.productAlias.upsert({
+          where: { sku: a.sku },
+          update: { alias: a.alias, groupKey: a.groupKey, prefix: a.prefix },
+          create: a,
+        });
+        written++;
+      }
     }
-
-    const existing = await prisma.productAlias.findMany();
-    const existingSkus = new Set(existing.map((e) => e.sku));
-    const existingPrefixByGroup: Record<string, string> = {};
-    const keepAliases: Record<string, string> = {};
-    for (const e of existing) { existingPrefixByGroup[e.groupKey] = e.prefix; keepAliases[e.sku] = e.alias; }
-    const fresh = buildAliases(products, { existingPrefixByGroup, keepAliases }).filter((a) => !existingSkus.has(a.sku));
-    await write(fresh);
-    return { ok: true, mode: 'fill', groups: new Set(fresh.map((a) => a.groupKey)).size, aliased: fresh.length };
+    const ungrouped = await prisma.product.count({ where: { status: 'active', catalogGroup: null } });
+    return { ok: true, mode: regenerate ? 'regenerate' : 'fill', coded: assignments.length, written, ungrouped };
   });
 
   // POST /api/stock/aliases/group-prefix { group, prefix } — rename a family's prefix and
@@ -474,5 +509,323 @@ export async function stockRoutes(app: FastifyInstance) {
       create: { sku, alias: raw, groupKey: groupOf(sku), prefix },
     });
     return { ok: true, sku, alias: raw };
+  });
+
+  // ─── Catalog groups (merchandising taxonomy) ───────────────────────────
+  // GET /api/stock/groups — the fixed group vocabulary + how many products are in each,
+  // grouped by pillar, plus the unassigned count.
+  app.get('/api/stock/groups', async () => {
+    const counts = await prisma.product.groupBy({
+      by: ['catalogGroup'],
+      where: { status: 'active' },
+      _count: { _all: true },
+    });
+    const byKey = new Map(counts.map((c) => [c.catalogGroup ?? '', c._count._all]));
+    const total = counts.reduce((n, c) => n + c._count._all, 0);
+    const groups = CATALOG_GROUPS.map((g) => ({ ...g, count: byKey.get(g.key) ?? 0, subgroups: SUBGROUPS[g.key] ?? [] }));
+    return { groups, total, unassigned: byKey.get('') ?? 0 };
+  });
+
+  // GET /api/stock/groups/products?group=&filter=all|unassigned&q=&limit= — products for the
+  // review list, each with its current group + alias. group=<key> filters to that group.
+  app.get('/api/stock/groups/products', async (req) => {
+    const { group, filter, q, limit } = req.query as { group?: string; filter?: string; q?: string; limit?: string };
+    const take = Math.min(Math.max(Number(limit) || 300, 1), 1000);
+    const query = String(q ?? '').trim();
+
+    const where: Record<string, unknown> = { status: 'active' };
+    if (group) where.catalogGroup = group;
+    else if (filter === 'unassigned') where.catalogGroup = null;
+
+    let products;
+    if (query) {
+      const matches = await searchProducts(query, take);
+      const skus = matches.map((m) => m.sku);
+      products = skus.length
+        ? await prisma.product.findMany({ where: { ...where, sku: { in: skus } } })
+        : [];
+      const order = new Map(skus.map((s, i) => [s, i]));
+      products.sort((a, b) => (order.get(a.sku) ?? 0) - (order.get(b.sku) ?? 0));
+    } else {
+      products = await prisma.product.findMany({ where, orderBy: { sku: 'asc' }, take });
+    }
+
+    const aliases = products.length
+      ? await prisma.productAlias.findMany({ where: { sku: { in: products.map((p) => p.sku) } }, select: { sku: true, alias: true } })
+      : [];
+    const aliasBySku = new Map(aliases.map((a) => [a.sku, a.alias]));
+    return {
+      products: products.map((p) => ({
+        sku: p.sku, nameEn: p.nameEn, nameTh: p.nameTh, photoSku: p.photoSku,
+        catalogGroup: p.catalogGroup, catalogSubgroup: p.catalogSubgroup,
+        alias: aliasBySku.get(p.sku) ?? null,
+        stock: p.stock, reorderPoint: p.reorderPoint,
+      })),
+    };
+  });
+
+  // POST /api/stock/groups/auto-assign { onlyUnassigned? } — run the keyword/category rules.
+  // onlyUnassigned=true (default): fill GROUP for products with none, and fill SUBGROUP for any
+  // grouped product still missing one. false: recompute both for everything. Never touches SKU.
+  app.post('/api/stock/groups/auto-assign', async (req) => {
+    const onlyUnassigned = (req.body as { onlyUnassigned?: boolean }).onlyUnassigned !== false;
+    const CHUNK = 200;
+    // Write a sku→value map bucketed by value (one updateMany per distinct value).
+    const writeBucketed = async (bySku: Map<string, string>, field: 'catalogGroup' | 'catalogSubgroup') => {
+      const byVal = new Map<string, string[]>();
+      for (const [sku, v] of bySku) { if (!byVal.has(v)) byVal.set(v, []); byVal.get(v)!.push(sku); }
+      let n = 0;
+      for (const [v, skus] of byVal) {
+        for (let i = 0; i < skus.length; i += CHUNK) {
+          const res = await prisma.product.updateMany({ where: { sku: { in: skus.slice(i, i + CHUNK) } }, data: { [field]: v } });
+          n += res.count;
+        }
+      }
+      return n;
+    };
+
+    // ── GROUP pass ──
+    const groupScope = await prisma.product.findMany({
+      where: onlyUnassigned ? { status: 'active', catalogGroup: null } : { status: 'active' },
+      select: { sku: true, nameEn: true, nameTh: true, keywords: true },
+    });
+    const groupBySku = new Map<string, string>();
+    for (const p of groupScope) { const g = autoAssignGroup(p); if (g) groupBySku.set(p.sku, g); }
+    const assigned = await writeBucketed(groupBySku, 'catalogGroup');
+
+    // ── SUBGROUP pass ── (after groups are written, so newly-grouped items are included)
+    const subScope = await prisma.product.findMany({
+      where: { status: 'active', catalogGroup: { not: null }, ...(onlyUnassigned ? { catalogSubgroup: null } : {}) },
+      select: { sku: true, nameEn: true, nameTh: true, keywords: true, catalogGroup: true },
+    });
+    const subBySku = new Map<string, string>();
+    for (const p of subScope) { const s = autoAssignSubgroup(p.catalogGroup!, p); if (s) subBySku.set(p.sku, s); }
+    const subAssigned = await writeBucketed(subBySku, 'catalogSubgroup');
+
+    const stillNull = await prisma.product.count({ where: { status: 'active', catalogGroup: null } });
+    return { ok: true, assigned, subAssigned, unassigned: stillNull, scanned: groupScope.length };
+  });
+
+  // POST /api/stock/groups/set-product { sku, group } — set/clear one product's group.
+  // Changing the group clears any sub-group (a sub code only makes sense within its group).
+  app.post('/api/stock/groups/set-product', async (req, reply) => {
+    const body = req.body as { sku?: string; group?: string | null };
+    const sku = String(body.sku ?? '').trim();
+    if (!sku || !SKU_RE.test(sku)) return reply.code(400).send({ error: 'bad_sku' });
+    const group = body.group === null || body.group === '' || body.group === undefined ? null : String(body.group);
+    if (group !== null && !GROUP_KEYS.has(group)) return reply.code(400).send({ error: 'bad_group' });
+    const existing = await prisma.product.findUnique({ where: { sku }, select: { catalogGroup: true } });
+    if (!existing) return reply.code(404).send({ error: 'unknown_sku' });
+    const clearSub = existing.catalogGroup !== group;
+    await prisma.product.update({ where: { sku }, data: { catalogGroup: group, ...(clearSub ? { catalogSubgroup: null } : {}) } });
+    return { ok: true, sku, group };
+  });
+
+  // POST /api/stock/groups/set-subgroup { sku, subgroup } — set/clear one product's sub-group
+  // (a 2-letter code that must be valid for the product's current group).
+  app.post('/api/stock/groups/set-subgroup', async (req, reply) => {
+    const body = req.body as { sku?: string; subgroup?: string | null };
+    const sku = String(body.sku ?? '').trim();
+    if (!sku || !SKU_RE.test(sku)) return reply.code(400).send({ error: 'bad_sku' });
+    const sub = body.subgroup === null || body.subgroup === '' || body.subgroup === undefined ? null : String(body.subgroup);
+    const product = await prisma.product.findUnique({ where: { sku }, select: { catalogGroup: true } });
+    if (!product) return reply.code(404).send({ error: 'unknown_sku' });
+    if (sub !== null) {
+      if (!product.catalogGroup) return reply.code(400).send({ error: 'no_group' });
+      if (!SUBGROUP_CODES[product.catalogGroup]?.has(sub)) return reply.code(400).send({ error: 'bad_subgroup' });
+    }
+    await prisma.product.update({ where: { sku }, data: { catalogSubgroup: sub } });
+    return { ok: true, sku, subgroup: sub };
+  });
+
+  // POST /api/stock/groups/set-family { family, group } — set the group for every product
+  // in a family ("NN-NN"). Fast way to assign a whole coherent product line at once.
+  app.post('/api/stock/groups/set-family', async (req, reply) => {
+    const body = req.body as { family?: string; group?: string | null };
+    const family = String(body.family ?? '').trim();
+    if (!/^\d{2}-\d{2}$/.test(family)) return reply.code(400).send({ error: 'bad_family' });
+    const group = body.group === null || body.group === '' || body.group === undefined ? null : String(body.group);
+    if (group !== null && !GROUP_KEYS.has(group)) return reply.code(400).send({ error: 'bad_group' });
+    const res = await prisma.product.updateMany({
+      where: { status: 'active', sku: { startsWith: `${family}-` }, catalogGroup: group === null ? { not: null } : undefined },
+      data: { catalogGroup: group },
+    });
+    return { ok: true, family, group, updated: res.count };
+  });
+
+  // ─── Name-normalization review (ตรวจทาน) ───────────────────────────────
+  // Supervisors review AI-normalized English names before they replace the live name. A
+  // proposal lives in Product.proposedNameEn (STAGING); the live Product.nameEn is left
+  // untouched until the proposal is APPROVED here. Seed from api/src/catalog/nameProposals.ts.
+
+  // Shape one row for the review UI. Reads only the proposal-relevant fields, so both the
+  // list query (partial select) and a decide response (full Product) can pass through it.
+  const proposalRow = (p: {
+    sku: string; nameEn: string; nameTh: string; photoSku: string | null;
+    proposedNameEn: string | null; proposalStatus: string; proposalNeedsReview: boolean;
+    catalogGroup: string | null; catalogSubgroup: string | null; stock: number | null; reorderPoint: number | null;
+  }, alias: string | null) => ({
+    sku: p.sku, nameEn: p.nameEn, nameTh: p.nameTh, photoSku: p.photoSku,
+    proposedNameEn: p.proposedNameEn, status: p.proposalStatus, needsReview: p.proposalNeedsReview,
+    catalogGroup: p.catalogGroup, catalogSubgroup: p.catalogSubgroup,
+    stock: p.stock, reorderPoint: p.reorderPoint, alias,
+  });
+
+  const PROPOSAL_SELECT = {
+    sku: true, nameEn: true, nameTh: true, photoSku: true, proposedNameEn: true,
+    proposalStatus: true, proposalNeedsReview: true, catalogGroup: true, catalogSubgroup: true,
+    stock: true, reorderPoint: true,
+  } as const;
+
+  // GET /api/stock/proposals/summary — counts for the review header / progress bar.
+  app.get('/api/stock/proposals/summary', async () => {
+    const grouped = await prisma.product.groupBy({
+      by: ['proposalStatus'],
+      where: { status: 'active', proposalStatus: { not: 'none' } },
+      _count: { _all: true },
+    });
+    const by = new Map(grouped.map((r) => [r.proposalStatus, r._count._all]));
+    const pending = by.get('pending') ?? 0;
+    const approved = by.get('approved') ?? 0;
+    const rejected = by.get('rejected') ?? 0;
+    // "review" = the flagged (ต้องตรวจสอบ) ones still awaiting a decision.
+    const review = await prisma.product.count({
+      where: { status: 'active', proposalStatus: 'pending', proposalNeedsReview: true },
+    });
+    return { pending, approved, rejected, review, total: pending + approved + rejected };
+  });
+
+  // GET /api/stock/proposals?filter=pending|review|approved|rejected|all&q=&limit= — the list.
+  // Only products that HAVE a proposal (proposalStatus != 'none') appear. review = pending & flagged.
+  app.get('/api/stock/proposals', async (req) => {
+    const { filter, q, limit } = req.query as { filter?: string; q?: string; limit?: string };
+    // Default high enough to show the whole review set in one bucket (≈1k proposals) — this is a
+    // supervisor tool and hiding rows behind an invisible cap would make the review look complete
+    // when it isn't. Search/filter narrows it when needed.
+    const take = Math.min(Math.max(Number(limit) || 1000, 1), 2000);
+    const query = String(q ?? '').trim();
+
+    const where: Record<string, unknown> = { status: 'active', proposalStatus: { not: 'none' } };
+    if (filter === 'pending') where.proposalStatus = 'pending';
+    else if (filter === 'approved') where.proposalStatus = 'approved';
+    else if (filter === 'rejected') where.proposalStatus = 'rejected';
+    else if (filter === 'review') { where.proposalStatus = 'pending'; where.proposalNeedsReview = true; }
+
+    let products;
+    if (query) {
+      const matches = await searchProducts(query, take);
+      const skus = matches.map((m) => m.sku);
+      products = skus.length
+        ? await prisma.product.findMany({ where: { ...where, sku: { in: skus } }, select: PROPOSAL_SELECT })
+        : [];
+      const order = new Map(skus.map((s, i) => [s, i]));
+      products.sort((a, b) => (order.get(a.sku) ?? 0) - (order.get(b.sku) ?? 0));
+    } else {
+      products = await prisma.product.findMany({ where, orderBy: { sku: 'asc' }, take, select: PROPOSAL_SELECT });
+    }
+
+    const aliases = products.length
+      ? await prisma.productAlias.findMany({ where: { sku: { in: products.map((p) => p.sku) } }, select: { sku: true, alias: true } })
+      : [];
+    const aliasBySku = new Map(aliases.map((a) => [a.sku, a.alias]));
+    return { products: products.map((p) => proposalRow(p, aliasBySku.get(p.sku) ?? null)) };
+  });
+
+  // POST /api/stock/proposals/load — seed the staging column from nameProposals.ts. Only fills
+  // rows still at proposalStatus='none' (never clobbers a decision or a manual edit), so it is
+  // safe to re-run. NEVER touches the live nameEn.
+  app.post('/api/stock/proposals/load', async () => {
+    const skus = NAME_PROPOSALS.map((p) => p.sku);
+    const existing = await prisma.product.findMany({
+      where: { sku: { in: skus }, status: 'active' },
+      select: { sku: true, proposalStatus: true },
+    });
+    const seedable = new Set(existing.filter((e) => e.proposalStatus === 'none').map((e) => e.sku));
+    const toLoad = NAME_PROPOSALS.filter((p) => seedable.has(p.sku));
+
+    let loaded = 0;
+    const CHUNK = 50;
+    for (let i = 0; i < toLoad.length; i += CHUNK) {
+      const slice = toLoad.slice(i, i + CHUNK);
+      const res = await Promise.all(slice.map((p) =>
+        prisma.product.updateMany({
+          where: { sku: p.sku, proposalStatus: 'none' },
+          data: { proposedNameEn: p.nameEn, proposalNeedsReview: p.needsReview, proposalStatus: 'pending' },
+        }),
+      ));
+      loaded += res.reduce((n, r) => n + r.count, 0);
+    }
+    const total = await prisma.product.count({ where: { status: 'active', proposalStatus: { not: 'none' } } });
+    return { ok: true, loaded, skipped: NAME_PROPOSALS.length - toLoad.length, available: NAME_PROPOSALS.length, total };
+  });
+
+  // POST /api/stock/proposals/decide { sku, action, nameEn? }
+  //   approve → write (nameEn ?? proposedNameEn) to the LIVE Product.nameEn (+ merge keywords),
+  //             mark approved. The ONLY path that changes a live name.
+  //   reject  → mark rejected; the live name is left as-is.
+  //   edit    → save an edited proposedNameEn and keep it pending (decide later).
+  app.post('/api/stock/proposals/decide', async (req, reply) => {
+    const body = req.body as { sku?: string; action?: string; nameEn?: string };
+    const sku = String(body.sku ?? '').trim();
+    if (!sku || !SKU_RE.test(sku)) return reply.code(400).send({ error: 'bad_sku' });
+    const action = String(body.action ?? '');
+    if (!['approve', 'reject', 'edit'].includes(action)) return reply.code(400).send({ error: 'bad_action' });
+
+    const product = await prisma.product.findUnique({ where: { sku } });
+    if (!product) return reply.code(404).send({ error: 'unknown_sku' });
+    if (product.proposalStatus === 'none') return reply.code(409).send({ error: 'no_proposal' });
+    const editText = body.nameEn != null ? String(body.nameEn).trim() : null;
+
+    if (action === 'edit') {
+      if (!editText) return reply.code(400).send({ error: 'empty_name' });
+      const updated = await prisma.product.update({ where: { sku }, data: { proposedNameEn: editText, proposalStatus: 'pending' } });
+      return { ok: true, product: proposalRow(updated, null) };
+    }
+    if (action === 'reject') {
+      // Guard the transition on the expected state (mirrors decide-bulk): reject is only valid
+      // from 'pending'. If an approve raced ahead, this no-ops rather than flipping an approved
+      // row to 'rejected' while its live name stays overwritten (a misleading status/name split).
+      const res = await prisma.product.updateMany({ where: { sku, proposalStatus: 'pending' }, data: { proposalStatus: 'rejected' } });
+      if (res.count === 0) return reply.code(409).send({ error: 'not_pending' });
+      const updated = await prisma.product.findUnique({ where: { sku } });
+      return { ok: true, product: proposalRow(updated!, null) };
+    }
+    // approve
+    const finalName = editText || (product.proposedNameEn ?? '').trim();
+    if (!finalName) return reply.code(400).send({ error: 'empty_name' });
+    const keywords = mergeNameKeywords(product.keywords, finalName, product.nameTh);
+    const updated = await prisma.product.update({
+      where: { sku },
+      data: { nameEn: finalName, keywords, proposedNameEn: finalName, proposalStatus: 'approved' },
+    });
+    return { ok: true, product: proposalRow(updated, null) };
+  });
+
+  // POST /api/stock/proposals/decide-bulk { scope: 'safe' } — approve every pending, NON-flagged
+  // proposal at once (scope 'safe' = status pending AND needsReview=false). Writes each live name.
+  // The flagged (ต้องตรวจสอบ) proposals are deliberately NEVER bulk-approved.
+  app.post('/api/stock/proposals/decide-bulk', async (req, reply) => {
+    const scope = String((req.body as { scope?: string }).scope ?? 'safe');
+    if (scope !== 'safe') return reply.code(400).send({ error: 'bad_scope' });
+    const targets = await prisma.product.findMany({
+      where: { status: 'active', proposalStatus: 'pending', proposalNeedsReview: false },
+      select: { sku: true, nameTh: true, keywords: true, proposedNameEn: true },
+    });
+    let approved = 0;
+    const CHUNK = 50;
+    for (let i = 0; i < targets.length; i += CHUNK) {
+      const slice = targets.slice(i, i + CHUNK);
+      const res = await Promise.all(slice.map((p) => {
+        const finalName = (p.proposedNameEn ?? '').trim();
+        if (!finalName) return Promise.resolve({ count: 0 });
+        const keywords = mergeNameKeywords(p.keywords, finalName, p.nameTh);
+        return prisma.product.updateMany({
+          where: { sku: p.sku, proposalStatus: 'pending' },
+          data: { nameEn: finalName, keywords, proposedNameEn: finalName, proposalStatus: 'approved' },
+        });
+      }));
+      approved += res.reduce((n, r) => n + r.count, 0);
+    }
+    return { ok: true, approved };
   });
 }

@@ -1,14 +1,71 @@
 // Product alias generation. A product's canonical key is its dashed SKU ("07-10-09",
-// shared with Express — never changed). An ALIAS is a short human code ("TR34") staff can
-// type/read. Products in the same FAMILY (first two SKU segments, e.g. "01-01") share one
-// alpha PREFIX, and alias = prefix + the item's third segment. Prefixes are globally
-// unique, so aliases are too. buildAliases is PURE + deterministic (no DB) so it's testable.
+// shared with Express — never changed). An ALIAS is a short human code staff can type/read.
+//
+// GROUP-BASED codes (current scheme): alias = <2-letter group code>[<2-letter subgroup>]<num>,
+// numbered within the (group, subgroup) bucket. e.g. IM01 (impression, no sub), IMAL01
+// (impression/alginate), EN12 (endo). Self-describing by category. See catalogGroups.ts.
+// (The older FAMILY-based buildAliases — "TR34" — is kept below for its unit test / reference.)
+
+import { GROUP_CODE, SUBGROUP_CODES } from './catalogGroups.js';
 
 export interface AliasAssignment {
   sku: string;
   alias: string;
   groupKey: string;
-  prefix: string;
+  prefix: string; // the alpha prefix (group code, or group+subgroup code)
+}
+
+// The alpha prefix for a product's code: group code, plus its subgroup code when it has a
+// valid one for that group (e.g. "IM" or "IMAL"). null if the product has no/invalid group.
+export function codePrefix(catalogGroup: string | null, catalogSubgroup: string | null): string | null {
+  if (!catalogGroup || !GROUP_CODE.has(catalogGroup)) return null;
+  const g = GROUP_CODE.get(catalogGroup)!;
+  const sub = catalogSubgroup && SUBGROUP_CODES[catalogGroup]?.has(catalogSubgroup) ? catalogSubgroup : '';
+  return g + sub;
+}
+
+// Build group-based codes. Deterministic: same input → same output. Only products WITH a
+// (valid) catalogGroup get a code. Numbering is per PREFIX bucket (group, or group+subgroup),
+// so IMAL01/IMAL02 and IM01/IM02 coexist. `keep` (sku→alias) preserves existing codes and
+// APPENDS new items after the bucket's current max, so codes stay stable as items are added.
+export function buildGroupAliases(
+  products: { sku: string; catalogGroup: string | null; catalogSubgroup?: string | null }[],
+  opts?: { keep?: Record<string, string> },
+): AliasAssignment[] {
+  const keep = opts?.keep ?? {};
+  const sorted = [...products].sort((a, b) => (a.sku < b.sku ? -1 : a.sku > b.sku ? 1 : 0));
+  // Bucket by resolved prefix (group or group+subgroup), in ascending SKU order.
+  const byPrefix = new Map<string, { sku: string; groupKey: string }[]>();
+  for (const p of sorted) {
+    const prefix = codePrefix(p.catalogGroup, p.catalogSubgroup ?? null);
+    if (!prefix) continue;
+    if (!byPrefix.has(prefix)) byPrefix.set(prefix, []);
+    byPrefix.get(prefix)!.push({ sku: p.sku, groupKey: p.catalogGroup! });
+  }
+
+  const out: AliasAssignment[] = [];
+  for (const [prefix, members] of byPrefix) {
+    const codeRe = new RegExp(`^${prefix}(\\d+)$`);
+    const used = new Set<number>();
+    for (const m of members) {
+      const k = keep[m.sku];
+      const mt = k && codeRe.exec(k);
+      if (mt) used.add(parseInt(mt[1], 10));
+    }
+    let next = 1;
+    const nextFree = () => {
+      while (used.has(next)) next++;
+      used.add(next);
+      return next;
+    };
+    const width = Math.max(2, String(members.length).length);
+    for (const m of members) {
+      const k = keep[m.sku];
+      const n = k && codeRe.test(k) ? parseInt(codeRe.exec(k)![1], 10) : nextFree();
+      out.push({ sku: m.sku, alias: `${prefix}${String(n).padStart(width, '0')}`, groupKey: m.groupKey, prefix });
+    }
+  }
+  return out;
 }
 
 // The family a product belongs to: first two SKU segments, e.g. "07-10-09" → "07-10".

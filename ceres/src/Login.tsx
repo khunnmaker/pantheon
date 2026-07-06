@@ -1,7 +1,10 @@
 import { useEffect, useState } from 'react';
-import { Wallet, Loader2, AlertTriangle, Delete, LogIn, ArrowLeft, ShieldCheck } from 'lucide-react';
+import { Wallet, Loader2, AlertTriangle, LogIn, ArrowLeft, ShieldCheck } from 'lucide-react';
 import { login, setSession, getLogins, type Agent, type LoginName } from './lib/api';
+import { groupLogins, type GroupMeta } from './lib/loginGroups';
+import { memberAvatar, teamAvatar } from './lib/avatar';
 
+const PIN_LEN = 6;
 const RAW_ROLES = new Set(['employee', 'md', 'supervisor']);
 
 export default function Login({ onLogin }: { onLogin: (agent: Agent) => void }) {
@@ -15,7 +18,7 @@ export default function Login({ onLogin }: { onLogin: (agent: Agent) => void }) 
       </div>
       <p className="text-sm text-slate-500 mb-6">ระบบค่าใช้จ่าย</p>
 
-      <div className="w-full max-w-sm">
+      <div className="w-full max-w-md">
         {manual ? (
           <AdminLogin onLogin={onLogin} onBack={() => setManual(false)} />
         ) : (
@@ -26,30 +29,86 @@ export default function Login({ onLogin }: { onLogin: (agent: Agent) => void }) 
   );
 }
 
-// ── Card flow: pick your name — 'pin' cards open a PIN pad, 'password' cards
-// (supervisor + MD) open a password field. Falls back to the manual email/password
-// form (AdminLogin) if the card list fails to load.
+// ── Card flow: role-grouped, tap-to-drill-down, Metro-tile picker — the SAME UX as the Jupiter
+// portal (jupiter/src/Login.tsx), adapted to Ceres's amber accent. People come from the server
+// (GET /api/ceres/logins) — a rich card list carrying group + gender. 3-level DRILL-DOWN:
+//   L1 role groups (2-col Metro grid) → L2 that group's people (avatar tiles) → L3 person + cred
+//   (password field for supervisor/MD, masked auto-submit 6-digit PIN for everyone else).
+// The auth mechanism is UNCHANGED: submit() still calls login() → setSession() → onLogin(), with
+// the RAW_ROLES guard preserved. Falls back to the manual email/password form (AdminLogin) if the
+// card list fails to load.
 function CardLogin({ onLogin, onManual }: { onLogin: (agent: Agent) => void; onManual: () => void }) {
-  const [names, setNames] = useState<LoginName[] | null>(null);
+  const [cards, setCards] = useState<LoginName[] | null>(null);
   const [loadError, setLoadError] = useState('');
-  const [selected, setSelected] = useState<LoginName | null>(null);
+
+  const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
+  const [selectedEmail, setSelectedEmail] = useState<string | null>(null);
+  const [secret, setSecret] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
 
   useEffect(() => {
+    let cancelled = false;
     getLogins()
-      .then(setNames)
-      .catch(() => setLoadError('โหลดรายชื่อไม่สำเร็จ'));
+      .then((rows) => { if (!cancelled) setCards(rows); })
+      .catch(() => { if (!cancelled) setLoadError('โหลดรายชื่อไม่สำเร็จ'); });
+    return () => { cancelled = true; };
   }, []);
 
-  if (selected) {
-    if (selected.kind === 'password') {
-      return <PasswordCard name={selected} onBack={() => setSelected(null)} onLogin={onLogin} />;
+  const groups = cards ? groupLogins(cards) : [];
+  const group = selectedGroupId ? groups.find((g) => g.meta.id === selectedGroupId) ?? null : null;
+  const selected =
+    group && selectedEmail ? group.members.find((p) => p.email === selectedEmail) ?? null : null;
+
+  async function submit(useEmail: string, value: string) {
+    const em = useEmail.trim();
+    if (!em || !value || busy) return;
+    setBusy(true);
+    setError('');
+    try {
+      const { token, agent } = await login(em, value);
+      if (!RAW_ROLES.has(agent.role)) {
+        setError('บัญชีนี้ไม่มีสิทธิ์เข้าระบบค่าใช้จ่าย');
+        setSecret('');
+        setBusy(false);
+        return;
+      }
+      setSession(token, agent);
+      onLogin(agent);
+    } catch {
+      setError(selected?.kind === 'password' ? 'รหัสผ่านไม่ถูกต้อง' : 'PIN ไม่ถูกต้อง');
+      setSecret('');
+    } finally {
+      setBusy(false);
     }
-    return <PinPad name={selected} onBack={() => setSelected(null)} onLogin={onLogin} />;
+  }
+
+  function pickGroup(g: GroupMeta) {
+    setSelectedGroupId(g.id);
+    setSelectedEmail(null);
+    setSecret('');
+    setError('');
+  }
+  function pickPerson(p: LoginName) {
+    setSelectedEmail(p.email);
+    setSecret('');
+    setError('');
+  }
+  function back() {
+    if (selectedEmail) setSelectedEmail(null);
+    else setSelectedGroupId(null);
+    setSecret('');
+    setError('');
+  }
+  function onPinChange(v: string) {
+    if (!selected) return;
+    const digits = v.replace(/\D/g, '').slice(0, PIN_LEN);
+    setSecret(digits);
+    if (digits.length === PIN_LEN) void submit(selected.email, digits);
   }
 
   return (
     <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
-      <div className="text-sm font-semibold text-slate-500 mb-3">เลือกชื่อของคุณ</div>
       {loadError ? (
         <div className="flex flex-col items-center gap-2 py-4">
           <div className="flex items-center gap-1 text-rose-600 text-sm justify-center">
@@ -62,25 +121,83 @@ function CardLogin({ onLogin, onManual }: { onLogin: (agent: Agent) => void; onM
             เข้าสู่ระบบด้วยอีเมล/รหัสผ่าน
           </button>
         </div>
-      ) : !names ? (
+      ) : !cards ? (
         <div className="py-8 flex justify-center text-slate-400">
           <Loader2 className="animate-spin" size={22} />
         </div>
-      ) : names.length === 0 ? (
-        <div className="py-8 text-center text-slate-400 text-sm">ไม่พบรายชื่อผู้ใช้</div>
+      ) : !group ? (
+        <>
+          <div className="text-sm font-semibold text-slate-500 mb-3">เลือกชื่อของคุณ</div>
+          <GroupGrid groups={groups} onPick={pickGroup} />
+        </>
+      ) : !selected ? (
+        <div>
+          <BackButton onClick={back} />
+          <div className={`${group.meta.color} text-white rounded-md px-3 py-2 mb-3`}>
+            <span className="text-sm font-bold">{group.meta.label}</span>
+          </div>
+          <NameGrid members={group.members} onPick={pickPerson} />
+        </div>
       ) : (
-        <div className="grid grid-cols-2 gap-3">
-          {names.map((n) => (
-            <button
-              key={n.email}
-              onClick={() => setSelected(n)}
-              className="min-h-[64px] px-3 py-3 rounded-xl border border-slate-200 bg-slate-50 hover:bg-amber-50 hover:border-amber-300 text-base font-semibold text-slate-700 flex items-center justify-center text-center"
-            >
-              {n.name}
-            </button>
-          ))}
+        <div>
+          <BackButton onClick={back} />
+          <div className={`${group.meta.color} text-white rounded-md px-4 py-3 mb-4`}>
+            <div className="flex items-center gap-2">
+              <div className="w-12 h-12 rounded-md bg-white/25 overflow-hidden flex items-center justify-center shrink-0">
+                <img src={memberAvatar(selected.email, selected.gender)} alt="" className="w-full h-full object-cover" />
+              </div>
+              <div className="font-bold text-base leading-tight">{selected.name}</div>
+            </div>
+          </div>
+
+          {selected.kind === 'password' ? (
+            <>
+              <label className="block text-xs font-semibold text-slate-500 mb-1">รหัสผ่าน</label>
+              <input
+                type="password"
+                autoFocus
+                value={secret}
+                onChange={(e) => setSecret(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && submit(selected.email, secret)}
+                disabled={busy}
+                className="w-full px-3 py-3 mb-3 rounded-md border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 min-h-[48px] disabled:opacity-50"
+              />
+              <button
+                onClick={() => submit(selected.email, secret)}
+                disabled={busy || !secret}
+                className="w-full px-3 py-3 rounded-md bg-amber-600 hover:bg-amber-700 text-white text-sm font-semibold flex items-center justify-center gap-1 disabled:opacity-50 min-h-[48px]"
+              >
+                {busy ? <Loader2 size={16} className="animate-spin" /> : <LogIn size={16} />} เข้าสู่ระบบ
+              </button>
+            </>
+          ) : (
+            <>
+              <label className="block text-xs font-semibold text-slate-500 mb-1">PIN 6 หลัก</label>
+              <input
+                type="password"
+                inputMode="numeric"
+                autoFocus
+                autoComplete="one-time-code"
+                value={secret}
+                onChange={(e) => onPinChange(e.target.value)}
+                placeholder="••••••"
+                disabled={busy}
+                className="w-full px-3 py-3 mb-1 rounded-md border border-slate-300 text-center tracking-[0.5em] text-2xl focus:outline-none focus:ring-2 focus:ring-amber-400 min-h-[48px] disabled:opacity-50"
+              />
+              <div className="h-5 flex items-center justify-center">
+                {busy && <Loader2 size={16} className="animate-spin text-amber-500" />}
+              </div>
+            </>
+          )}
+
+          {error && (
+            <div className="flex items-center gap-1 text-rose-600 text-xs mt-1">
+              <AlertTriangle size={13} /> {error}
+            </div>
+          )}
         </div>
       )}
+
       {!loadError && (
         <button
           onClick={onManual}
@@ -93,171 +210,60 @@ function CardLogin({ onLogin, onManual }: { onLogin: (agent: Agent) => void; onM
   );
 }
 
-// ── Password card: for 'password'-kind cards (supervisor + MD) picked from the list. ──
-function PasswordCard({ name, onBack, onLogin }: { name: LoginName; onBack: () => void; onLogin: (agent: Agent) => void }) {
-  const [password, setPassword] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
-
-  async function submit() {
-    if (!password || busy) return;
-    setBusy(true);
-    setError('');
-    try {
-      const { token, agent } = await login(name.email, password);
-      if (!RAW_ROLES.has(agent.role)) {
-        setError('บัญชีนี้ไม่มีสิทธิ์เข้าระบบค่าใช้จ่าย');
-        setBusy(false);
-        return;
-      }
-      setSession(token, agent);
-      onLogin(agent);
-    } catch {
-      setError('รหัสผ่านไม่ถูกต้อง');
-    } finally {
-      setBusy(false);
-    }
-  }
-
+function BackButton({ onClick }: { onClick: () => void }) {
   return (
-    <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
-      <div className="flex items-center gap-2 mb-4">
-        <button onClick={onBack} className="text-slate-400 hover:text-slate-600 p-1 -ml-1">
-          <ArrowLeft size={18} />
+    <button
+      onClick={onClick}
+      className="flex items-center gap-1 px-2 py-2 -ml-2 mb-3 rounded-md text-sm font-medium text-slate-500 hover:text-amber-600 hover:bg-slate-100"
+    >
+      <ArrowLeft size={16} /> กลับ
+    </button>
+  );
+}
+
+function GroupGrid({
+  groups,
+  onPick,
+}: {
+  groups: { meta: GroupMeta; members: LoginName[] }[];
+  onPick: (g: GroupMeta) => void;
+}) {
+  if (groups.length === 0) {
+    return <div className="px-1 py-6 text-center text-xs text-slate-400">ไม่พบรายชื่อผู้ใช้</div>;
+  }
+  return (
+    <div className="grid grid-cols-2 gap-2">
+      {groups.map(({ meta, members }) => (
+        <button
+          key={meta.id}
+          onClick={() => onPick(meta)}
+          className={`${meta.color} relative aspect-square flex flex-col items-center justify-center gap-2 p-2 rounded-md text-white hover:brightness-110 transition`}
+        >
+          <span className="absolute top-2 right-2.5 text-xs font-semibold text-white/80">{members.length}</span>
+          <img src={teamAvatar(meta.id)} alt="" className="w-24 h-24 rounded-full bg-white/90 object-cover" />
+          <span className="text-base font-bold leading-tight text-center">{meta.label}</span>
         </button>
-        <div className="text-base font-semibold">{name.name}</div>
-      </div>
-
-      <label className="block text-xs font-semibold text-slate-500 mb-1">รหัสผ่าน</label>
-      <input
-        type="password"
-        value={password}
-        onChange={(e) => setPassword(e.target.value)}
-        onKeyDown={(e) => e.key === 'Enter' && submit()}
-        autoFocus
-        disabled={busy}
-        className="w-full px-3 py-3 mb-3 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 min-h-[48px] disabled:opacity-50"
-      />
-
-      {error && (
-        <div className="flex items-center gap-1 text-rose-600 text-xs mb-3">
-          <AlertTriangle size={13} /> {error}
-        </div>
-      )}
-
-      <button
-        onClick={submit}
-        disabled={busy}
-        className="w-full px-3 py-3 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-sm font-semibold flex items-center justify-center gap-1 disabled:opacity-50 min-h-[48px]"
-      >
-        {busy ? <Loader2 size={16} className="animate-spin" /> : <LogIn size={16} />} เข้าสู่ระบบ
-      </button>
+      ))}
     </div>
   );
 }
 
-function PinPad({ name, onBack, onLogin }: { name: LoginName; onBack: () => void; onLogin: (agent: Agent) => void }) {
-  const [pin, setPin] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
-
-  async function submit(fullPin: string) {
-    if (busy) return;
-    setBusy(true);
-    setError('');
-    try {
-      const { token, agent } = await login(name.email, fullPin);
-      if (!RAW_ROLES.has(agent.role)) {
-        setError('บัญชีนี้ไม่มีสิทธิ์เข้าระบบ');
-        setPin('');
-        setBusy(false);
-        return;
-      }
-      setSession(token, agent);
-      onLogin(agent);
-    } catch {
-      setError('PIN ไม่ถูกต้อง');
-      setPin('');
-    } finally {
-      setBusy(false);
-    }
+function NameGrid({ members, onPick }: { members: LoginName[]; onPick: (p: LoginName) => void }) {
+  if (members.length === 0) {
+    return <div className="px-1 py-6 text-center text-xs text-slate-400">ไม่พบรายชื่อผู้ใช้</div>;
   }
-
-  function press(d: string) {
-    if (busy) return;
-    setError('');
-    setPin((prev) => {
-      const next = (prev + d).slice(0, 6);
-      return next;
-    });
-  }
-  function backspace() {
-    if (busy) return;
-    setError('');
-    setPin((prev) => prev.slice(0, -1));
-  }
-  function ok() {
-    if (pin.length === 0) return;
-    submit(pin);
-  }
-
   return (
-    <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
-      <div className="flex items-center gap-2 mb-4">
-        <button onClick={onBack} className="text-slate-400 hover:text-slate-600 p-1 -ml-1">
-          <ArrowLeft size={18} />
-        </button>
-        <div className="text-base font-semibold">{name.name}</div>
-      </div>
-
-      <div className="flex justify-center gap-3 mb-4" inputMode="numeric">
-        {Array.from({ length: 6 }).map((_, i) => (
-          <span
-            key={i}
-            className={`w-3.5 h-3.5 rounded-full border-2 ${i < pin.length ? 'bg-amber-600 border-amber-600' : 'border-slate-300'}`}
-          />
-        ))}
-      </div>
-
-      {error && (
-        <div className="flex items-center justify-center gap-1 text-rose-600 text-sm mb-3">
-          <AlertTriangle size={14} /> {error}
-        </div>
-      )}
-
-      <div className="grid grid-cols-3 gap-3">
-        {['1', '2', '3', '4', '5', '6', '7', '8', '9'].map((d) => (
-          <button
-            key={d}
-            onClick={() => press(d)}
-            disabled={busy}
-            className="min-h-[56px] rounded-xl bg-slate-50 border border-slate-200 text-xl font-semibold hover:bg-slate-100 disabled:opacity-50"
-          >
-            {d}
-          </button>
-        ))}
+    <div className="grid grid-cols-2 gap-2">
+      {members.map((p) => (
         <button
-          onClick={backspace}
-          disabled={busy}
-          className="min-h-[56px] rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-center hover:bg-slate-100 disabled:opacity-50"
+          key={p.email}
+          onClick={() => onPick(p)}
+          className="relative aspect-square flex flex-col items-center justify-center gap-2 p-2 rounded-md bg-slate-700 hover:bg-slate-800 text-white transition-colors"
         >
-          <Delete size={20} />
+          <img src={memberAvatar(p.email, p.gender)} alt="" className="w-24 h-24 rounded-full object-cover bg-white/15" />
+          <span className="text-sm font-bold leading-tight text-center">{p.name}</span>
         </button>
-        <button
-          onClick={() => press('0')}
-          disabled={busy}
-          className="min-h-[56px] rounded-xl bg-slate-50 border border-slate-200 text-xl font-semibold hover:bg-slate-100 disabled:opacity-50"
-        >
-          0
-        </button>
-        <button
-          onClick={ok}
-          disabled={busy || pin.length === 0}
-          className="min-h-[56px] rounded-xl bg-amber-600 text-white font-semibold flex items-center justify-center hover:bg-amber-700 disabled:opacity-40"
-        >
-          {busy ? <Loader2 className="animate-spin" size={20} /> : 'OK'}
-        </button>
-      </div>
+      ))}
     </div>
   );
 }

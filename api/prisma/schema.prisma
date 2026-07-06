@@ -19,6 +19,12 @@ model Customer {
   id                String          @id @default(cuid())
   lineUserId        String          @unique
   displayName       String?
+  // LINE profile/group picture (public https url from getProfile/getGroupSummary); null when
+  // none or unavailable. Best-effort — set on customer creation + lazily on chat-open.
+  pictureUrl        String?
+  // when pictureUrl was last fetched from LINE; throttles the periodic refresh (PICTURE_REFRESH_DAYS)
+  // so an active customer's changed photo is picked up without hammering the LINE API. null = never.
+  pictureFetchedAt  DateTime?
   // staff-assigned nickname (shown in the console in preference to the LINE name)
   nickname          String?
   // staff-assigned customer code from the Express system (shown before the name, e.g. ร103)
@@ -71,6 +77,12 @@ model Message {
   attachmentRef    String?
   // original filename for received "file" messages (for download).
   attachmentName   String?
+  // LINE quote-reply support. quoteToken = LINE's token to quote THIS message in a later
+  // send (issued only for inbound text/sticker; never exposed to the client). quotedMessageId
+  // = OUR internal Message.id this message is a reply to (resolved at write time), for both an
+  // incoming customer quote-reply and our own quote-reply out.
+  quoteToken       String?
+  quotedMessageId  String?
   // when a payment-slip image was forwarded to finance (the Google Sheet) — also blocks double-send.
   financeSentAt    DateTime?
   // the amount the AI OCR read off the slip (server-set, tamper-proof) — compared to the
@@ -92,6 +104,20 @@ model CustomerMemory {
   summary            String   @default("")
   summarizedThroughN Int      @default(0) // message count covered by summary
   updatedAt          DateTime @updatedAt
+}
+
+// Per-agent private "pin chat": a sales agent pins customer chats they're working on
+// so their in-progress deals stay one click away, in a "ปักหมุด" section at the top of
+// the console queue. Private (keyed by agentId), manual unpin only. Bare String ids —
+// no @relation — matching the house cross-reference style (e.g. Message.agentId).
+model Pin {
+  id         String   @id @default(cuid())
+  agentId    String
+  customerId String
+  createdAt  DateTime @default(now())
+
+  @@unique([agentId, customerId])
+  @@index([agentId])
 }
 
 model Agent {
@@ -201,11 +227,13 @@ model FinanceAudit {
   @@index([resolvedAt])
 }
 
-// Juno (finance) — the structured record of every INCOMING LINE-slip payment. Written by
-// Minerva's /to-finance hook (mirrors the Google-Sheet forward); the finance department
-// works off THIS table via the Juno app, never the sheet. INCOME only for now; manual/cash
-// entry, expenses, and Express/Odoo sync are deliberately out of scope (future, same table).
-// Customer name/code are SNAPSHOT here so history stays stable if the Customer is renamed.
+// Juno (finance) — the structured record of every INCOMING payment. Most rows are written
+// by Minerva's /to-finance hook (mirrors the Google-Sheet forward, source='line'); FIN/CEO
+// can also hand-add a row in Juno itself (source='manual_transfer'|'cash'|'cheque' — see
+// JUNO_MANUAL_ENTRY_BRIEF.md). The finance department works off THIS table via the Juno app,
+// never the sheet. INCOME only for now; expenses and Express/Odoo sync are deliberately out
+// of scope (future, same table). Customer name/code are SNAPSHOT here so history stays stable
+// if the Customer is renamed.
 model Payment {
   id               String             @id @default(cuid())
   // link + snapshot
@@ -216,6 +244,14 @@ model Payment {
   // money (String to match the free-text OCR/entry flow; sums parse on read)
   amount           String             @default("") // confirmed baht amount (staff-entered)
   ocrAmount        String             @default("") // what the OCR read (for the mismatch flag)
+  // withholding tax (หัก ณ ที่จ่าย, task 2) — amount stays the GROSS/RE figure above; the
+  // withheld slice is tracked separately here so net (amount − whtAmount) reconciles the
+  // SHORT bank credit without a false mismatch. whtRate 0 / whtAmount "" = no WHT (the default
+  // for every existing + non-WHT row — net falls back to the gross unchanged). Entered in the
+  // ตรวจแล้ว (RE-check) dialog; whtRate ∈ {0,1,2,3,5} (percent), whtAmount is the editable baht
+  // figure (may differ slightly from a naive rate×gross calc to match the 50-ทวิ certificate).
+  whtRate          Int                @default(0)
+  whtAmount        String             @default("")
   bank             String             @default("") // account received into
   transferAt       String             @default("") // when the customer transferred (as-shown on slip)
   ref              String             @default("") // transfer reference no.
@@ -236,12 +272,37 @@ model Payment {
   verifiedAt       DateTime?
   createdAt        DateTime           @default(now()) // when Minerva forwarded it
   // FIN check data (entered in Juno's check dialog when the RE is issued in Express)
-  reNumber         String             @default("") // receipt no., stored as BARE 7 digits (e.g. "6900123")
+  // DEPRECATED: kept only as a join mirror = reNumbers.join('/'), for back-compat search
+  // (buildListWhere's `contains` filter) and the CSV export column. Never write it directly —
+  // always derive it from reNumbers. See reNumbers below for the real (list) source of truth.
+  reNumber         String             @default("") // receipt no.(s), bare 7 digits, joined with '/' if >1
+  // one payment can cover several REs (e.g. one transfer paying several receipts); one RE can
+  // also be split across several payments — so this is a plain list, not a relation. Each entry
+  // is bare 7 digits (see POST /verify's normalization).
+  reNumbers        String[]           @default([])
   receiptName      String             @default("") // official name on the RE (may differ from customerName)
   customerType     String             @default("") // โอนก่อนส่ง | เครดิต | เก็บปลายทาง | "" (unset)
   // bank reconciliation (phase B): denormalized true while >=1 PaymentBankMatch link exists
   reconciled       Boolean            @default(false)
   bankMatches      PaymentBankMatch[]
+  // how the row entered Juno. 'line' = Minerva LINE slip (default, all existing rows);
+  // the rest are hand-added in Juno. transfer types reconcile in กระทบยอด; cash/cheque
+  // are verified in the เงินสด/เช็ค tab instead.
+  source           String             @default("line") // line | manual_transfer | cash | cheque
+  // cash/cheque banking state (blank for transfers). cash: '' -> deposited; cheque: '' -> cleared.
+  settleState      String             @default("") // '' | deposited | cleared
+  settledAt        DateTime?
+  settledById      String?
+  // CEO receipt-verify gate (task 1) — SEPARATE from settleState above: the CEO must confirm he
+  // physically received the cash/cheque before it can be ยืนยันใน Express (status->'recorded').
+  // null = not yet confirmed. A cheque's KBiz auto-clear (settleState->'cleared') is a separate
+  // banking event and does NOT set these — only POST /payments/:id/receive (supervisor-only) does.
+  receivedAt       DateTime?
+  receivedBy       String?
+  // cheque details (source='cheque' only)
+  chequeNo         String             @default("")
+  chequeBank       String             @default("")
+  chequeDueDate    String             @default("") // as-typed (free text, like transferAt)
 
   @@index([status])
   @@index([flagged])
@@ -250,6 +311,8 @@ model Payment {
   @@index([createdAt])
   @@index([reNumber])
   @@index([reconciled])
+  @@index([source])
+  @@index([settleState])
 }
 
 // ─── Juno phase B (bank import + reconciliation) ─────────────────────────
@@ -330,23 +393,38 @@ model QuickReply {
 // price=0 means "unknown" (the AI must NOT quote it; defer to staff). Variant
 // SKUs (color/size) share a photo via photoSku (resolved to the cell's lead SKU).
 model Product {
-  sku          String    @id // e.g. "07-10-09"
-  nameEn       String    @default("")
-  nameTh       String    @default("")
-  price        Int       @default(0) // baht; 0 = unknown
-  promo        String    @default("") // e.g. "ซื้อ 9 แถม 1"
-  note         String    @default("") // pack/size/weight
-  page         Int? // catalog page
-  photoSku     String? // SKU whose photo file represents this product (self or lead variant)
-  keywords     String[] // search terms (tokenized names) for matching
-  status       String    @default("active") // active | archived
-  stock        Int? // remaining quantity from the latest stock snapshot (null = unknown)
-  stockAt      DateTime? // the date the stock figure is as-of (snapshot date)
+  sku                 String    @id // e.g. "07-10-09"
+  nameEn              String    @default("")
+  nameTh              String    @default("")
+  price               Int       @default(0) // baht; 0 = unknown
+  promo               String    @default("") // e.g. "ซื้อ 9 แถม 1"
+  note                String    @default("") // pack/size/weight
+  page                Int? // catalog page
+  photoSku            String? // SKU whose photo file represents this product (self or lead variant)
+  keywords            String[] // search terms (tokenized names) for matching
+  status              String    @default("active") // active | archived
+  stock               Int? // remaining quantity from the latest stock snapshot (null = unknown)
+  stockAt             DateTime? // the date the stock figure is as-of (snapshot date)
   // Vulcan low-stock threshold (null = no threshold set). Low = stock != null && stock <= reorderPoint.
-  reorderPoint Int?
-  updatedAt    DateTime  @updatedAt
+  reorderPoint        Int?
+  // Merchandising group key (see api/src/stock/catalogGroups.ts), e.g. "acrylic" | "endo".
+  // null = not yet assigned. Independent of the Express category in the SKU.
+  catalogGroup        String?
+  // Sub-group 2-letter code WITHIN the group (e.g. "AL" alginate under impression). null =
+  // none. The product code becomes group + subgroup + number → "IMAL01".
+  catalogSubgroup     String?
+  // ── Name-normalization review (Vulcan ตรวจทาน tab) ──────────────────────
+  // A STAGED normalized English name awaiting supervisor review. The live nameEn is left
+  // untouched until the proposal is APPROVED in-app; approving copies proposedNameEn → nameEn.
+  // Seeded from api/src/catalog/nameProposals.ts via POST /api/stock/proposals/load.
+  proposedNameEn      String? // the normalized candidate (null = no proposal loaded)
+  proposalStatus      String    @default("none") // none | pending | approved | rejected
+  proposalNeedsReview Boolean   @default(false) // flagged for team review (e.g. ambiguous shade code)
+  updatedAt           DateTime  @updatedAt
 
   @@index([status])
+  @@index([catalogGroup])
+  @@index([proposalStatus])
 }
 
 // Short human-friendly code per product (e.g. "TR34") that resolves to the canonical SKU.
@@ -545,10 +623,15 @@ model CeresExpense {
   ocrAmount       String    @default("")
   ocrVendor       String    @default("")
   ocrDate         String    @default("")
-  status          String    @default("pending") // pending | approved | settled | rejected
+  status          String    @default("pending") // pending | approved | settled | rejected | void
   approvedById    String?
   approvedAt      DateTime?
   rejectReason    String    @default("")
+  // void = soft-delete by md/ceo; the row is kept (struck-through, excluded from every
+  // total/board/settlement) so a closed day's books stay auditable. Never hard-deleted.
+  voidedById      String?
+  voidedAt        DateTime?
+  voidReason      String    @default("")
   settlementId    String?
   aiVerdict       String    @default("") // "" | ok | flagged (post-hoc AI review, wired later)
   aiReviewId      String?
@@ -703,6 +786,39 @@ model CeresCategory {
   needsCustomerNote Boolean @default(false)
   active            Boolean @default(true)
   sortOrder         Int     @default(0)
+}
+
+// ─── Mercury (procurement / buy-side) — CLOUD node tables only ───────────
+// Cloud-Mercury is the team/phone-facing reorder board (mirror of Vulcan on the buy side).
+// SECRETS-FREE BY CONSTRUCTION: these rows carry NO vendor, cost, real name, or real SKU — a
+// full dump of this DB reveals only aliases + quantities + who-ordered, never a supplier
+// identity or a price. Vendor/SecretMap/PurchaseOrder live ONLY in the separate local-Mercury
+// DB (Phase 2) and are never migrated into this shared schema. See docs/MERCURY_BRIEF.md §3/§5/§8.
+model MercuryItem {
+  id          String   @id @default(cuid())
+  displayName String // ordinary item name OR an opaque alias ("วัตถุดิบ A-17"); never the real name
+  isSecret    Boolean  @default(false) // secret items resolve to a real vendor ONLY in local-Mercury
+  vulcanSku   String? // dashed Product.sku for ordinary stocked items; NULL for secret items
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  @@index([active])
+}
+
+// A team purchase REQUEST (item/alias + qty). Non-secret. Local-Mercury pulls pending rows,
+// resolves aliases → real vendor locally, and flows status back (ordered/received/cancelled).
+model MercuryRequest {
+  id            String    @id @default(cuid())
+  itemId        String // → MercuryItem.id (bare FK column, house style — no @relation)
+  qty           String    @default("") // Juno/suite number-as-String convention
+  requestedById String? // → Agent.id (bare column, NOT @relation — mirrors Payment.salesAgentId etc.)
+  note          String    @default("")
+  status        String    @default("pending") // pending | ordered | received | cancelled
+  createdAt     DateTime  @default(now())
+  orderedAt     DateTime?
+  receivedAt    DateTime?
+
+  @@index([status])
 }
 
 // ─── Venus (360° customer CRM) ─── Stage A+B: backend foundation only.

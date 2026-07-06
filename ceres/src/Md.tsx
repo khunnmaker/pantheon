@@ -13,7 +13,7 @@ import {
   Crown,
 } from 'lucide-react';
 import { useCeres } from './lib/bootstrapContext';
-import { clearSession } from './lib/api';
+import { logout as logoutSuite } from './lib/api';
 import MdBoard from './MdBoard';
 import MdApproval from './MdApproval';
 import MdMoney from './MdMoney';
@@ -76,7 +76,7 @@ export default function MdApp() {
             <span className="text-slate-500 hidden sm:inline">{agent.name}</span>
             <button
               onClick={() => {
-                clearSession();
+                void logoutSuite();
                 onLogout();
               }}
               className="flex items-center gap-1 text-slate-500 hover:text-rose-600"

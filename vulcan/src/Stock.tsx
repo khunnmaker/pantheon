@@ -2,7 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import {
   Boxes, Search, Upload, History, LogOut, AlertTriangle, Check, Loader2,
   Package, RefreshCw, ChevronRight, X, LayoutDashboard, PackageX, PackageCheck,
-  HelpCircle, Clock, ArrowRight, Crown, Tag, Wand2,
+  HelpCircle, Clock, ArrowRight, Crown, Tag, Wand2, Layers, Pencil,
+  ClipboardCheck, Sparkles,
 } from 'lucide-react';
 
 // Portal-back link (Jupiter). URL from build-time env; hidden when unset, so it is completely
@@ -10,14 +11,19 @@ import {
 const PORTAL_URL: string | undefined = import.meta.env.VITE_PORTAL_URL;
 import {
   type Agent, type StockRow, type StockSummary, type StockImportRow,
-  type StockAdjustmentRow, type ImportPreview, type AliasGroup, type AliasItem,
-  getSummary, getStockList, adjustStock, setReorderPoint, getImports, getAdjustments,
-  previewImport, applyImport, clearSession, API_URL, flatSku,
-  getAliases, generateAliases, setGroupPrefix, setAlias,
+  type StockAdjustmentRow, type ImportPreview,
+  type CatalogGroupInfo, type GroupProduct, type Pillar,
+  getSummary, getStockList, adjustStock, setReorderPoint, renameProduct, getImports, getAdjustments,
+  previewImport, applyImport, logout as logoutSuite, API_URL, flatSku,
+  generateAliases, setAlias,
+  getGroups, getGroupProducts, autoAssignGroups, setProductGroup, setSubgroup,
+  type NameProposalRow, type ProposalSummary, type ProposalFilter,
+  getProposalSummary, getProposals, loadProposals, decideProposal, bulkApproveSafe,
 } from './lib/api';
+import AppSwitcher from './AppSwitcher';
 
-type Tab = 'dashboard' | 'stock' | 'import' | 'history' | 'alias';
-type StockFilter = 'all' | 'low' | 'out' | 'unknown';
+type Tab = 'dashboard' | 'stock' | 'import' | 'history' | 'alias' | 'group' | 'review';
+type StockFilter = 'all' | 'low' | 'out' | 'unknown' | 'noname';
 
 // Product photo thumbnail (served public from the shared api). photoSku is the catalog
 // photo key (variants share a lead photo); hides itself if the image is missing.
@@ -42,6 +48,22 @@ function Thumb({ photoSku, size = 36 }: { photoSku: string | null; size?: number
         e.currentTarget.style.visibility = 'hidden';
       }}
     />
+  );
+}
+
+// Remaining-stock pill: "—" unknown, "หมด" out (rose), amber when at/below reorder point.
+function StockPill({ stock, reorderPoint }: { stock: number | null; reorderPoint: number | null }) {
+  if (stock == null) return <span className="text-[11px] text-slate-300 shrink-0">—</span>;
+  const out = stock <= 0;
+  const low = !out && reorderPoint != null && stock <= reorderPoint;
+  return (
+    <span
+      className={`text-[11px] font-semibold tabular-nums shrink-0 px-1.5 py-0.5 rounded ${
+        out ? 'bg-rose-100 text-rose-700' : low ? 'bg-amber-100 text-amber-700' : 'text-slate-500'
+      }`}
+    >
+      {out ? 'หมด' : `เหลือ ${stock.toLocaleString('th-TH')}`}
+    </span>
   );
 }
 
@@ -78,7 +100,7 @@ export default function Stock({ agent, onLogout }: { agent: Agent; onLogout: () 
   }
 
   function logout() {
-    clearSession();
+    void logoutSuite(); // clears the shared SSO cookie + local session (fire-and-forget)
     onLogout();
   }
 
@@ -87,7 +109,7 @@ export default function Stock({ agent, onLogout }: { agent: Agent; onLogout: () 
       <header className="bg-white border-b border-slate-200 sticky top-0 z-10">
         <div className="max-w-6xl mx-auto px-4 py-3 flex items-center gap-4">
           <div className="flex items-center gap-2 text-indigo-700 font-bold">
-            <Boxes size={22} /> Vulcan
+            <AppSwitcher agent={agent} />
           </div>
           <nav className="flex gap-1 text-sm">
             <TabBtn active={tab === 'dashboard'} onClick={() => setTab('dashboard')} icon={<LayoutDashboard size={15} />}>
@@ -104,6 +126,12 @@ export default function Stock({ agent, onLogout }: { agent: Agent; onLogout: () 
             </TabBtn>
             <TabBtn active={tab === 'alias'} onClick={() => setTab('alias')} icon={<Tag size={15} />}>
               รหัสย่อ
+            </TabBtn>
+            <TabBtn active={tab === 'group'} onClick={() => setTab('group')} icon={<Layers size={15} />}>
+              จัดกลุ่ม
+            </TabBtn>
+            <TabBtn active={tab === 'review'} onClick={() => setTab('review')} icon={<ClipboardCheck size={15} />}>
+              ตรวจทานชื่อ
             </TabBtn>
           </nav>
           <div className="ml-auto flex items-center gap-3 text-sm text-slate-500">
@@ -149,6 +177,8 @@ export default function Stock({ agent, onLogout }: { agent: Agent; onLogout: () 
         )}
         {tab === 'history' && <HistoryTab />}
         {tab === 'alias' && <AliasTab />}
+        {tab === 'group' && <GroupTab />}
+        {tab === 'review' && <ReviewTab />}
       </main>
     </div>
   );
@@ -409,7 +439,7 @@ function StockTab({
           />
         </div>
         <div className="flex gap-1">
-          {(['all', 'low', 'out', 'unknown'] as const).map((f) => (
+          {(['all', 'low', 'out', 'unknown', 'noname'] as const).map((f) => (
             <button
               key={f}
               onClick={() => setFilter(f)}
@@ -419,7 +449,7 @@ function StockTab({
                   : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'
               }`}
             >
-              {f === 'all' ? 'ทั้งหมด' : f === 'low' ? 'ใกล้หมด' : f === 'out' ? 'หมด' : 'ไม่ทราบสต็อก'}
+              {f === 'all' ? 'ทั้งหมด' : f === 'low' ? 'ใกล้หมด' : f === 'out' ? 'หมด' : f === 'unknown' ? 'ไม่ทราบสต็อก' : 'ไม่มีชื่อไทย'}
             </button>
           ))}
         </div>
@@ -526,9 +556,26 @@ function EditPanel({ row, onPatch }: { row: StockRow; onPatch: (r: StockRow) => 
   const [qty, setQty] = useState(row.stock == null ? '' : String(row.stock));
   const [reason, setReason] = useState('');
   const [rp, setRp] = useState(row.reorderPoint == null ? '' : String(row.reorderPoint));
-  const [busy, setBusy] = useState<'qty' | 'rp' | null>(null);
+  const [nameTh, setNameTh] = useState(row.nameTh);
+  const [nameEn, setNameEn] = useState(row.nameEn);
+  const [busy, setBusy] = useState<'qty' | 'rp' | 'name' | null>(null);
   const [err, setErr] = useState('');
   const [history, setHistory] = useState<StockAdjustmentRow[] | null>(null);
+  const nameDirty = nameTh.trim() !== row.nameTh.trim() || nameEn.trim() !== row.nameEn.trim();
+
+  async function saveName() {
+    setErr('');
+    setBusy('name');
+    try {
+      // Keep the alias the row already carries — the rename response doesn't include it.
+      const { product } = await renameProduct(row.sku, nameEn.trim(), nameTh.trim());
+      onPatch({ ...product, alias: row.alias });
+    } catch {
+      setErr('บันทึกชื่อไม่สำเร็จ');
+    } finally {
+      setBusy(null);
+    }
+  }
 
   useEffect(() => {
     getAdjustments(row.sku).then((d) => setHistory(d.adjustments)).catch(() => setHistory([]));
@@ -574,6 +621,32 @@ function EditPanel({ row, onPatch }: { row: StockRow; onPatch: (r: StockRow) => 
 
   return (
     <div className="grid gap-4 md:grid-cols-3">
+      {/* rename product (Thai + English) */}
+      <div className="md:col-span-3">
+        <div className="text-xs font-semibold text-slate-500 mb-1">ชื่อสินค้า</div>
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            value={nameTh}
+            onChange={(e) => setNameTh(e.target.value)}
+            placeholder="ชื่อไทย"
+            className="flex-1 min-w-[160px] px-2 py-1.5 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+          />
+          <input
+            value={nameEn}
+            onChange={(e) => setNameEn(e.target.value)}
+            placeholder="ชื่ออังกฤษ (English)"
+            className="flex-1 min-w-[160px] px-2 py-1.5 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+          />
+          <button
+            onClick={saveName}
+            disabled={busy !== null || !nameDirty}
+            className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium flex items-center gap-1 disabled:opacity-40"
+          >
+            {busy === 'name' ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />} บันทึกชื่อ
+          </button>
+        </div>
+      </div>
+
       {/* manual stock adjust */}
       <div className="md:col-span-2">
         <div className="text-xs font-semibold text-slate-500 mb-1">แก้ไขจำนวนสต็อก (ด้วยมือ)</div>
@@ -934,190 +1007,154 @@ function HistoryTab() {
   );
 }
 
-// ── Product aliases (short human codes, e.g. "TR34") ────────────────────
+// ── Product codes (group-based, e.g. "IM01" impression, "EN12" endo) ────
 function AliasTab() {
-  const [groups, setGroups] = useState<AliasGroup[]>([]);
+  const [groups, setGroups] = useState<CatalogGroupInfo[]>([]);
+  const [ungrouped, setUngrouped] = useState(0);
   const [loading, setLoading] = useState(true);
-  const [busy, setBusy] = useState<'fill' | 'regen' | null>(null);
+  const [busy, setBusy] = useState<'fill' | 'redo' | null>(null);
   const [q, setQ] = useState('');
+  const [products, setProducts] = useState<GroupProduct[]>([]);
+  const [prodLoading, setProdLoading] = useState(false);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const loadGroups = useCallback(async () => {
     try {
-      const res = await getAliases();
-      setGroups(res.groups);
-    } catch {
-      setGroups([]);
-    } finally {
-      setLoading(false);
-    }
+      const g = await getGroups();
+      setGroups(g.groups);
+      setUngrouped(g.unassigned);
+    } catch { /* leave as-is */ }
+  }, []);
+  useEffect(() => { loadGroups().finally(() => setLoading(false)); }, [loadGroups]);
+
+  const loadProducts = useCallback(async (query: string) => {
+    setProdLoading(true);
+    try {
+      const r = await getGroupProducts({ q: query });
+      setProducts(r.products);
+    } catch { setProducts([]); } finally { setProdLoading(false); }
   }, []);
   useEffect(() => {
-    load();
-  }, [load]);
+    const t = setTimeout(() => loadProducts(q), 250);
+    return () => clearTimeout(t);
+  }, [q, loadProducts]);
 
   async function gen(regenerate: boolean) {
-    if (regenerate && !window.confirm('สร้างรหัสย่อใหม่ทั้งหมด? รหัสที่แก้ด้วยมือจะถูกเขียนทับ')) return;
-    setBusy(regenerate ? 'regen' : 'fill');
+    if (regenerate && !window.confirm('สร้างรหัสใหม่ทั้งหมด? รหัสที่แก้ด้วยมือจะถูกเขียนทับ')) return;
+    setBusy(regenerate ? 'redo' : 'fill');
     try {
       await generateAliases(regenerate);
-      await load();
-    } catch {
-      /* ignore — the list just won't change */
-    } finally {
-      setBusy(null);
-    }
+      await loadGroups();
+      await loadProducts(q);
+    } catch { /* ignore */ } finally { setBusy(null); }
   }
 
-  const term = q.trim().toLowerCase();
-  const flatTerm = term.replace(/-/g, '');
-  const shown = term
-    ? groups
-        .map((g) => ({
-          ...g,
-          items: g.items.filter(
-            (it) =>
-              g.group.includes(term) ||
-              (g.prefix && g.prefix.toLowerCase().includes(term)) ||
-              (it.alias && it.alias.toLowerCase().includes(term)) ||
-              it.sku.replace(/-/g, '').includes(flatTerm) ||
-              `${it.nameEn} ${it.nameTh}`.toLowerCase().includes(term),
-          ),
-        }))
-        .filter((g) => g.items.length)
-    : groups;
+  const codeOf = (key: string | null) => groups.find((g) => g.key === key)?.code ?? null;
+
+  if (loading) {
+    return <div className="text-slate-400 py-8 text-center"><Loader2 size={18} className="animate-spin inline" /> กำลังโหลด…</div>;
+  }
 
   return (
     <div className="max-w-4xl">
       <div className="bg-white rounded-2xl border border-slate-200 p-5 mb-4">
         <h2 className="font-semibold text-slate-800 mb-1 flex items-center gap-2">
-          <Tag size={18} className="text-indigo-600" /> รหัสย่อสินค้า
+          <Tag size={18} className="text-indigo-600" /> รหัสสินค้า (ตามกลุ่ม)
         </h2>
-        <p className="text-sm text-slate-500 mb-4">
-          รหัสสั้นที่พิมพ์ง่าย เช่น <b>TR34</b> — สินค้ากลุ่มเดียวกันใช้ตัวอักษรนำหน้าเดียวกัน (รหัสย่อ = ตัวอักษรกลุ่ม + เลขสินค้า) พิมพ์รหัสย่อในช่องค้นหาหน้า “สต็อก” ได้เลย
+        <p className="text-sm text-slate-500 mb-3">
+          รหัสสั้นที่บอกหมวดในตัว เช่น <b>IM01</b> = พิมพ์ปาก, <b>EN12</b> = รักษาราก, <b>TC03</b> = ครอบชั่วคราว
+          (รหัส = ตัวอักษรกลุ่ม + เลขลำดับ) พิมพ์รหัสในช่องค้นหาหน้า “สต็อก” ได้เลย · รหัส Express (07-10-09) ไม่เปลี่ยน
         </p>
+        {ungrouped > 0 && (
+          <div className="mb-3 flex items-center gap-1.5 text-amber-700 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 text-xs">
+            <AlertTriangle size={14} /> มี {ungrouped.toLocaleString('th-TH')} รายการยังไม่จัดกลุ่ม จึงยังไม่มีรหัส — ไปที่แท็บ “จัดกลุ่ม” ก่อน
+          </div>
+        )}
         <div className="flex flex-wrap items-center gap-2">
           <button
             onClick={() => gen(false)}
             disabled={busy !== null}
             className="px-3 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold flex items-center gap-1.5 disabled:opacity-50"
           >
-            {busy === 'fill' ? <Loader2 size={15} className="animate-spin" /> : <Wand2 size={15} />} สร้างรหัสย่ออัตโนมัติ
+            {busy === 'fill' ? <Loader2 size={15} className="animate-spin" /> : <Wand2 size={15} />} สร้างรหัสอัตโนมัติ
           </button>
           <button
             onClick={() => gen(true)}
             disabled={busy !== null}
             className="px-3 py-2 rounded-xl border border-slate-300 bg-white text-slate-600 hover:bg-slate-50 text-sm disabled:opacity-50"
           >
-            {busy === 'regen' ? <Loader2 size={15} className="animate-spin inline" /> : 'สร้างใหม่ทั้งหมด'}
+            {busy === 'redo' ? <Loader2 size={15} className="animate-spin inline" /> : 'สร้างใหม่ทั้งหมด'}
           </button>
-          <div className="relative flex-1 min-w-[200px]">
-            <Search size={16} className="absolute left-3 top-2.5 text-slate-400" />
-            <input
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              placeholder="ค้นหากลุ่ม / รหัสย่อ / ชื่อ…"
-              className="w-full pl-9 pr-3 py-2 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
-            />
-          </div>
         </div>
       </div>
 
-      {loading ? (
-        <div className="text-slate-400 py-8 text-center">
-          <Loader2 size={18} className="animate-spin inline" /> กำลังโหลด…
-        </div>
-      ) : shown.length === 0 ? (
-        <p className="text-sm text-slate-400 py-6 text-center">ยังไม่มีรหัสย่อ — กด “สร้างรหัสย่ออัตโนมัติ”</p>
-      ) : (
+      {/* code legend by pillar */}
+      <div className="bg-white rounded-2xl border border-slate-200 p-4 mb-4">
+        <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-2">รหัสของแต่ละกลุ่ม</div>
         <div className="space-y-3">
-          {shown.map((g) => (
-            <AliasGroupCard key={g.group} group={g} onChanged={load} />
+          {PILLAR_ORDER.map((pl) => (
+            <div key={pl}>
+              <div className="text-[11px] text-slate-400 mb-1.5">{PILLAR_LABEL[pl]}</div>
+              <div className="flex flex-wrap gap-1.5">
+                {groups.filter((g) => g.pillar === pl).map((g) => (
+                  <span
+                    key={g.key}
+                    className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-lg border text-xs ${
+                      g.count > 0 ? 'border-slate-200 bg-white' : 'border-dashed border-slate-200 bg-slate-50 text-slate-400'
+                    }`}
+                  >
+                    <b className={`font-mono ${g.count > 0 ? 'text-indigo-600' : 'text-slate-400'}`}>{g.code}</b> {g.nameTh}
+                    {g.count > 0 && <span className="text-slate-400 tabular-nums">· {g.count}</span>}
+                  </span>
+                ))}
+              </div>
+            </div>
           ))}
         </div>
-      )}
-    </div>
-  );
-}
+      </div>
 
-function AliasGroupCard({ group, onChanged }: { group: AliasGroup; onChanged: () => void }) {
-  const [prefix, setPrefix] = useState(group.prefix);
-  const [saving, setSaving] = useState(false);
-  const [err, setErr] = useState('');
-
-  async function savePrefix() {
-    const pfx = prefix.trim().toUpperCase();
-    if (!/^[A-Z0-9]{1,4}$/.test(pfx)) {
-      setErr('ตัวนำหน้า 1–4 ตัว (A–Z, 0–9)');
-      return;
-    }
-    setSaving(true);
-    setErr('');
-    try {
-      await setGroupPrefix(group.group, pfx);
-      onChanged();
-    } catch (e) {
-      setErr(e instanceof Error && e.message.includes('409') ? 'ตัวนำหน้าซ้ำกับกลุ่มอื่น' : 'บันทึกไม่สำเร็จ');
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  return (
-    <div className="bg-white rounded-2xl border border-slate-200 p-4">
-      <div className="flex items-center gap-2 mb-2">
-        <span className="text-xs text-slate-400 font-mono">กลุ่ม {group.group}</span>
-        <span className="text-[11px] text-slate-400">· {group.count} รายการ</span>
-        <div className="ml-auto flex items-center gap-1.5">
-          <span className="text-[11px] text-slate-500">ตัวนำหน้า</span>
+      {/* product list — code + manual override */}
+      <div className="bg-white rounded-2xl border border-slate-200 p-4">
+        <div className="relative mb-3">
+          <Search size={16} className="absolute left-3 top-2.5 text-slate-400" />
           <input
-            value={prefix}
-            onChange={(e) => setPrefix(e.target.value.toUpperCase())}
-            maxLength={4}
-            className="w-16 px-2 py-1 rounded-lg border border-slate-300 text-sm font-mono uppercase focus:outline-none focus:ring-2 focus:ring-indigo-400"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="ค้นหาสินค้าเพื่อดู/แก้รหัส…"
+            className="w-full pl-9 pr-3 py-2 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
           />
-          <button
-            onClick={savePrefix}
-            disabled={saving || prefix.trim().toUpperCase() === group.prefix}
-            className="px-2 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs disabled:opacity-40 flex items-center gap-1"
-          >
-            {saving ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} ตั้ง
-          </button>
         </div>
-      </div>
-      {err && (
-        <div className="text-rose-600 text-[11px] mb-2 flex items-center gap-1">
-          <AlertTriangle size={11} /> {err}
-        </div>
-      )}
-      <div className="divide-y divide-slate-100">
-        {group.items.map((it) => (
-          <AliasRow key={it.sku} item={it} onChanged={onChanged} />
-        ))}
+        {prodLoading ? (
+          <div className="text-slate-400 py-6 text-center"><Loader2 size={16} className="animate-spin inline" /></div>
+        ) : products.length === 0 ? (
+          <p className="text-sm text-slate-400 py-4 text-center">ไม่พบสินค้า</p>
+        ) : (
+          <div className="divide-y divide-slate-100 max-h-[60vh] overflow-auto">
+            {products.map((p) => (
+              <CodeRow key={p.sku} product={p} groupCode={codeOf(p.catalogGroup)} onChanged={() => { loadProducts(q); loadGroups(); }} />
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
 }
 
-function AliasRow({ item, onChanged }: { item: AliasItem; onChanged: () => void }) {
-  const [alias, setAliasVal] = useState(item.alias ?? '');
+function CodeRow({ product, groupCode, onChanged }: { product: GroupProduct; groupCode: string | null; onChanged: () => void }) {
+  const [alias, setAliasVal] = useState(product.alias ?? '');
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
-  const dirty = alias.trim().toUpperCase() !== (item.alias ?? '');
+  const dirty = alias.trim().toUpperCase() !== (product.alias ?? '');
 
   async function save() {
     const a = alias.trim().toUpperCase();
-    if (a && !/^[A-Z0-9]{2,12}$/.test(a)) {
-      setErr('2–12 ตัว (A–Z, 0–9)');
-      return;
-    }
+    if (a && !/^[A-Z0-9]{2,12}$/.test(a)) { setErr('2–12 ตัว (A–Z, 0–9)'); return; }
     setSaving(true);
     setErr('');
     try {
-      await setAlias(item.sku, a);
+      await setAlias(product.sku, a);
       onChanged();
     } catch (e) {
-      setErr(e instanceof Error && e.message.includes('409') ? 'รหัสย่อซ้ำ' : 'บันทึกไม่สำเร็จ');
+      setErr(e instanceof Error && e.message.includes('409') ? 'รหัสซ้ำ' : 'บันทึกไม่สำเร็จ');
     } finally {
       setSaving(false);
     }
@@ -1129,7 +1166,7 @@ function AliasRow({ item, onChanged }: { item: AliasItem; onChanged: () => void 
         value={alias}
         onChange={(e) => setAliasVal(e.target.value.toUpperCase())}
         onKeyDown={(e) => e.key === 'Enter' && dirty && save()}
-        placeholder="—"
+        placeholder={groupCode ? `${groupCode}–` : '—'}
         maxLength={12}
         className="w-24 shrink-0 px-2 py-1 rounded-lg border border-slate-300 text-sm font-mono uppercase focus:outline-none focus:ring-2 focus:ring-indigo-400"
       />
@@ -1143,14 +1180,612 @@ function AliasRow({ item, onChanged }: { item: AliasItem; onChanged: () => void 
         </button>
       )}
       <div className="min-w-0 flex-1">
-        <div className="text-sm text-slate-700 truncate">{item.nameTh || item.nameEn || flatSku(item.sku)}</div>
-        <div className="text-[10px] text-slate-400 font-mono">{flatSku(item.sku)}</div>
+        <div className="text-sm text-slate-700 truncate">{product.nameTh || product.nameEn || flatSku(product.sku)}</div>
+        <div className="text-[10px] text-slate-400 font-mono">
+          {flatSku(product.sku)}
+          {!product.catalogGroup && <span className="text-amber-600"> · ยังไม่จัดกลุ่ม</span>}
+        </div>
       </div>
+      <StockPill stock={product.stock} reorderPoint={product.reorderPoint} />
       {err && (
         <span className="text-rose-600 text-[10px] flex items-center gap-0.5 shrink-0">
           <AlertTriangle size={10} /> {err}
         </span>
       )}
+    </div>
+  );
+}
+
+// ── Catalog grouping (merchandising taxonomy) ───────────────────────────
+const PILLAR_LABEL: Record<Pillar, string> = {
+  lab: 'แล็บ / ทันตกรรมประดิษฐ์',
+  digital: 'ดิจิทัล',
+  clinical: 'คลินิก',
+  equipment: 'อุปกรณ์และของใช้',
+};
+const PILLAR_ORDER: Pillar[] = ['lab', 'digital', 'clinical', 'equipment'];
+
+// A <select> of every group (optgroup'd by pillar) + a blank "unassigned" option.
+function GroupSelect({
+  groups, value, onChange, disabled,
+}: { groups: CatalogGroupInfo[]; value: string | null; onChange: (g: string | null) => void; disabled?: boolean }) {
+  return (
+    <select
+      value={value ?? ''}
+      disabled={disabled}
+      onChange={(e) => onChange(e.target.value || null)}
+      className="shrink-0 w-40 px-2 py-1 rounded-lg border border-slate-300 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-indigo-400 disabled:opacity-50"
+    >
+      <option value="">— ยังไม่จัด —</option>
+      {PILLAR_ORDER.map((pl) => (
+        <optgroup key={pl} label={PILLAR_LABEL[pl]}>
+          {groups.filter((g) => g.pillar === pl).map((g) => (
+            <option key={g.key} value={g.key}>{g.nameTh}</option>
+          ))}
+        </optgroup>
+      ))}
+    </select>
+  );
+}
+
+// One reviewable product row: group + sub-group pickers, remaining stock, and inline name edit.
+function GroupProductRow({
+  product, groups, onChangeGroup, onChangeSubgroup, onRenamed,
+}: {
+  product: GroupProduct;
+  groups: CatalogGroupInfo[];
+  onChangeGroup: (sku: string, group: string | null) => void;
+  onChangeSubgroup: (sku: string, sub: string | null) => void;
+  onRenamed: (sku: string, nameTh: string, nameEn: string) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [nameTh, setNameTh] = useState(product.nameTh);
+  const [nameEn, setNameEn] = useState(product.nameEn);
+  const [saving, setSaving] = useState(false);
+  const subs = groups.find((g) => g.key === product.catalogGroup)?.subgroups ?? [];
+
+  async function saveName() {
+    setSaving(true);
+    try {
+      await renameProduct(product.sku, nameEn.trim(), nameTh.trim());
+      onRenamed(product.sku, nameTh.trim(), nameEn.trim());
+      setEditing(false);
+    } catch { /* keep editor open on failure */ } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="py-2">
+      <div className="flex items-center gap-2.5">
+        <Thumb photoSku={product.photoSku} size={34} />
+        <div className="min-w-0 flex-1">
+          <div className="text-sm text-slate-700 truncate">{product.nameTh || product.nameEn || flatSku(product.sku)}</div>
+          <div className="text-[10px] text-slate-400 font-mono">
+            {product.alias && <span className="text-indigo-600 font-semibold">{product.alias} · </span>}
+            {flatSku(product.sku)}
+            {product.nameEn && product.nameTh && <span className="text-slate-300"> · {product.nameEn}</span>}
+          </div>
+        </div>
+        <button
+          onClick={() => { setEditing((v) => !v); setNameTh(product.nameTh); setNameEn(product.nameEn); }}
+          title="แก้ชื่อ"
+          className={`shrink-0 p-1.5 rounded-lg border ${editing ? 'bg-indigo-50 border-indigo-300 text-indigo-600' : 'border-slate-200 text-slate-400 hover:text-slate-600'}`}
+        >
+          <Pencil size={13} />
+        </button>
+        <StockPill stock={product.stock} reorderPoint={product.reorderPoint} />
+        {subs.length > 0 && (
+          <select
+            value={product.catalogSubgroup ?? ''}
+            onChange={(e) => onChangeSubgroup(product.sku, e.target.value || null)}
+            className="shrink-0 w-28 px-2 py-1 rounded-lg border border-slate-300 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-indigo-400"
+          >
+            <option value="">— ชนิด —</option>
+            {subs.map((s) => (
+              <option key={s.code} value={s.code}>{s.nameTh}</option>
+            ))}
+          </select>
+        )}
+        <GroupSelect groups={groups} value={product.catalogGroup} onChange={(g) => onChangeGroup(product.sku, g)} />
+      </div>
+      {editing && (
+        <div className="flex flex-wrap items-center gap-2 mt-2 pl-11">
+          <input
+            value={nameTh}
+            onChange={(e) => setNameTh(e.target.value)}
+            placeholder="ชื่อไทย"
+            className="flex-1 min-w-[140px] px-2 py-1 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+          />
+          <input
+            value={nameEn}
+            onChange={(e) => setNameEn(e.target.value)}
+            placeholder="ชื่ออังกฤษ"
+            className="flex-1 min-w-[140px] px-2 py-1 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+          />
+          <button
+            onClick={saveName}
+            disabled={saving}
+            className="px-3 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-medium flex items-center gap-1 disabled:opacity-50"
+          >
+            {saving ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} บันทึกชื่อ
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function GroupTab() {
+  const [groups, setGroups] = useState<CatalogGroupInfo[]>([]);
+  const [total, setTotal] = useState(0);
+  const [unassigned, setUnassigned] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState<'fill' | 'redo' | null>(null);
+  // Which bucket is open for review: a group key, 'unassigned', or null (overview only).
+  const [sel, setSel] = useState<string | null>(null);
+  const [products, setProducts] = useState<GroupProduct[]>([]);
+  const [prodLoading, setProdLoading] = useState(false);
+  const [q, setQ] = useState('');
+
+  const loadGroups = useCallback(async () => {
+    try {
+      const g = await getGroups();
+      setGroups(g.groups);
+      setTotal(g.total);
+      setUnassigned(g.unassigned);
+    } catch { /* leave as-is */ }
+  }, []);
+  useEffect(() => { loadGroups().finally(() => setLoading(false)); }, [loadGroups]);
+
+  const loadProducts = useCallback(async (bucket: string, query: string) => {
+    setProdLoading(true);
+    try {
+      const opts = bucket === 'unassigned' ? { filter: 'unassigned' as const, q: query } : { group: bucket, q: query };
+      const r = await getGroupProducts(opts);
+      setProducts(r.products);
+    } catch { setProducts([]); } finally { setProdLoading(false); }
+  }, []);
+
+  // (re)load the open bucket when it or the (debounced) search changes.
+  useEffect(() => {
+    if (!sel) { setProducts([]); return; }
+    const t = setTimeout(() => loadProducts(sel, q), 250);
+    return () => clearTimeout(t);
+  }, [sel, q, loadProducts]);
+
+  async function auto(redo: boolean) {
+    if (redo && !window.confirm('จัดกลุ่มใหม่ทั้งหมด? การจัดด้วยมือจะถูกเขียนทับ')) return;
+    setBusy(redo ? 'redo' : 'fill');
+    try {
+      await autoAssignGroups(!redo);
+      await loadGroups();
+      if (sel) await loadProducts(sel, q);
+    } catch { /* ignore */ } finally { setBusy(null); }
+  }
+
+  async function changeProduct(sku: string, group: string | null) {
+    // optimistic: update the row (changing group clears the sub-group), then drop it if it no
+    // longer belongs to the open bucket.
+    setProducts((ps) => {
+      const updated = ps.map((p) => (p.sku === sku ? { ...p, catalogGroup: group, catalogSubgroup: null } : p));
+      if (sel === 'unassigned') return updated.filter((p) => p.catalogGroup === null);
+      if (sel) return updated.filter((p) => p.catalogGroup === sel);
+      return updated;
+    });
+    try {
+      await setProductGroup(sku, group);
+      loadGroups();
+    } catch {
+      if (sel) loadProducts(sel, q); // revert to server truth on failure
+    }
+  }
+
+  async function changeSubgroup(sku: string, sub: string | null) {
+    setProducts((ps) => ps.map((p) => (p.sku === sku ? { ...p, catalogSubgroup: sub } : p)));
+    try {
+      await setSubgroup(sku, sub);
+    } catch {
+      if (sel) loadProducts(sel, q);
+    }
+  }
+
+  function patchName(sku: string, nameTh: string, nameEn: string) {
+    setProducts((ps) => ps.map((p) => (p.sku === sku ? { ...p, nameTh, nameEn } : p)));
+  }
+
+  const byPillar = (pl: Pillar) => groups.filter((g) => g.pillar === pl);
+  const selName = sel === 'unassigned' ? 'ยังไม่จัดกลุ่ม' : groups.find((g) => g.key === sel)?.nameTh ?? '';
+  const assigned = total - unassigned;
+
+  if (loading) {
+    return <div className="text-slate-400 py-8 text-center"><Loader2 size={18} className="animate-spin inline" /> กำลังโหลด…</div>;
+  }
+
+  return (
+    <div className="max-w-5xl">
+      <div className="bg-white rounded-2xl border border-slate-200 p-5 mb-4">
+        <h2 className="font-semibold text-slate-800 mb-1 flex items-center gap-2">
+          <Layers size={18} className="text-indigo-600" /> จัดกลุ่มสินค้า
+        </h2>
+        <p className="text-sm text-slate-500 mb-3">
+          จัดสินค้าเข้าหมวดตามชนิด (พิมพ์ปาก, อะคริลิก, รักษาราก, ฯลฯ) — ไม่แตะรหัส Express กด “จัดกลุ่มอัตโนมัติ” ให้ระบบเดาให้ก่อน แล้วแก้รายการที่ผิดได้
+        </p>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            onClick={() => auto(false)}
+            disabled={busy !== null}
+            className="px-3 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold flex items-center gap-1.5 disabled:opacity-50"
+          >
+            {busy === 'fill' ? <Loader2 size={15} className="animate-spin" /> : <Wand2 size={15} />} จัดกลุ่มอัตโนมัติ
+          </button>
+          <button
+            onClick={() => auto(true)}
+            disabled={busy !== null}
+            className="px-3 py-2 rounded-xl border border-slate-300 bg-white text-slate-600 hover:bg-slate-50 text-sm disabled:opacity-50"
+          >
+            {busy === 'redo' ? <Loader2 size={15} className="animate-spin inline" /> : 'จัดใหม่ทั้งหมด'}
+          </button>
+          <div className="ml-auto text-sm text-slate-500">
+            จัดแล้ว <b className="text-slate-800">{assigned.toLocaleString('th-TH')}</b> / {total.toLocaleString('th-TH')} ·{' '}
+            <button
+              onClick={() => { setSel('unassigned'); setQ(''); }}
+              className={unassigned > 0 ? 'text-amber-600 font-semibold hover:underline' : 'text-slate-400'}
+            >
+              ยังไม่จัด {unassigned.toLocaleString('th-TH')}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* group overview by pillar */}
+      <div className="space-y-4">
+        {PILLAR_ORDER.map((pl) => (
+          <div key={pl}>
+            <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-2">{PILLAR_LABEL[pl]}</div>
+            <div className="flex flex-wrap gap-2">
+              {byPillar(pl).map((g) => (
+                <button
+                  key={g.key}
+                  onClick={() => { setSel(sel === g.key ? null : g.key); setQ(''); }}
+                  className={`px-3 py-2 rounded-xl border text-sm flex items-center gap-2 transition ${
+                    sel === g.key
+                      ? 'border-indigo-500 bg-indigo-50 ring-2 ring-indigo-100'
+                      : g.count > 0
+                        ? 'border-slate-200 bg-white hover:border-indigo-300'
+                        : 'border-dashed border-slate-200 bg-slate-50 text-slate-400'
+                  }`}
+                >
+                  <span className="font-medium">{g.nameTh}</span>
+                  <span className={`text-xs font-bold tabular-nums ${g.count > 0 ? 'text-indigo-600' : 'text-slate-300'}`}>{g.count}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* review list for the open bucket */}
+      {sel && (
+        <div className="mt-5 bg-white rounded-2xl border border-slate-200 p-4">
+          <div className="flex flex-wrap items-center gap-2 mb-3">
+            <h3 className="font-semibold text-slate-800">{selName}</h3>
+            <button onClick={() => setSel(null)} className="text-slate-400 hover:text-slate-600"><X size={16} /></button>
+            <div className="relative flex-1 min-w-[200px]">
+              <Search size={15} className="absolute left-3 top-2.5 text-slate-400" />
+              <input
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                placeholder="ค้นหาในหมวดนี้…"
+                className="w-full pl-9 pr-3 py-2 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+              />
+            </div>
+          </div>
+          {prodLoading ? (
+            <div className="text-slate-400 py-6 text-center"><Loader2 size={16} className="animate-spin inline" /></div>
+          ) : products.length === 0 ? (
+            <p className="text-sm text-slate-400 py-4 text-center">ไม่มีสินค้าในรายการนี้</p>
+          ) : (
+            <div className="divide-y divide-slate-100 max-h-[60vh] overflow-auto">
+              {products.map((p) => (
+                <GroupProductRow
+                  key={p.sku}
+                  product={p}
+                  groups={groups}
+                  onChangeGroup={changeProduct}
+                  onChangeSubgroup={changeSubgroup}
+                  onRenamed={patchName}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Name normalization review (ตรวจทานชื่อ) ──────────────────────────────
+// Review AI-normalized English names before they replace the live name. NOTHING here changes a
+// live product name until you press อนุมัติ — proposals are staged server-side. Approving copies
+// the proposed name onto the live product (and makes it searchable); rejecting leaves it as-is.
+const PROPOSAL_FILTERS: { key: ProposalFilter; label: string; count: (s: ProposalSummary) => number }[] = [
+  { key: 'pending', label: 'รอตรวจ', count: (s) => s.pending },
+  { key: 'review', label: '⚠ ต้องตรวจสอบ', count: (s) => s.review },
+  { key: 'approved', label: 'อนุมัติแล้ว', count: (s) => s.approved },
+  { key: 'rejected', label: 'ไม่ใช้', count: (s) => s.rejected },
+  { key: 'all', label: 'ทั้งหมด', count: (s) => s.total },
+];
+
+function ReviewTab() {
+  const [groups, setGroups] = useState<CatalogGroupInfo[]>([]);
+  const [summary, setSummary] = useState<ProposalSummary | null>(null);
+  const [filter, setFilter] = useState<ProposalFilter>('pending');
+  const [q, setQ] = useState('');
+  const [rows, setRows] = useState<NameProposalRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState<'load' | 'bulk' | null>(null);
+
+  const loadSummary = useCallback(() => { getProposalSummary().then(setSummary).catch(() => {}); }, []);
+  useEffect(() => { getGroups().then((g) => setGroups(g.groups)).catch(() => {}); }, []);
+  useEffect(() => { loadSummary(); }, [loadSummary]);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try { const { products } = await getProposals(filter, q); setRows(products); }
+    catch { setRows([]); }
+    finally { setLoading(false); }
+  }, [filter, q]);
+  useEffect(() => { const t = setTimeout(load, 250); return () => clearTimeout(t); }, [load]);
+
+  const groupLabel = useCallback((g: string | null, sub: string | null): { text: string; muted: boolean } => {
+    if (!g) return { text: 'ยังไม่จัดกลุ่ม', muted: true };
+    const grp = groups.find((x) => x.key === g);
+    const gName = grp?.nameTh ?? g;
+    const sName = sub ? (grp?.subgroups.find((s) => s.code === sub)?.nameTh ?? sub) : '';
+    return { text: sName ? `${gName} › ${sName}` : gName, muted: false };
+  }, [groups]);
+
+  // After a decide: update the row in place, or drop it if it no longer matches the open filter.
+  function afterDecide(r: NameProposalRow) {
+    setRows((rs) => rs.flatMap((x) => {
+      if (x.sku !== r.sku) return [x];
+      const merged = { ...x, ...r, alias: x.alias, catalogGroup: x.catalogGroup, catalogSubgroup: x.catalogSubgroup };
+      const keep =
+        filter === 'all' ? true :
+        filter === 'pending' ? merged.status === 'pending' :
+        filter === 'review' ? merged.status === 'pending' && merged.needsReview :
+        filter === 'approved' ? merged.status === 'approved' :
+        merged.status === 'rejected';
+      return keep ? [merged] : [];
+    }));
+    loadSummary();
+  }
+
+  async function seed() {
+    setBusy('load');
+    try { await loadProposals(); await Promise.all([loadSummary(), load()]); }
+    finally { setBusy(null); }
+  }
+  async function bulk() {
+    const n = summary ? summary.pending - summary.review : 0;
+    if (n <= 0) return;
+    if (!window.confirm(
+      `อนุมัติชื่อที่ปลอดภัย ${n.toLocaleString('th-TH')} รายการทั้งหมด?\n` +
+      `ชื่อจริงจะถูกอัปเดตทันที (รายการที่ต้อง “ตรวจสอบ” จะไม่ถูกแตะ)`,
+    )) return;
+    setBusy('bulk');
+    try { await bulkApproveSafe(); await Promise.all([loadSummary(), load()]); }
+    finally { setBusy(null); }
+  }
+
+  const total = summary?.total ?? 0;
+  const done = (summary?.approved ?? 0) + (summary?.rejected ?? 0);
+  const safeN = summary ? summary.pending - summary.review : 0;
+  const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+
+  return (
+    <div className="max-w-4xl">
+      <div className="bg-white rounded-2xl border border-slate-200 p-5 mb-4">
+        <h2 className="font-semibold text-slate-800 mb-1 flex items-center gap-2">
+          <ClipboardCheck size={18} className="text-indigo-600" /> ตรวจทานชื่อสินค้า
+        </h2>
+        <p className="text-sm text-slate-500 mb-3">
+          ทบทวนชื่ออังกฤษที่ระบบปรับให้ก่อนบันทึกลงระบบจริง — <b>ชื่อจริงจะยังไม่เปลี่ยนจนกว่าคุณจะกด “อนุมัติ”</b>{' '}
+          ชื่อเดิมจะขีดฆ่าไว้ให้เทียบ · แก้ข้อความในช่องได้ก่อนอนุมัติ · รายการ <span className="text-amber-700">⚠ ต้องตรวจสอบ</span> (สี/เฉดที่ระบบเดาไม่ได้) เก็บไว้ให้ทีมดูร่วมกัน
+        </p>
+
+        {total === 0 ? (
+          <button onClick={seed} disabled={busy !== null}
+            className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold flex items-center gap-2 disabled:opacity-50">
+            {busy === 'load' ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />} โหลดข้อเสนอชื่อเพื่อเริ่มตรวจทาน
+          </button>
+        ) : (
+          <>
+            {/* progress */}
+            <div className="flex items-center gap-3 mb-3">
+              <div className="flex-1 h-2 rounded-full bg-slate-100 overflow-hidden">
+                <div className="h-full bg-emerald-500 transition-all" style={{ width: `${pct}%` }} />
+              </div>
+              <span className="text-xs text-slate-500 tabular-nums shrink-0">
+                ตรวจแล้ว <b className="text-slate-700">{done.toLocaleString('th-TH')}</b> / {total.toLocaleString('th-TH')}
+              </span>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <button onClick={bulk} disabled={busy !== null || safeN <= 0}
+                className="px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold flex items-center gap-1.5 disabled:opacity-40">
+                {busy === 'bulk' ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />}
+                อนุมัติชื่อที่ปลอดภัยทั้งหมด{safeN > 0 ? ` (${safeN.toLocaleString('th-TH')})` : ''}
+              </button>
+              <span className="text-[11px] text-slate-400">รายการที่ต้องตรวจสอบจะไม่ถูกอนุมัติอัตโนมัติ</span>
+              <button onClick={seed} disabled={busy !== null}
+                className="ml-auto text-xs text-slate-400 hover:text-slate-600 flex items-center gap-1" title="โหลดข้อเสนอที่ยังไม่มีในระบบ">
+                {busy === 'load' ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />} โหลดเพิ่ม
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* filters + search */}
+      <div className="flex flex-wrap items-center gap-2 mb-3">
+        <div className="relative flex-1 min-w-[200px]">
+          <Search size={16} className="absolute left-3 top-2.5 text-slate-400" />
+          <input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="ค้นหาชื่อ / รหัสสินค้า…"
+            className="w-full pl-9 pr-3 py-2 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+          />
+        </div>
+        <div className="flex flex-wrap gap-1">
+          {PROPOSAL_FILTERS.map((f) => (
+            <button
+              key={f.key}
+              onClick={() => setFilter(f.key)}
+              className={`px-3 py-2 rounded-xl text-sm font-medium border flex items-center gap-1.5 ${
+                filter === f.key
+                  ? f.key === 'review' ? 'bg-amber-500 text-white border-amber-500' : 'bg-indigo-600 text-white border-indigo-600'
+                  : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'
+              }`}
+            >
+              {f.label}
+              {summary && <span className={`text-xs tabular-nums ${filter === f.key ? 'opacity-80' : 'text-slate-400'}`}>{f.count(summary).toLocaleString('th-TH')}</span>}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="bg-white rounded-2xl border border-slate-200 p-4">
+        {loading ? (
+          <div className="text-slate-400 py-8 text-center"><Loader2 size={18} className="animate-spin inline" /> กำลังโหลด…</div>
+        ) : rows.length === 0 ? (
+          <p className="text-sm text-slate-400 py-8 text-center">
+            {total === 0 ? 'ยังไม่มีข้อเสนอ — กด “โหลดข้อเสนอชื่อ” ด้านบน' : 'ไม่มีรายการในตัวกรองนี้'}
+          </p>
+        ) : (
+          <div className="divide-y divide-slate-100 max-h-[64vh] overflow-auto">
+            {rows.map((r) => (
+              <ProposalRow key={r.sku} row={r} groupLabel={groupLabel} onDecided={afterDecide} />
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ProposalRow({
+  row, groupLabel, onDecided,
+}: {
+  row: NameProposalRow;
+  groupLabel: (g: string | null, sub: string | null) => { text: string; muted: boolean };
+  onDecided: (r: NameProposalRow) => void;
+}) {
+  const proposed = (row.proposedNameEn ?? '').trim();
+  const [text, setText] = useState(proposed);
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState<'approve' | 'reject' | null>(null);
+  // Discard any abandoned in-place edit when the row's proposal/status changes. ProposalRow is
+  // reused across decides (same key=sku, no remount), so local text must not outlive the row
+  // state it belonged to — otherwise a rejected row's inline approve could write leftover text.
+  useEffect(() => { setText((row.proposedNameEn ?? '').trim()); setOpen(false); }, [row.sku, row.proposedNameEn, row.status]);
+  const gl = groupLabel(row.catalogGroup, row.catalogSubgroup);
+  const flagged = row.needsReview && row.status === 'pending';
+  const editable = row.status === 'pending' || open;
+  const liveDiffers = proposed !== row.nameEn.trim();
+
+  async function decide(action: 'approve' | 'reject') {
+    setBusy(action);
+    try {
+      // Only send edited text when the editor is actually visible (editable). An inline approve on
+      // a closed approved/rejected row approves the STORED proposal, never leftover local text.
+      const nameEn = action === 'approve' && editable ? text.trim() : undefined;
+      const { product } = await decideProposal(row.sku, action, nameEn);
+      onDecided(product);
+      setOpen(false);
+    } catch { /* leave the row as-is on failure */ } finally { setBusy(null); }
+  }
+  function startEdit() { setText(proposed); setOpen(true); }
+
+  return (
+    <div className={`py-2.5 ${flagged ? 'bg-amber-50/60 -mx-4 px-4' : ''}`}>
+      <div className="flex items-start gap-2.5">
+        <Thumb photoSku={row.photoSku} size={38} />
+        <div className="min-w-0 flex-1">
+          {editable ? (
+            <>
+              {liveDiffers && <div className="text-[13px] text-slate-400 line-through truncate">{row.nameEn || '—'}</div>}
+              <input
+                value={text}
+                onChange={(e) => setText(e.target.value)}
+                className="w-full text-sm font-semibold text-slate-800 bg-transparent border-b border-dashed border-slate-300 focus:border-indigo-500 focus:outline-none py-0.5"
+              />
+            </>
+          ) : (
+            <>
+              <div className={`text-sm truncate ${row.status === 'approved' ? 'font-semibold text-slate-800' : 'text-slate-600'}`}>
+                {row.nameEn || '—'}
+              </div>
+              {row.status === 'rejected' && liveDiffers && (
+                <div className="text-[11px] text-slate-400 truncate">เสนอ: {proposed}</div>
+              )}
+            </>
+          )}
+          <div className="text-[10px] text-slate-400 font-mono mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
+            {row.alias && <span className="text-indigo-600 font-semibold">{row.alias}</span>}
+            <span>{flatSku(row.sku)}</span>
+            <span className={gl.muted ? 'text-amber-600' : 'text-slate-500'}>· {gl.text}</span>
+            {flagged && <span className="font-sans not-italic text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded font-semibold">⚠ ต้องตรวจสอบ</span>}
+          </div>
+          {row.nameTh && <div className="text-[11px] text-slate-400 truncate mt-0.5">{row.nameTh}</div>}
+        </div>
+        <StockPill stock={row.stock} reorderPoint={row.reorderPoint} />
+        <div className="shrink-0 flex items-center gap-1.5">
+          {row.status === 'pending' && (
+            <>
+              <button onClick={() => decide('approve')} disabled={busy !== null}
+                className="px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium flex items-center gap-1 disabled:opacity-50">
+                {busy === 'approve' ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} อนุมัติ
+              </button>
+              <button onClick={() => decide('reject')} disabled={busy !== null}
+                className="px-2.5 py-1.5 rounded-lg border border-slate-300 text-slate-500 hover:bg-slate-50 text-xs flex items-center gap-1 disabled:opacity-50">
+                {busy === 'reject' ? <Loader2 size={13} className="animate-spin" /> : <X size={13} />} ไม่ใช้
+              </button>
+            </>
+          )}
+          {row.status === 'approved' && (open ? (
+            <>
+              <button onClick={() => decide('approve')} disabled={busy !== null}
+                className="px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium flex items-center gap-1 disabled:opacity-50">
+                {busy === 'approve' ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} บันทึก
+              </button>
+              <button onClick={() => { setOpen(false); setText(proposed); }} className="px-2 py-1.5 text-xs text-slate-400 hover:text-slate-600">ยกเลิก</button>
+            </>
+          ) : (
+            <>
+              <span className="text-emerald-600 text-xs font-medium flex items-center gap-1"><Check size={13} /> อนุมัติแล้ว</span>
+              <button onClick={startEdit} className="text-slate-400 hover:text-indigo-600 p-1" title="แก้ไขชื่อ"><Pencil size={13} /></button>
+            </>
+          ))}
+          {row.status === 'rejected' && !open && (
+            <>
+              <span className="text-slate-400 text-xs">ไม่ใช้แล้ว</span>
+              <button onClick={() => decide('approve')} disabled={busy !== null} className="text-xs text-indigo-600 hover:underline">อนุมัติ</button>
+              <button onClick={startEdit} className="text-slate-400 hover:text-indigo-600 p-1" title="แก้ไขชื่อ"><Pencil size={13} /></button>
+            </>
+          )}
+          {row.status === 'rejected' && open && (
+            <>
+              <button onClick={() => decide('approve')} disabled={busy !== null}
+                className="px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium flex items-center gap-1 disabled:opacity-50">
+                {busy === 'approve' ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} บันทึก
+              </button>
+              <button onClick={() => { setOpen(false); setText(proposed); }} className="px-2 py-1.5 text-xs text-slate-400 hover:text-slate-600">ยกเลิก</button>
+            </>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

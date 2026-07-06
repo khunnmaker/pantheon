@@ -3,15 +3,16 @@ import { z } from 'zod';
 import { prisma } from '../db/prisma.js';
 import { verifyPassword, DUMMY_HASH } from '../auth/password.js';
 import { signToken, type Role, type AppName } from '../auth/jwt.js';
-import { requireAuth } from '../auth/middleware.js';
+import { authedAgentFromToken } from '../auth/middleware.js';
 import { buildLoginCards } from '../auth/loginCards.js';
+import { sessionSetCookie, sessionClearCookie, readSessionToken } from '../auth/cookies.js';
 
 const loginBody = z.object({
   email: z.string().email(),
   password: z.string().min(1),
 });
 
-const APP_NAMES = ['minerva', 'vulcan', 'juno', 'ceres', 'venus'] as const;
+const APP_NAMES = ['minerva', 'vulcan', 'juno', 'ceres', 'mercury', 'venus'] as const;
 
 export async function authRoutes(app: FastifyInstance) {
   // POST /api/auth/login — { email, password } -> { token, agent }. Any role may log in here;
@@ -42,14 +43,35 @@ export async function authRoutes(app: FastifyInstance) {
         role: agent.role as Role,
         apps: agent.apps,
       };
-      return { token: signToken(identity), agent: identity };
+      const token = signToken(identity);
+      // Also drop the suite SSO cookie (parent-domain, httpOnly) so opening any OTHER
+      // *.prominentdental.com app recognises this login without re-entering credentials. The
+      // cookie only ever authenticates GET /api/auth/me (below) — never a state change.
+      reply.header('set-cookie', sessionSetCookie(token));
+      return { token, agent: identity };
     },
   );
 
-  // GET /api/auth/me — current identity from the JWT. requireAuth-only (any live account) —
-  // Jupiter's bootstrap uses this regardless of which app it's fronting.
-  app.get('/api/auth/me', { preHandler: requireAuth }, async (req) => {
-    return { agent: req.agent };
+  // GET /api/auth/me — "who am I?" bootstrap. Accepts the bearer token (Authorization header)
+  // OR the shared SSO cookie, and returns the identity PLUS a fresh bearer token. This is the
+  // whole SSO mechanism: an app opened with no local token calls /me, the browser attaches the
+  // parent-domain cookie, and the app gets a token to use (via the header) from then on. It is
+  // the ONLY endpoint that reads the cookie, and it is a GET whose body is CORS-protected — so
+  // the cookie can never drive a state change and there is no CSRF surface to defend.
+  app.get('/api/auth/me', async (req, reply) => {
+    const header = req.headers.authorization;
+    const bearer = header?.startsWith('Bearer ') ? header.slice('Bearer '.length).trim() : '';
+    const agent = await authedAgentFromToken(bearer || readSessionToken(req));
+    if (!agent) return reply.code(401).send({ error: 'unauthorized' });
+    return { agent, token: signToken(agent) };
+  });
+
+  // POST /api/auth/logout — clear the shared SSO cookie (idempotent; needs no token, since
+  // clearing your own session is not a CSRF concern). Apps also clear their own local token
+  // client-side; this call makes SSO logout propagate to every *.prominentdental.com app.
+  app.post('/api/auth/logout', async (_req, reply) => {
+    reply.header('set-cookie', sessionClearCookie());
+    return { ok: true };
   });
 
   // PUBLIC GET /api/auth/logins?app=minerva|vulcan|juno|ceres — the name-card list for that

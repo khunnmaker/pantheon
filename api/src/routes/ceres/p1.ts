@@ -143,7 +143,7 @@ export function p1Routes(app: FastifyInstance) {
   // GET /api/ceres/expenses?scope=mine|all&status=&from=&to=&partyId=
   const listQuery = z.object({
     scope: z.enum(['mine', 'all']).optional(),
-    status: z.enum(['pending', 'approved', 'settled', 'rejected']).optional(),
+    status: z.enum(['pending', 'approved', 'settled', 'rejected', 'void']).optional(),
     from: z.string().optional(),
     to: z.string().optional(),
     partyId: z.string().optional(),
@@ -274,6 +274,43 @@ export function p1Routes(app: FastifyInstance) {
 
       await prisma.ceresExpense.delete({ where: { id: existing.id } });
       return { ok: true };
+    },
+  );
+
+  // POST /api/ceres/expenses/:id/void { reason } — md/ceo soft-delete of ANY entry
+  // (approved/settled/rejected/pending). Unlike DELETE (which hard-removes a pending
+  // draft), void KEEPS the row: it's excluded from every total/board/settlement but stays
+  // visible struck-through with who/when/why, so a closed day's books stay auditable.
+  // A voided settled entry does NOT alter its already-closed settlement snapshot (history
+  // is immutable) — it just stops counting in the live views and future reports.
+  app.post<{ Params: { id: string } }>(
+    '/api/ceres/expenses/:id/void',
+    { preHandler: requireCeresRole('md', 'ceo') },
+    async (req, reply) => {
+      const body = z.object({ reason: z.string().min(1).max(300) }).safeParse(req.body);
+      if (!body.success) return reply.code(400).send({ error: 'invalid_body' });
+      const existing = await prisma.ceresExpense.findUnique({ where: { id: req.params.id } });
+      if (!existing) return reply.code(404).send({ error: 'not_found' });
+      if (existing.status === 'void') return reply.code(409).send({ error: 'already_void' });
+      const agent = req.agent!;
+      const [updated] = await prisma.$transaction([
+        prisma.ceresExpense.update({
+          where: { id: existing.id },
+          data: { status: 'void', voidedById: agent.id, voidedAt: new Date(), voidReason: body.data.reason },
+        }),
+        prisma.ceresRevision.create({
+          data: {
+            subjectType: 'expense',
+            subjectId: existing.id,
+            changedById: agent.id,
+            changedByName: agent.name,
+            before: { status: existing.status },
+            after: { status: 'void', voidReason: body.data.reason },
+            reason: body.data.reason,
+          },
+        }),
+      ]);
+      return { expense: toExpenseRow(updated, reqBase(req)) };
     },
   );
 

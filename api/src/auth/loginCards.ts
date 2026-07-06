@@ -1,11 +1,15 @@
 import { prisma } from '../db/prisma.js';
 import { TIER_ACCOUNTS, EMPLOYEES, employeeEmail } from '../db/ensureSeeded.js';
-import type { AppName } from './jwt.js';
+import { MD_APPS, type AppName } from './jwt.js';
 
 export interface LoginCard {
   email: string;
   name: string;
   kind: 'password' | 'pin';
+  // DISPLAY metadata for the suite login screens (role-grouped tiles + cute avatars). Additive
+  // — older clients that only read email/name/kind keep working unchanged.
+  group: string;                 // ceo | md | sales | finance | messengers | others
+  gender: 'male' | 'female';     // drives the cute (DiceBear) avatar
 }
 
 // Shared "who can log in to app X" name-card list, used by BOTH the public
@@ -19,7 +23,7 @@ export async function buildLoginCards(app: AppName): Promise<LoginCard[]> {
 
   const candidateEmails = [
     supervisor.email,
-    ...(app === 'ceres' ? [md.email] : []),
+    ...(MD_APPS.includes(app) ? [md.email] : []),
     ...EMPLOYEES.filter((e) => (e.apps as readonly string[]).includes(app)).map((e) => employeeEmail(e.slug)),
   ];
 
@@ -31,15 +35,15 @@ export async function buildLoginCards(app: AppName): Promise<LoginCard[]> {
 
   const cards: LoginCard[] = [];
   if (known.has(supervisor.email)) {
-    cards.push({ email: supervisor.email, name: supervisor.name, kind: 'password' });
+    cards.push({ email: supervisor.email, name: supervisor.name, kind: 'password', group: supervisor.group, gender: supervisor.gender });
   }
-  if (app === 'ceres' && known.has(md.email)) {
-    cards.push({ email: md.email, name: md.name, kind: 'password' });
+  if (MD_APPS.includes(app) && known.has(md.email)) {
+    cards.push({ email: md.email, name: md.name, kind: 'password', group: md.group, gender: md.gender });
   }
   for (const e of EMPLOYEES) {
     if (!(e.apps as readonly string[]).includes(app)) continue;
     const email = employeeEmail(e.slug);
-    if (known.has(email)) cards.push({ email, name: e.name, kind: 'pin' });
+    if (known.has(email)) cards.push({ email, name: e.name, kind: 'pin', group: e.group, gender: e.gender });
   }
   return cards;
 }

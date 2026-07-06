@@ -39,6 +39,24 @@ export async function fetchGroupName(groupId: string): Promise<string | null> {
   }
 }
 
+// Best-effort profile/group picture lookup. 1-on-1 (U…) → getProfile.pictureUrl; group (C…) →
+// getGroupSummary.pictureUrl; room (R…) has no picture API → null. null on no client / error.
+export async function fetchPictureUrl(lineUserId: string): Promise<string | null> {
+  const c = getLineClient();
+  if (!c) return null;
+  try {
+    if (lineUserId.startsWith('C')) {
+      const summary = await c.getGroupSummary(lineUserId);
+      return summary.pictureUrl ?? null;
+    }
+    if (lineUserId.startsWith('R')) return null;
+    const profile = await c.getProfile(lineUserId);
+    return profile.pictureUrl ?? null;
+  } catch {
+    return null;
+  }
+}
+
 // Download the binary content of an image/file message via the LINE content API.
 // Returns null if no token or the fetch fails.
 export async function fetchMessageContent(

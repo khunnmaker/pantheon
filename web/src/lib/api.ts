@@ -13,6 +13,21 @@ export interface Agent {
   email: string;
   name: string;
   role: Role;
+  // Per-person app grants (from the login response). Drives the suite app switcher —
+  // see hasAppAccess, which mirrors the SERVER logic in api/src/auth/jwt.ts exactly.
+  apps: string[];
+}
+
+// Suite apps the switcher can link to. Keep in sync with AppName in api/src/auth/jwt.ts.
+export type AppName = 'minerva' | 'vulcan' | 'juno' | 'ceres' | 'mercury';
+
+// Mirror of the server's hasAppAccess (api/src/auth/jwt.ts): supervisor → everything;
+// md → Ceres only; employee → their own per-person grant list. A stored agent from before
+// this field existed has no apps → treated as no grants (empty list), which is safe.
+export function hasAppAccess(agent: Agent, app: AppName): boolean {
+  if (agent.role === 'supervisor') return true;
+  if (agent.role === 'md') return app === 'ceres';
+  return (agent.apps ?? []).includes(app);
 }
 export interface Message {
   id: string;
@@ -28,6 +43,8 @@ export interface Message {
   attachmentRef: string | null;
   attachmentName: string | null; // original filename for received files
   financeSentAt: string | null; // when a slip was forwarded to finance
+  quotedMessageId?: string | null; // our Message.id this bubble quote-replies to (both directions)
+  quotable?: boolean; // customer text/sticker bubble carrying a quoteToken → tap to LINE-quote it
   createdAt: string;
 }
 export interface CustomerLite {
@@ -39,6 +56,7 @@ export interface CustomerLite {
   category: string | null;
   stage: string | null;
   suggestedStage: string | null;
+  pictureUrl?: string | null; // LINE profile/group picture (fallback icon when absent/broken)
   firstSeen?: string;
   lastSeen: string;
 }
@@ -143,15 +161,49 @@ export async function login(email: string, password: string): Promise<{ token: s
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ email, password }),
+    // Suite SSO: let the browser STORE the parent-domain httpOnly cookie the server sets
+    // on this response. Only login/bootstrap/logout use credentials — never state-changing calls.
+    credentials: 'include',
   });
   if (!res.ok) throw new Error('invalid_credentials');
   return res.json() as Promise<{ token: string; agent: Agent }>;
+}
+
+// Suite SSO bootstrap: with NO stored token, ask /me using ONLY the shared parent-domain
+// cookie (credentials:'include', no Authorization header). If the cookie authenticates,
+// the server returns a fresh bearer token + agent; we store the session and return the agent.
+// Never throws — a missing/invalid cookie just yields null (→ show Login).
+export async function bootstrap(): Promise<Agent | null> {
+  try {
+    const res = await fetch(`${API_URL}/api/auth/me`, { credentials: 'include' });
+    if (!res.ok) return null;
+    const { agent, token } = (await res.json()) as { agent: Agent; token: string };
+    setSession(token, agent);
+    return agent;
+  } catch {
+    return null;
+  }
+}
+
+// Suite-wide logout: clear the shared cookie server-side (best-effort), THEN clear this
+// app's local session. Used by the user-facing "log out" action so logging out here
+// propagates across the suite.
+export async function logout(): Promise<void> {
+  try {
+    await fetch(`${API_URL}/api/auth/logout`, { method: 'POST', credentials: 'include' });
+  } catch {
+    // Network failure clearing the cookie shouldn't block local logout.
+  }
+  clearSession();
 }
 
 export interface LoginCard {
   email: string;
   name: string;
   kind: 'password' | 'pin';
+  // DISPLAY metadata for the role-grouped, avatar login screen (additive; server-provided).
+  group: string;                 // ceo | md | sales | finance | messengers | stores | others
+  gender: 'male' | 'female';     // drives the cute (DiceBear) avatar
 }
 // PUBLIC — no auth required. Ordered: supervisor first, then employees granted this app.
 export async function getLogins(app: 'minerva' | 'ceres'): Promise<LoginCard[]> {
@@ -161,8 +213,16 @@ export async function getLogins(app: 'minerva' | 'ceres'): Promise<LoginCard[]> 
 }
 
 export const getQueue = () => authed<{ queue: QueueItem[] }>('/api/queue');
-export const getCustomers = () => authed<{ customers: CustomerLite[] }>('/api/customers');
+// Also returns the current agent's pinned customer ids (private per-agent) for the "ปักหมุด" section.
+export const getCustomers = () =>
+  authed<{ customers: CustomerLite[]; pinnedIds: string[] }>('/api/customers');
 export const getCustomer = (id: string) => authed<CustomerDetail>(`/api/customers/${id}`);
+
+// Per-agent private pin chats — pin/unpin a customer for the logged-in agent (manual unpin only).
+export const pinCustomer = (id: string) =>
+  authed<{ ok: boolean; pinned: boolean }>(`/api/customers/${id}/pin`, { method: 'POST' });
+export const unpinCustomer = (id: string) =>
+  authed<{ ok: boolean; pinned: boolean }>(`/api/customers/${id}/pin`, { method: 'DELETE' });
 
 export const searchCustomers = (q: string) =>
   authed<{ customers: CustomerLite[] }>(`/api/customers/search?q=${encodeURIComponent(q)}`);
@@ -221,12 +281,13 @@ export async function sendReply(
   confirmNumbers?: boolean,
   attachProductSkus?: string[],
   uploadId?: string,
+  replyToMessageId?: string, // our Message.id to LINE-quote in this reply
 ): Promise<ReplyResult | { needsConfirm: true } | { alreadyReplied: true }> {
   const token = getToken();
   const res = await fetch(`${API_URL}/api/messages/${messageId}/reply`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
-    body: JSON.stringify({ finalText, confirmNumbers, attachProductSkus, uploadId }),
+    body: JSON.stringify({ finalText, confirmNumbers, attachProductSkus, uploadId, replyToMessageId }),
   });
   if (res.status === 428) return { needsConfirm: true }; // reply has a price; staff must confirm
   if (res.status === 409) return { alreadyReplied: true }; // someone already answered this one
@@ -268,12 +329,13 @@ export async function sendQuickReply(
   customerId: string,
   quickReplyId: string,
   confirmNumbers?: boolean,
+  replyToMessageId?: string, // our Message.id to LINE-quote
 ): Promise<{ ok: boolean; message: Message; dryRun: boolean } | { needsConfirm: true }> {
   const token = getToken();
   const res = await fetch(`${API_URL}/api/customers/${customerId}/quick-reply`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
-    body: JSON.stringify({ quickReplyId, confirmNumbers }),
+    body: JSON.stringify({ quickReplyId, confirmNumbers, replyToMessageId }),
   });
   if (res.status === 428) return { needsConfirm: true }; // template has a price; staff must confirm
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -296,12 +358,13 @@ export async function sendMessage(
   uploadId?: string,
   confirmNumbers?: boolean,
   attachProductSkus?: string[],
+  replyToMessageId?: string, // our Message.id to LINE-quote
 ): Promise<{ message: Message; dryRun: boolean } | { needsConfirm: true }> {
   const token = getToken();
   const res = await fetch(`${API_URL}/api/customers/${customerId}/message`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
-    body: JSON.stringify({ text, uploadId, confirmNumbers, attachProductSkus }),
+    body: JSON.stringify({ text, uploadId, confirmNumbers, attachProductSkus, replyToMessageId }),
   });
   if (res.status === 428) return { needsConfirm: true }; // message has a price; staff must confirm
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
