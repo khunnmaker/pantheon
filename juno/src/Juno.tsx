@@ -1247,28 +1247,33 @@ function CashChequeSection({ payment: p, busy, run, isCeo }: {
         {kind === 'cheque' && field('ธนาคาร', p.chequeBank)}
         {kind === 'cheque' && field('วันที่บนเช็ค', p.chequeDueDate)}
       </div>
-      <div className="flex items-center gap-2">
-        <Badge cls={settled ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}>
-          {settled ? meta.done : meta.pending}
-        </Badge>
-        {!settled ? (
-          <button
-            disabled={busy !== ''}
-            onClick={() => void run('settle', () => settlePayment(p.id, meta.state))}
-            className="px-2.5 py-1 rounded-lg text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 disabled:opacity-40 flex items-center gap-1"
-          >
-            {busy === 'settle' ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} {meta.action}
-          </button>
-        ) : (
-          <button
-            disabled={busy !== ''}
-            onClick={() => void run('settle', () => settlePayment(p.id, ''))}
-            className="px-2.5 py-1 rounded-lg text-xs font-medium bg-slate-100 text-slate-600 border border-slate-200 hover:bg-slate-200 disabled:opacity-40 flex items-center gap-1"
-          >
-            {busy === 'settle' ? <Loader2 size={12} className="animate-spin" /> : <Undo2 size={12} />} ยกเลิก
-          </button>
-        )}
-      </div>
+      {/* Deposit/clear (settle) — CHEQUE ONLY. Cash is handed straight to the CEO, so there's no
+          bank-deposit step for it (owner decision B for cash, 2026-07-06) — the ได้รับแล้ว confirm
+          below is the whole story. Cheques still clear at the bank (auto from the KBiz import). */}
+      {kind === 'cheque' && (
+        <div className="flex items-center gap-2">
+          <Badge cls={settled ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}>
+            {settled ? meta.done : meta.pending}
+          </Badge>
+          {!settled ? (
+            <button
+              disabled={busy !== ''}
+              onClick={() => void run('settle', () => settlePayment(p.id, meta.state))}
+              className="px-2.5 py-1 rounded-lg text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 disabled:opacity-40 flex items-center gap-1"
+            >
+              {busy === 'settle' ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} {meta.action}
+            </button>
+          ) : (
+            <button
+              disabled={busy !== ''}
+              onClick={() => void run('settle', () => settlePayment(p.id, ''))}
+              className="px-2.5 py-1 rounded-lg text-xs font-medium bg-slate-100 text-slate-600 border border-slate-200 hover:bg-slate-200 disabled:opacity-40 flex items-center gap-1"
+            >
+              {busy === 'settle' ? <Loader2 size={12} className="animate-spin" /> : <Undo2 size={12} />} ยกเลิก
+            </button>
+          )}
+        </div>
+      )}
 
       {/* CEO receipt-verify gate (task 1) — SEPARATE from the settle control above (that's the
           banking deposit/clear state; a cheque's KBiz auto-clear does NOT satisfy this gate).
