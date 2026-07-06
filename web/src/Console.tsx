@@ -954,7 +954,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
   // duplicates). No draft exists here, so this does NOT call addProductToDraft — that
   // endpoint requires a pending draft and drives keyword-learning tied to a pending question.
   function addFreeProduct(p: PendingProduct) {
-    setFreeProducts((prev) => (prev.length >= 6 || prev.some((x) => x.sku === p.sku) ? prev : [...prev, p]));
+    setFreeProducts((prev) => (prev.length >= 20 || prev.some((x) => x.sku === p.sku) ? prev : [...prev, p]));
   }
   function removeFreeProduct(sku: string) {
     setFreeProducts((prev) => prev.filter((p) => p.sku !== sku));

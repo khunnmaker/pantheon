@@ -396,7 +396,7 @@ export async function consoleRoutes(app: FastifyInstance) {
     const parsed = z.object({
       text: z.string().max(4000).optional(),
       uploadId: z.string().max(80).optional(), // optional staff photo/file attachment
-      attachProductSkus: z.array(z.string()).max(6).optional(), // catalog photos to attach (only when no upload)
+      attachProductSkus: z.array(z.string()).max(20).optional(), // catalog photos to attach (only when no upload)
       confirmNumbers: z.boolean().optional(),
       replyToMessageId: z.string().max(60).optional(), // our Message.id to LINE-quote in this message
     }).safeParse(req.body);

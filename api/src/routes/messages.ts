@@ -46,7 +46,7 @@ async function resolveCustomerName(customer: {
 const replyBody = z.object({
   finalText: z.string().min(1),
   confirmNumbers: z.boolean().optional(),
-  attachProductSkus: z.array(z.string()).max(6).optional(), // catalog photos to attach
+  attachProductSkus: z.array(z.string()).max(20).optional(), // catalog photos to attach
   uploadId: z.string().max(80).optional(), // attach a staff-uploaded photo/file
   replyToMessageId: z.string().max(60).optional(), // our Message.id to LINE-quote in this reply
 });
