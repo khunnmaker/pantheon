@@ -160,7 +160,7 @@ export const uploadReceipt = (dataB64: string, contentType: string) =>
     body: JSON.stringify({ dataB64, contentType }),
   });
 
-export type ExpenseStatus = 'pending' | 'approved' | 'settled' | 'rejected';
+export type ExpenseStatus = 'pending' | 'approved' | 'settled' | 'rejected' | 'void';
 export interface Expense {
   id: string;
   partyId: string | null;
@@ -182,6 +182,9 @@ export interface Expense {
   approvedById: string | null;
   approvedAt: string | null;
   rejectReason: string;
+  voidedById: string | null;
+  voidedAt: string | null;
+  voidReason: string;
   settlementId: string | null;
   aiVerdict: string;
   note: string;
@@ -220,6 +223,8 @@ export const updateExpense = (
 ) => authed<{ expense: Expense }>(`/api/ceres/expenses/${id}`, { method: 'PATCH', body: JSON.stringify(body) });
 
 export const deleteExpense = (id: string) => authed<{ ok: boolean }>(`/api/ceres/expenses/${id}`, { method: 'DELETE' });
+export const voidExpense = (id: string, reason: string) =>
+  authed<{ expense: Expense }>(`/api/ceres/expenses/${id}/void`, { method: 'POST', body: JSON.stringify({ reason }) });
 export const approveExpense = (id: string) => authed<{ expense: Expense }>(`/api/ceres/expenses/${id}/approve`, { method: 'POST' });
 export const rejectExpense = (id: string, reason: string) =>
   authed<{ expense: Expense }>(`/api/ceres/expenses/${id}/reject`, { method: 'POST', body: JSON.stringify({ reason }) });
