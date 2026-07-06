@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import {
-  User, LogOut, Clock, Inbox, Wifi, WifiOff, Loader2, ShieldCheck, MessageSquare,
+  User, LogOut, Clock, Inbox, Loader2, ShieldCheck, MessageSquare,
   Send, Check, CheckCircle2, RefreshCw, Brain, GraduationCap, Wand2, Pencil, AlertTriangle, Search,
   Download, Paperclip, Camera, Banknote, X, ChevronDown, ChevronUp, Crown, Pin, CornerUpLeft,
 } from 'lucide-react';
@@ -510,7 +510,6 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<CustomerDetail | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
-  const [connected, setConnected] = useState(false);
 
   const [editText, setEditText] = useState('');
   const [sending, setSending] = useState(false);
@@ -640,10 +639,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
     refreshLists().catch(() => undefined);
     refreshLearned().catch(() => undefined);
     const socket = getSocket();
-    const onConnect = () => setConnected(true);
-    const onDisconnect = () => setConnected(false);
     const onConnectError = (err: Error) => {
-      setConnected(false);
       if (err.message === 'unauthorized') logout();
     };
     const onMessage = (payload: { customer: CustomerLite }) => {
@@ -673,16 +669,11 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
         loadDetail(payload.customerId).catch(() => undefined);
       }
     };
-    socket.on('connect', onConnect);
-    socket.on('disconnect', onDisconnect);
     socket.on('connect_error', onConnectError);
     socket.on('message:new', onMessage);
     socket.on('draft:new', onDraft);
     socket.on('conversation:update', onConversation);
-    if (socket.connected) setConnected(true);
     return () => {
-      socket.off('connect', onConnect);
-      socket.off('disconnect', onDisconnect);
       socket.off('connect_error', onConnectError);
       socket.off('message:new', onMessage);
       socket.off('draft:new', onDraft);
@@ -1253,20 +1244,10 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                 <GraduationCap size={19} />
                 {learned.length > 0 && <span className="absolute -top-0.5 -right-0.5 text-[10px] bg-amber-400 text-white rounded-full px-1 leading-tight">{learned.length}</span>}
               </button>
-              {agent.role === 'supervisor' && (
-                <button onClick={() => setView('audit')} title="ตรวจสอบยอด (หัวหน้า)"
-                  className={'relative p-2 rounded-xl ' + (view === 'audit' ? 'bg-sky-600 text-white' : 'text-slate-500 hover:bg-slate-100')}>
-                  <Banknote size={19} />
-                  {audits.length > 0 && <span className="absolute -top-0.5 -right-0.5 text-[10px] bg-rose-500 text-white rounded-full px-1 leading-tight">{audits.length}</span>}
-                </button>
-              )}
               <div className="flex-1" />
               {PORTAL_URL && (
                 <a href={PORTAL_URL} title="กลับพอร์ทัล Jupiter" className="p-2 rounded-xl text-slate-400 hover:text-violet-600 hover:bg-slate-100"><Crown size={17} /></a>
               )}
-              <span title={connected ? 'เชื่อมต่อสด' : 'ออฟไลน์'} className={'px-1 ' + (connected ? 'text-sky-600' : 'text-slate-300')}>
-                {connected ? <Wifi size={17} /> : <WifiOff size={17} />}
-              </span>
               <span title={agent.name + (agent.role === 'supervisor' ? ' (หัวหน้า)' : '')}
                 className="relative w-8 h-8 rounded-full bg-sky-600 text-white flex items-center justify-center text-xs font-bold shrink-0">
                 {agent.name.replace(/^คุณ/, '').charAt(0)}
