@@ -133,26 +133,29 @@ export async function venusRoutes(app: FastifyInstance) {
       }
       previews.delete(token);
 
-      // Upsert by code in ONE transaction so a re-import (overlapping export) is safe and
-      // idempotent — never creates duplicates, never partially applies.
+      // Upsert by code, CHUNKED into bounded transactions (same shape as the sales import) —
+      // a 10k-customer import must never sit in one giant transaction (Prisma's 5s default
+      // would time out). Each chunk is idempotent, so re-importing / a partial retry is safe.
+      // One existence-check per chunk (not per row) keeps the created/updated split cheap.
       let created = 0;
       let updated = 0;
-      const CHUNK = 100;
-      await prisma.$transaction(async (tx) => {
-        for (let i = 0; i < staged.customers.length; i += CHUNK) {
-          const slice = staged.customers.slice(i, i + CHUNK);
-          for (const c of slice) {
+      const CHUNK = 200;
+      for (let i = 0; i < staged.customers.length; i += CHUNK) {
+        const slice = staged.customers.slice(i, i + CHUNK);
+        const sliceCodes = slice.map((c) => c.code);
+        const existing = new Set(
+          (await prisma.venusCustomer.findMany({ where: { code: { in: sliceCodes } }, select: { code: true } })).map((r) => r.code),
+        );
+        // Array form batches the chunk's upserts into one round-trip; 200 ops run well
+        // under Prisma's default transaction timeout (the whole point of chunking).
+        await prisma.$transaction(
+          slice.map((c) => {
             const data = toVenusCustomerData(c);
-            const existing = await tx.venusCustomer.findUnique({ where: { code: c.code }, select: { code: true } });
-            await tx.venusCustomer.upsert({
-              where: { code: c.code },
-              create: data,
-              update: data,
-            });
-            if (existing) updated++; else created++;
-          }
-        }
-      });
+            return prisma.venusCustomer.upsert({ where: { code: c.code }, create: data, update: data });
+          }),
+        );
+        for (const c of slice) { if (existing.has(c.code)) updated++; else created++; }
+      }
 
       return {
         ok: true,
