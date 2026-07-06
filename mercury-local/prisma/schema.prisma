@@ -79,15 +79,15 @@ model PendingRequest {
   @@index([itemId])
 }
 
-// A purchase order (draft → sent). Built next chunk; this chunk scaffolds the tables so
-// the PO list screen reads real (empty) data.
+// A purchase order (draft → sent). The Gmail review-then-send flow (Phase 2c) flips status
+// draft → sent and stamps emailedAt on a successful send.
 model PurchaseOrder {
   id        String    @id @default(cuid())
   vendorId  String
   vendor    Vendor    @relation(fields: [vendorId], references: [id])
   poNumber  String?
   status    String    @default("draft") // draft | sent
-  emailedAt DateTime?
+  emailedAt DateTime? // set when the PO email was sent (Gmail API) — audit trail
   pdfPath   String?
   createdAt DateTime  @default(now())
 
@@ -103,6 +103,9 @@ model PurchaseOrderLine {
   poId           String
   po             PurchaseOrder @relation(fields: [poId], references: [id], onDelete: Cascade)
   cloudItemId    String
+  // The cloud MercuryRequest this line came from. Kept so that on a successful send we can mark
+  // the underlying local PendingRequest 'ordered' (the cloud status push-back is Phase 3).
+  cloudRequestId String        @default("")
   realName       String
   realSku        String        @default("")
   qty            String        @default("") // number-as-String

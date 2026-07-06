@@ -1,11 +1,22 @@
 import { useEffect, useState } from 'react';
-import { Loader2, AlertTriangle, FileText, FileDown, ExternalLink, Check } from 'lucide-react';
+import {
+  Loader2,
+  AlertTriangle,
+  FileText,
+  FileDown,
+  ExternalLink,
+  Check,
+  Mail,
+  MailCheck,
+} from 'lucide-react';
 import {
   getPurchaseOrders,
   generatePoPdf,
   poPdfUrl,
   type PurchaseOrder,
 } from '../lib/api';
+import GmailCard from './GmailCard';
+import SendEmailModal from './SendEmailModal';
 
 // Purchase Orders — draft POs (grouped by vendor) with a "Generate PDF" action per PO. The PDF is
 // English-only, splits Taiwan vendors into normal/special, and embeds a product picture per line
@@ -15,6 +26,7 @@ export default function PurchaseOrders() {
   const [error, setError] = useState('');
   const [busyId, setBusyId] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [emailPo, setEmailPo] = useState<PurchaseOrder | null>(null);
 
   async function load() {
     setError('');
@@ -47,9 +59,12 @@ export default function PurchaseOrders() {
 
   return (
     <div>
+      {/* Gmail connection — needed before a PO can be emailed. */}
+      <GmailCard />
+
       <div className="text-xs text-slate-500 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 mb-3">
-        ใบสั่งซื้อ (draft) จัดกลุ่มตามผู้ขาย · กด &quot;สร้าง PDF&quot; เพื่อออกไฟล์ (อังกฤษ, ไต้หวันแยก normal/special, มีรูปสินค้าต่อบรรทัด)
-        การส่งอีเมลจะมาในขั้นถัดไป
+        ใบสั่งซื้อ (draft) จัดกลุ่มตามผู้ขาย · กด &quot;สร้าง PDF&quot; เพื่อออกไฟล์ (อังกฤษ, ไต้หวันแยก normal/special, มีรูปสินค้าต่อบรรทัด) แล้ว
+        &quot;ตรวจ + ส่งอีเมล&quot; ไปยังผู้ขาย (ตรวจก่อนส่งทุกครั้ง ไม่ส่งอัตโนมัติ)
       </div>
 
       {error && (
@@ -131,6 +146,22 @@ export default function PurchaseOrders() {
                       )}
                       {o.pdfPath ? 'สร้างใหม่' : 'สร้าง PDF'}
                     </button>
+                    {/* Review-then-send. Enabled once a PDF exists; disabled after 'sent'. */}
+                    <button
+                      onClick={() => setEmailPo(o)}
+                      disabled={!o.pdfPath || o.status === 'sent'}
+                      title={
+                        o.status === 'sent'
+                          ? 'ส่งแล้ว'
+                          : !o.pdfPath
+                            ? 'สร้าง PDF ก่อนจึงจะส่งได้'
+                            : 'ตรวจแล้วส่งอีเมลไปยังผู้ขาย'
+                      }
+                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded-md border border-orange-300 text-orange-700 hover:bg-orange-50 text-xs font-semibold disabled:opacity-40"
+                    >
+                      {o.status === 'sent' ? <MailCheck size={13} /> : <Mail size={13} />}
+                      {o.status === 'sent' ? 'ส่งแล้ว' : 'ตรวจ + ส่งอีเมล'}
+                    </button>
                   </div>
                 </div>
 
@@ -150,6 +181,17 @@ export default function PurchaseOrders() {
             );
           })}
         </div>
+      )}
+
+      {/* Review-then-send modal (mounted only when a PO is chosen). */}
+      {emailPo && (
+        <SendEmailModal
+          po={emailPo}
+          onClose={() => setEmailPo(null)}
+          onSent={() => {
+            void load();
+          }}
+        />
       )}
     </div>
   );

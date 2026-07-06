@@ -109,6 +109,7 @@ export async function buildPosFromPending(): Promise<{
         lines: {
           create: lines.map((l) => ({
             cloudItemId: l.cloudItemId,
+            cloudRequestId: l.cloudRequestId,
             realName: l.realName,
             realSku: l.realSku,
             qty: l.qty,

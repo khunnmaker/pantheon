@@ -236,3 +236,74 @@ export const generatePoPdf = (id: string) =>
 
 // The URL to view a generated PDF (served inline by the local server).
 export const poPdfUrl = (id: string) => `/api${`/purchase-orders/${id}/pdf`}`;
+
+// ── Gmail connection (Phase 2c) ──────────────────────────────────────────────
+export interface GmailStatus {
+  connected: boolean; // a refresh token is stored locally
+  clientReady: boolean; // the OAuth client JSON is present
+  authorizedEmail?: string;
+  authorizedAt?: string;
+  senderEmail: string; // purchasing@prominentdental.com
+  senderName: string; // Prominent Purchasing
+  authAccountHint: string; // khunnakritr@prominentdental.com
+}
+
+export const getGmailStatus = () => req<{ status: GmailStatus }>('/gmail');
+
+// Runs the loopback OAuth flow server-side (opens the browser to Google consent, waits for the
+// redirect). Resolves when the owner has authorized (or rejects with a clear error).
+export const connectGmail = () =>
+  req<{ ok: boolean; authorizedEmail?: string; status: GmailStatus }>('/gmail/connect', {
+    method: 'POST',
+  });
+
+export const disconnectGmail = () =>
+  req<{ ok: boolean; status: GmailStatus }>('/gmail', { method: 'DELETE' });
+
+// ── PO email: compose → dry-run → review-then-send ───────────────────────────
+export interface ComposedEmail {
+  poId: string;
+  poNumber: string;
+  vendorName: string;
+  to: string;
+  cc: string[];
+  subject: string;
+  body: string;
+  attachmentName: string;
+  attachmentBytes: number;
+  attachmentFound: boolean; // false → generate the PDF first
+  alreadySent: boolean;
+}
+
+export interface RenderedMessage {
+  from: string; // Prominent Purchasing <purchasing@prominentdental.com>
+  to: string;
+  cc: string[];
+  subject: string;
+  body: string;
+  attachmentName: string;
+  attachmentBytes: number;
+  attachmentFound: boolean;
+}
+
+export type EmailOverrides = {
+  to?: string;
+  cc?: string[];
+  subject?: string;
+  body?: string;
+};
+
+export const getPoEmail = (id: string) =>
+  req<{ composed: ComposedEmail; gmail: GmailStatus }>(`/purchase-orders/${id}/email`);
+
+export const dryRunPoEmail = (id: string, overrides: EmailOverrides) =>
+  req<{ rendered: RenderedMessage }>(`/purchase-orders/${id}/email/dry-run`, {
+    method: 'POST',
+    body: JSON.stringify(overrides),
+  });
+
+export const sendPoEmail = (id: string, overrides: EmailOverrides) =>
+  req<{ ok: boolean; messageId: string; poId: string; poNumber: string; markedOrdered: number }>(
+    `/purchase-orders/${id}/email/send`,
+    { method: 'POST', body: JSON.stringify(overrides) },
+  );

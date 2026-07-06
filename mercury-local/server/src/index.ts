@@ -17,6 +17,16 @@ import {
 } from './connection.js';
 import { cloudLogin, CloudError, fixturePath } from './cloud.js';
 import { syncPending, resolveShadow, buildPosFromPending, generatePoPdf } from './po.js';
+import {
+  gmailStatus,
+  clearToken,
+  runConnectFlow,
+  loadOAuthClient,
+  GmailError,
+  OAUTH_CLIENT_FILE,
+} from './gmail.js';
+import { composePoEmail, dryRunPoEmail, sendPoEmail } from './poEmail.js';
+import { spawn } from 'node:child_process';
 
 const app = express();
 app.use(express.json());
@@ -350,6 +360,124 @@ app.get(
       return res.status(404).json({ error: 'pdf not generated yet' });
     res.setHeader('content-type', 'application/pdf');
     res.sendFile(po.pdfPath);
+  }),
+);
+
+// ── Gmail connection (OAuth) — Phase 2c ──────────────────────────────────────
+// Open the OS default browser to a URL (reused for the OAuth consent page).
+function openBrowser(target: string): void {
+  try {
+    if (process.platform === 'win32') {
+      spawn('cmd', ['/c', 'start', '', target], { stdio: 'ignore', detached: true }).unref();
+    } else if (process.platform === 'darwin') {
+      spawn('open', [target], { stdio: 'ignore', detached: true }).unref();
+    } else {
+      spawn('xdg-open', [target], { stdio: 'ignore', detached: true }).unref();
+    }
+  } catch {
+    console.log(`[mercury-local] open your browser to: ${target}`);
+  }
+}
+
+// GET /api/gmail — redacted Gmail status (connected? client file present? who authorized?).
+app.get(
+  '/api/gmail',
+  h(async (_req, res) => {
+    res.json({ status: gmailStatus() });
+  }),
+);
+
+// POST /api/gmail/connect — run the loopback OAuth flow (opens consent in the browser, waits for
+// the redirect, saves the refresh token locally). Fails gracefully if no client JSON is dropped in.
+// This is the ONLY place the loopback port is bound.
+app.post(
+  '/api/gmail/connect',
+  h(async (_req, res) => {
+    // Fail early + clearly when the owner hasn't dropped in the OAuth client JSON yet.
+    let client;
+    try {
+      client = loadOAuthClient();
+    } catch (e) {
+      const msg = e instanceof GmailError ? e.message : 'invalid client file';
+      return res.status(400).json({ error: msg, clientFile: OAUTH_CLIENT_FILE });
+    }
+    if (!client)
+      return res
+        .status(409)
+        .json({ error: 'OAuth client not configured', clientFile: OAUTH_CLIENT_FILE });
+    try {
+      const { authorizedEmail } = await runConnectFlow(openBrowser);
+      res.json({ ok: true, authorizedEmail, status: gmailStatus() });
+    } catch (e) {
+      if (e instanceof GmailError) return res.status(e.status).json({ error: e.message });
+      throw e;
+    }
+  }),
+);
+
+// DELETE /api/gmail — forget the local refresh token (revoke also possible in the Google account).
+app.delete(
+  '/api/gmail',
+  h(async (_req, res) => {
+    clearToken();
+    res.json({ ok: true, status: gmailStatus() });
+  }),
+);
+
+// ── PO email: compose → dry-run → review-then-send (NEVER auto-send) ──────────
+// GET /api/purchase-orders/:id/email — the prefilled, editable email defaults (To/CC/subject/body
+// + attachment name/size). No send.
+app.get(
+  '/api/purchase-orders/:id/email',
+  h(async (req, res) => {
+    try {
+      const composed = await composePoEmail(req.params.id);
+      res.json({ composed, gmail: gmailStatus() });
+    } catch (e) {
+      if (e instanceof GmailError) return res.status(e.status).json({ error: e.message });
+      throw e;
+    }
+  }),
+);
+
+// POST /api/purchase-orders/:id/email/dry-run — render the EXACT outgoing message WITHOUT sending.
+app.post(
+  '/api/purchase-orders/:id/email/dry-run',
+  h(async (req, res) => {
+    const b = req.body ?? {};
+    try {
+      const rendered = await dryRunPoEmail(req.params.id, {
+        to: b.to !== undefined ? String(b.to) : undefined,
+        cc: Array.isArray(b.cc) ? b.cc.map((x: unknown) => String(x)) : undefined,
+        subject: b.subject !== undefined ? String(b.subject) : undefined,
+        body: b.body !== undefined ? String(b.body) : undefined,
+      });
+      res.json({ rendered });
+    } catch (e) {
+      if (e instanceof GmailError) return res.status(e.status).json({ error: e.message });
+      throw e;
+    }
+  }),
+);
+
+// POST /api/purchase-orders/:id/email/send — SEND via Gmail (explicit owner action only). On
+// success: PO → sent, emailedAt stamped, underlying local PendingRequests → ordered.
+app.post(
+  '/api/purchase-orders/:id/email/send',
+  h(async (req, res) => {
+    const b = req.body ?? {};
+    try {
+      const outcome = await sendPoEmail(req.params.id, {
+        to: b.to !== undefined ? String(b.to) : undefined,
+        cc: Array.isArray(b.cc) ? b.cc.map((x: unknown) => String(x)) : undefined,
+        subject: b.subject !== undefined ? String(b.subject) : undefined,
+        body: b.body !== undefined ? String(b.body) : undefined,
+      });
+      res.json({ ok: true, ...outcome });
+    } catch (e) {
+      if (e instanceof GmailError) return res.status(e.status).json({ error: e.message });
+      throw e;
+    }
   }),
 );
 

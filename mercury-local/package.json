@@ -16,12 +16,14 @@
     "serve": "node server/dist/index.js",
     "start": "npm run prisma:generate && npm run prisma:deploy && npm run build:client && npm run build:server && node server/dist/launch.js",
     "dev:server": "tsx watch server/src/index.ts",
-    "dev:client": "npm --prefix client run dev"
+    "dev:client": "npm --prefix client run dev",
+    "verify:send": "tsx server/src/verify-send.ts"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",
     "cors": "^2.8.5",
     "express": "^4.21.1",
+    "googleapis": "^144.0.0",
     "pdfkit": "^0.15.2"
   },
   "devDependencies": {
