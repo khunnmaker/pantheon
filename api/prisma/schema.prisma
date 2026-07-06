@@ -379,6 +379,28 @@ model PaymentBankMatch {
   @@index([bankTxnId])
 }
 
+// ─── Juno RE reconciliation (the "future RE-import" the WHT task exposed grossOf() for) ──
+// One row per Express AR-receipt (ARRCPDAT "RE#######"). The CEO imports the periodic
+// ARRCPDAT.TXT export (see POST /api/juno/re/import); each receipt is upserted by reNumber
+// so a re-import just refreshes amount/customer/etc. rather than duplicating. Match status
+// against Payment.reNumbers is COMPUTED LIVE on read (GET /api/juno/re) — never stored here —
+// so it's always current against whatever Payments exist at query time. See JUNO_BRIEF.md.
+model ReReceipt {
+  id           String   @id @default(cuid())
+  reNumber     String   @unique // bare 7-digit core (ARRCPDAT "RE6907402" -> "6907402")
+  receiptDate  String   @default("") // dd/mm/yy as printed (Thai Buddhist), kept as-typed like Payment.transferAt
+  customerName String   @default("")
+  salesName    String   @default("")
+  amount       String   @default("") // ยอดตามใบกำกับ (gross/invoice total) — house String-money style, matches Payment.amount
+  notPosted    Boolean  @default(false) // "***" in the report's หมายเหตุ column (ทำรายการรับชำระหนี้ไม่เรียบร้อย)
+  invoices     Json? // ReReceiptInvoice[] (docNo/date/amount) — the IV/SR detail lines under this receipt, display-only
+  importedAt   DateTime @default(now()) // when this row was last imported/refreshed
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([notPosted])
+}
+
 // Staff quick-reply templates — canned messages (address, hours, payment, catalog,
 // shipping…) the team inserts with one click. Editable in the console.
 model QuickReply {
@@ -908,22 +930,22 @@ model SaleLine {
 // `trendOrders`/`reorderDue` added for the RFM/trend/reorder engine — additive only, see
 // migration 20260706120000_venus_sales_import.
 model CustomerStats {
-  id           String    @id @default(cuid())
-  customerCode String    @unique // VenusCustomer.code
-  r            Int? // recency: days since last purchase
-  f            Int? // frequency: purchase count in window
-  m            Float? // monetary: revenue in window
-  rfmScore     String? // e.g. "435" (R,F,M quintiles 1-5)
-  segment      String? // ลูกค้าชั้นดี | ลูกค้าประจำ | มาใหม่ | เสี่ยงหาย | หายไปแล้ว
-  trendPct     Float? // last-90d vs previous-90d revenue % change
-  trendDir     String? // up | down | flat
-  trendOrders  Int? // last-90d order-count delta vs previous 90d (raw count difference)
+  id            String    @id @default(cuid())
+  customerCode  String    @unique // VenusCustomer.code
+  r             Int? // recency: days since last purchase
+  f             Int? // frequency: purchase count in window
+  m             Float? // monetary: revenue in window
+  rfmScore      String? // e.g. "435" (R,F,M quintiles 1-5)
+  segment       String? // ลูกค้าชั้นดี | ลูกค้าประจำ | มาใหม่ | เสี่ยงหาย | หายไปแล้ว
+  trendPct      Float? // last-90d vs previous-90d revenue % change
+  trendDir      String? // up | down | flat
+  trendOrders   Int? // last-90d order-count delta vs previous 90d (raw count difference)
   // Reorder-due items: JSON array of { sku, productName, lastPurchase, medianGapDays,
   // dueSince } for consumable SKUs (>=3 purchases) past 1.25x their median reorder cycle.
   // Kept as JSON (not a relation table) — it's fully derived/overwritten each recompute,
   // same as the rest of this row, and queried only per-customer (never filtered across
   // customers), so a relation table would add join cost with no query benefit yet.
-  reorderDue   Json?
+  reorderDue    Json?
   // Cross-sell gap signals (VENUS_BRIEF.md §7): JSON array of { crossSku, name, anchorSku,
   // score } — CrossSellLink pairings (learned bought-together, Minerva's picker) where the
   // customer owns the anchorSku but has never bought the crossSku, ranked by score desc.
@@ -936,10 +958,10 @@ model CustomerStats {
   // EQUIPMENT_PRICE_THRESHOLD), surfaced instead as a positive service/upgrade-timing nudge
   // once aged past VENUS_BIGTICKET_MIN_MONTHS. Additive, see migration
   // 20260710000000_venus_signals.
-  bigTicket    Json?
-  dataFrom     DateTime? // data-coverage window this row was computed over (min sale date)
-  dataTo       DateTime? // data-coverage window this row was computed over (max sale date)
-  computedAt   DateTime  @default(now())
+  bigTicket     Json?
+  dataFrom      DateTime? // data-coverage window this row was computed over (min sale date)
+  dataTo        DateTime? // data-coverage window this row was computed over (max sale date)
+  computedAt    DateTime  @default(now())
 
   @@index([segment])
 }

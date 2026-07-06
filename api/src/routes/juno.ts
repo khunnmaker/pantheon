@@ -11,6 +11,7 @@ import type { BankSource, ParsedBankRow } from '../bank/types.js';
 import { BankParseError } from '../bank/types.js';
 import { readStaffUploadFile, readStaffUploadMeta, UPLOAD_ID_RE } from '../line/staffUploads.js';
 import { readSlipFromBuffer } from '../llm/readSlip.js';
+import { parseReReceipts, decodeExpressBytes } from '../finance/parseReReceipts.js';
 
 // Juno finance API. Reads the Payment table (written by Minerva's /to-finance hook) and
 // owns the finance lifecycle: verify → record, flag-queue triage, tax-invoice tracking,
@@ -1376,5 +1377,186 @@ export async function junoRoutes(app: FastifyInstance) {
       take: limit,
     });
     return { payments: rows.map(toRow) };
+  });
+
+  // ─── RE reconciliation (the "future RE-import" the WHT task's grossOf() was built for) ──
+  // The CEO periodically imports Express's ARRCPDAT.TXT (AR-receipt report); every RE gets
+  // cross-checked LIVE against the Juno Payment(s) that carry it (Payment.reNumbers). See
+  // JUNO_BRIEF.md + parseReReceipts.ts for the file format.
+
+  // POST /api/juno/re/import { dataB64, fileName } — parse + UPSERT an ARRCPDAT.TXT export
+  // by reNumber (a re-import refreshes amount/customer/etc., never duplicates). CEO-only,
+  // same large-bodyLimit + re-checked-at-onRequest reasoning as bank import above.
+  app.post('/api/juno/re/import', {
+    onRequest: [requireAuth, requireRole('supervisor')], // RE import is CEO-only
+    bodyLimit: 17 * 1024 * 1024, // ~15MB cap after base64 inflation, plus envelope headroom
+    config: { rateLimit: { max: 10, timeWindow: '1 minute' } },
+  }, async (req, reply) => {
+    const body = z.object({ dataB64: z.string().min(1), fileName: z.string().max(300).optional() }).safeParse(req.body);
+    if (!body.success) return reply.code(400).send({ error: 'missing_data' });
+    const MAX_UPLOAD_BYTES = 15 * 1024 * 1024;
+    if (body.data.dataB64.length > Math.ceil((MAX_UPLOAD_BYTES * 4) / 3) + 4) return reply.code(413).send({ error: 'too_large' });
+    const buf = Buffer.from(body.data.dataB64, 'base64');
+    if (!buf.length) return reply.code(400).send({ error: 'empty' });
+    if (buf.length > MAX_UPLOAD_BYTES) return reply.code(413).send({ error: 'too_large' });
+
+    let parsed;
+    try {
+      const { text } = decodeExpressBytes(buf);
+      parsed = parseReReceipts(text);
+    } catch (err) {
+      req.log.error({ err }, 're import: parse failed');
+      return reply.code(422).send({ error: 'parse_failed' });
+    }
+    if (parsed.parsedCount === 0) {
+      return reply.code(422).send({ error: 'no_receipts', detail: 'ไม่พบรายการใบเสร็จในไฟล์ — ตรวจสอบว่าเป็นไฟล์ ARRCPDAT.TXT ที่ถูกต้อง' });
+    }
+
+    // UPSERT each receipt by reNumber, CHUNKed the same way bank import chunks its inserts —
+    // this file can carry a few hundred receipts and each upsert is its own round trip.
+    let imported = 0;
+    let updated = 0;
+    const CHUNK = 50;
+    for (let i = 0; i < parsed.receipts.length; i += CHUNK) {
+      const slice = parsed.receipts.slice(i, i + CHUNK);
+      const results = await prisma.$transaction(
+        slice.map((r) =>
+          prisma.reReceipt.upsert({
+            where: { reNumber: r.reNumber },
+            create: {
+              reNumber: r.reNumber,
+              receiptDate: r.receiptDate,
+              customerName: r.customerName,
+              salesName: r.salesName,
+              amount: r.amount.toFixed(2),
+              notPosted: r.notPosted,
+              invoices: r.invoices as unknown as object,
+              importedAt: new Date(),
+            },
+            update: {
+              receiptDate: r.receiptDate,
+              customerName: r.customerName,
+              salesName: r.salesName,
+              amount: r.amount.toFixed(2),
+              notPosted: r.notPosted,
+              invoices: r.invoices as unknown as object,
+              importedAt: new Date(),
+            },
+          }),
+        ),
+      );
+      // Prisma upsert doesn't report create-vs-update directly; infer it from createdAt ===
+      // updatedAt (true only on the row's first-ever write, satang-safe since both are
+      // server `now()` timestamps set in the same statement).
+      for (const row of results) {
+        if (row.createdAt.getTime() === row.updatedAt.getTime()) imported++;
+        else updated++;
+      }
+    }
+
+    req.log.info({ by: req.agent?.id, parsed: parsed.parsedCount, imported, updated }, 're receipts imported');
+
+    return {
+      parsed: parsed.parsedCount,
+      imported,
+      updated,
+      cancelledSkipped: parsed.cancelledSkipped,
+      totalAmount: parsed.totalAmount,
+      fileTotal: parsed.fileTotal,
+      totalsMatch: parsed.totalsMatch,
+    };
+  });
+
+  // GET /api/juno/re?status=&q=&from=&to= — the กระทบยอด RE tab: every imported RE, each
+  // cross-checked LIVE against current Payments (never stored — always up to date). Visible
+  // to every Juno user (no supervisor gate, unlike the import above). Built in ≤2 queries
+  // total (ReReceipt list + one Payment scan), never one query per RE.
+  const reQuerySchema = z.object({
+    status: z.enum(['all', 'matched', 'mismatch', 'unpaid']).optional(),
+    q: z.string().max(120).optional(),
+    from: z.string().max(20).optional(),
+    to: z.string().max(20).optional(),
+  });
+  app.get('/api/juno/re', async (req, reply) => {
+    const parsedQ = reQuerySchema.safeParse(req.query ?? {});
+    if (!parsedQ.success) return reply.code(400).send({ error: 'invalid_query' });
+    const q = parsedQ.data;
+
+    const where: Record<string, unknown> = {};
+    if (q.q?.trim()) {
+      const needle = q.q.trim();
+      where.OR = [
+        { reNumber: { contains: needle, mode: 'insensitive' } },
+        { customerName: { contains: needle, mode: 'insensitive' } },
+      ];
+    }
+    // receiptDate is stored as printed ("dd/mm/yy", Thai Buddhist) — not a real date column,
+    // so a from/to range can't be pushed into SQL. Filtered in JS below instead (same
+    // "feasible, not exact SQL range" compromise the spec allows for).
+    const receiptDateInRange = (dd: string): boolean => {
+      if (!q.from && !q.to) return true;
+      const m = dd.match(/^(\d{2})\/(\d{2})\/(\d{2})$/);
+      if (!m) return true; // unparseable date — don't hide it behind a range filter
+      const greg = 2500 + Number(m[3]) - 543;
+      const iso = `${greg}-${m[2]}-${m[1]}`;
+      if (q.from && iso < q.from) return false;
+      if (q.to && iso > q.to) return false;
+      return true;
+    };
+
+    // Query 1: every RE row matching the text filter (status filtering happens after the
+    // live match computation below, since status isn't a stored column).
+    const receipts = await prisma.reReceipt.findMany({ where, orderBy: { reNumber: 'desc' } });
+
+    // Query 2: every candidate Payment that could possibly cover an RE — non-void, at least
+    // one reNumber — loaded ONCE and grouped in JS into a reCore -> payments[] map. This is
+    // the whole reason it's 2 queries instead of N: no per-RE lookup.
+    const candidatePayments = await prisma.payment.findMany({
+      where: { status: { not: 'void' }, reNumbers: { isEmpty: false } },
+      select: { id: true, reNumbers: true, amount: true, whtAmount: true, customerName: true, status: true },
+    });
+    const byRe = new Map<string, typeof candidatePayments>();
+    for (const p of candidatePayments) {
+      for (const re of p.reNumbers) {
+        const list = byRe.get(re);
+        if (list) list.push(p);
+        else byRe.set(re, [p]);
+      }
+    }
+
+    const rows = receipts
+      .filter((r) => receiptDateInRange(r.receiptDate))
+      .map((r) => {
+        const payments = byRe.get(r.reNumber) ?? [];
+        const paidGross = payments.reduce((s, p) => s + grossOf(p), 0);
+        const status: 'unpaid' | 'matched' | 'mismatch' =
+          payments.length === 0 ? 'unpaid' : amountsEqual(r.amount, paidGross.toFixed(2)) ? 'matched' : 'mismatch';
+        return {
+          id: r.id,
+          reNumber: r.reNumber,
+          receiptDate: r.receiptDate,
+          customerName: r.customerName,
+          salesName: r.salesName,
+          amount: num(r.amount),
+          notPosted: r.notPosted,
+          invoices: (r.invoices as unknown as { docNo: string; date: string; amount: number }[] | null) ?? [],
+          status,
+          paidGross,
+          diff: Number((paidGross - num(r.amount)).toFixed(2)),
+          paymentCount: payments.length,
+        };
+      })
+      .filter((r) => !q.status || q.status === 'all' || r.status === q.status);
+
+    const summary = {
+      total: rows.length,
+      matched: rows.filter((r) => r.status === 'matched').length,
+      mismatch: rows.filter((r) => r.status === 'mismatch').length,
+      unpaid: rows.filter((r) => r.status === 'unpaid').length,
+      totalAmount: rows.reduce((s, r) => s + r.amount, 0),
+      matchedAmount: rows.filter((r) => r.status === 'matched').reduce((s, r) => s + r.amount, 0),
+    };
+
+    return { rows, summary };
   });
 }
