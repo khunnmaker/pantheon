@@ -352,6 +352,43 @@ export const previewCustomerImport = (dataB64: string, fileName: string) =>
     body: JSON.stringify({ mode: 'preview', dataB64, fileName }),
   });
 
+// ── Sales import (OESOC — sales orders grouped by customer) ──────────────────
+export interface SalesImportPreview {
+  token: string;
+  fileName: string;
+  encoding: string;
+  docs: number;
+  lineItems: number;
+  distinctCodes: number;
+  matchedCodes: number;
+  unmatchedCodes: number;
+  unmatchedCodesSample: string[];
+  voids: number;
+  dateSpan: { min: string | null; max: string | null };
+  selfCertify: { docChecked: number; docOk: number; custSubtotalChecked: number; custSubtotalOk: number };
+  unresolved: number;
+  unresolvedSamples: string[];
+}
+export interface SalesImportApplyResult {
+  ok: boolean;
+  docsCreated: number;
+  docsUpdated: number;
+  linesWritten: number;
+  unmatchedCodes: string[];
+  unresolved: number;
+  unresolvedSamples: string[];
+}
+export const previewSalesImport = (dataB64: string, fileName: string) =>
+  authed<SalesImportPreview>('/api/venus/import/sales', {
+    method: 'POST',
+    body: JSON.stringify({ mode: 'preview', dataB64, fileName }),
+  });
+export const applySalesImport = (token: string) =>
+  authed<SalesImportApplyResult>('/api/venus/import/sales', {
+    method: 'POST',
+    body: JSON.stringify({ mode: 'apply', token }),
+  });
+
 export const applyCustomerImport = (token: string) =>
   authed<ImportApplyResult>('/api/venus/import/customers', {
     method: 'POST',

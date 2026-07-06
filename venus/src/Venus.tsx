@@ -1,16 +1,17 @@
 import { useState } from 'react';
-import { Heart, LogOut, Crown, Users, Upload, LayoutDashboard } from 'lucide-react';
+import { Heart, LogOut, Crown, Users, Upload, LayoutDashboard, ShoppingBag } from 'lucide-react';
 import { canImport, clearSession, type Agent } from './lib/api';
 import CustomerList from './CustomerList';
 import CustomerDetail from './CustomerDetail';
 import ImportCustomers from './ImportCustomers';
+import ImportSales from './ImportSales';
 import Dashboard from './Dashboard';
 
 // Portal-back link (Jupiter). URL from build-time env; hidden when unset, so it stays
 // completely inert until VITE_PORTAL_URL is configured (same convention as juno/vulcan).
 const PORTAL_URL: string | undefined = import.meta.env.VITE_PORTAL_URL;
 
-type View = { screen: 'dashboard' } | { screen: 'list' } | { screen: 'detail'; code: string } | { screen: 'import' };
+type View = { screen: 'dashboard' } | { screen: 'list' } | { screen: 'detail'; code: string } | { screen: 'import' } | { screen: 'import-sales' };
 
 export default function Venus({ agent, onLogout }: { agent: Agent; onLogout: () => void }) {
   const [view, setView] = useState<View>({ screen: 'dashboard' });
@@ -68,7 +69,17 @@ export default function Venus({ agent, onLogout }: { agent: Agent; onLogout: () 
                 view.screen === 'import' ? 'border-rose-600 text-rose-700' : 'border-transparent text-slate-500 hover:text-slate-700'
               }`}
             >
-              <Upload size={16} /> นำเข้าข้อมูลลูกค้า
+              <Upload size={16} /> นำเข้าลูกค้า
+            </button>
+          )}
+          {showImport && (
+            <button
+              onClick={() => setView({ screen: 'import-sales' })}
+              className={`flex items-center gap-1.5 px-3 py-2 text-sm font-medium border-b-2 whitespace-nowrap ${
+                view.screen === 'import-sales' ? 'border-rose-600 text-rose-700' : 'border-transparent text-slate-500 hover:text-slate-700'
+              }`}
+            >
+              <ShoppingBag size={16} /> นำเข้าการขาย
             </button>
           )}
         </div>
@@ -85,6 +96,7 @@ export default function Venus({ agent, onLogout }: { agent: Agent; onLogout: () 
           <CustomerDetail code={view.code} onBack={() => setView({ screen: 'list' })} />
         )}
         {view.screen === 'import' && showImport && <ImportCustomers />}
+        {view.screen === 'import-sales' && showImport && <ImportSales />}
       </main>
     </div>
   );
