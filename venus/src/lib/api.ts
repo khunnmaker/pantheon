@@ -102,11 +102,17 @@ export interface ProductCycle {
   reorderStatus: 'due' | 'ok';
   reorderDue: ReorderDueItem | null;
 }
+export interface CustomerNote {
+  text: string;
+  authorName: string | null;
+  updatedAt: string;
+}
 export interface CustomerPrecautions {
   credit: string | null;
   payment: string | null;
   churn: string | null;
   complaints: string | null;
+  note: CustomerNote | null;
 }
 export interface CustomerDetailResult {
   customer: VenusCustomer;
@@ -260,6 +266,14 @@ export const getCustomers = (params: { q?: string; limit?: number; offset?: numb
 
 export const getCustomer = (code: string) =>
   authed<CustomerDetailResult>(`/api/venus/customers/${encodeURIComponent(code)}`);
+
+// Manual pinned note (precaution #4) — shared-pool write: any logged-in Venus user (not
+// just supervisor) can save/clear it. Empty text clears the note server-side.
+export const saveNote = (code: string, text: string) =>
+  authed<{ ok: boolean; note: CustomerNote | null }>(`/api/venus/customers/${encodeURIComponent(code)}/note`, {
+    method: 'PUT',
+    body: JSON.stringify({ text }),
+  });
 
 // ── Import (supervisor only) — Express ARMAST customer-master preview→apply ─────
 

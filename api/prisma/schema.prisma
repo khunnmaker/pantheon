@@ -815,6 +815,20 @@ model CustomerStats {
   @@index([segment])
 }
 
+// Manual pinned "ข้อควรระวัง" note (VENUS_BRIEF.md §7 precaution #4) — one per customer,
+// shared-pool free text (any logged-in Venus user — supervisor + granted employees — can
+// write; not supervisor-only like imports). Keyed on the Express customer `code`, same
+// soft-link convention as SaleDoc.customerCode (no FK — VenusCustomer rows can be
+// re-imported/rebuilt independently of notes). Empty text clears the note rather than
+// leaving an empty row (see PUT /api/venus/customers/:code/note).
+model VenusNote {
+  id           String   @id @default(cuid())
+  customerCode String   @unique
+  text         String
+  authorName   String?
+  updatedAt    DateTime @updatedAt
+}
+
 // ─── DEFERRED TO M3: pgvector embedding tables (spec §5 note) ────────────
 // Activate in M3 once the database has the `vector` extension. Steps:
 //   1. add `previewFeatures = ["postgresqlExtensions"]` to the generator

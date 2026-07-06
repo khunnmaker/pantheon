@@ -2,21 +2,25 @@ import { useEffect, useState } from 'react';
 import {
   ArrowLeft, Loader2, AlertTriangle, MapPin, Phone, User, CreditCard, Truck, Hash,
   ShoppingCart, MessageCircle, Wallet, StickyNote, Clock, ChevronDown, ChevronUp,
-  ShieldAlert, PackageSearch, TrendingUp, TrendingDown,
+  ShieldAlert, PackageSearch, TrendingUp, TrendingDown, Pin, Save,
 } from 'lucide-react';
 import {
-  getCustomer, trendArrow, trendColor, formatBaht, formatDate,
+  getCustomer, saveNote, trendArrow, trendColor, formatBaht, formatDate,
   type VenusCustomer, type CustomerStats, type Purchase, type ProductCycle, type CustomerPrecautions,
+  type CustomerNote,
 } from './lib/api';
 import { CreditChip, SegmentChip } from './CustomerList';
 
 type Tab = 'overview' | 'purchases' | 'chat' | 'payments' | 'notes';
 
-// The rep-lens card: header (name/code/credit/segment/trend) + ภาพรวม (RFM + active
-// signals) + การซื้อ (purchase timeline + per-product cycle table), both now backed by the
-// enriched GET /api/venus/customers/:code (customer + stats + purchases + productCycles +
-// precautions). แชท/การชำระเงิน/โน้ต stay stubbed — those are later phases (Juno wiring,
-// Minerva deep-link, free-text notes) and must not fake data (VENUS_BRIEF.md §7-8).
+// The rep-lens card: header (name/code/credit/segment/trend/note pin) + ภาพรวม (RFM +
+// active signals + precautions) + การซื้อ (purchase timeline + per-product cycle table) +
+// โน้ต (editable manual pinned note), all backed by the enriched GET
+// /api/venus/customers/:code (customer + stats + purchases + productCycles + precautions).
+// แชท/การชำระเงิน (Juno detail) stay stubbed — those are later phases (Minerva deep-link,
+// Juno payment list UI) and must not fake data (VENUS_BRIEF.md §7-8). The precaution
+// SUMMARY for payment already appears in ภาพรวม (from Juno's Payment table, computed
+// server-side); this tab is for the raw payment list, still pending.
 export default function CustomerDetail({ code, onBack }: { code: string; onBack: () => void }) {
   const [customer, setCustomer] = useState<VenusCustomer | null>(null);
   const [stats, setStats] = useState<CustomerStats | null>(null);
@@ -44,6 +48,10 @@ export default function CustomerDetail({ code, onBack }: { code: string; onBack:
       .finally(() => setBusy(false));
   }, [code]);
 
+  function handleNoteSaved(note: CustomerNote | null) {
+    setPrecautions((prev) => (prev ? { ...prev, note } : prev));
+  }
+
   return (
     <div>
       <button onClick={onBack} className="flex items-center gap-1 text-sm text-slate-500 hover:text-rose-600 mb-3">
@@ -60,33 +68,51 @@ export default function CustomerDetail({ code, onBack }: { code: string; onBack:
         </div>
       ) : customer ? (
         <div>
-          <CustomerHeader customer={customer} stats={stats} />
+          <CustomerHeader customer={customer} stats={stats} note={precautions?.note ?? null} onPinClick={() => setTab('notes')} />
 
           <div className="flex gap-1 overflow-x-auto mb-4 border-b border-slate-200">
             <TabButton active={tab === 'overview'} onClick={() => setTab('overview')} icon={<Hash size={15} />} label="ภาพรวม" />
             <TabButton active={tab === 'purchases'} onClick={() => setTab('purchases')} icon={<ShoppingCart size={15} />} label="การซื้อ" />
             <TabButton active={tab === 'chat'} onClick={() => setTab('chat')} icon={<MessageCircle size={15} />} label="แชท" disabled />
             <TabButton active={tab === 'payments'} onClick={() => setTab('payments')} icon={<Wallet size={15} />} label="การชำระเงิน" disabled />
-            <TabButton active={tab === 'notes'} onClick={() => setTab('notes')} icon={<StickyNote size={15} />} label="โน้ต" disabled />
+            <TabButton active={tab === 'notes'} onClick={() => setTab('notes')} icon={<StickyNote size={15} />} label="โน้ต" />
           </div>
 
           {tab === 'overview' && <Overview customer={customer} stats={stats} precautions={precautions} />}
           {tab === 'purchases' && <Purchases purchases={purchases} productCycles={productCycles} />}
           {tab === 'chat' && <ComingSoon label="ประวัติแชทจะเชื่อมกับคอนโซล Minerva" />}
-          {tab === 'payments' && <ComingSoon label="ประวัติการชำระเงินจะดึงจาก Juno" />}
-          {tab === 'notes' && <ComingSoon label="โน้ตและข้อควรระวังจะเปิดใช้งานในเฟสถัดไป" />}
+          {tab === 'payments' && <ComingSoon label="รายการชำระเงินละเอียดจะดึงจาก Juno (สรุปแสดงในแท็บภาพรวมแล้ว)" />}
+          {tab === 'notes' && <NoteEditor code={code} note={precautions?.note ?? null} onSaved={handleNoteSaved} />}
         </div>
       ) : null}
     </div>
   );
 }
 
-function CustomerHeader({ customer: c, stats }: { customer: VenusCustomer; stats: CustomerStats | null }) {
+function CustomerHeader({
+  customer: c, stats, note, onPinClick,
+}: {
+  customer: VenusCustomer;
+  stats: CustomerStats | null;
+  note: CustomerNote | null;
+  onPinClick: () => void;
+}) {
   return (
     <div className="bg-white rounded-2xl border border-slate-200 p-5 mb-4">
       <div className="flex items-start justify-between gap-3 flex-wrap">
         <div>
-          <h2 className="text-lg font-bold text-slate-800">{c.name || '(ไม่มีชื่อ)'}</h2>
+          <div className="flex items-center gap-2">
+            <h2 className="text-lg font-bold text-slate-800">{c.name || '(ไม่มีชื่อ)'}</h2>
+            {note?.text && (
+              <button
+                onClick={onPinClick}
+                title={`ข้อควรระวัง: ${note.text}`}
+                className="shrink-0 flex items-center justify-center w-5 h-5 rounded-full bg-amber-100 text-amber-600 hover:bg-amber-200"
+              >
+                <Pin size={12} />
+              </button>
+            )}
+          </div>
           {c.nameEn && <div className="text-sm text-slate-400">{c.nameEn}</div>}
           <div className="text-xs text-slate-400 font-mono mt-1">{c.code}</div>
         </div>
@@ -103,6 +129,76 @@ function CustomerHeader({ customer: c, stats }: { customer: VenusCustomer; stats
           <CreditChip norm={c.creditTermsNorm} />
         </div>
       </div>
+    </div>
+  );
+}
+
+function NoteEditor({
+  code, note, onSaved,
+}: {
+  code: string;
+  note: CustomerNote | null;
+  onSaved: (note: CustomerNote | null) => void;
+}) {
+  const [text, setText] = useState(note?.text ?? '');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+
+  useEffect(() => {
+    setText(note?.text ?? '');
+  }, [code, note?.text]);
+
+  async function handleSave() {
+    setBusy(true);
+    setErr('');
+    try {
+      const r = await saveNote(code, text);
+      onSaved(r.note);
+    } catch {
+      setErr('บันทึกไม่สำเร็จ');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const dirty = text !== (note?.text ?? '');
+
+  return (
+    <div className="bg-white rounded-2xl border border-slate-200 p-5 space-y-3">
+      <h3 className="text-sm font-semibold text-slate-500">ข้อควรระวัง (โน้ตที่ปักหมุด)</h3>
+      <p className="text-xs text-slate-400">
+        โน้ตนี้เป็นของทีม (เห็น/แก้ไขได้ทุกคนที่เข้าถึง Venus) — ใช้บันทึกข้อควรระวังเกี่ยวกับลูกค้ารายนี้
+      </p>
+      <textarea
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        rows={5}
+        maxLength={2000}
+        placeholder="เช่น ลูกค้าขอเปลี่ยนช่องทางส่งของบ่อย, เคยผิดนัดจ่ายเงิน…"
+        className="w-full rounded-xl border border-slate-200 p-3 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-rose-200 resize-y"
+      />
+      <div className="flex items-center justify-between gap-3">
+        <div className="text-xs text-slate-400">
+          {note?.updatedAt ? (
+            <>บันทึกล่าสุดโดย {note.authorName || 'ไม่ทราบชื่อ'} · {formatDate(note.updatedAt)}</>
+          ) : (
+            'ยังไม่มีโน้ตสำหรับลูกค้ารายนี้'
+          )}
+        </div>
+        <button
+          onClick={handleSave}
+          disabled={busy || !dirty}
+          className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-rose-600 text-white text-sm font-semibold disabled:opacity-40 hover:bg-rose-700"
+        >
+          {busy ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+          บันทึก
+        </button>
+      </div>
+      {err && (
+        <div className="flex items-center gap-1 text-rose-600 text-xs">
+          <AlertTriangle size={12} /> {err}
+        </div>
+      )}
     </div>
   );
 }
@@ -199,15 +295,18 @@ function Overview({
         </div>
       )}
 
-      {/* Precautions — only the credit flag is wired today; the other three (payment
-          behavior, churn evidence narration, complaint tags) are later phases. */}
+      {/* Precautions (VENUS_BRIEF.md §7): credit + payment (Juno) + churn evidence are wired.
+          Complaint tagging (LINE-history AI pass) is a separate later stage. */}
       <div className="bg-white rounded-2xl border border-slate-200 p-5">
         <h3 className="text-sm font-semibold text-slate-500 mb-3">ข้อควรระวัง</h3>
         <div className="space-y-2 text-sm">
-          <PrecautionRow label="การชำระเงิน" value={precautions?.credit ?? null} />
-          <PrecautionRow label="พฤติกรรมการจ่าย" value={precautions?.payment} soonLabel="รอเชื่อมข้อมูลจาก Juno" />
-          <PrecautionRow label="เสี่ยงหาย" value={precautions?.churn} soonLabel="เพิ่มหลักฐานประกอบในเฟสถัดไป" />
+          <PrecautionRow label="เครดิต" value={precautions?.credit ?? null} />
+          <PrecautionRow label="การชำระเงิน" value={precautions?.payment} soonLabel="ยังไม่มีประวัติจาก Juno" />
+          <PrecautionRow label="เสี่ยงหาย" value={precautions?.churn} soonLabel="ไม่อยู่ในกลุ่มเสี่ยงหายตอนนี้" />
           <PrecautionRow label="เคยมีปัญหา" value={precautions?.complaints} soonLabel="รอระบบแท็กจากประวัติแชท" />
+          {precautions?.note?.text && (
+            <PrecautionRow label="ข้อควรระวัง (โน้ต)" value={precautions.note.text} />
+          )}
         </div>
       </div>
 

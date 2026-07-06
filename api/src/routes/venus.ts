@@ -20,6 +20,11 @@ import { recomputeStats, type ReorderDueItem } from '../venus/stats.js';
 const MAX_UPLOAD_BYTES = 12 * 1024 * 1024; // real ARMAST export is ~6.6MB
 const MAX_SALES_UPLOAD_BYTES = 16 * 1024 * 1024; // real OESOC export is ~13MB
 
+// Precaution #1 (การชำระเงิน, VENUS_BRIEF.md §7): Juno's Payment data only starts 2026-07,
+// so a customer's payment history is thin for months. Below this many Payment rows, show
+// "ข้อมูลยังน้อย" instead of a confident verdict rather than over-reading a tiny sample.
+const PAYMENT_MIN_SAMPLE = Number(process.env.VENUS_PAYMENT_MIN_SAMPLE ?? 3);
+
 // Lowercase + strip everything but alnum/Thai, so "Cก002" / "cก002" / "cก-002" all match
 // the same stored searchKey — same convention as the SKU dash-insensitive search.
 function toSearchKey(code: string): string {
@@ -643,18 +648,82 @@ export async function venusRoutes(app: FastifyInstance) {
       })
       .sort((a, b) => b.lastPurchase.getTime() - a.lastPurchase.getTime());
 
-    // Precautions: only the credit one is wired (Phase 1 data). The other three (payment
-    // behavior from Juno, churn evidence beyond the segment chip itself, complaint tags)
-    // are later phases (brief §7) — left as explicit null slots rather than faked.
+    // Precaution #1 (การชำระเงิน): join Juno's Payment by customerCode — a compact factual
+    // summary only (count / flagged / most recent), never a "confident verdict" beyond what
+    // the sample supports. Juno data starts 2026-07, so most customers will be thin for
+    // months; below PAYMENT_MIN_SAMPLE rows, say so explicitly rather than reading tea leaves.
+    const payments = await prisma.payment.findMany({
+      where: { customerCode: code },
+      orderBy: { createdAt: 'desc' },
+      select: { flagged: true, createdAt: true },
+    });
+    let paymentPrecaution: string | null = null;
+    if (payments.length === 0) {
+      paymentPrecaution = null; // no Juno history at all — nothing to say yet
+    } else if (payments.length < PAYMENT_MIN_SAMPLE) {
+      paymentPrecaution = `ข้อมูลยังน้อย (${payments.length} รายการ)`;
+    } else {
+      const flaggedCount = payments.filter((p) => p.flagged).length;
+      const latest = payments[0].createdAt;
+      paymentPrecaution = `มี ${payments.length} รายการชำระ, flagged ${flaggedCount} รายการ (ล่าสุด ${latest.toLocaleDateString('th-TH')})`;
+    }
+
+    // Precaution #2 (เสี่ยงหาย): the RFM at-risk/lost segments, surfaced WITH evidence — the
+    // segment chip alone doesn't say why. Evidence = real computed numbers only (stats.r =
+    // days since last purchase; the typical cadence, when knowable, comes from the shortest
+    // known reorder cycle in reorderDue — never invented). Null when not at-risk/lost.
+    let churnPrecaution: string | null = null;
+    if (stats && (stats.segment === 'เสี่ยงหาย' || stats.segment === 'หายไปแล้ว') && stats.r != null) {
+      const reorderItems = Array.isArray(stats.reorderDue) ? (stats.reorderDue as unknown as ReorderDueItem[]) : [];
+      const knownCadence = reorderItems.length
+        ? Math.round(Math.min(...reorderItems.map((r) => r.medianGapDays)))
+        : null;
+      churnPrecaution = knownCadence != null
+        ? `หายไป ${stats.r} วัน ทั้งที่เคยซื้อทุก ${knownCadence} วัน`
+        : `หายไป ${stats.r} วัน (เคยซื้อ ${stats.f ?? 0} ครั้งในช่วงข้อมูล)`;
+    }
+
+    const note = await prisma.venusNote.findUnique({ where: { customerCode: code } });
+
     const precautions = {
       credit: customer.creditDays != null
         ? `เครดิต ${customer.creditDays} วัน${customer.creditTermsNorm ? ` (${customer.creditTermsNorm})` : ''}`
         : customer.creditTermsNorm === 'CASH' ? 'เงินสด' : null,
-      payment: null as string | null, // Phase 3: from Juno
-      churn: null as string | null, // Phase 3: AI-narrated evidence beyond the segment chip
-      complaints: null as string | null, // Phase 3: AI-tagged from LINE history
+      payment: paymentPrecaution,
+      churn: churnPrecaution,
+      complaints: null as string | null, // Phase 3 stage 2: AI-tagged from LINE history — separate build
+      note: note ? { text: note.text, authorName: note.authorName, updatedAt: note.updatedAt } : null,
     };
 
     return { customer, stats, purchases, productCycles, precautions };
+  });
+
+  // PUT /api/venus/customers/:code/note — upsert the manual pinned ข้อควรระวัง note
+  // (VENUS_BRIEF.md §7 precaution #4). Shared-pool: any logged-in Venus user may write
+  // (same requireApp('venus') gate as the reads above, not supervisor-only — this is a
+  // team note, not an import/config action). Empty text clears the note entirely.
+  app.put('/api/venus/customers/:code/note', async (req, reply) => {
+    const { code } = req.params as { code: string };
+    const body = z.object({ text: z.string().max(2000) }).safeParse(req.body);
+    if (!body.success) return reply.code(400).send({ error: 'bad_request' });
+
+    const customer = await prisma.venusCustomer.findUnique({ where: { code }, select: { code: true } });
+    if (!customer) return reply.code(404).send({ error: 'not_found' });
+
+    const text = body.data.text.trim();
+    const authorName = req.agent?.name ?? null;
+
+    if (!text) {
+      await prisma.venusNote.deleteMany({ where: { customerCode: code } });
+      return { ok: true, note: null };
+    }
+
+    const saved = await prisma.venusNote.upsert({
+      where: { customerCode: code },
+      create: { customerCode: code, text, authorName },
+      update: { text, authorName },
+    });
+
+    return { ok: true, note: { text: saved.text, authorName: saved.authorName, updatedAt: saved.updatedAt } };
   });
 }
