@@ -44,24 +44,27 @@ function Badge({ children, cls }: { children: React.ReactNode; cls: string }) {
 }
 
 // ช่องทาง (payment-method) list cell — transfer shows the bank name (unchanged from before);
-// cash/cheque show their method label plus a รอฝาก/รอเคลียร์ badge until settled (folds the old
-// separate เงินสด/เช็ค tab's method-at-a-glance info into this one column, owner decision 2026-07-06).
+// cash/cheque show their method label plus, until the CEO confirms receipt, a รอยืนยัน badge.
+// The badge tracks the RECEIPT gate (task 1), not the ฝาก/เคลียร์ deposit state — under owner
+// decision A (2026-07-06) the deposit is optional and lives in the drawer, so the list surfaces
+// the one thing that actually blocks "done": the CEO's ได้รับแล้ว confirm.
 function MethodCell({ p }: { p: Payment }) {
+  const awaitingReceive = !p.receivedAt && p.status !== 'void';
   if (p.source === 'cash') {
     return (
-      <div className="flex items-center gap-1 max-w-[110px]">
+      <div className="flex items-center gap-1 max-w-[120px]">
         <span className="truncate">เงินสด</span>
-        {p.settleState === '' && <Badge cls="bg-amber-100 text-amber-700">รอฝาก</Badge>}
+        {awaitingReceive && <Badge cls="bg-amber-100 text-amber-700">รอยืนยัน</Badge>}
       </div>
     );
   }
   if (p.source === 'cheque') {
     return (
-      <div className="flex items-center gap-1 max-w-[110px]">
+      <div className="flex items-center gap-1 max-w-[120px]">
         <span className="truncate" title={p.chequeBank ? `เช็ค · ${p.chequeBank}` : 'เช็ค'}>
           {p.chequeBank ? `เช็ค · ${p.chequeBank}` : 'เช็ค'}
         </span>
-        {p.settleState === '' && <Badge cls="bg-amber-100 text-amber-700">รอเคลียร์</Badge>}
+        {awaitingReceive && <Badge cls="bg-amber-100 text-amber-700">รอยืนยัน</Badge>}
       </div>
     );
   }

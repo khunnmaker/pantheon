@@ -1143,7 +1143,13 @@ export async function junoRoutes(app: FastifyInstance) {
     await prisma.$transaction([
       prisma.bankTxn.update({ where: { id: txn.id }, data: { expressConfirmedAt: now, expressConfirmedById: req.agent?.id ?? null } }),
       prisma.payment.updateMany({
-        where: { id: { in: links.map((l) => l.paymentId) }, status: 'verified' },
+        // Task 1 gate: cash/cheque can't be booked to Express until the CEO has confirmed
+        // physical receipt (receivedAt) — transfers advance as before. Mirrors POST /status.
+        where: {
+          id: { in: links.map((l) => l.paymentId) },
+          status: 'verified',
+          OR: [{ source: { notIn: ['cash', 'cheque'] } }, { receivedAt: { not: null } }],
+        },
         data: { status: 'recorded', verifiedById: req.agent?.id ?? null, verifiedAt: now },
       }),
     ]);
@@ -1181,7 +1187,13 @@ export async function junoRoutes(app: FastifyInstance) {
         data: { expressConfirmedAt: now, expressConfirmedById: req.agent?.id ?? null },
       }),
       prisma.payment.updateMany({
-        where: { id: { in: paymentIds }, status: 'verified' }, // only 'verified' advances; received/void/recorded untouched
+        // only 'verified' advances; received/void/recorded untouched. Task 1 gate: cash/cheque
+        // also need the CEO's receipt confirm (receivedAt) first — transfers advance as before.
+        where: {
+          id: { in: paymentIds },
+          status: 'verified',
+          OR: [{ source: { notIn: ['cash', 'cheque'] } }, { receivedAt: { not: null } }],
+        },
         data: { status: 'recorded', verifiedById: req.agent?.id ?? null, verifiedAt: now },
       }),
     ]);
