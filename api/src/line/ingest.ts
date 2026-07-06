@@ -1,6 +1,6 @@
 import type { Customer, Message, Session } from '@prisma/client';
 import { prisma } from '../db/prisma.js';
-import { fetchDisplayName, fetchGroupName } from './client.js';
+import { fetchDisplayName, fetchGroupName, fetchPictureUrl } from './client.js';
 
 export interface IngestInput {
   lineUserId: string;
@@ -35,8 +35,10 @@ export async function ingestCustomerText(input: IngestInput): Promise<IngestResu
       : lineUserId.startsWith('R')
         ? 'ห้องแชท'
         : ((await fetchDisplayName(lineUserId)) ?? undefined);
+    // Best-effort LINE picture (profile for 1-on-1, group summary for groups; null for rooms).
+    const pictureUrl = await fetchPictureUrl(lineUserId);
     customer = await prisma.customer.create({
-      data: { lineUserId, displayName: displayName ?? undefined },
+      data: { lineUserId, displayName: displayName ?? undefined, pictureUrl: pictureUrl ?? undefined },
     });
   } else {
     // A new message reactivates a previously-ended chat (returns to the queue).

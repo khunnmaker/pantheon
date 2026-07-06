@@ -19,6 +19,9 @@ model Customer {
   id                String          @id @default(cuid())
   lineUserId        String          @unique
   displayName       String?
+  // LINE profile/group picture (public https url from getProfile/getGroupSummary); null when
+  // none or unavailable. Best-effort — set on customer creation + lazily on chat-open.
+  pictureUrl        String?
   // staff-assigned nickname (shown in the console in preference to the LINE name)
   nickname          String?
   // staff-assigned customer code from the Express system (shown before the name, e.g. ร103)

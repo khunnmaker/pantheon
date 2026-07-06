@@ -7,6 +7,7 @@ import { requireAuth, requireApp } from '../auth/middleware.js';
 import { endSession } from '../memory/summarize.js';
 import { sendLineText, sendLineImages, sendLineReply } from '../line/send.js';
 import { readStaffUploadMeta, UPLOAD_ID_RE } from '../line/staffUploads.js';
+import { fetchPictureUrl } from '../line/client.js';
 import { PRODUCT_PHOTO_DIR } from './content.js';
 import { isStage } from '../stages.js';
 import { pushToConsole } from '../ws/io.js';
@@ -66,6 +67,7 @@ export async function consoleRoutes(app: FastifyInstance) {
           category: c.category,
           stage: c.stage,
           suggestedStage: c.suggestedStage,
+          pictureUrl: c.pictureUrl,
           lastSeen: c.lastSeen,
         },
         lastMessage: c.messages[0],
@@ -81,7 +83,7 @@ export async function consoleRoutes(app: FastifyInstance) {
     const customers = await prisma.customer.findMany({
       where: { active: true },
       orderBy: { lastSeen: 'desc' },
-      select: { id: true, lineUserId: true, displayName: true, nickname: true, code: true, category: true, stage: true, suggestedStage: true, firstSeen: true, lastSeen: true },
+      select: { id: true, lineUserId: true, displayName: true, nickname: true, code: true, category: true, stage: true, suggestedStage: true, pictureUrl: true, firstSeen: true, lastSeen: true },
     });
     const pinnedIds = (
       await prisma.pin.findMany({ where: { agentId: req.agent!.id }, select: { customerId: true } })
@@ -106,7 +108,7 @@ export async function consoleRoutes(app: FastifyInstance) {
       },
       orderBy: { lastSeen: 'desc' },
       take: 30,
-      select: { id: true, lineUserId: true, displayName: true, nickname: true, code: true, category: true, stage: true, suggestedStage: true, firstSeen: true, lastSeen: true },
+      select: { id: true, lineUserId: true, displayName: true, nickname: true, code: true, category: true, stage: true, suggestedStage: true, pictureUrl: true, firstSeen: true, lastSeen: true },
     });
     return { customers };
   });
@@ -132,8 +134,19 @@ export async function consoleRoutes(app: FastifyInstance) {
   // GET /api/customers/:id — profile + recent messages + simple stats.
   app.get<{ Params: { id: string } }>('/api/customers/:id', async (req, reply) => {
     const { id } = req.params;
-    const customer = await prisma.customer.findUnique({ where: { id } });
-    if (!customer) return reply.code(404).send({ error: 'not_found' });
+    const found = await prisma.customer.findUnique({ where: { id } });
+    if (!found) return reply.code(404).send({ error: 'not_found' });
+    let customer = found;
+
+    // Lazy picture backfill for pre-existing customers: the first time staff open a 1-on-1 (U…)
+    // or group (C…) chat with no stored picture, fetch it once and persist. Best-effort — a LINE
+    // error never fails the request. This spreads the backfill over normal use (no mass job).
+    if (!customer.pictureUrl && (customer.lineUserId.startsWith('U') || customer.lineUserId.startsWith('C'))) {
+      const pic = await fetchPictureUrl(customer.lineUserId);
+      if (pic) {
+        customer = await prisma.customer.update({ where: { id }, data: { pictureUrl: pic } }).catch(() => customer);
+      }
+    }
 
     const [recent, customerCount, agentCount] = await Promise.all([
       prisma.message.findMany({

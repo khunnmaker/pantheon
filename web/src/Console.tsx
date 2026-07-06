@@ -54,6 +54,28 @@ const nameOf = (c: CustomerLite) => {
 };
 const CATEGORIES = ['C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'Lab'];
 
+// Customer avatar: the LINE profile/group picture when present, else the generic person icon
+// in the grey circle. A broken/expired picture url falls back to the icon via onError. Sizes
+// the circle + icon from `size` (px) so it works in the list (32) and the header (28).
+function Avatar({ src, size = 32, className = '' }: { src?: string | null; size?: number; className?: string }) {
+  const [broken, setBroken] = useState(false);
+  // Reset the error state when the url changes (opening a different chat / lazy-backfill arriving).
+  useEffect(() => { setBroken(false); }, [src]);
+  const style = { width: size, height: size };
+  if (src && !broken) {
+    return (
+      <img src={src} alt="" style={style} onError={() => setBroken(true)}
+        className={'rounded-full object-cover bg-slate-200 shrink-0 ' + className} />
+    );
+  }
+  return (
+    <span style={style}
+      className={'rounded-full bg-slate-200 text-slate-600 flex items-center justify-center shrink-0 ' + className}>
+      <User size={Math.round(size * 0.47)} />
+    </span>
+  );
+}
+
 // A stored attachment (image/video/audio/file) fetched with the JWT (the content
 // endpoint stays auth-protected) and shown via an object URL: image/video/audio
 // inline, files as a download link.
@@ -1170,7 +1192,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
       <button key={c.id} onClick={() => setSelectedId(c.id)}
         className={'w-full text-left px-3 py-2 rounded-xl border transition ' + (active ? 'bg-sky-50 border-sky-300' : 'bg-white border-slate-100 hover:bg-slate-50')}>
         <div className="flex items-center gap-2">
-          <span className="w-8 h-8 rounded-full bg-slate-200 text-slate-600 flex items-center justify-center shrink-0"><User size={15} /></span>
+          <Avatar src={c.pictureUrl} size={32} />
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-1">
               <span className="font-medium text-sm truncate">{nameOf(c)}</span>
@@ -1338,7 +1360,9 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
             <div className="bg-white rounded-2xl shadow-sm border border-slate-200 flex flex-col h-full">
               <div className="px-4 py-2.5 bg-sky-600 text-white rounded-t-2xl font-semibold flex items-center gap-2">
                 <div className="flex items-center gap-2 min-w-0 flex-1">
-                  <MessageSquare size={18} className="shrink-0" />
+                  {detail
+                    ? <Avatar src={detail.customer.pictureUrl} size={28} />
+                    : <MessageSquare size={18} className="shrink-0" />}
                   {nickEdit !== null ? (
                     <div className="flex items-center gap-1">
                       <input autoFocus value={nickEdit.code} onChange={(e) => setNickEdit({ ...nickEdit, code: e.target.value })}

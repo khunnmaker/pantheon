@@ -56,6 +56,7 @@ export interface CustomerLite {
   category: string | null;
   stage: string | null;
   suggestedStage: string | null;
+  pictureUrl?: string | null; // LINE profile/group picture (fallback icon when absent/broken)
   firstSeen?: string;
   lastSeen: string;
 }
