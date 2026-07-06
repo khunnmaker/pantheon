@@ -402,10 +402,26 @@ export async function venusRoutes(app: FastifyInstance) {
     onRequest: [requireAuth, requireRole('supervisor')],
     config: { rateLimit: { max: 3, timeWindow: '1 minute' } },
   }, async (req) => {
-    const parsed = z.object({ limit: z.number().int().min(1).max(50).optional() }).safeParse(req.body ?? {});
+    const parsed = z.object({
+      limit: z.number().int().min(1).max(100).optional(),
+      full: z.boolean().optional(),
+    }).safeParse(req.body ?? {});
+    const full = parsed.success ? parsed.data.full ?? false : false;
+
+    if (full) {
+      // Validate the key + model on a tiny SYNC sample first — a bad key/model then returns
+      // immediately (started:false + the skip counts) instead of silently doing nothing in
+      // the background. If the sample writes cards, kick off the whole base in the background
+      // (a ~2k-customer run is far too long to hold one HTTP request open) and return started.
+      const sample = await generateAllCards(prisma, { limit: 3 });
+      if (sample.written === 0) return { ok: true, started: false, ...sample };
+      void generateAllCards(prisma).catch((err) => app.log.error({ err }, 'venus full card run failed'));
+      return { ok: true, started: true, candidates: sample.candidates };
+    }
+
     const limit = parsed.success ? parsed.data.limit ?? 15 : 15;
     const result = await generateAllCards(prisma, { limit });
-    return { ok: true, ...result };
+    return { ok: true, started: false, ...result };
   });
 
   // Everything below requires login + the 'venus' app grant (supervisor always passes; md

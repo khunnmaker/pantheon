@@ -46,12 +46,14 @@ export default function Dashboard({ onOpen, canManage }: { onOpen: (code: string
     setGenerating(true);
     setGenMsg('');
     try {
-      const r = await generateCards(15);
+      const r = await generateCards({ full: true });
       setGenMsg(
-        r.written > 0
-          ? `สร้างคำแนะนำ AI ${r.written} รายการ (ลูกค้าที่มีสัญญาณ ${r.candidates} ราย) — เปิดการ์ดลูกค้ารายมูลค่าสูงเพื่อดู`
-          : r.skippedNoLlm > 0
+        r.started
+          ? `เริ่มสร้างคำแนะนำ AI ทั้งหมดในเบื้องหลังแล้ว (ลูกค้าที่มีสัญญาณ ${r.candidates ?? '~2,000'} ราย) — ใช้เวลาสักครู่ การ์ดจะทยอยขึ้นบนหน้าลูกค้า`
+          : (r.skippedNoLlm ?? 0) > 0
           ? 'ยังไม่ได้ตั้งค่า AI key บนเซิร์ฟเวอร์ (ระบบยังทำงานได้ — จะแสดงเป็นแบดจ์สัญญาณแทน)'
+          : (r.skippedError ?? 0) > 0
+          ? 'AI ทำงานผิดพลาด (อาจต้องตรวจรุ่นโมเดล/คีย์) — แจ้งผู้ดูแลระบบ'
           : 'ไม่มีลูกค้าที่มีสัญญาณให้สร้างคำแนะนำ',
       );
     } catch (e) {

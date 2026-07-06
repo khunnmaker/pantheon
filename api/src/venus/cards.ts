@@ -230,7 +230,10 @@ export async function buildCard(
     'segment' | 'r' | 'f' | 'trendDir' | 'trendPct' | 'reorderDue' | 'crossSellGaps' | 'bigTicket'
   >,
   modelId: string,
-  caller: (user: string, system: string) => Promise<string> = (user, system) => callClaude(user, system),
+  // Default caller runs on `modelId` (Haiku for cards — a one-sentence restate needs no more)
+  // with a tight token cap; tests inject their own caller. maxTokens 256 comfortably fits 1–2
+  // Thai sentences and caps the cost/latency of a full-base run.
+  caller: (user: string, system: string) => Promise<string> = (user, system) => callClaude(user, system, 256, modelId),
 ): Promise<CardBuildResult | null> {
   const signals = activeSignals(stats);
   if (signals.length === 0) return null;
@@ -244,10 +247,10 @@ export async function buildCard(
   return { text, signals, model: modelId };
 }
 
-// Model id recorded on the card for audit — anthropic.ts owns the real constant used in the
-// actual API call; this is just what gets stamped on the row (same "informational" pattern as
-// aiReview.ts's AI_MODEL constant).
-export const CARD_MODEL_ID = 'claude-sonnet-4-6';
+// The model cards are generated with (passed to callClaude, and stamped on the row for audit).
+// Haiku: the task is "restate the given signals as one short Thai sentence" — no reasoning
+// needed, and it's ~4x cheaper than Sonnet for a full-base run of ~2k customers.
+export const CARD_MODEL_ID = 'claude-haiku-4-5-20251001';
 
 export interface GenerateAllResult {
   candidates: number; // customers with >=1 active signal
@@ -289,38 +292,48 @@ export async function generateAllCards(
   const candidates = allStats.filter((s) => activeSignals(s).length > 0);
   result.candidates = candidates.length;
 
-  const llmUp = llmAvailable();
   const slice = opts.limit != null ? candidates.slice(0, opts.limit) : candidates;
 
-  for (const stats of slice) {
-    if (!llmUp) {
-      result.skippedNoLlm++;
-      continue;
-    }
-    try {
-      const built = await buildCard(stats, CARD_MODEL_ID);
-      if (!built) continue; // no signals (shouldn't happen given the candidates filter, but defensive)
-      await prisma.venusCard.upsert({
-        where: { customerCode: stats.customerCode },
-        create: {
-          customerCode: stats.customerCode,
-          text: built.text,
-          signalsJson: built.signals as unknown as object,
-          model: built.model,
-        },
-        update: {
-          text: built.text,
-          signalsJson: built.signals as unknown as object,
-          model: built.model,
-          createdAt: new Date(),
-        },
-      });
-      result.written++;
-    } catch {
-      // Fail-soft per customer: skip, never throw — the rules badges already carry the
-      // signal information regardless of whether the AI narration succeeded.
-      result.skippedError++;
-    }
+  // Fail-soft at the batch level: no key at all → every candidate is skippedNoLlm, return clean.
+  if (!llmAvailable()) {
+    result.skippedNoLlm = slice.length;
+    return result;
+  }
+
+  // Process in small concurrent batches so a full-base run (~2k customers) finishes in
+  // minutes, not sequentially over half an hour. 6 concurrent LLM calls stays well within
+  // rate limits; result.++ is safe (single-threaded event loop).
+  const CONCURRENCY = 6;
+  for (let i = 0; i < slice.length; i += CONCURRENCY) {
+    const batch = slice.slice(i, i + CONCURRENCY);
+    await Promise.all(
+      batch.map(async (stats) => {
+        try {
+          const built = await buildCard(stats, CARD_MODEL_ID);
+          if (!built) return; // no signals (shouldn't happen given the candidates filter, but defensive)
+          await prisma.venusCard.upsert({
+            where: { customerCode: stats.customerCode },
+            create: {
+              customerCode: stats.customerCode,
+              text: built.text,
+              signalsJson: built.signals as unknown as object,
+              model: built.model,
+            },
+            update: {
+              text: built.text,
+              signalsJson: built.signals as unknown as object,
+              model: built.model,
+              createdAt: new Date(),
+            },
+          });
+          result.written++;
+        } catch {
+          // Fail-soft per customer: skip, never throw — the rules badges already carry the
+          // signal information regardless of whether the AI narration succeeded.
+          result.skippedError++;
+        }
+      }),
+    );
   }
 
   return result;

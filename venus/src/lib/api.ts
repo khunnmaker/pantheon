@@ -201,15 +201,16 @@ export const recompute = () => authed<RecomputeResult>('/api/venus/recompute', {
 // Bounded (one LLM call each); fail-soft — no key on the server → written 0, skippedNoLlm>0.
 export interface GenerateCardsResult {
   ok: boolean;
-  candidates: number;
-  written: number;
-  skippedNoLlm: number;
-  skippedError: number;
+  started: boolean; // true = full run kicked off in the background
+  candidates?: number;
+  written?: number;
+  skippedNoLlm?: number;
+  skippedError?: number;
 }
-export const generateCards = (limit = 15) =>
+export const generateCards = (opts: { limit?: number; full?: boolean } = {}) =>
   authed<GenerateCardsResult>('/api/venus/generate-cards', {
     method: 'POST',
-    body: JSON.stringify({ limit }),
+    body: JSON.stringify(opts),
   });
 
 const TOKEN_KEY = 'venus_token';

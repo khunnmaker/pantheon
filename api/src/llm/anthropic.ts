@@ -77,12 +77,13 @@ export async function callClaude(
   user: string,
   system?: SystemPrompt,
   maxTokens = MAX_TOKENS,
+  model: string = MODEL, // optional override; defaults to the shared drafting model
 ): Promise<string> {
   const c = getClient();
   if (!c) throw new Error('ANTHROPIC_API_KEY not configured');
 
   const res = await c.messages.create({
-    model: MODEL,
+    model,
     max_tokens: maxTokens,
     ...(system ? { system: buildSystemBlocks(system) } : {}),
     messages: [{ role: 'user', content: user }],
