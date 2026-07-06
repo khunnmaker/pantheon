@@ -21,11 +21,11 @@ export interface Agent {
 export type AppName = 'minerva' | 'vulcan' | 'juno' | 'ceres';
 
 // Mirror of the server's hasAppAccess (api/src/auth/jwt.ts): supervisor → everything;
-// md → Ceres only; employee → their own per-person grant list. A stored agent from before
-// this field existed has no apps → treated as no grants (empty list), which is safe.
+// md → Ceres + Minerva + Juno; employee → their own per-person grant list. A stored agent from
+// before this field existed has no apps → treated as no grants (empty list), which is safe.
 export function hasAppAccess(agent: Agent, app: AppName): boolean {
   if (agent.role === 'supervisor') return true;
-  if (agent.role === 'md') return app === 'ceres';
+  if (agent.role === 'md') return app === 'ceres' || app === 'minerva' || app === 'juno';
   return (agent.apps ?? []).includes(app);
 }
 

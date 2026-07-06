@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Landmark, LogIn, Loader2, AlertTriangle, ArrowLeft } from 'lucide-react';
-import { login, setSession, getLogins, type Agent, type LoginCard } from './lib/api';
+import { login, setSession, getLogins, hasAppAccess, type Agent, type LoginCard } from './lib/api';
 import { groupLogins, type GroupMeta } from './lib/loginGroups';
 import { memberAvatar, teamAvatar } from './lib/avatar';
 
@@ -10,9 +10,10 @@ const PIN_LEN = 6;
 // (jupiter/src/Login.tsx), adapted to Juno's emerald accent. The people come from the server
 // (GET /api/auth/logins?app=juno) — a rich card list carrying group + gender. 3-level DRILL-DOWN:
 //   L1 role groups (2-col Metro grid) → L2 that group's people (avatar tiles) → L3 person + cred.
-// The auth mechanism is UNCHANGED: submit() still calls login() → setSession() → onLogin(), and
-// Juno's supervisor-only guard (only 'supervisor' role may enter) is preserved. The manual
-// email/password form stays as a fallback for when the card fetch fails or for other roles.
+// The auth mechanism is UNCHANGED: submit() still calls login() → setSession() → onLogin().
+// Entry is gated to anyone with the 'juno' grant (hasAppAccess) — supervisor, md, and the
+// finance team — matching the server's requireApp('juno'). The manual email/password form
+// stays as a fallback for when the card fetch fails.
 export default function Login({ onLogin }: { onLogin: (agent: Agent) => void }) {
   const [view, setView] = useState<'list' | 'manual'>('list');
   const [cards, setCards] = useState<LoginCard[] | null>(null);
@@ -48,8 +49,8 @@ export default function Login({ onLogin }: { onLogin: (agent: Agent) => void }) 
     setError('');
     try {
       const { token, agent } = await login(em, value);
-      if (agent.role !== 'supervisor') {
-        setError('บัญชีนี้ไม่มีสิทธิ์เข้าระบบการเงิน (เฉพาะหัวหน้า)');
+      if (!hasAppAccess(agent, 'juno')) {
+        setError('บัญชีนี้ไม่มีสิทธิ์เข้าระบบการเงิน');
         setSecret('');
         setPassword('');
         setBusy(false);
@@ -226,7 +227,7 @@ export default function Login({ onLogin }: { onLogin: (agent: Agent) => void }) 
           </>
         )}
 
-        <p className="text-[10px] text-slate-300 mt-4">Juno เปิดให้เฉพาะหัวหน้า (supervisor) เท่านั้น</p>
+        <p className="text-[10px] text-slate-300 mt-4">Juno · ระบบการเงิน Minerva</p>
       </div>
     </div>
   );

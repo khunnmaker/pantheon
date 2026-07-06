@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import Login from './Login';
 import Juno from './Juno';
-import { getStoredAgent, getToken, setOnUnauthorized, type Agent } from './lib/api';
+import { getStoredAgent, getToken, setOnUnauthorized, hasAppAccess, type Agent } from './lib/api';
 
 export default function App() {
   const [agent, setAgent] = useState<Agent | null>(() =>
@@ -15,7 +15,7 @@ export default function App() {
     return () => setOnUnauthorized(null);
   }, []);
 
-  if (!agent || agent.role !== 'supervisor') {
+  if (!agent || !hasAppAccess(agent, 'juno')) {
     return <Login onLogin={setAgent} />;
   }
   return <Juno agent={agent} onLogout={() => setAgent(null)} />;
