@@ -15,7 +15,7 @@ import {
   dryRunPoEmail,
   sendPoEmail,
   type ComposedEmail,
-  type GmailStatus,
+  type MailStatus,
   type RenderedMessage,
   type EmailOverrides,
   type PurchaseOrder,
@@ -23,7 +23,7 @@ import {
 
 // Review-then-send modal. Loads the prefilled (editable) email for a PO, lets the owner review +
 // edit To/CC/subject/body, offers a DRY-RUN (renders the exact outgoing message with no send), and
-// a SEND (explicit click → Gmail API). There is NO auto-send path: send only fires on the button.
+// a SEND (explicit click → SMTP). There is NO auto-send path: send only fires on the button.
 export default function SendEmailModal({
   po,
   onClose,
@@ -34,7 +34,7 @@ export default function SendEmailModal({
   onSent: () => void;
 }) {
   const [composed, setComposed] = useState<ComposedEmail | null>(null);
-  const [gmail, setGmail] = useState<GmailStatus | null>(null);
+  const [mail, setMail] = useState<MailStatus | null>(null);
   const [loadErr, setLoadErr] = useState('');
 
   // Editable fields.
@@ -52,10 +52,10 @@ export default function SendEmailModal({
     let alive = true;
     (async () => {
       try {
-        const { composed, gmail } = await getPoEmail(po.id);
+        const { composed, mail } = await getPoEmail(po.id);
         if (!alive) return;
         setComposed(composed);
-        setGmail(gmail);
+        setMail(mail);
         setTo(composed.to);
         setCc(composed.cc.join(', '));
         setSubject(composed.subject);
@@ -109,10 +109,10 @@ export default function SendEmailModal({
     }
   }
 
-  const notConnected = gmail && !gmail.connected;
+  const notConfigured = mail && !mail.configured;
   const noPdf = composed && !composed.attachmentFound;
   const alreadySent = composed?.alreadySent ?? false;
-  const canSend = !!composed && !!gmail?.connected && !noPdf && !alreadySent && !!to.trim() && busy === null && !sentMsg;
+  const canSend = !!composed && !!mail?.configured && !noPdf && !alreadySent && !!to.trim() && busy === null && !sentMsg;
 
   const inputCls =
     'w-full px-3 py-2 rounded-md border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400';
@@ -143,15 +143,15 @@ export default function SendEmailModal({
           <div className="text-xs text-slate-500 bg-orange-50 border border-orange-100 rounded-lg px-3 py-2">
             ส่งจาก:{' '}
             <span className="font-semibold text-slate-700">
-              {gmail ? `${gmail.senderName} <${gmail.senderEmail}>` : 'purchasing@prominentdental.com'}
+              {mail ? `${mail.senderName} <${mail.senderEmail}>` : 'purchasing@prominentdental.com'}
             </span>{' '}
-            (ยืนยันสิทธิ์ผ่านบัญชี {gmail?.authAccountHint ?? 'khunnakritr@prominentdental.com'})
+            (ยืนยันสิทธิ์ผ่านบัญชี {mail?.authAccountHint ?? 'khunnakritr@prominentdental.com'})
           </div>
 
-          {/* Gmail-not-connected warning */}
-          {notConnected && (
+          {/* SMTP-not-configured warning */}
+          {notConfigured && (
             <div className="flex items-center gap-2 text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-              <CloudOff size={15} /> ยังไม่ได้เชื่อม Gmail — ไปที่แท็บ &quot;ใบสั่งซื้อ&quot; แล้วกด &quot;เชื่อม Gmail&quot; ก่อนจึงจะส่งได้ (ยังพรีวิว/dry-run ได้)
+              <CloudOff size={15} /> ยังไม่ได้ตั้งค่า SMTP — ใส่ App Password ใน .mercury-smtp.json แล้วรีสตาร์ตแอปก่อนจึงจะส่งได้ (ยังพรีวิว/dry-run ได้)
             </div>
           )}
           {noPdf && (
@@ -258,7 +258,7 @@ export default function SendEmailModal({
             <button
               onClick={doSend}
               disabled={!canSend}
-              title={canSend ? 'ส่งอีเมลจริงไปยังผู้ขาย' : 'ต้องเชื่อม Gmail + มี PDF + มีผู้รับ'}
+              title={canSend ? 'ส่งอีเมลจริงไปยังผู้ขาย' : 'ต้องตั้งค่า SMTP + มี PDF + มีผู้รับ'}
               className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-orange-600 hover:bg-orange-700 text-white text-sm font-semibold disabled:opacity-50"
             >
               {busy === 'send' ? <Loader2 size={15} className="animate-spin" /> : <Send size={15} />}

@@ -17,16 +17,8 @@ import {
 } from './connection.js';
 import { cloudLogin, CloudError, fixturePath } from './cloud.js';
 import { syncPending, resolveShadow, buildPosFromPending, generatePoPdf, receiveSecret } from './po.js';
-import {
-  gmailStatus,
-  clearToken,
-  runConnectFlow,
-  loadOAuthClient,
-  GmailError,
-  OAUTH_CLIENT_FILE,
-} from './gmail.js';
+import { smtpStatus, MailError, SMTP_CONFIG_FILE } from './mail.js';
 import { composePoEmail, dryRunPoEmail, sendPoEmail } from './poEmail.js';
-import { spawn } from 'node:child_process';
 
 const app = express();
 app.use(express.json());
@@ -383,64 +375,14 @@ app.get(
   }),
 );
 
-// ── Gmail connection (OAuth) — Phase 2c ──────────────────────────────────────
-// Open the OS default browser to a URL (reused for the OAuth consent page).
-function openBrowser(target: string): void {
-  try {
-    if (process.platform === 'win32') {
-      spawn('cmd', ['/c', 'start', '', target], { stdio: 'ignore', detached: true }).unref();
-    } else if (process.platform === 'darwin') {
-      spawn('open', [target], { stdio: 'ignore', detached: true }).unref();
-    } else {
-      spawn('xdg-open', [target], { stdio: 'ignore', detached: true }).unref();
-    }
-  } catch {
-    console.log(`[mercury-local] open your browser to: ${target}`);
-  }
-}
-
-// GET /api/gmail — redacted Gmail status (connected? client file present? who authorized?).
+// ── Mail (SMTP) status — Phase 2c ────────────────────────────────────────────
+// GET /api/mail — redacted SMTP status (configured? host/port/user + From). NEVER returns the App
+// Password. There is no "connect" flow: the owner pastes the App Password into the gitignored
+// .mercury-smtp.json config file and restarts. `configFile` lets the UI point at the exact path.
 app.get(
-  '/api/gmail',
+  '/api/mail',
   h(async (_req, res) => {
-    res.json({ status: gmailStatus() });
-  }),
-);
-
-// POST /api/gmail/connect — run the loopback OAuth flow (opens consent in the browser, waits for
-// the redirect, saves the refresh token locally). Fails gracefully if no client JSON is dropped in.
-// This is the ONLY place the loopback port is bound.
-app.post(
-  '/api/gmail/connect',
-  h(async (_req, res) => {
-    // Fail early + clearly when the owner hasn't dropped in the OAuth client JSON yet.
-    let client;
-    try {
-      client = loadOAuthClient();
-    } catch (e) {
-      const msg = e instanceof GmailError ? e.message : 'invalid client file';
-      return res.status(400).json({ error: msg, clientFile: OAUTH_CLIENT_FILE });
-    }
-    if (!client)
-      return res
-        .status(409)
-        .json({ error: 'OAuth client not configured', clientFile: OAUTH_CLIENT_FILE });
-    try {
-      const { authorizedEmail } = await runConnectFlow(openBrowser);
-      res.json({ ok: true, authorizedEmail, status: gmailStatus() });
-    } catch (e) {
-      if (e instanceof GmailError) return res.status(e.status).json({ error: e.message });
-      throw e;
-    }
-  }),
-);
-
-// DELETE /api/gmail — forget the local refresh token (revoke also possible in the Google account).
-app.delete(
-  '/api/gmail',
-  h(async (_req, res) => {
-    clearToken();
-    res.json({ ok: true, status: gmailStatus() });
+    res.json({ status: smtpStatus(), configFile: SMTP_CONFIG_FILE });
   }),
 );
 
@@ -452,9 +394,9 @@ app.get(
   h(async (req, res) => {
     try {
       const composed = await composePoEmail(req.params.id);
-      res.json({ composed, gmail: gmailStatus() });
+      res.json({ composed, mail: smtpStatus() });
     } catch (e) {
-      if (e instanceof GmailError) return res.status(e.status).json({ error: e.message });
+      if (e instanceof MailError) return res.status(e.status).json({ error: e.message });
       throw e;
     }
   }),
@@ -474,13 +416,13 @@ app.post(
       });
       res.json({ rendered });
     } catch (e) {
-      if (e instanceof GmailError) return res.status(e.status).json({ error: e.message });
+      if (e instanceof MailError) return res.status(e.status).json({ error: e.message });
       throw e;
     }
   }),
 );
 
-// POST /api/purchase-orders/:id/email/send — SEND via Gmail (explicit owner action only). On
+// POST /api/purchase-orders/:id/email/send — SEND via SMTP (explicit owner action only). On
 // success: PO → sent, emailedAt stamped, underlying local PendingRequests → ordered.
 app.post(
   '/api/purchase-orders/:id/email/send',
@@ -495,7 +437,7 @@ app.post(
       });
       res.json({ ok: true, ...outcome });
     } catch (e) {
-      if (e instanceof GmailError) return res.status(e.status).json({ error: e.message });
+      if (e instanceof MailError) return res.status(e.status).json({ error: e.message });
       throw e;
     }
   }),

@@ -1,14 +1,15 @@
-// Standalone verification of the Gmail send path WITHOUT any real Google credential.
+// Standalone verification of the SMTP send path WITHOUT any real credential.
 // Run: npm run verify:send  (tsx server/src/verify-send.ts)
 //
-// It proves, with a MOCK GmailClient (no network, no OAuth, no token):
+// It proves, with a MOCK MailTransport (no network, no SMTP, no App Password):
 //   1. Dry-run renders the exact message: From=purchasing@, To, CC, subject, body, attachment
 //      name + non-zero size — and touches no credential.
-//   2. Send calls gmail.users.messages.send({ userId:'me', requestBody:{ raw } }) exactly once,
-//      and the decoded base64url MIME contains From=purchasing@, the correct To/Cc/Subject, and
-//      a base64 PDF attachment (Content-Type: application/pdf + %PDF header).
+//   2. Send calls transport.sendMail({ from, to, cc, subject, text, attachments }) exactly once,
+//      with From=purchasing@ alias, correct To/Cc/Subject, and the PO PDF attached (application/pdf,
+//      pointing at the real generated file on disk).
 //   3. On success the PO is marked 'sent', emailedAt is stamped, and the underlying local
-//      PendingRequest is flipped to 'ordered' (Phase-3 cloud push-back is a documented TODO).
+//      PendingRequest is flipped to 'ordered' (Phase-3 cloud push-back is stubbed here).
+//   4. A re-send of an already-sent PO is refused (no double-send).
 //
 // It seeds its own throwaway rows in the local DB and cleans them up, so it is safe to re-run.
 import './env.js';
@@ -18,12 +19,14 @@ import { prisma } from './db.js';
 import { PKG_ROOT } from './env.js';
 import {
   renderMessage,
-  buildRawMessage,
+  buildMailMessage,
   sendMessage,
   SENDER_EMAIL,
-  type GmailClient,
+  DEFAULT_MAIL_FROM,
+  type MailTransport,
+  type MailMessage,
   type EmailSpec,
-} from './gmail.js';
+} from './mail.js';
 import { dryRunPoEmail, sendPoEmail } from './poEmail.js';
 
 let failures = 0;
@@ -39,33 +42,23 @@ const MINIMAL_PDF = Buffer.from(
   'utf8',
 );
 
-// A mock Gmail client capturing the exact send() params — implements the same structural interface
-// as googleapis' gmail.users.messages.send. No network, no auth.
-function makeMockClient(): { client: GmailClient; calls: { userId: string; raw: string }[] } {
-  const calls: { userId: string; raw: string }[] = [];
-  const client: GmailClient = {
-    users: {
-      messages: {
-        async send(params) {
-          calls.push({ userId: params.userId, raw: params.requestBody.raw });
-          return { data: { id: 'mock-msg-id-123' } };
-        },
-      },
+// A mock SMTP transport capturing the exact sendMail() message — implements the same structural
+// interface as nodemailer's Transporter.sendMail. No network, no auth, no App Password.
+function makeMockTransport(): { transport: MailTransport; calls: MailMessage[] } {
+  const calls: MailMessage[] = [];
+  const transport: MailTransport = {
+    async sendMail(message) {
+      calls.push(message);
+      return { messageId: 'mock-msg-id-123' };
     },
   };
-  return { client, calls };
-}
-
-// Decode a Gmail base64url `raw` back into the MIME text for assertions.
-function decodeRaw(raw: string): string {
-  const b64 = raw.replace(/-/g, '+').replace(/_/g, '/');
-  return Buffer.from(b64, 'base64').toString('utf8');
+  return { transport, calls };
 }
 
 async function main(): Promise<void> {
-  console.log('mercury-local — Gmail send verification (mocked, no real credential)\n');
+  console.log('mercury-local — SMTP send verification (mocked, no real credential)\n');
 
-  // ── A. Pure unit-level checks on the MIME builder (no DB) ──────────────────────────────────
+  // ── A. Pure unit-level checks on the message builder (no DB) ──────────────────────────────────
   const outDir = resolve(PKG_ROOT, 'po-output');
   if (!existsSync(outDir)) mkdirSync(outDir, { recursive: true });
   const pdfPath = resolve(outDir, '__verify_send__.pdf');
@@ -80,49 +73,41 @@ async function main(): Promise<void> {
     attachmentName: 'PO-TEST-001.pdf',
   };
 
-  console.log('A. MIME builder + dry-run render:');
+  console.log('A. message builder + dry-run render:');
   const rendered = renderMessage(spec);
-  check('From = purchasing@ alias with display name', rendered.from === `Prominent Purchasing <${SENDER_EMAIL}>`, rendered.from);
+  check('From = purchasing@ alias with display name', rendered.from === DEFAULT_MAIL_FROM, rendered.from);
+  check('From contains purchasing@', rendered.from.includes(SENDER_EMAIL));
   check('To preserved', rendered.to === 'vendor@example.com');
   check('CC preserved (2)', rendered.cc.length === 2 && rendered.cc[0] === 'cc1@example.com');
   check('attachment name', rendered.attachmentName === 'PO-TEST-001.pdf');
   check('attachment size > 0', rendered.attachmentBytes === MINIMAL_PDF.length, `${rendered.attachmentBytes} bytes`);
   check('attachment found', rendered.attachmentFound === true);
 
-  const raw = buildRawMessage(spec);
-  const mime = decodeRaw(raw);
-  check('raw is base64url (no +/= chars)', !/[+/=]/.test(raw));
-  check('MIME From header = purchasing@', mime.includes(`From: Prominent Purchasing <${SENDER_EMAIL}>`));
-  check('MIME To header', mime.includes('To: vendor@example.com'));
-  check('MIME Cc header', mime.includes('Cc: cc1@example.com, cc2@example.com'));
-  // The subject has a non-ASCII em dash → RFC 2047 encoded-word. Decode it back to verify.
-  const subjMatch = /Subject: (.+)/.exec(mime)?.[1] ?? '';
-  const decodedSubj = /=\?UTF-8\?B\?(.+)\?=/.exec(subjMatch);
-  const subjText = decodedSubj ? Buffer.from(decodedSubj[1], 'base64').toString('utf8') : subjMatch;
-  check('MIME Subject (RFC 2047 decoded)', subjText === 'Purchase Order PO-TEST-001 — Prominent', subjText);
-  check('MIME multipart/mixed', /Content-Type: multipart\/mixed; boundary=/.test(mime));
-  check('MIME PDF part present', mime.includes('Content-Type: application/pdf; name="PO-TEST-001.pdf"'));
-  check('MIME attachment disposition', mime.includes('Content-Disposition: attachment; filename="PO-TEST-001.pdf"'));
-  // The PDF bytes are base64-embedded — decode the attachment part and check the %PDF magic.
-  const attMatch = mime.split('Content-Transfer-Encoding: base64').pop() ?? '';
-  const attB64 = attMatch.split(/\r?\n\r?\n/).slice(1).join('').replace(/--.*$/s, '').replace(/\s+/g, '');
-  const attDecoded = Buffer.from(attB64, 'base64');
-  check('embedded attachment decodes to a PDF', attDecoded.slice(0, 5).toString('utf8') === '%PDF-');
+  const msg = buildMailMessage(spec);
+  check('built From = purchasing@ alias', msg.from === DEFAULT_MAIL_FROM, msg.from);
+  check('built To header', msg.to === 'vendor@example.com');
+  check('built Cc header (comma-joined)', msg.cc === 'cc1@example.com, cc2@example.com');
+  check('built Subject', msg.subject === 'Purchase Order PO-TEST-001 — Prominent');
+  check('built plain-text body', msg.text === spec.body);
+  check('exactly one attachment', msg.attachments.length === 1);
+  check('attachment filename', msg.attachments[0]?.filename === 'PO-TEST-001.pdf');
+  check('attachment content-type = application/pdf', msg.attachments[0]?.contentType === 'application/pdf');
+  check('attachment path points at the PDF on disk', msg.attachments[0]?.path === pdfPath);
 
-  // ── B. sendMessage() calls the client with the right shape (mock) ──────────────────────────
-  console.log('\nB. sendMessage() via mock client:');
-  const { client: mockA, calls: callsA } = makeMockClient();
+  // ── B. sendMessage() calls the transport with the right shape (mock) ──────────────────────────
+  console.log('\nB. sendMessage() via mock transport:');
+  const { transport: mockA, calls: callsA } = makeMockTransport();
   const resA = await sendMessage(mockA, spec);
-  check('called send() exactly once', callsA.length === 1);
-  check("userId = 'me' (auth account; From alias is in the MIME)", callsA[0]?.userId === 'me');
+  check('called sendMail() exactly once', callsA.length === 1);
   check('returned the mock message id', resA.id === 'mock-msg-id-123');
-  const mimeA = decodeRaw(callsA[0]?.raw ?? '');
-  check('sent MIME From = purchasing@', mimeA.includes(`From: Prominent Purchasing <${SENDER_EMAIL}>`));
-  check('sent MIME To', mimeA.includes('To: vendor@example.com'));
-  check('sent MIME Cc', mimeA.includes('Cc: cc1@example.com, cc2@example.com'));
+  check('sent From = purchasing@ alias', callsA[0]?.from === DEFAULT_MAIL_FROM);
+  check('sent To', callsA[0]?.to === 'vendor@example.com');
+  check('sent Cc', callsA[0]?.cc === 'cc1@example.com, cc2@example.com');
+  check('sent subject', callsA[0]?.subject === 'Purchase Order PO-TEST-001 — Prominent');
+  check('sent one PDF attachment', callsA[0]?.attachments.length === 1 && callsA[0]?.attachments[0]?.contentType === 'application/pdf');
 
-  // ── C. End-to-end through poEmail against seeded DB rows (mock client) ──────────────────────
-  console.log('\nC. sendPoEmail() end-to-end (DB, mock client):');
+  // ── C. End-to-end through poEmail against seeded DB rows (mock transport) ──────────────────────
+  console.log('\nC. sendPoEmail() end-to-end (DB, mock transport):');
   const stamp = Date.now();
   const vendor = await prisma.vendor.create({
     data: {
@@ -162,17 +147,17 @@ async function main(): Promise<void> {
 
   // Dry-run first — must render, must NOT change the PO.
   const dry = await dryRunPoEmail(po.id);
-  check('dry-run From = purchasing@', dry.from === `Prominent Purchasing <${SENDER_EMAIL}>`);
+  check('dry-run From = purchasing@', dry.from === DEFAULT_MAIL_FROM);
   check('dry-run To from vendor', dry.to === 'vendor@example.com');
   check('dry-run CC from vendor ccList', dry.cc.length === 2);
   check('dry-run attachment found', dry.attachmentFound === true);
   const poAfterDry = await prisma.purchaseOrder.findUnique({ where: { id: po.id } });
   check('dry-run did NOT send (still draft)', poAfterDry?.status === 'draft');
 
-  // Now send with the mock client (explicit) — proves the success bookkeeping. The cloud status
+  // Now send with the mock transport (explicit) — proves the success bookkeeping. The cloud status
   // push is stubbed (records the call) so this stays hermetic (no network); Phase-3 cloud push is
   // proven separately in verify-loop.ts.
-  const { client: mockC } = makeMockClient();
+  const { transport: mockC } = makeMockTransport();
   const pushed: { ids: string[]; status: string }[] = [];
   const outcome = await sendPoEmail(po.id, undefined, mockC, async (ids, status) => {
     pushed.push({ ids, status });
@@ -202,7 +187,7 @@ async function main(): Promise<void> {
   await prisma.vendor.delete({ where: { id: vendor.id } });
   if (existsSync(pdfPath)) rmSync(pdfPath);
 
-  console.log(`\n${failures === 0 ? 'ALL CHECKS PASSED' : `${failures} CHECK(S) FAILED`} — no real Google credential was used.`);
+  console.log(`\n${failures === 0 ? 'ALL CHECKS PASSED' : `${failures} CHECK(S) FAILED`} — no real SMTP credential was used.`);
   await prisma.$disconnect();
   process.exit(failures === 0 ? 0 : 1);
 }

@@ -1,8 +1,8 @@
 // PO email composition + review-then-send orchestration (Phase 2c). Builds the default,
 // EDITABLE email for a draft PO (To/CC/subject/body prefilled from the vendor), renders the
-// dry-run, and — only on an explicit send — dispatches via the Gmail API and marks the PO sent.
+// dry-run, and — only on an explicit send — dispatches via SMTP (nodemailer) and marks the PO sent.
 //
-// REVIEW-THEN-SEND, NEVER AUTO-SEND: there is exactly ONE code path that calls Gmail
+// REVIEW-THEN-SEND, NEVER AUTO-SEND: there is exactly ONE code path that sends mail
 // (sendPoEmail), and it is only reachable from the POST /api/purchase-orders/:id/send route, which
 // is only hit by the owner clicking Send. No scheduler, no cron, no implicit send anywhere.
 // See docs/MERCURY_BRIEF.md §6.
@@ -11,12 +11,12 @@ import { prisma } from './db.js';
 import {
   renderMessage,
   sendMessage,
-  makeGmailClient,
-  GmailError,
+  makeMailTransport,
+  MailError,
   type EmailSpec,
   type RenderedMessage,
-  type GmailClient,
-} from './gmail.js';
+  type MailTransport,
+} from './mail.js';
 import { loadConnection } from './connection.js';
 import { cloudPatchStatus, CloudError } from './cloud.js';
 
@@ -68,15 +68,15 @@ function defaultBody(opts: {
   ].join('\n');
 }
 
-// Load a PO and build the default editable email. Throws GmailError with a clear message/status on
+// Load a PO and build the default editable email. Throws MailError with a clear message/status on
 // the not-found / no-vendor / no-PDF cases so the route can translate them.
 export async function composePoEmail(poId: string): Promise<ComposedEmail> {
   const po = await prisma.purchaseOrder.findUnique({
     where: { id: poId },
     include: { vendor: true, lines: true },
   });
-  if (!po) throw new GmailError('po not found', 404);
-  if (!po.vendor) throw new GmailError('po has no vendor', 409);
+  if (!po) throw new MailError('po not found', 404);
+  if (!po.vendor) throw new MailError('po has no vendor', 409);
 
   const poNumber = po.poNumber ?? po.id;
   // The attachment is the generated PDF (may not exist yet — rendered.attachmentFound reflects it).
@@ -121,7 +121,7 @@ export interface SendOverrides {
 async function buildSpec(poId: string, overrides?: SendOverrides): Promise<{ spec: EmailSpec; poNumber: string }> {
   const composed = await composePoEmail(poId);
   const po = await prisma.purchaseOrder.findUnique({ where: { id: poId } });
-  if (!po?.pdfPath) throw new GmailError('PO PDF not generated yet — generate it first', 409);
+  if (!po?.pdfPath) throw new MailError('PO PDF not generated yet — generate it first', 409);
   const spec: EmailSpec = {
     to: (overrides?.to ?? composed.to).trim(),
     cc: (overrides?.cc ?? composed.cc).map((c) => c.trim()).filter(Boolean),
@@ -130,19 +130,19 @@ async function buildSpec(poId: string, overrides?: SendOverrides): Promise<{ spe
     attachmentPath: po.pdfPath,
     attachmentName: `${composed.poNumber}.pdf`,
   };
-  if (!spec.to) throw new GmailError('recipient (To) is empty — set the vendor email', 409);
+  if (!spec.to) throw new MailError('recipient (To) is empty — set the vendor email', 409);
   return { spec, poNumber: composed.poNumber };
 }
 
 // DRY-RUN: render the EXACT outgoing message (From/To/CC/subject/body + attachment name/size)
-// WITHOUT sending. No Gmail client, no credential touched.
+// WITHOUT sending. No SMTP transport, no credential touched.
 export async function dryRunPoEmail(poId: string, overrides?: SendOverrides): Promise<RenderedMessage> {
   const { spec } = await buildSpec(poId, overrides);
   return renderMessage(spec);
 }
 
-// SEND: the one and only path that dispatches to Gmail. `client` is injectable for tests; when
-// omitted, the real authenticated client is built. On success: mark the PO sent + stamp emailedAt,
+// SEND: the one and only path that dispatches mail. `transport` is injectable for tests; when
+// omitted, the real SMTP transport is built. On success: mark the PO sent + stamp emailedAt,
 // and mark the underlying local PendingRequests 'ordered' (cloud status push-back is Phase 3).
 export interface SendOutcome {
   messageId: string;
@@ -182,17 +182,17 @@ export async function pushCloudStatus(
 export async function sendPoEmail(
   poId: string,
   overrides?: SendOverrides,
-  client?: GmailClient,
+  transport?: MailTransport,
   pushCloud: (ids: string[], status: string) => Promise<{ pushed: number; error?: string }> = (ids, status) =>
     pushCloudStatus(ids, status),
 ): Promise<SendOutcome> {
   const po = await prisma.purchaseOrder.findUnique({ where: { id: poId }, include: { lines: true } });
-  if (!po) throw new GmailError('po not found', 404);
-  if (po.status === 'sent') throw new GmailError('this PO was already sent', 409);
+  if (!po) throw new MailError('po not found', 404);
+  if (po.status === 'sent') throw new MailError('this PO was already sent', 409);
 
   const { spec, poNumber } = await buildSpec(poId, overrides);
-  const gmail = client ?? (await makeGmailClient());
-  const { id: messageId } = await sendMessage(gmail, spec);
+  const mail = transport ?? (await makeMailTransport());
+  const { id: messageId } = await sendMessage(mail, spec);
 
   // Success → local bookkeeping. Mark the PO sent + stamp the audit time.
   await prisma.purchaseOrder.update({
@@ -220,4 +220,4 @@ export async function sendPoEmail(
   return { messageId, poId, poNumber, markedOrdered, cloudPushed, cloudPushError };
 }
 
-export { GmailError };
+export { MailError };

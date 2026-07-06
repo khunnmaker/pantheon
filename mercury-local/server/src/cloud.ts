@@ -1,5 +1,5 @@
-// Cloud-Mercury client. Local-Mercury's ONLY outbound contact for procurement data (Gmail send
-// is a later chunk). It consumes the shared api's mercury routes AS-IS (see
+// Cloud-Mercury client. Local-Mercury's ONLY outbound contact for procurement data (SMTP mail send
+// is the other outbound path). It consumes the shared api's mercury routes AS-IS (see
 // api/src/routes/mercury/index.ts) — we do not modify the cloud app.
 //
 // Auth choice (v1): the cloud /api/mercury/* routes are gated by requireApp('mercury'), which the

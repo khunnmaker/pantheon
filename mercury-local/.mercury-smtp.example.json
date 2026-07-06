@@ -1,0 +1,9 @@
+{
+  "_comment": "Copy this file to .mercury-smtp.json (which is gitignored) and fill in SMTP_PASS. See docs/MERCURY_LOCAL_RUNBOOK.md §2. NEVER commit .mercury-smtp.json — it holds the App Password.",
+  "SMTP_HOST": "smtp.gmail.com",
+  "SMTP_PORT": 465,
+  "SMTP_SECURE": true,
+  "SMTP_USER": "khunnakritr@prominentdental.com",
+  "SMTP_PASS": "PASTE-YOUR-16-CHAR-GOOGLE-APP-PASSWORD-HERE",
+  "MAIL_FROM": "Prominent Purchasing <purchasing@prominentdental.com>"
+}

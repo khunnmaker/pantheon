@@ -27,14 +27,14 @@ server/src/generated/
 prisma/*.db
 prisma/*.db-journal
 
-# env + Gmail OAuth credentials (Phase 2c) — NEVER commit a real token/client secret.
+# env — NEVER commit a real secret.
 .env
 **/.env
 !.env.example
-# the refresh token saved after "Connect Gmail"
-gmail-token*.json
-# the OAuth *client* JSON the owner downloads from GCP (holds client_id/secret)
-gmail-oauth-client*.json
+
+# ── SMTP send config (holds the Gmail App Password — NEVER commit) ────────
+# .mercury-smtp.json: { SMTP_USER, SMTP_PASS (the 16-char App Password), ... }
+.mercury-smtp.json
 
 # ── Cloud connection (holds a live suite JWT — NEVER commit) ─────────────
 .mercury-connection.json
