@@ -93,13 +93,14 @@ function Cover({ payment: p }: { payment: Payment }) {
       </div>
 
       <Row label="วันที่" value={fmtDate(p.createdAt)} />
-      {/* ลูกค้า + ชื่อบนใบเสร็จ each render on ONE line (owner 2026-07-06): the customer name sits
-          inline with its label exactly like ชื่อบนใบเสร็จ; the รหัส code is a subtle suffix that
-          ellipsizes last if the row runs long, so the name is never pushed onto a second line. */}
-      <Row label="ลูกค้า" value={<>{p.customerName || '—'}{p.customerCode && <span className="text-slate-400"> · รหัส {p.customerCode}</span>}</>} />
+      {/* ลูกค้า name on its own single line; รหัสลูกค้า is its OWN bigger row below it, and the
+          amount is enlarged, so the two identifiers staff match on (code + จำนวนเงิน) stand out
+          (owner 2026-07-06). */}
+      <Row label="ลูกค้า" value={p.customerName || '—'} />
+      {p.customerCode && <Row label="รหัสลูกค้า" value={<span className="font-bold text-xl">{p.customerCode}</span>} />}
       <Row label="ชื่อบนใบเสร็จ" value={p.receiptName || '—'} />
       <Row label="ประเภทลูกค้า" value={p.customerType || '—'} />
-      <Row label="จำนวนเงิน" value={<span className="font-bold text-lg">{baht(p.amountNum)}</span>} />
+      <Row label="จำนวนเงิน" value={<span className="font-bold text-3xl">{baht(p.amountNum)}</span>} />
       <Row label="ช่องทาง" value={p.bank || '—'} />
       <Row label="พนักงานขาย" value={p.salesName || '—'} />
 
