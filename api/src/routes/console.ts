@@ -227,7 +227,14 @@ export async function consoleRoutes(app: FastifyInstance) {
       ? await prisma.agent.findMany({ where: { id: { in: agentIds } }, select: { id: true, name: true } })
       : [];
     const agentNameById = new Map(agents.map((a) => [a.id, a.name]));
-    const messages = ordered.map((m) => ({ ...m, agentName: m.agentId ? (agentNameById.get(m.agentId) ?? null) : null }));
+    // Never expose the raw quoteToken to the client — surface only a `quotable` flag (a customer
+    // text/sticker bubble the staff can tap to LINE-quote). quotedMessageId stays so the frontend
+    // can render the quoted snippet by joining within the loaded messages.
+    const messages = ordered.map(({ quoteToken, ...m }) => ({
+      ...m,
+      agentName: m.agentId ? (agentNameById.get(m.agentId) ?? null) : null,
+      quotable: m.role === 'customer' && !!quoteToken,
+    }));
 
     return {
       customer,
@@ -318,12 +325,28 @@ export async function consoleRoutes(app: FastifyInstance) {
   // customer as a STANDALONE message (answersMessageId stays null, so it does NOT
   // consume the pending question — the team keeps composing their main reply).
   app.post<{ Params: { id: string } }>('/api/customers/:id/quick-reply', async (req, reply) => {
-    const parsed = z.object({ quickReplyId: z.string(), confirmNumbers: z.boolean().optional() }).safeParse(req.body);
+    const parsed = z.object({
+      quickReplyId: z.string(),
+      confirmNumbers: z.boolean().optional(),
+      replyToMessageId: z.string().max(60).optional(), // our Message.id to LINE-quote
+    }).safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: 'invalid_body' });
     const customer = await prisma.customer.findUnique({ where: { id: req.params.id } });
     if (!customer) return reply.code(404).send({ error: 'not_found' });
     const qr = await prisma.quickReply.findUnique({ where: { id: parsed.data.quickReplyId } });
     if (!qr) return reply.code(404).send({ error: 'quick_reply_not_found' });
+
+    // Optional LINE quote-reply (same rule as /message and /reply): honour only a same-customer
+    // message carrying a quoteToken; else send the template normally.
+    let quoteToken: string | undefined;
+    let quotedMessageId: string | undefined;
+    if (parsed.data.replyToMessageId) {
+      const quoted = await prisma.message.findUnique({ where: { id: parsed.data.replyToMessageId } });
+      if (quoted && quoted.customerId === customer.id && quoted.quoteToken) {
+        quoteToken = quoted.quoteToken;
+        quotedMessageId = quoted.id;
+      }
+    }
 
     // Same server-enforced price-confirm as /reply and /message: a priced template must be
     // explicitly confirmed (428) — a stale price in a template is one click from the customer.
@@ -333,7 +356,7 @@ export async function consoleRoutes(app: FastifyInstance) {
 
     let sendResult;
     try {
-      sendResult = await sendLineText(customer.lineUserId, qr.body);
+      sendResult = await sendLineText(customer.lineUserId, qr.body, quoteToken);
     } catch (err) {
       req.log.error({ err }, 'quick-reply send failed');
       return reply.code(502).send({ error: 'line_send_failed' });
@@ -345,6 +368,7 @@ export async function consoleRoutes(app: FastifyInstance) {
         text: qr.body,
         agentId: req.agent!.id,
         kbIds: [],
+        ...(quotedMessageId ? { quotedMessageId } : {}),
         ...(sendResult.channelMsgId ? { channelMsgId: sendResult.channelMsgId } : {}),
       },
     });
@@ -362,6 +386,7 @@ export async function consoleRoutes(app: FastifyInstance) {
       uploadId: z.string().max(80).optional(), // optional staff photo/file attachment
       attachProductSkus: z.array(z.string()).max(6).optional(), // catalog photos to attach (only when no upload)
       confirmNumbers: z.boolean().optional(),
+      replyToMessageId: z.string().max(60).optional(), // our Message.id to LINE-quote in this message
     }).safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: 'invalid_body' });
     const text = (parsed.data.text ?? '').trim();
@@ -369,6 +394,19 @@ export async function consoleRoutes(app: FastifyInstance) {
     if (!text && !uploadId && !parsed.data.attachProductSkus?.length) return reply.code(400).send({ error: 'empty' });
     const customer = await prisma.customer.findUnique({ where: { id: req.params.id } });
     if (!customer) return reply.code(404).send({ error: 'not_found' });
+
+    // Optional LINE quote-reply — only if replyToMessageId belongs to THIS customer and has a
+    // quoteToken (inbound text/sticker). The quote rides the TEXT part, so a photo-only send can't
+    // carry it; send normally (no error) when unmet. quotedMessageId records what we replied to.
+    let quoteToken: string | undefined;
+    let quotedMessageId: string | undefined;
+    if (parsed.data.replyToMessageId) {
+      const quoted = await prisma.message.findUnique({ where: { id: parsed.data.replyToMessageId } });
+      if (quoted && quoted.customerId === customer.id && quoted.quoteToken) {
+        quoteToken = quoted.quoteToken;
+        quotedMessageId = quoted.id;
+      }
+    }
 
     // Resolve an optional attachment: a staff upload (image → LINE image, file → download
     // link) wins; when no upload resolved, fall back to catalog product photos — same
@@ -420,8 +458,8 @@ export async function consoleRoutes(app: FastifyInstance) {
     let sendResult;
     try {
       if (imageUrls.length && !sendText) sendResult = await sendLineImages(customer.lineUserId, imageUrls);
-      else if (imageUrls.length) sendResult = await sendLineReply(customer.lineUserId, sendText, imageUrls);
-      else sendResult = await sendLineText(customer.lineUserId, sendText);
+      else if (imageUrls.length) sendResult = await sendLineReply(customer.lineUserId, sendText, imageUrls, quoteToken);
+      else sendResult = await sendLineText(customer.lineUserId, sendText, quoteToken);
     } catch (err) {
       req.log.error({ err }, 'free message send failed');
       return reply.code(502).send({ error: 'line_send_failed' });
@@ -433,6 +471,8 @@ export async function consoleRoutes(app: FastifyInstance) {
         text,
         agentId: req.agent!.id,
         kbIds: [],
+        // Only record the quote when a TEXT bubble actually carried it (a photo-only send can't).
+        ...(quotedMessageId && sendText ? { quotedMessageId } : {}),
         ...(attach ?? {}),
         ...(sendResult.channelMsgId ? { channelMsgId: sendResult.channelMsgId } : {}),
       },

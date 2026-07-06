@@ -71,6 +71,12 @@ model Message {
   attachmentRef    String?
   // original filename for received "file" messages (for download).
   attachmentName   String?
+  // LINE quote-reply support. quoteToken = LINE's token to quote THIS message in a later
+  // send (issued only for inbound text/sticker; never exposed to the client). quotedMessageId
+  // = OUR internal Message.id this message is a reply to (resolved at write time), for both an
+  // incoming customer quote-reply and our own quote-reply out.
+  quoteToken       String?
+  quotedMessageId  String?
   // when a payment-slip image was forwarded to finance (the Google Sheet) — also blocks double-send.
   financeSentAt    DateTime?
   // the amount the AI OCR read off the slip (server-set, tamper-proof) — compared to the

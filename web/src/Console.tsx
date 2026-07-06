@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import {
   User, LogOut, Clock, Inbox, Wifi, WifiOff, Loader2, ShieldCheck, MessageSquare,
   Send, Check, CheckCircle2, RefreshCw, Brain, GraduationCap, Wand2, Pencil, AlertTriangle, Search,
-  Download, Paperclip, Camera, Banknote, X, ChevronDown, ChevronUp, Crown, Pin,
+  Download, Paperclip, Camera, Banknote, X, ChevronDown, ChevronUp, Crown, Pin, CornerUpLeft,
 } from 'lucide-react';
 import {
   getQueue, getCustomers, getCustomer, searchCustomers, clearSession, regenerateDraft, rewriteText, sendReply, setNickname, setCategory, setStage, STAGES,
@@ -38,6 +38,15 @@ function fmtTime(t?: string) {
   } catch {
     return '';
   }
+}
+
+// Compact author + truncated text of a message, for a quoted-reply snippet / the "reply-to" bar.
+function quoteSnippet(m: Message | undefined): { author: string; text: string } {
+  if (!m) return { author: '', text: 'ข้อความที่ตอบกลับ' };
+  const author = m.role === 'customer' ? 'ลูกค้า' : m.agentName ? m.agentName : 'ทีมงาน';
+  const raw = (m.text ?? '').replace(/\s+/g, ' ').trim();
+  const text = raw.length > 60 ? raw.slice(0, 60) + '…' : raw || 'ข้อความ';
+  return { author, text };
 }
 const nameOf = (c: CustomerLite) => {
   const base = c.nickname || c.displayName || c.lineUserId;
@@ -513,6 +522,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
   const [freeText, setFreeText] = useState('');
   const [freeNeedsConfirm, setFreeNeedsConfirm] = useState(false);
   const [freeSending, setFreeSending] = useState(false);
+  const [replyingTo, setReplyingTo] = useState<string | null>(null); // Message.id being LINE-quote-replied
   const [freeProducts, setFreeProducts] = useState<PendingProduct[]>([]); // catalog photos picked in the answered-state composer (no draft to attach to)
   const [freeRewriting, setFreeRewriting] = useState(false);
   const [prodSearchOpen, setProdSearchOpen] = useState(false);
@@ -546,7 +556,12 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
     setLoadingDetail(true);
     try {
       const d = await getCustomer(id);
-      setDetail(d);
+      // Clear an in-progress quote-reply selection only when SWITCHING to a different customer —
+      // a same-customer reload (socket push / post-send refresh) must not drop the staff's pick.
+      setDetail((prev) => {
+        if (prev && prev.customer.id !== d.customer.id) setReplyingTo(null);
+        return d;
+      });
       setEditText(d.pendingDraft?.draftText ?? '');
       setNeedsConfirm(false);
       setQrConfirmId(null);
@@ -716,7 +731,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
     setSending(true);
     setError('');
     try {
-      const res = await sendReply(msgId, editText.trim(), needsConfirm, selectedProductSkus.length ? selectedProductSkus : undefined, upload?.uploadId);
+      const res = await sendReply(msgId, editText.trim(), needsConfirm, selectedProductSkus.length ? selectedProductSkus : undefined, upload?.uploadId, replyingTo ?? undefined);
       if ('needsConfirm' in res) {
         setNeedsConfirm(true);
         setError('คำตอบมีราคา — โปรดตรวจสอบตัวเลขแล้วกด "ยืนยันส่ง" อีกครั้ง');
@@ -728,6 +743,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
         if (selectedId) await loadDetail(selectedId);
         return;
       }
+      setReplyingTo(null); // sent — clear the quote-reply selection
       flashToast(res.dryRun ? 'บันทึกแล้ว (โหมดทดสอบ — ยังไม่ส่งจริงไป LINE)' : 'ส่งคำตอบไปยังลูกค้าแล้ว ✓');
       if (res.learnedCaptured) flashToast('ส่งแล้ว — คำตอบที่แก้ถูกเก็บเข้าคลังการเรียนรู้');
       await refreshLists();
@@ -848,7 +864,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
     setQrSending(true);
     setError('');
     try {
-      const res = await sendQuickReply(selectedId, q.id, qrConfirmId === q.id);
+      const res = await sendQuickReply(selectedId, q.id, qrConfirmId === q.id, replyingTo ?? undefined);
       if ('needsConfirm' in res) {
         setQrConfirmId(q.id);
         setError('ข้อความด่วนนี้มีราคา — กดอีกครั้งเพื่อยืนยันส่ง');
@@ -856,6 +872,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
       }
       setQrConfirmId(null);
       setQrOpen(false);
+      setReplyingTo(null); // sent — clear the quote-reply selection
       flashToast(res.dryRun ? `บันทึก "${q.label}" (โหมดทดสอบ)` : `ส่ง "${q.label}" ให้ลูกค้าแล้ว ✓`);
     } catch {
       setError('ส่งข้อความไม่สำเร็จ');
@@ -872,7 +889,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
     setError('');
     try {
       const skus = freeProducts.length ? freeProducts.map((p) => p.sku) : undefined;
-      const res = await sendMessage(selectedId, freeText.trim(), upload?.uploadId, freeNeedsConfirm, skus);
+      const res = await sendMessage(selectedId, freeText.trim(), upload?.uploadId, freeNeedsConfirm, skus, replyingTo ?? undefined);
       if ('needsConfirm' in res) {
         setFreeNeedsConfirm(true);
         setError('ข้อความมีราคา — โปรดตรวจสอบตัวเลขแล้วกดส่งอีกครั้งเพื่อยืนยัน');
@@ -882,6 +899,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
       setUpload(null);
       setFreeProducts([]);
       setFreeNeedsConfirm(false);
+      setReplyingTo(null); // sent — clear the quote-reply selection
       flashToast(res.dryRun ? 'บันทึกแล้ว (โหมดทดสอบ)' : 'ส่งข้อความให้ลูกค้าแล้ว ✓');
     } catch {
       setError('ส่งข้อความไม่สำเร็จ');
@@ -1119,6 +1137,20 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
   }
 
   const draft = detail?.pendingDraft ?? null;
+  // "กำลังตอบกลับ" bar — shown above BOTH composers when a customer bubble is selected to
+  // quote-reply. Resolves the author + snippet from the loaded messages; ✕ clears the selection.
+  const replyingMsg = replyingTo ? detail?.messages.find((m) => m.id === replyingTo) : undefined;
+  const replyBar = replyingTo ? (() => {
+    const s = quoteSnippet(replyingMsg);
+    return (
+      <div className="flex items-center gap-2 text-[11px] bg-sky-50 border border-sky-200 rounded-lg px-2 py-1 text-slate-600">
+        <CornerUpLeft size={13} className="shrink-0 text-sky-500" />
+        <span className="min-w-0 truncate"><span className="font-semibold text-sky-800">กำลังตอบกลับ:</span> {s.author} · «{s.text}»</span>
+        <button type="button" onClick={() => setReplyingTo(null)} title="ยกเลิกการตอบกลับ" aria-label="ยกเลิกการตอบกลับ"
+          className="ml-auto shrink-0 text-slate-400 hover:text-slate-600"><X size={13} /></button>
+      </div>
+    );
+  })() : null;
   // Both filters are "exclude" style: all selected by default; deselecting a chip hides
   // only that group's customers; unstaged/uncategorized always show. (All = everyone.)
   const displayList = searchResults ?? customers.filter((c) =>
@@ -1402,26 +1434,50 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                   <div className="flex-1 overflow-y-auto p-3 space-y-2 bg-sky-50"
                     onClick={(e) => { const img = (e.target as HTMLElement).closest('img[data-zoom]') as HTMLImageElement | null; if (img) setLightbox(img.currentSrc || img.src); }}>
                     {loadingDetail && !detail && <div className="flex justify-center py-8 text-slate-400"><Loader2 size={18} className="animate-spin" /></div>}
-                    {detail?.messages.map((m: Message) => (
+                    {detail?.messages.map((m: Message) => {
+                      // Quoted snippet (both directions): the message THIS bubble quote-replies to.
+                      const quoted = m.quotedMessageId
+                        ? detail.messages.find((q) => q.id === m.quotedMessageId)
+                        : undefined;
+                      const quotedSnip = m.quotedMessageId ? quoteSnippet(quoted) : null;
+                      // Tap a quotable customer text/sticker bubble to LINE-quote-reply it.
+                      const canReply = !!m.quotable;
+                      const isReplying = replyingTo === m.id;
+                      return (
                       <div key={m.id} className={m.role === 'customer' ? 'flex justify-start' : 'flex justify-end'}>
-                        <div className={'max-w-[78%] px-3 py-2 rounded-2xl text-sm whitespace-pre-wrap ' +
-                          (m.role === 'customer' ? 'bg-white border border-slate-200 rounded-tl-sm' : 'bg-sky-600 text-white rounded-tr-sm')}>
+                        <div onClick={canReply ? () => setReplyingTo((cur) => (cur === m.id ? null : m.id)) : undefined}
+                          title={canReply ? 'แตะเพื่อตอบกลับข้อความนี้' : undefined}
+                          className={'max-w-[78%] px-3 py-2 rounded-2xl text-sm whitespace-pre-wrap ' +
+                          (m.role === 'customer' ? 'bg-white border border-slate-200 rounded-tl-sm' : 'bg-sky-600 text-white rounded-tr-sm') +
+                          (canReply ? ' cursor-pointer' : '') +
+                          (isReplying ? ' ring-2 ring-sky-400' : '')}>
+                          {quotedSnip && (
+                            <div className={'mb-1 pl-2 border-l-2 text-[11px] leading-snug ' +
+                              (m.role === 'customer' ? 'border-slate-300 text-slate-500' : 'border-sky-200/70 text-sky-100/90')}>
+                              <span className="font-semibold">{quotedSnip.author}</span>
+                              <span className="opacity-90"> · {quotedSnip.text}</span>
+                            </div>
+                          )}
                           <MessageBody m={m} />
                           <div className={'text-[10px] mt-0.5 flex items-baseline justify-between gap-3 ' + (m.role === 'customer' ? 'text-slate-400' : 'text-sky-100')}>
-                            <span>{fmtTime(m.createdAt)}</span>
+                            <span className="flex items-center gap-1">
+                              {fmtTime(m.createdAt)}
+                              {canReply && <CornerUpLeft size={11} className={isReplying ? 'text-sky-500' : 'text-slate-300'} />}
+                            </span>
                             {m.role !== 'customer' && m.agentName && <span className="text-sky-100/80">— {m.agentName}</span>}
                           </div>
                           {m.role === 'customer' && m.attachmentType === 'image' && (
                             m.financeSentAt
                               ? <div className="mt-1 text-[10px] text-sky-600 font-medium flex items-center gap-1"><CheckCircle2 size={11} /> ส่งการเงินแล้ว</div>
-                              : <button type="button" onClick={() => setFinanceMsg(m.id)}
+                              : <button type="button" onClick={(e) => { e.stopPropagation(); setFinanceMsg(m.id); }}
                                   className="mt-1 text-[10px] px-2 py-1 rounded-lg bg-amber-100 hover:bg-amber-200 text-amber-800 font-medium flex items-center gap-1">
                                   <Banknote size={12} /> แจ้งการเงิน
                                 </button>
                           )}
                         </div>
                       </div>
-                    ))}
+                      );
+                    })}
                     <div ref={endRef} />
                   </div>
                     </div>{/* /LEFT column */}
@@ -1516,6 +1572,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                               </div>
                             </div>
                       )}
+                      {replyBar}
                       <textarea value={editText} onChange={(e) => { setEditText(e.target.value); setNeedsConfirm(false); setRewriteNote(null); }} rows={4}
                         className="w-full flex-1 min-h-[120px] p-3 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-sky-400 resize-none" placeholder="พิมพ์/แก้คำตอบก่อนส่ง… (วางรูป Ctrl+V ได้)" />
                       {rewriteNote && (
@@ -1643,6 +1700,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                           <button type="button" onClick={() => setUpload(null)} className="text-slate-400 hover:text-rose-500"><X size={14} /></button>
                         </div>
                       )}
+                      {replyBar}
                       <textarea value={freeText} onChange={(e) => { setFreeText(e.target.value); setFreeNeedsConfirm(false); setRewriteNote(null); }} rows={3}
                         className="w-full flex-1 min-h-[100px] p-3 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-sky-400 resize-none" placeholder="พิมพ์ข้อความถึงลูกค้า… (วางรูป Ctrl+V ได้)" />
                       {rewriteNote && (

@@ -43,6 +43,8 @@ export interface Message {
   attachmentRef: string | null;
   attachmentName: string | null; // original filename for received files
   financeSentAt: string | null; // when a slip was forwarded to finance
+  quotedMessageId?: string | null; // our Message.id this bubble quote-replies to (both directions)
+  quotable?: boolean; // customer text/sticker bubble carrying a quoteToken → tap to LINE-quote it
   createdAt: string;
 }
 export interface CustomerLite {
@@ -247,12 +249,13 @@ export async function sendReply(
   confirmNumbers?: boolean,
   attachProductSkus?: string[],
   uploadId?: string,
+  replyToMessageId?: string, // our Message.id to LINE-quote in this reply
 ): Promise<ReplyResult | { needsConfirm: true } | { alreadyReplied: true }> {
   const token = getToken();
   const res = await fetch(`${API_URL}/api/messages/${messageId}/reply`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
-    body: JSON.stringify({ finalText, confirmNumbers, attachProductSkus, uploadId }),
+    body: JSON.stringify({ finalText, confirmNumbers, attachProductSkus, uploadId, replyToMessageId }),
   });
   if (res.status === 428) return { needsConfirm: true }; // reply has a price; staff must confirm
   if (res.status === 409) return { alreadyReplied: true }; // someone already answered this one
@@ -294,12 +297,13 @@ export async function sendQuickReply(
   customerId: string,
   quickReplyId: string,
   confirmNumbers?: boolean,
+  replyToMessageId?: string, // our Message.id to LINE-quote
 ): Promise<{ ok: boolean; message: Message; dryRun: boolean } | { needsConfirm: true }> {
   const token = getToken();
   const res = await fetch(`${API_URL}/api/customers/${customerId}/quick-reply`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
-    body: JSON.stringify({ quickReplyId, confirmNumbers }),
+    body: JSON.stringify({ quickReplyId, confirmNumbers, replyToMessageId }),
   });
   if (res.status === 428) return { needsConfirm: true }; // template has a price; staff must confirm
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -322,12 +326,13 @@ export async function sendMessage(
   uploadId?: string,
   confirmNumbers?: boolean,
   attachProductSkus?: string[],
+  replyToMessageId?: string, // our Message.id to LINE-quote
 ): Promise<{ message: Message; dryRun: boolean } | { needsConfirm: true }> {
   const token = getToken();
   const res = await fetch(`${API_URL}/api/customers/${customerId}/message`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
-    body: JSON.stringify({ text, uploadId, confirmNumbers, attachProductSkus }),
+    body: JSON.stringify({ text, uploadId, confirmNumbers, attachProductSkus, replyToMessageId }),
   });
   if (res.status === 428) return { needsConfirm: true }; // message has a price; staff must confirm
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
