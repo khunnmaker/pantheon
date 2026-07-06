@@ -47,13 +47,14 @@ export interface Payment {
   amount: string;
   amountNum: number;
   ocrAmount: string;
-  // withholding tax (หัก ณ ที่จ่าย, task 2) — `amount` above stays the GROSS/RE figure;
-  // whtRate/whtAmount track the withheld slice, and netAmount (server-computed) is what the
-  // bank actually credited (amountNum − parsed whtAmount). whtRate 0 / whtAmount '' = no WHT
-  // (every pre-task-2 row, and any ordinary payment) → netAmount === amountNum. See verifyPayment.
+  // withholding tax (หัก ณ ที่จ่าย, task 2) — `amount`/`amountNum` above is the NET the customer
+  // actually sent (what the slip/bank shows, and what reconciles directly). whtRate/whtAmount
+  // track the withheld slice, and grossAmount (server-computed) is the full price / RE =
+  // amountNum + parsed whtAmount. whtRate 0 / whtAmount '' = no WHT (every pre-task-2 row, and any
+  // ordinary payment) → grossAmount === amountNum. See verifyPayment.
   whtRate: number;
   whtAmount: string;
-  netAmount: number;
+  grossAmount: number;
   bank: string;
   transferAt: string;
   ref: string;
@@ -346,7 +347,8 @@ export const getReport = (groupBy: Report['groupBy'], from?: string, to?: string
   return authed<Report>(`/api/juno/reports?${p.toString()}`);
 };
 
-// หัก ณ ที่จ่าย (WHT, task 2) tab totals bar — count + gross/wht/net over the given range.
+// หัก ณ ที่จ่าย (WHT, task 2) tab totals bar over the given range: count, net (what was actually
+// received = Σ amount), wht (withheld), gross (full price/RE = net + wht).
 // Visible to every Juno user (no CEO gate, unlike getReport above).
 export interface WhtSummary {
   count: number;

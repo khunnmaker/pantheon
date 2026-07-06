@@ -1225,18 +1225,17 @@ function Detail({ payment, onClose, onUpdate, onDelete, onPrint, canDelete, isCe
             )}
 
             {/* หัก ณ ที่จ่าย (WHT, task 2) — only shown once FIN has entered a withheld amount in
-                the ตรวจแล้ว dialog. amount/amountNum above stays the gross/RE figure throughout;
-                this block is what makes the gross → withheld → net breakdown legible on review.
-                The withheld baht shown is amountNum − netAmount (both server-computed off the
-                SAME netOf()), not a re-parse of the whtAmount string, so it can never drift from
-                the server's own arithmetic. */}
+                the ตรวจแล้ว dialog. amount/amountNum above is the NET the customer actually sent;
+                this block makes the received → withheld → full-price breakdown legible on review.
+                The withheld baht shown is grossAmount − amountNum (both server-computed off the
+                SAME grossOf()), so it can never drift from the server's own arithmetic. */}
             {p.whtAmount !== '' && (
               <div className="mx-4 mt-3 p-2 rounded-lg bg-amber-50 text-amber-800 text-xs flex items-center justify-between gap-2">
                 <Percent size={14} className="shrink-0" />
                 <span className="flex-1">
-                  ยอดเต็ม {baht(p.amountNum)} · หัก ณ ที่จ่าย {p.whtRate}% = {baht(p.amountNum - p.netAmount)}
+                  รับจริง {baht(p.amountNum)} · หัก ณ ที่จ่าย {p.whtRate}% = {baht(p.grossAmount - p.amountNum)}
                 </span>
-                <span className="font-semibold whitespace-nowrap">สุทธิ {baht(p.netAmount)}</span>
+                <span className="font-semibold whitespace-nowrap">เต็ม {baht(p.grossAmount)}</span>
               </div>
             )}
 
@@ -1495,30 +1494,32 @@ function ReChipsBox({ state, onEnter, autoFocus }: {
 // ── Shared WHT (หัก ณ ที่จ่าย, task 2) control logic — used by CheckDialog only (see the
 // BatchCheckDialog note below for why the batch path leaves WHT out). Mirrors the
 // useReChipsInput hook style: one implementation, reset() to re-seed from a different payment.
-// The rate picker AUTO-COMPUTES the withheld baht from the payment's gross (round to 2dp), but
-// the baht stays user-editable afterward (to match the 50-ทวิ cert / rounding) — so this hook
-// tracks the computed baht as its own state and only re-derives it when the RATE changes, never
-// clobbering a manual edit on every render.
+// The rate picker AUTO-COMPUTES the withheld baht from what the customer actually SENT (the net,
+// payment.amountNum): wht = net × rate/(100−rate) — the slice a `rate`% withholding took off the
+// full price to leave this net (e.g. net 97 @ 3% → 3, full price 100). Rounded to 2dp, but the
+// baht stays user-editable afterward (to match the 50-ทวิ cert / rounding), only re-derived when
+// the RATE changes so a manual edit is never clobbered on render.
 function useWhtControl(payment: Payment) {
   const [on, setOn] = useState(payment.whtRate > 0);
   const [rate, setRate] = useState<WhtRate>(payment.whtRate > 0 ? (payment.whtRate as WhtRate) : DEFAULT_WHT_RATE);
   const [amountStr, setAmountStr] = useState(payment.whtAmount);
 
-  // Turning WHT on (from off) seeds the baht from a fresh rate×gross calc; turning off just
+  // Turning WHT on (from off) seeds the baht from a fresh calc off the net; turning off just
   // hides the controls (state is zeroed at save-time in toBody(), not here, so flipping back on
   // mid-edit doesn't lose the figure the user already had).
   function toggleOn(next: boolean) {
     setOn(next);
-    if (next && amountStr === '') setAmountStr(String(round2((payment.amountNum * rate) / 100)));
+    if (next && amountStr === '') setAmountStr(String(round2((payment.amountNum * rate) / (100 - rate))));
   }
-  // Recompute from the gross whenever the rate changes — this is the "auto-compute" the owner
-  // asked for; the resulting figure remains a normal editable input afterward.
+  // Recompute the withheld baht off the net (payment.amountNum) whenever the rate changes — the
+  // "auto-compute" the owner asked for; the resulting figure remains a normal editable input.
   function changeRate(next: WhtRate) {
     setRate(next);
-    setAmountStr(String(round2((payment.amountNum * next) / 100)));
+    setAmountStr(String(round2((payment.amountNum * next) / (100 - next))));
   }
 
-  const netPreview = round2(payment.amountNum - (parseFloat(amountStr) || 0));
+  // Full price / RE = what was received + what was withheld.
+  const grossPreview = round2(payment.amountNum + (parseFloat(amountStr) || 0));
 
   // Re-seed every field from a (possibly different) payment — used by CheckDialog when it
   // re-opens on a different row, and would be used by a batch queue's goTo() if one existed.
@@ -1535,12 +1536,12 @@ function useWhtControl(payment: Payment) {
     return on ? { whtRate: rate, whtAmount: amountStr.trim() } : { whtRate: 0, whtAmount: '' };
   }
 
-  return { on, toggleOn, rate, changeRate, amountStr, setAmountStr, netPreview, reset, toBody };
+  return { on, toggleOn, rate, changeRate, amountStr, setAmountStr, grossPreview, reset, toBody };
 }
 
-// The WHT section UI (checkbox + rate picker + editable baht + read-only net) shared by its one
-// caller today (CheckDialog) — factored out so a future batch/other dialog can reuse it verbatim.
-// Takes only the `wht` control state — everything it renders (rate/amount/net preview) is
+// The WHT section UI (checkbox + rate picker + editable baht + read-only full-price) shared by its
+// one caller today (CheckDialog) — factored out so a future batch/other dialog can reuse it.
+// Takes only the `wht` control state — everything it renders (rate/amount/full-price preview) is
 // already derived off the payment inside useWhtControl, so no separate `payment` prop is needed.
 function WhtSection({ wht }: { wht: ReturnType<typeof useWhtControl> }) {
   return (
@@ -1579,8 +1580,8 @@ function WhtSection({ wht }: { wht: ReturnType<typeof useWhtControl> }) {
             />
           </label>
           <div className="col-span-2 flex items-center justify-between text-xs bg-slate-50 rounded-lg px-2 py-1.5">
-            <span className="text-slate-400">ยอดสุทธิ (หลังหัก)</span>
-            <span className="font-semibold text-slate-700">{baht(wht.netPreview)}</span>
+            <span className="text-slate-400">ยอดเต็ม/RE (ก่อนหัก)</span>
+            <span className="font-semibold text-slate-700">{baht(wht.grossPreview)}</span>
           </div>
         </div>
       )}

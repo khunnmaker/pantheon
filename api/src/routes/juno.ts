@@ -43,12 +43,13 @@ function num(s: string): number {
   return Number.isFinite(n) ? n : 0;
 }
 
-// Withholding tax (หัก ณ ที่จ่าย, task 2): amount stays the GROSS/RE figure — netOf is what the
-// bank actually credited (gross − withheld). whtAmount '' (the default, and every pre-task-2
-// row) → netOf === num(amount) unchanged, so non-WHT behavior is byte-identical everywhere this
-// is used. Reused by the bank matcher + suggestions ranking below (search netOf for both).
-function netOf(p: { amount: string; whtAmount: string }): number {
-  return num(p.amount) - num(p.whtAmount || '0');
+// Withholding tax (หัก ณ ที่จ่าย, task 2): the payment `amount` is the money the customer
+// ACTUALLY sent — already net of any WHT (that's what the slip/bank shows and what the bank
+// matcher reconciles directly, no adjustment). grossOf adds the withheld slice back to recover
+// the full price / RE amount (amount + wht). whtAmount '' (the default + every pre-task-2 row) →
+// grossOf === num(amount). Used only for the WHT tab + DTO display, never for bank matching.
+function grossOf(p: { amount: string; whtAmount: string }): number {
+  return num(p.amount) + num(p.whtAmount || '0');
 }
 
 // The row shape the Juno UI consumes (the stored Payment plus a couple of derived fields).
@@ -73,11 +74,12 @@ function toRow(p: {
     amount: p.amount,
     amountNum: num(p.amount),
     ocrAmount: p.ocrAmount,
-    // withholding tax (task 2) — amount above stays the gross/RE figure; netAmount is what the
-    // bank actually credited (gross − wht). whtAmount '' → netAmount === amountNum unchanged.
+    // withholding tax (task 2) — `amount`/`amountNum` above is the net the customer actually sent
+    // (matches the bank directly); grossAmount adds the WHT back to recover the full price/RE.
+    // whtAmount '' → grossAmount === amountNum unchanged.
     whtRate: p.whtRate,
     whtAmount: p.whtAmount,
-    netAmount: netOf(p),
+    grossAmount: grossOf(p),
     bank: p.bank,
     transferAt: p.transferAt,
     ref: p.ref,
@@ -297,17 +299,11 @@ async function runAutoMatcher(txnIds?: string[]): Promise<{ matched: number; che
     }),
     prisma.payment.findMany({
       where: { status: 'verified', reconciled: false, source: { not: 'cheque' } },
-      // whtAmount is fetched so Pass 2 below can amount-match against netOf(p) (gross − wht)
-      // instead of the raw gross — a WHT payment's bank credit lands short by design.
-      select: { id: true, amount: true, whtAmount: true, transferAt: true, createdAt: true },
+      select: { id: true, amount: true, transferAt: true, createdAt: true },
     }),
     prisma.payment.findMany({
-      // Pass 1 (cheques, below) also amount-matches against netOf: a customer who withholds
-      // tax writes the cheque for the NET, so its deposit lands short by the WHT just like a
-      // transfer. whtAmount '' (every non-WHT cheque) → netOf === gross, so this is unchanged
-      // for the normal case.
       where: { source: 'cheque', reconciled: false, status: { not: 'void' } },
-      select: { id: true, amount: true, chequeNo: true, whtAmount: true },
+      select: { id: true, amount: true, chequeNo: true },
     }),
   ]);
   const linkTargets = txnIds ? new Set(txnIds) : null;
@@ -333,7 +329,7 @@ async function runAutoMatcher(txnIds?: string[]): Promise<{ matched: number; che
       const matches: string[] = [];
       for (const p of chequePayments) {
         if (normChq(p.chequeNo) !== key) continue;
-        if (!amountsEqual(t.amount, String(netOf(p)))) continue;
+        if (!amountsEqual(t.amount, p.amount)) continue;
         matches.push(p.id);
       }
       chequeTxnCandidates.set(t.id, matches);
@@ -373,12 +369,9 @@ async function runAutoMatcher(txnIds?: string[]): Promise<{ matched: number; che
     for (const t of genericTxns) {
       const matches: string[] = [];
       for (const p of payments) {
-        // WHT (task 2): a withheld payment's bank credit lands SHORT by the withheld slice on
-        // purpose (RE/amount stays the gross) — so match the credit against netOf(p) (gross −
-        // wht), not the gross amount itself. whtAmount '' → netOf(p) === num(p.amount), so this
-        // is byte-identical to the old `amountsEqual(t.amount, p.amount)` for every non-WHT
-        // payment (i.e. everything before task 2, and every ordinary payment after it).
-        if (!amountsEqual(t.amount, String(netOf(p)))) continue;
+        // The payment `amount` is already the net the customer sent, so it equals the bank
+        // credit directly — WHT needs no adjustment here (see grossOf's note).
+        if (!amountsEqual(t.amount, p.amount)) continue;
         if (dayDistance(t.txnAt, paymentTimes.get(p.id)!) > 3) continue;
         matches.push(p.id);
       }
@@ -427,7 +420,7 @@ export async function junoRoutes(app: FastifyInstance) {
   });
 
   // GET /api/juno/wht/summary?from=&to= — period totals for the หัก ณ ที่จ่าย (WHT, task 2)
-  // tab: count + gross/wht/net summed over non-void payments with a withheld amount on file,
+  // tab: count + net(received)/wht/gross(full-price) over non-void payments with a withheld amount,
   // in the given Thai-day range. Visible to every Juno user (list + totals only — no
   // certificate tracking) — same requireApp('juno') gate as the rest of this file, no extra
   // supervisor check (contrast with the CEO-only /reports below).
@@ -445,9 +438,11 @@ export async function junoRoutes(app: FastifyInstance) {
     if (range) where.createdAt = range;
 
     const rows = await prisma.payment.findMany({ where, select: { amount: true, whtAmount: true } });
-    const gross = rows.reduce((s, r) => s + num(r.amount), 0);
+    // `amount` is the NET the customer actually sent; wht is the withheld slice; the full
+    // price / RE (gross) = net + wht.
+    const net = rows.reduce((s, r) => s + num(r.amount), 0);
     const wht = rows.reduce((s, r) => s + num(r.whtAmount), 0);
-    return { count: rows.length, gross, wht, net: gross - wht };
+    return { count: rows.length, net, wht, gross: net + wht };
   });
 
   // GET /api/juno/payments?q=&status=&flagged=&tax=&from=&to=&limit=
@@ -1090,9 +1085,7 @@ export async function junoRoutes(app: FastifyInstance) {
 
     const candidates = await prisma.payment.findMany({
       where: { status: 'verified', id: { notIn: [...excludeIds] } },
-      // whtAmount fetched so the ranking below compares the bank credit against netOf(p)
-      // (gross − wht), not the raw gross — see the `exact`/`delta` computation.
-      select: { id: true, reNumber: true, receiptName: true, customerName: true, senderName: true, amount: true, whtAmount: true, transferAt: true, createdAt: true },
+      select: { id: true, reNumber: true, receiptName: true, customerName: true, senderName: true, amount: true, transferAt: true, createdAt: true },
       take: 500, // ranked below; a bound keeps this cheap even on a large backlog
     });
 
@@ -1100,18 +1093,12 @@ export async function junoRoutes(app: FastifyInstance) {
     const scored = candidates.map((p) => {
       const pAt = paymentTimestamp(p.transferAt, p.createdAt);
       const days = dayDistance(txn.txnAt, pAt);
-      // WHT (task 2): compare the bank credit against netOf(p) (gross − wht), not p.amount —
-      // a withheld payment's credit lands short of the gross BY DESIGN, so ranking it against
-      // the gross would wrongly demote (or miss) its true match. whtAmount '' → netOf(p) ===
-      // parseFloat(p.amount), so `exact`/`delta` are byte-identical to before for every
-      // non-WHT payment.
-      const pNet = netOf(p);
-      const exact = amountsEqual(txn.amount, String(pNet));
+      const exact = amountsEqual(txn.amount, p.amount);
       const nameScore = Math.max(
         nameSimilarity(txn.payerName || txn.details, p.senderName || p.customerName),
         nameSimilarity(txn.payerName || txn.details, p.receiptName),
       );
-      const delta = Math.abs(txnAmount - pNet);
+      const delta = Math.abs(txnAmount - parseFloat(p.amount || '0'));
       // Rank tiers: exact-amount (closer day wins ties) > name-similarity > same-day-small-delta.
       // Encoded as a single sortable number: tier * 1000 - tiebreak, higher = better.
       let score = 0;
