@@ -1270,11 +1270,16 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
             {/* icon bar */}
             <div className="bg-white rounded-2xl shadow-sm border border-slate-200 flex items-center gap-1 px-2 py-2 shrink-0">
               <AppSwitcher agent={agent} />
-              <button onClick={() => setView('console')} title="คอนโซล"
-                className={'p-2 rounded-xl ' + (view === 'console' ? 'bg-sky-600 text-white' : 'text-slate-500 hover:bg-slate-100')}><MessageSquare size={19} /></button>
-              <button onClick={() => setView('learning')} title="การเรียนรู้"
-                className={'relative p-2 rounded-xl ' + (view === 'learning' ? 'bg-sky-600 text-white' : 'text-slate-500 hover:bg-slate-100')}>
-                <GraduationCap size={19} />
+              {/* Stacked mode toggle: current mode's icon large + the other mode as a small
+                  corner badge; click to flip console <-> learning. Keeps the learning-count badge. */}
+              <button type="button"
+                onClick={() => setView((v) => (v === 'learning' ? 'console' : 'learning'))}
+                title={view === 'learning' ? 'โหมดการเรียนรู้ — คลิกเพื่อสลับไปคอนโซล' : 'โหมดคอนโซล — คลิกเพื่อสลับไปการเรียนรู้'}
+                className="relative p-2 rounded-xl bg-sky-600 text-white hover:bg-sky-700">
+                {view === 'learning' ? <GraduationCap size={19} /> : <MessageSquare size={19} />}
+                <span className="absolute -bottom-1 -left-1 bg-white rounded-full p-0.5 text-sky-600 flex shadow-sm">
+                  {view === 'learning' ? <MessageSquare size={10} /> : <GraduationCap size={10} />}
+                </span>
                 {learned.length > 0 && <span className="absolute -top-0.5 -right-0.5 text-[10px] bg-amber-400 text-white rounded-full px-1 leading-tight">{learned.length}</span>}
               </button>
               <div className="flex-1" />
