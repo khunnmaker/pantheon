@@ -141,6 +141,9 @@ export interface LoginName {
   email: string;
   name: string;
   kind: 'password' | 'pin';
+  // DISPLAY metadata for the role-grouped, avatar login screen (additive; server-provided).
+  group: string;                 // ceo | md | sales | finance | messengers | stores | others
+  gender: 'male' | 'female';     // drives the cute (DiceBear) avatar
 }
 // PUBLIC — no auth required. Ordered: supervisor first (kind 'password'), then the MD
 // (kind 'password'), then messenger/employee cards (kind 'pin').

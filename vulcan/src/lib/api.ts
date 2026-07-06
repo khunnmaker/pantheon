@@ -161,6 +161,21 @@ export async function login(email: string, password: string): Promise<{ token: s
   return res.json() as Promise<{ token: string; agent: Agent }>;
 }
 
+export interface LoginCard {
+  email: string;
+  name: string;
+  kind: 'password' | 'pin';
+  // DISPLAY metadata for the role-grouped, avatar login screen (additive; server-provided).
+  group: string;                 // ceo | md | sales | finance | messengers | stores | others
+  gender: 'male' | 'female';     // drives the cute (DiceBear) avatar
+}
+// PUBLIC — no auth required. Ordered: supervisor first, then employees granted this app.
+export async function getLogins(): Promise<LoginCard[]> {
+  const res = await fetch(`${API_URL}/api/auth/logins?app=vulcan`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json() as Promise<LoginCard[]>;
+}
+
 export const getSummary = () => authed<StockSummary>('/api/stock/summary');
 
 export const getStockList = (q: string, filter: 'all' | 'low' | 'out' | 'unknown' | 'noname') =>

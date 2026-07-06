@@ -167,6 +167,9 @@ export interface LoginCard {
   email: string;
   name: string;
   kind: 'password' | 'pin';
+  // DISPLAY metadata for the role-grouped, avatar login screen (additive; server-provided).
+  group: string;                 // ceo | md | sales | finance | messengers | stores | others
+  gender: 'male' | 'female';     // drives the cute (DiceBear) avatar
 }
 // PUBLIC — no auth required. Ordered: supervisor first, then employees granted this app.
 export async function getLogins(app: 'minerva' | 'ceres'): Promise<LoginCard[]> {
