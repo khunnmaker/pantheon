@@ -82,39 +82,33 @@ export default function PrintCovers({ payments, onDone }: { payments: Payment[];
 
 function Cover({ payment: p }: { payment: Payment }) {
   const multi = p.reNumbers.length > 1;
-  // one RE → text-4xl (matches รหัสลูกค้า + จำนวนเงิน); several REs scale down & wrap so they
-  // can never blow the numbers off the page.
+  // one RE → text-4xl (matches รหัสลูกค้า + จำนวนเงิน); several REs scale down & wrap right.
   const reSize = p.reNumbers.length === 1 ? 'text-4xl' : p.reNumbers.length <= 3 ? 'text-2xl' : 'text-lg';
+  const big = 'text-4xl font-bold leading-tight';
   return (
     <div className="print-page shadow-lg">
       <div className="text-sm font-bold text-slate-500 mb-2">{COMPANY_HEADER}</div>
 
-      <BigField label={`เลขที่ใบเสร็จ${multi ? ` (${p.reNumbers.length} เลข)` : ''}`}>
-        <div className={`${reSize} font-bold tracking-wide leading-tight flex flex-wrap gap-x-3`}>
-          {p.reNumbers.map((re) => <span key={re}>RE {re}</span>)}
-        </div>
-      </BigField>
-
-      <Row label="วันที่" value={fmtDate(p.createdAt)} />
-      <Row label="ลูกค้า" value={p.customerName || '—'} />
-
-      {/* รหัสลูกค้า + จำนวนเงิน render as BIG figures at the SAME size as the RE number — these
-          three are what staff match a cover against its receipt on (owner 2026-07-06). */}
-      {p.customerCode && (
-        <BigField label="รหัสลูกค้า">
-          <div className="text-4xl font-bold tracking-wide leading-tight">{p.customerCode}</div>
-        </BigField>
-      )}
-
-      <Row label="ชื่อบนใบเสร็จ" value={p.receiptName || '—'} />
-      <Row label="ประเภทลูกค้า" value={p.customerType || '—'} />
-
-      <BigField label="จำนวนเงิน">
-        <div className="text-4xl font-bold tracking-tight leading-tight">{baht(p.amountNum)}</div>
-      </BigField>
-
-      <Row label="ช่องทาง" value={p.bank || '—'} />
-      <Row label="พนักงานขาย" value={p.salesName || '—'} />
+      {/* Every field is ONE line: label on the LEFT, value on the RIGHT (owner 2026-07-06). The
+          three figures staff match a cover to its receipt on — RE, รหัสลูกค้า, จำนวนเงิน — share
+          the same big size on the right. */}
+      <Line
+        label={`เลขที่ใบเสร็จ${multi ? ` (${p.reNumbers.length} เลข)` : ''}`}
+        valueClass={`${reSize} font-bold leading-tight`}
+        value={
+          <span className="inline-flex flex-wrap justify-end gap-x-3">
+            {p.reNumbers.map((re) => <span key={re}>RE {re}</span>)}
+          </span>
+        }
+      />
+      <Line label="วันที่" value={fmtDate(p.createdAt)} />
+      <Line label="ลูกค้า" value={p.customerName || '—'} />
+      {p.customerCode && <Line label="รหัสลูกค้า" value={p.customerCode} valueClass={big} />}
+      <Line label="ชื่อบนใบเสร็จ" value={p.receiptName || '—'} />
+      <Line label="ประเภทลูกค้า" value={p.customerType || '—'} />
+      <Line label="จำนวนเงิน" value={baht(p.amountNum)} valueClass={big} />
+      <Line label="ช่องทาง" value={p.bank || '—'} />
+      <Line label="พนักงานขาย" value={p.salesName || '—'} />
 
       <div className="mt-6 text-sm text-slate-500">
         ผู้จัดทำ: ______________________
@@ -123,24 +117,13 @@ function Cover({ payment: p }: { payment: Payment }) {
   );
 }
 
-// A prominent figure block: a small label above a large value. Used for the three numbers staff
-// match on — RE, รหัสลูกค้า, จำนวนเงิน — so they're visually parallel and equally big.
-function BigField({ label, children }: { label: string; children: React.ReactNode }) {
+// One field per line: label on the LEFT, value on the RIGHT (justified). valueClass overrides the
+// value size — RE / รหัสลูกค้า / จำนวนเงิน pass a big class; every other field defaults to text-base.
+function Line({ label, value, valueClass = 'text-base' }: { label: string; value: React.ReactNode; valueClass?: string }) {
   return (
-    <div className="mb-2">
-      <div className="text-xs text-slate-400">{label}</div>
-      {children}
-    </div>
-  );
-}
-
-// One line per field: label + value inline, ellipsized if it would overflow the A6 width — so a
-// long Thai name (customer / receipt) stays on its own single row instead of wrapping.
-function Row({ label, value }: { label: string; value: React.ReactNode }) {
-  return (
-    <div className="mb-2 text-base whitespace-nowrap overflow-hidden text-ellipsis">
-      <span className="text-slate-400">{label}: </span>
-      <span className="text-slate-800">{value}</span>
+    <div className="mb-2 flex items-baseline justify-between gap-4">
+      <span className="text-sm text-slate-400 shrink-0">{label}</span>
+      <span className={`text-slate-800 text-right min-w-0 ${valueClass}`}>{value}</span>
     </div>
   );
 }
