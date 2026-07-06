@@ -56,10 +56,11 @@ export function verifyToken(token: string): { id: string; email: string; name: s
   }
 }
 
-// supervisor → everything; md → Ceres (management side) only; employee → their own
-// per-person Agent.apps grant list.
+// supervisor → everything; md → Ceres + Minerva + Juno (the MD runs expenses, the sales
+// console, and finance); employee → their own per-person Agent.apps grant list.
+export const MD_APPS: readonly AppName[] = ['ceres', 'minerva', 'juno'];
 export function hasAppAccess(agent: AuthedAgent, app: AppName): boolean {
   if (agent.role === 'supervisor') return true;
-  if (agent.role === 'md') return app === 'ceres';
+  if (agent.role === 'md') return MD_APPS.includes(app);
   return agent.apps.includes(app);
 }

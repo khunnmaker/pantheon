@@ -39,7 +39,7 @@ export const EMPLOYEES = [
   { slug: 'lungko', name: 'ลุงโก๊ะ', apps: ['ceres'], group: 'messengers', gender: 'male' },
   { slug: 'wong', name: 'วง', apps: ['ceres'], group: 'messengers', gender: 'male' },
   { slug: 'paeng', name: 'แป๋ง', apps: ['ceres'], group: 'messengers', gender: 'male' },
-  { slug: 'nun', name: 'นุ่น', apps: ['ceres'], group: 'md', gender: 'female' },
+  { slug: 'nun', name: 'นุ่น', apps: ['minerva', 'juno', 'ceres'], group: 'md', gender: 'female' }, // Noon — MD side, same access as Nee
   { slug: 'pin', name: 'พิณ', apps: ['ceres'], group: 'others', gender: 'male' },
   { slug: 'lekmaeban', name: 'เล็กแม่บ้าน', apps: ['ceres'], group: 'others', gender: 'female' }, // housekeeper — enters expenses like everyone
   { slug: 'da', name: 'ด้า', apps: ['ceres'], group: 'messengers', gender: 'male' },
@@ -168,20 +168,24 @@ async function syncStaff(): Promise<void> {
       existing && (await verifyPassword(pin, existing.passwordHash))
         ? existing.passwordHash
         : await hashPassword(pin);
-    // apps: a NON-EMPTY grant list belongs to Jupiter's admin UI and is never overwritten.
-    // An EMPTY list on an existing row can only be a pre-unification account (the column
-    // arrived defaulted to {}) — backfill the roster defaults ONCE, or the live sales
-    // team would deploy straight into a console lock-out. To fully revoke someone,
-    // remove their PIN from EMPLOYEE_PINS (no login at all), not their last grant.
-    const backfillApps = existing && existing.apps.length === 0 ? { apps: [...e.apps] } : {};
+    // apps: the roster declaration is the FLOOR of a person's grants — every app listed in
+    // EMPLOYEES is applied as a UNION with whatever is already on the row (ADDITIVE: a declared
+    // grant is always present, but any extra grant added out-of-band survives). This lets an
+    // owner-requested grant change (edit EMPLOYEES) actually propagate to existing rows, while
+    // never removing a grant on deploy — so no one is ever locked out. To REVOKE, remove the
+    // app from EMPLOYEES here (it stops being re-added) or pull the PIN to kill the login entirely.
+    const mergedApps = existing
+      ? Array.from(new Set([...existing.apps, ...e.apps]))
+      : [...e.apps];
+    const appsGrew = existing !== null && mergedApps.length > existing.apps.length;
     await prisma.agent.upsert({
       where: { email },
-      update: { name: e.name, role: 'employee', passwordHash, ...backfillApps },
+      update: { name: e.name, role: 'employee', passwordHash, apps: mergedApps },
       create: { email, name: e.name, role: 'employee', passwordHash, apps: [...e.apps] },
     });
-    if (existing && existing.apps.length === 0) {
+    if (appsGrew) {
       // eslint-disable-next-line no-console
-      console.log(`[staff] backfilled default app grants for "${e.slug}" (${e.apps.join(', ')})`);
+      console.log(`[staff] applied declared app grants for "${e.slug}" → ${mergedApps.join(', ')}`);
     }
   }
 
