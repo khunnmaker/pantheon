@@ -26,6 +26,7 @@ const schema = z.object({
   SESSION_IDLE_MINUTES: z.coerce.number().int().positive().default(30),
   DRAFT_DEBOUNCE_MS: z.coerce.number().int().min(0).default(15000), // burst debounce: wait this long after the LAST message before drafting (0 = draft immediately)
   KB_INJECT_ALL_MAX: z.coerce.number().int().positive().default(120),
+  PICTURE_REFRESH_DAYS: z.coerce.number().int().positive().default(7), // staleness window: re-fetch a customer's LINE picture at most once per this many days
 
   WEB_ORIGIN: z.string().default('http://localhost:5173'),
 

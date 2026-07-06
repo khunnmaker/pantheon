@@ -22,6 +22,9 @@ model Customer {
   // LINE profile/group picture (public https url from getProfile/getGroupSummary); null when
   // none or unavailable. Best-effort — set on customer creation + lazily on chat-open.
   pictureUrl        String?
+  // when pictureUrl was last fetched from LINE; throttles the periodic refresh (PICTURE_REFRESH_DAYS)
+  // so an active customer's changed photo is picked up without hammering the LINE API. null = never.
+  pictureFetchedAt  DateTime?
   // staff-assigned nickname (shown in the console in preference to the LINE name)
   nickname          String?
   // staff-assigned customer code from the Express system (shown before the name, e.g. ร103)

@@ -7,7 +7,7 @@ import { requireAuth, requireApp } from '../auth/middleware.js';
 import { endSession } from '../memory/summarize.js';
 import { sendLineText, sendLineImages, sendLineReply } from '../line/send.js';
 import { readStaffUploadMeta, UPLOAD_ID_RE } from '../line/staffUploads.js';
-import { fetchPictureUrl } from '../line/client.js';
+import { maybeRefreshCustomerPicture } from '../line/picture.js';
 import { PRODUCT_PHOTO_DIR } from './content.js';
 import { isStage } from '../stages.js';
 import { pushToConsole } from '../ws/io.js';
@@ -138,14 +138,13 @@ export async function consoleRoutes(app: FastifyInstance) {
     if (!found) return reply.code(404).send({ error: 'not_found' });
     let customer = found;
 
-    // Lazy picture backfill for pre-existing customers: the first time staff open a 1-on-1 (U…)
-    // or group (C…) chat with no stored picture, fetch it once and persist. Best-effort — a LINE
-    // error never fails the request. This spreads the backfill over normal use (no mass job).
-    if (!customer.pictureUrl && (customer.lineUserId.startsWith('U') || customer.lineUserId.startsWith('C'))) {
-      const pic = await fetchPictureUrl(customer.lineUserId);
-      if (pic) {
-        customer = await prisma.customer.update({ where: { id }, data: { pictureUrl: pic } }).catch(() => customer);
-      }
+    // Refresh the cached LINE picture on chat-open: fills it in the first time (backfill for
+    // pre-existing customers) AND re-fetches a stale one so a customer who changed their photo is
+    // picked up — throttled to once per PICTURE_REFRESH_DAYS. Best-effort; a LINE/DB error never
+    // fails the request and never wipes a good cached url. Reflect the effective url in the reply.
+    const refreshedPicture = await maybeRefreshCustomerPicture(customer).catch(() => customer.pictureUrl);
+    if (refreshedPicture !== customer.pictureUrl) {
+      customer = { ...customer, pictureUrl: refreshedPicture };
     }
 
     const [recent, customerCount, agentCount] = await Promise.all([

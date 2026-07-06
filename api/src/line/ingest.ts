@@ -1,6 +1,7 @@
 import type { Customer, Message, Session } from '@prisma/client';
 import { prisma } from '../db/prisma.js';
 import { fetchDisplayName, fetchGroupName, fetchPictureUrl } from './client.js';
+import { maybeRefreshCustomerPicture } from './picture.js';
 
 export interface IngestInput {
   lineUserId: string;
@@ -36,9 +37,15 @@ export async function ingestCustomerText(input: IngestInput): Promise<IngestResu
         ? 'ห้องแชท'
         : ((await fetchDisplayName(lineUserId)) ?? undefined);
     // Best-effort LINE picture (profile for 1-on-1, group summary for groups; null for rooms).
+    // Stamp pictureFetchedAt when we set a picture so the refresh throttle clock starts here.
     const pictureUrl = await fetchPictureUrl(lineUserId);
     customer = await prisma.customer.create({
-      data: { lineUserId, displayName: displayName ?? undefined, pictureUrl: pictureUrl ?? undefined },
+      data: {
+        lineUserId,
+        displayName: displayName ?? undefined,
+        pictureUrl: pictureUrl ?? undefined,
+        pictureFetchedAt: pictureUrl ? new Date() : undefined,
+      },
     });
   } else {
     // A new message reactivates a previously-ended chat (returns to the queue).
@@ -46,6 +53,9 @@ export async function ingestCustomerText(input: IngestInput): Promise<IngestResu
       where: { id: customer.id },
       data: { lastSeen: new Date(), active: true },
     });
+    // The customer is active — periodically refresh their cached LINE picture (throttled,
+    // best-effort). Don't block ingest on it; a failure here must never break the message flow.
+    void maybeRefreshCustomerPicture(customer).catch(() => {});
   }
 
   // Reuse the customer's open session, or start a new one. (Idle-based session
