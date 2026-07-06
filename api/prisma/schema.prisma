@@ -207,41 +207,41 @@ model FinanceAudit {
 // entry, expenses, and Express/Odoo sync are deliberately out of scope (future, same table).
 // Customer name/code are SNAPSHOT here so history stays stable if the Customer is renamed.
 model Payment {
-  id            String    @id @default(cuid())
+  id               String             @id @default(cuid())
   // link + snapshot
-  customerId    String?
-  customerCode  String    @default("") // e.g. ร001 (join key across the Deities)
-  customerName  String    @default("") // "ชื่อ": assigned nickname else LINE name, at time of payment
-  senderName    String    @default("") // "ชื่อผู้โอน": the name parsed off the slip
+  customerId       String?
+  customerCode     String             @default("") // e.g. ร001 (join key across the Deities)
+  customerName     String             @default("") // "ชื่อ": assigned nickname else LINE name, at time of payment
+  senderName       String             @default("") // "ชื่อผู้โอน": the name parsed off the slip
   // money (String to match the free-text OCR/entry flow; sums parse on read)
-  amount        String    @default("") // confirmed baht amount (staff-entered)
-  ocrAmount     String    @default("") // what the OCR read (for the mismatch flag)
-  bank          String    @default("") // account received into
-  transferAt    String    @default("") // when the customer transferred (as-shown on slip)
-  ref           String    @default("") // transfer reference no.
+  amount           String             @default("") // confirmed baht amount (staff-entered)
+  ocrAmount        String             @default("") // what the OCR read (for the mismatch flag)
+  bank             String             @default("") // account received into
+  transferAt       String             @default("") // when the customer transferred (as-shown on slip)
+  ref              String             @default("") // transfer reference no.
   // the slip itself
-  slipMessageId String? @unique // the Minerva Message this came from — one Payment per slip (idempotent re-forward)
-  slipUrl       String    @default("") // tokenized public link to the slip image (Minerva hosts it)
+  slipMessageId    String?            @unique // the Minerva Message this came from — one Payment per slip (idempotent re-forward)
+  slipUrl          String             @default("") // tokenized public link to the slip image (Minerva hosts it)
   // tax invoice
-  taxInvoice       String @default("") // ใบกำกับภาษี: name / address / tax-id (free text), blank if not requested
-  taxInvoiceStatus String @default("none") // none | requested | issued
+  taxInvoice       String             @default("") // ใบกำกับภาษี: name / address / tax-id (free text), blank if not requested
+  taxInvoiceStatus String             @default("none") // none | requested | issued
   // who forwarded it (sales)
-  salesAgentId String?
-  salesName    String    @default("")
-  note         String    @default("") // หมายเหตุ
+  salesAgentId     String?
+  salesName        String             @default("")
+  note             String             @default("") // หมายเหตุ
   // finance lifecycle (Juno owns this)
-  status       String    @default("received") // received | verified | recorded | void
-  flagged      Boolean   @default(false) // true when ocrAmount != amount, or raised by finance
-  verifiedById String? // finance user who last advanced it
-  verifiedAt   DateTime?
-  createdAt    DateTime  @default(now()) // when Minerva forwarded it
+  status           String             @default("received") // received | verified | recorded | void
+  flagged          Boolean            @default(false) // true when ocrAmount != amount, or raised by finance
+  verifiedById     String? // finance user who last advanced it
+  verifiedAt       DateTime?
+  createdAt        DateTime           @default(now()) // when Minerva forwarded it
   // FIN check data (entered in Juno's check dialog when the RE is issued in Express)
-  reNumber     String @default("") // receipt no., stored as BARE 7 digits (e.g. "6900123")
-  receiptName  String @default("") // official name on the RE (may differ from customerName)
-  customerType String @default("") // โอนก่อนส่ง | เครดิต | เก็บปลายทาง | "" (unset)
+  reNumber         String             @default("") // receipt no., stored as BARE 7 digits (e.g. "6900123")
+  receiptName      String             @default("") // official name on the RE (may differ from customerName)
+  customerType     String             @default("") // โอนก่อนส่ง | เครดิต | เก็บปลายทาง | "" (unset)
   // bank reconciliation (phase B): denormalized true while >=1 PaymentBankMatch link exists
-  reconciled   Boolean @default(false)
-  bankMatches  PaymentBankMatch[]
+  reconciled       Boolean            @default(false)
+  bankMatches      PaymentBankMatch[]
 
   @@index([status])
   @@index([flagged])
@@ -262,7 +262,7 @@ model Payment {
 // Audit row for each bank-file import (preview→apply, mirrors Vulcan's StockImport).
 model BankImport {
   id           String   @id @default(cuid())
-  source       String   // kbiz | kshop
+  source       String // kbiz | kshop
   fileName     String   @default("")
   importedAt   DateTime @default(now())
   importedBy   String?
@@ -276,23 +276,23 @@ model BankImport {
 // One bank line (KBIZ statement row or K SHOP transaction row). dedupeKey makes
 // re-importing an overlapping export range a no-op instead of a duplicate.
 model BankTxn {
-  id          String    @id @default(cuid())
-  source      String    // kbiz | kshop
-  txnAt       DateTime
-  amount      String    @default("") // baht "1234.56" (house String style, matches Payment.amount)
-  direction   String    @default("in") // in | out
-  channel     String    @default("")
-  description String    @default("") // KBIZ Descriptions / kshop "Payment"
-  details     String    @default("") // KBIZ Details / kshop payer·bank·terminal
-  payerName   String    @default("")
-  payerBank   String    @default("")
-  dedupeKey   String    @unique // sha256("source|txnAt ISO|amount|details"), "|n" suffix on within-file collisions
-  importId    String
-  matchStatus String    @default("unmatched") // unmatched | matched
-  refText     String    @default("") // manual refs (cheque no. / บิล 38/13 / Shopee / RE list) — non-empty marks matched
+  id                   String             @id @default(cuid())
+  source               String // kbiz | kshop
+  txnAt                DateTime
+  amount               String             @default("") // baht "1234.56" (house String style, matches Payment.amount)
+  direction            String             @default("in") // in | out
+  channel              String             @default("")
+  description          String             @default("") // KBIZ Descriptions / kshop "Payment"
+  details              String             @default("") // KBIZ Details / kshop payer·bank·terminal
+  payerName            String             @default("")
+  payerBank            String             @default("")
+  dedupeKey            String             @unique // sha256("source|txnAt ISO|amount|details"), "|n" suffix on within-file collisions
+  importId             String
+  matchStatus          String             @default("unmatched") // unmatched | matched
+  refText              String             @default("") // manual refs (cheque no. / บิล 38/13 / Shopee / RE list) — non-empty marks matched
   expressConfirmedAt   DateTime?
   expressConfirmedById String?
-  matches     PaymentBankMatch[]
+  matches              PaymentBankMatch[]
 
   @@index([txnAt])
   @@index([matchStatus])
@@ -499,22 +499,22 @@ model ProductEnrichment {
 
 model CeresParty {
   id         String  @id @default(cuid())
-  name       String  @unique          // ต้า, อาร์ม, … or carrier bucket J&T, LALAMOVE Prom …
+  name       String  @unique // ต้า, อาร์ม, … or carrier bucket J&T, LALAMOVE Prom …
   kind       String  @default("person") // person | carrier
-  agentEmail String?                  // login link for persons (m-<slug>@prominent.local)
+  agentEmail String? // login link for persons (m-<slug>@prominent.local)
   active     Boolean @default(true)
   sortOrder  Int     @default(0)
 }
 
 model CashAccount {
-  id   String @id                     // literal ids: "pettyCash", "bank"
+  id   String @id // literal ids: "pettyCash", "bank"
   name String @default("")
 }
 
 model CashMovement {
   id            String   @id @default(cuid())
   accountId     String   @default("pettyCash")
-  type          String                 // deposit | advance | refund | topup
+  type          String // deposit | advance | refund | topup
   partyId       String?
   partyName     String   @default("") // snapshot
   entity        String   @default("") // PROM | DENL | "" (movements need no entity)
@@ -523,6 +523,7 @@ model CashMovement {
   createdById   String?
   createdByName String   @default("")
   createdAt     DateTime @default(now())
+
   @@index([accountId, createdAt])
   @@index([partyId])
   @@index([type])
@@ -536,11 +537,11 @@ model CeresExpense {
   enteredByName   String    @default("")
   entity          String    @default("PROM") // PROM | DENL
   category        String    @default("")
-  customerNote    String    @default("")     // "ลูกค้า: X" for shipping categories
+  customerNote    String    @default("") // "ลูกค้า: X" for shipping categories
   amount          String    @default("")
   spentAt         DateTime  @default(now())
   receiptUploadId String?
-  receiptSha      String    @default("")     // sha256 of the receipt image (duplicate detection)
+  receiptSha      String    @default("") // sha256 of the receipt image (duplicate detection)
   ocrAmount       String    @default("")
   ocrVendor       String    @default("")
   ocrDate         String    @default("")
@@ -549,10 +550,11 @@ model CeresExpense {
   approvedAt      DateTime?
   rejectReason    String    @default("")
   settlementId    String?
-  aiVerdict       String    @default("")     // "" | ok | flagged (post-hoc AI review, wired later)
+  aiVerdict       String    @default("") // "" | ok | flagged (post-hoc AI review, wired later)
   aiReviewId      String?
   note            String    @default("")
   createdAt       DateTime  @default(now())
+
   @@index([status])
   @@index([partyId])
   @@index([settlementId])
@@ -562,7 +564,7 @@ model CeresExpense {
 
 model CeresRevision {
   id            String   @id @default(cuid())
-  subjectType   String                 // expense | paymentRequest
+  subjectType   String // expense | paymentRequest
   subjectId     String
   changedById   String?
   changedByName String   @default("")
@@ -570,18 +572,19 @@ model CeresRevision {
   after         Json
   reason        String   @default("")
   createdAt     DateTime @default(now())
+
   @@index([subjectType, subjectId])
 }
 
 model CeresSettlement {
-  id           String   @id @default(cuid())
-  dayKey       String   @unique        // Thai day "YYYY-MM-DD"; one close per day
+  id           String                @id @default(cuid())
+  dayKey       String                @unique // Thai day "YYYY-MM-DD"; one close per day
   closedById   String?
-  closedByName String   @default("")
-  boxBefore    String   @default("")   // box balance before close (computed snapshot)
-  boxAfter     String   @default("")
-  note         String   @default("")
-  createdAt    DateTime @default(now())
+  closedByName String                @default("")
+  boxBefore    String                @default("") // box balance before close (computed snapshot)
+  boxAfter     String                @default("")
+  note         String                @default("")
+  createdAt    DateTime              @default(now())
   lines        CeresSettlementLine[]
 }
 
@@ -595,6 +598,7 @@ model CeresSettlementLine {
   expenses     String          @default("")
   refunds      String          @default("")
   outstanding  String          @default("") // carried forward
+
   @@index([settlementId])
   @@index([partyId])
 }
@@ -619,6 +623,7 @@ model CeresPaymentRequest {
   paidAt              DateTime?
   paidRef             String    @default("")
   createdAt           DateTime  @default(now())
+
   @@index([status])
   @@index([recurringTemplateId])
   @@index([createdAt])
@@ -641,13 +646,14 @@ model CeresRecurringTemplate {
 
 model CeresAIReview {
   id            String   @id @default(cuid())
-  subjectType   String                 // expense | paymentRequest
+  subjectType   String // expense | paymentRequest
   subjectId     String
-  verdict       String                 // approve | flag | escalate | error
+  verdict       String // approve | flag | escalate | error
   reasoning     String   @default("")
   policyVersion String   @default("")
   model         String   @default("")
   createdAt     DateTime @default(now())
+
   @@index([subjectType, subjectId])
 }
 
@@ -683,6 +689,7 @@ model CeresStatementLine {
   refText        String    @default("")
   reconciledById String?
   reconciledAt   DateTime?
+
   @@index([txnAt])
   @@index([matchStatus])
   @@index([direction])
@@ -692,7 +699,7 @@ model CeresCategory {
   id                String  @id @default(cuid())
   name              String  @unique
   kind              String  @default("general") // shipping | fuel | toll | general
-  ceiling           String  @default("")        // per-item baht ceiling for AI policy; "" = none
+  ceiling           String  @default("") // per-item baht ceiling for AI policy; "" = none
   needsCustomerNote Boolean @default(false)
   active            Boolean @default(true)
   sortOrder         Int     @default(0)
@@ -738,6 +745,8 @@ model VenusCustomer {
 // Sale document header (Express sales-report import) — Phase 1, defined now so later
 // stages drop in without another migration. Soft-links to VenusCustomer by code (same
 // non-FK reasoning as above: an unmatched customer code must never block an import).
+// Fields below `docType` were added for the OESOC (grouped-by-customer sales order)
+// import — additive only, see migration 20260706120000_venus_sales_import.
 model SaleDoc {
   id           String     @id @default(cuid())
   docNo        String     @unique
@@ -746,6 +755,12 @@ model SaleDoc {
   date         DateTime
   total        String     @default("") // baht string, parses on read (Ceres/Juno convention)
   docType      String? // invoice | credit-note | receipt, etc. — Express-specific, TBD Phase 1
+  void         Boolean    @default(false) // leading "*" in Express — cancelled doc, kept not dropped
+  repCode      String? // พนักงานขาย (salesperson code)
+  goodsValue   String     @default("") // มูลค่าสินค้า, ex-VAT — baht string, same convention as `total`
+  vat          String     @default("") // VAT — baht string
+  delivered    Boolean? // ส่งหมด (Y/N); null = not stated
+  reference    String? // อ้างอิง free-text
   importedAt   DateTime   @default(now())
   lines        SaleLine[]
 
@@ -770,9 +785,11 @@ model SaleLine {
 
 // One row per customer, fully overwritten by the nightly analytics job (derived data,
 // not append-only money — see VENUS_BRIEF.md §6). Phase 2 populates this; empty for now.
+// `trendOrders`/`reorderDue` added for the RFM/trend/reorder engine — additive only, see
+// migration 20260706120000_venus_sales_import.
 model CustomerStats {
-  id           String   @id @default(cuid())
-  customerCode String   @unique // VenusCustomer.code
+  id           String    @id @default(cuid())
+  customerCode String    @unique // VenusCustomer.code
   r            Int? // recency: days since last purchase
   f            Int? // frequency: purchase count in window
   m            Float? // monetary: revenue in window
@@ -780,7 +797,16 @@ model CustomerStats {
   segment      String? // ลูกค้าชั้นดี | ลูกค้าประจำ | มาใหม่ | เสี่ยงหาย | หายไปแล้ว
   trendPct     Float? // last-90d vs previous-90d revenue % change
   trendDir     String? // up | down | flat
-  computedAt   DateTime @default(now())
+  trendOrders  Int? // last-90d order-count delta vs previous 90d (raw count difference)
+  // Reorder-due items: JSON array of { sku, productName, lastPurchase, medianGapDays,
+  // dueSince } for consumable SKUs (>=3 purchases) past 1.25x their median reorder cycle.
+  // Kept as JSON (not a relation table) — it's fully derived/overwritten each recompute,
+  // same as the rest of this row, and queried only per-customer (never filtered across
+  // customers), so a relation table would add join cost with no query benefit yet.
+  reorderDue   Json?
+  dataFrom     DateTime? // data-coverage window this row was computed over (min sale date)
+  dataTo       DateTime? // data-coverage window this row was computed over (max sale date)
+  computedAt   DateTime  @default(now())
 
   @@index([segment])
 }
