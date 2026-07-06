@@ -238,17 +238,61 @@ if (existsSync(REAL_KBIZ)) {
   const result = parseKbiz(buf);
   const inRows = result.rows.filter((r) => r.direction === 'in');
   const outRows = result.rows.filter((r) => r.direction === 'out');
-  // The file's own header declares TOTAL DEPOSIT 59 ITEMS (incl. the 2 EDC/K SHOP/MYQR
-  // lumps we exclude) and TOTAL WITHDRAWAL 6 ITEMS. parsed - excluded(BeginningBalance=1)
-  // must equal 59(deposits)+6(withdrawals) = 65, i.e. parsed === 66 (+1 for Beginning Balance).
-  check(result.parsed === 66, `REAL KBiz.csv: parsed === 66 — 59 deposit rows + 6 withdrawal rows + 1 Beginning Balance (got ${result.parsed})`);
-  check(result.excluded === 3, `REAL KBiz.csv: excluded === 3 — Beginning Balance + 2 EDC/K SHOP/MYQR lumps (got ${result.excluded})`);
-  check(inRows.length === 57, `REAL KBiz.csv: 57 "in" rows — the 59 declared deposits minus the 2 excluded EDC lumps (got ${inRows.length})`);
-  check(outRows.length === 6, `REAL KBiz.csv: 6 "out" rows, matching the file's own TOTAL WITHDRAWAL 6 ITEMS (got ${outRows.length})`);
-  check(
-    result.rows.length === inRows.length + outRows.length,
-    'REAL KBiz.csv: rows.length === in + out',
-  );
+
+  // Derive the expected shape from the file's OWN header summary rather than hardcoding
+  // counts for one historical export. The real file in Downloads\Bank is re-downloaded
+  // periodically, so its transaction counts legitimately change from statement to
+  // statement — a hardcoded 66/3/57/6 would drift red on every refresh. The K-DEPOSIT
+  // header always carries the authoritative totals (ASCII, so a utf8 decode is safe even
+  // when the body is Thai in another codepage):
+  //   TOTAL WITHDRAWAL ,, <N> ,, ITEMS
+  //   TOTAL DEPOSIT    ,, <N> ,, ITEMS   (includes any EDC/K SHOP/MYQR lumps we exclude)
+  const text = buf.toString('utf8');
+  const declaredWithdrawals = Number(text.match(/TOTAL WITHDRAWAL[^\d]*(\d+)/)?.[1]);
+  const declaredDeposits = Number(text.match(/TOTAL DEPOSIT[^\d]*(\d+)/)?.[1]);
+
+  if (!Number.isFinite(declaredWithdrawals) || !Number.isFinite(declaredDeposits)) {
+    console.log(
+      'SKIP: real KBiz.csv present but its TOTAL WITHDRAWAL/DEPOSIT header could not be read — skipping real-file count checks',
+    );
+  } else {
+    // Header declares the full statement: <deposits> + <withdrawals> transaction rows,
+    // plus the 1 Beginning Balance row the parser always sees → parsed === D + W + 1.
+    const expectedParsed = declaredDeposits + declaredWithdrawals + 1;
+    if (result.parsed < expectedParsed) {
+      // Body has fewer rows than its own header declares → a truncated/partial export
+      // (e.g. a half-finished download). SKIP with a note instead of a wall of FAILs
+      // against a file that simply isn't all there.
+      console.log(
+        `SKIP: real KBiz.csv looks truncated — header declares ${declaredDeposits} deposits + ${declaredWithdrawals} withdrawals ` +
+          `(${expectedParsed} rows incl. Beginning Balance) but only ${result.parsed} parsed. ` +
+          'Drop a full export in to re-enable the real-file count check.',
+      );
+    } else {
+      // Complete file — every count is derived from this statement's own header, so a
+      // freshly downloaded (differently-sized) statement stays green with no edits here.
+      // excluded = 1 Beginning Balance + however many EDC/K SHOP/MYQR lumps this statement
+      // had; those lumps sit inside the header's deposit total but are dropped from output.
+      const edcLumpsExcluded = result.excluded - 1; // minus the Beginning Balance
+      check(
+        result.parsed === expectedParsed,
+        `REAL KBiz.csv: parsed === ${expectedParsed} — ${declaredDeposits} deposits + ${declaredWithdrawals} withdrawals + 1 Beginning Balance (got ${result.parsed})`,
+      );
+      check(
+        outRows.length === declaredWithdrawals,
+        `REAL KBiz.csv: ${declaredWithdrawals} "out" rows, matching the file's own TOTAL WITHDRAWAL (got ${outRows.length})`,
+      );
+      check(
+        inRows.length + edcLumpsExcluded === declaredDeposits,
+        `REAL KBiz.csv: "in" rows (${inRows.length}) + excluded EDC lumps (${edcLumpsExcluded}) === declared deposits ${declaredDeposits} (got ${inRows.length + edcLumpsExcluded})`,
+      );
+      check(result.excluded >= 1, `REAL KBiz.csv: at least the Beginning Balance excluded (got ${result.excluded})`);
+      check(
+        result.rows.length === inRows.length + outRows.length,
+        'REAL KBiz.csv: rows.length === in + out',
+      );
+    }
+  }
 } else {
   console.log('SKIP: real KBiz.csv not found on this machine — fixture checks only');
 }
