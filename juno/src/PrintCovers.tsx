@@ -1,6 +1,6 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { X } from 'lucide-react';
-import { baht, type Payment } from './lib/api';
+import { baht, getReNames, type Payment } from './lib/api';
 
 // Printable A6 cover letters — FIN staples one to every printed RE for the physical file.
 // The owner may adjust the legal name later; keep it in ONE constant.
@@ -20,7 +20,25 @@ const fmtDate = (iso: string) =>
 // can drop back to the inbox. The screen view renders the exact same mm-sized pages (scrolled) so
 // FIN can eyeball the layout before printing — no separate preview markup.
 export default function PrintCovers({ payments, onDone }: { payments: Payment[]; onDone: () => void }) {
+  // ชื่อบนใบเสร็จ prints the name on the ACTUAL Express receipt (ReReceipt.customerName) rather
+  // than the LINE display name prefilled into receiptName — so fetch the imported RE names for
+  // every RE on these covers FIRST, then open the print dialog. An unimported RE simply isn't in
+  // the map and the Cover falls back to receiptName; {} on failure = graceful, never blocks print.
+  const [reNames, setReNames] = useState<Record<string, string>>({});
+  const [namesReady, setNamesReady] = useState(false);
   useEffect(() => {
+    const cores = [...new Set(payments.flatMap((p) => p.reNumbers))];
+    let cancelled = false;
+    (cores.length ? getReNames(cores) : Promise.resolve({}))
+      .then((m) => { if (!cancelled) setReNames(m); })
+      .catch(() => { /* fall back to receiptName */ })
+      .finally(() => { if (!cancelled) setNamesReady(true); });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (!namesReady) return; // wait for the RE names so the printed page is final before the dialog
     const t = setTimeout(() => window.print(), 50); // let the DOM paint before the print dialog opens
     const handleAfterPrint = () => onDone();
     window.addEventListener('afterprint', handleAfterPrint);
@@ -29,7 +47,7 @@ export default function PrintCovers({ payments, onDone }: { payments: Payment[];
       window.removeEventListener('afterprint', handleAfterPrint);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [namesReady]);
 
   // One cover per payment that carries at least one RE (the caller already filters to
   // reNumbers.length > 0, but stay defensive here) — one A6 page each.
@@ -74,17 +92,21 @@ export default function PrintCovers({ payments, onDone }: { payments: Payment[];
       </div>
 
       <div className="bg-slate-200 py-6 flex flex-col items-center gap-6">
-        {items.map((p) => <Cover key={p.id} payment={p} />)}
+        {items.map((p) => <Cover key={p.id} payment={p} reNames={reNames} />)}
       </div>
     </div>
   );
 }
 
-function Cover({ payment: p }: { payment: Payment }) {
+function Cover({ payment: p, reNames }: { payment: Payment; reNames: Record<string, string> }) {
   const multi = p.reNumbers.length > 1;
   // one RE → text-4xl (matches รหัสลูกค้า + จำนวนเงิน); several REs scale down & wrap right.
   const reSize = p.reNumbers.length === 1 ? 'text-4xl' : p.reNumbers.length <= 3 ? 'text-2xl' : 'text-lg';
   const big = 'text-4xl font-bold leading-tight';
+  // ชื่อบนใบเสร็จ = the customer name on the ACTUAL matched RE (first reNumber that's been
+  // imported), falling back to the FIN-typed receiptName (which prefills from the LINE display
+  // name) when this RE isn't in the imported set yet.
+  const receiptDisplayName = p.reNumbers.map((re) => reNames[re]).find(Boolean) || p.receiptName;
   return (
     <div className="print-page shadow-lg">
       <div className="text-sm font-bold text-slate-500 mb-2">{COMPANY_HEADER}</div>
@@ -104,7 +126,7 @@ function Cover({ payment: p }: { payment: Payment }) {
       <Line label="วันที่" value={fmtDate(p.createdAt)} />
       <Line label="ลูกค้า" value={p.customerName || '—'} />
       {p.customerCode && <Line label="รหัสลูกค้า" value={p.customerCode} valueClass={big} />}
-      <Line label="ชื่อบนใบเสร็จ" value={p.receiptName || '—'} />
+      <Line label="ชื่อบนใบเสร็จ" value={receiptDisplayName || '—'} />
       <Line label="ประเภทลูกค้า" value={p.customerType || '—'} />
       <Line label="จำนวนเงิน" value={baht(p.amountNum)} valueClass={big} />
       <Line label="ช่องทาง" value={p.bank || '—'} />

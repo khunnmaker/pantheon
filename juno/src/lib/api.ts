@@ -688,3 +688,9 @@ function reReconFilterQuery(f: ReReconFilter): string {
 }
 export const getReReconciliation = (f: ReReconFilter) =>
   authed<{ rows: ReReconRow[]; summary: ReReconSummary }>(`/api/juno/re${reReconFilterQuery(f)}`);
+
+// The imported Express receipt's customer name per RE core (only cores that are imported come
+// back). The ใบปะหน้า cover uses this so ชื่อบนใบเสร็จ shows the name on the actual RE, not the
+// LINE display name. Returns {} when nothing's imported yet → the cover falls back to receiptName.
+export const getReNames = (reNumbers: string[]) =>
+  authed<Record<string, string>>(`/api/juno/re/names?res=${encodeURIComponent([...new Set(reNumbers)].join(','))}`);

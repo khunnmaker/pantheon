@@ -1559,4 +1559,23 @@ export async function junoRoutes(app: FastifyInstance) {
 
     return { rows, summary };
   });
+
+  // GET /api/juno/re/names?res=6907402,6907403 — the imported Express receipt's customer name
+  // per RE core, for just the cores asked about (any Juno user). The ใบปะหน้า cover uses this so
+  // ชื่อบนใบเสร็จ prints the name on the ACTUAL RE (ReReceipt.customerName) instead of the LINE
+  // display name that got prefilled into receiptName — the client falls back to receiptName for
+  // any core not imported yet.
+  app.get('/api/juno/re/names', async (req, reply) => {
+    const q = z.object({ res: z.string().max(8000).optional() }).safeParse(req.query ?? {});
+    if (!q.success) return reply.code(400).send({ error: 'invalid_query' });
+    const cores = [...new Set((q.data.res ?? '').split(',').map((s) => s.trim()).filter(Boolean))];
+    if (cores.length === 0) return {};
+    const rows = await prisma.reReceipt.findMany({
+      where: { reNumber: { in: cores } },
+      select: { reNumber: true, customerName: true },
+    });
+    const map: Record<string, string> = {};
+    for (const r of rows) if (r.customerName) map[r.reNumber] = r.customerName;
+    return map;
+  });
 }
