@@ -38,7 +38,7 @@ function channelChip(channel: string): string {
   return channel || '—';
 }
 
-export default function Recon() {
+export default function Recon({ isCeo }: { isCeo: boolean }) {
   const [summary, setSummary] = useState<BankSummary | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const bump = useCallback(() => setRefreshKey((k) => k + 1), []);
@@ -55,7 +55,10 @@ export default function Recon() {
       </div>
 
       <SummaryCards summary={summary} />
-      <ImportPanel onImported={bump} />
+      {/* The bank-file IMPORT (uploading KBIZ / K SHOP) is CEO-only — server 403s the preview/apply
+          endpoints for non-supervisor. The rest of reconciliation below (viewing txns, matching,
+          confirming, watchlist) stays visible to finance. */}
+      {isCeo && <ImportPanel onImported={bump} />}
       <TxnList onChanged={bump} refreshKey={refreshKey} />
       <Watchlist refreshKey={refreshKey} />
     </div>

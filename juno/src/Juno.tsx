@@ -44,9 +44,14 @@ function Badge({ children, cls }: { children: React.ReactNode; cls: string }) {
 export default function Juno({ agent, onLogout }: { agent: Agent; onLogout: () => void }) {
   const [view, setView] = useState<View>('inbox');
   const [summary, setSummary] = useState<Summary | null>(null);
+  // CEO-only actions (mirrors the server's supervisor gate in api/src/routes/juno.ts): reports,
+  // CSV export, bank-file import, clearing a flag, and hard delete. Finance (employee) + MD get
+  // everything else — slip work, reconciliation, void, raising a flag. Hidden here so those
+  // controls never appear rather than 403ing on click.
+  const isCeo = agent.role === 'supervisor';
   // ลบถาวร (permanent delete) is the CEO-only override — even md, who can now open Juno,
   // cannot delete. Mirrors the server's `req.agent?.role !== 'supervisor'` gate exactly.
-  const canDelete = agent.role === 'supervisor';
+  const canDelete = isCeo;
   // unmatched-in bank txn count — the badge on the กระทบยอด tab (phase B)
   const [bankUnmatched, setBankUnmatched] = useState<number | undefined>(undefined);
 
@@ -61,7 +66,9 @@ export default function Juno({ agent, onLogout }: { agent: Agent; onLogout: () =
     { key: 'flags', label: 'ปักธง', icon: <Flag size={16} />, count: summary?.flagged },
     { key: 'recon', label: 'กระทบยอด', icon: <Scale size={16} />, count: bankUnmatched },
     { key: 'cashcheque', label: 'เงินสด/เช็ค', icon: <Banknote size={16} />, count: summary?.cashChequePending },
-    { key: 'reports', label: 'รายงาน', icon: <BarChart3 size={16} /> },
+    // รายงาน is CEO-only (server 403s /reports + /export.csv for non-supervisor) — omit the tab
+    // for finance/MD so it's never shown. Their default tab (inbox) is one they can use.
+    ...(isCeo ? [{ key: 'reports' as const, label: 'รายงาน', icon: <BarChart3 size={16} /> }] : []),
   ];
 
   return (
@@ -105,12 +112,12 @@ export default function Juno({ agent, onLogout }: { agent: Agent; onLogout: () =
       </header>
 
       <main className="max-w-7xl mx-auto p-4">
-        {view === 'reports' ? (
+        {view === 'reports' && isCeo ? (
           <Reports />
         ) : view === 'recon' ? (
-          <Recon />
+          <Recon isCeo={isCeo} />
         ) : (
-          <PaymentsView view={view} onChanged={refreshSummary} canDelete={canDelete} />
+          <PaymentsView view={view === 'reports' ? 'inbox' : view} onChanged={refreshSummary} canDelete={canDelete} isCeo={isCeo} />
         )}
       </main>
     </div>
@@ -118,7 +125,7 @@ export default function Juno({ agent, onLogout }: { agent: Agent; onLogout: () =
 }
 
 // ── Payments list + detail (inbox / flags share this) ──────────────────────
-function PaymentsView({ view, onChanged, canDelete }: { view: Exclude<View, 'reports' | 'recon'>; onChanged: () => void; canDelete: boolean }) {
+function PaymentsView({ view, onChanged, canDelete, isCeo }: { view: Exclude<View, 'reports' | 'recon'>; onChanged: () => void; canDelete: boolean; isCeo: boolean }) {
   const [q, setQ] = useState('');
   const [status, setStatusFilter] = useState<'all' | PaymentStatus>('all');
   const [from, setFrom] = useState('');
@@ -346,12 +353,15 @@ function PaymentsView({ view, onChanged, canDelete }: { view: Exclude<View, 'rep
               <Printer size={15} /> พิมพ์ใบปะหน้า ({coverCountInView})
             </button>
           )}
-          <button
-            onClick={() => downloadCsv(filter).catch(() => setError('ดาวน์โหลดไม่สำเร็จ'))}
-            className="flex items-center gap-1 px-3 py-2 rounded-lg bg-slate-800 text-white text-sm hover:bg-slate-700"
-          >
-            <Download size={15} /> CSV
-          </button>
+          {/* CSV export is CEO-only (server 403s /export.csv for non-supervisor) — hidden for finance/MD */}
+          {isCeo && (
+            <button
+              onClick={() => downloadCsv(filter).catch(() => setError('ดาวน์โหลดไม่สำเร็จ'))}
+              className="flex items-center gap-1 px-3 py-2 rounded-lg bg-slate-800 text-white text-sm hover:bg-slate-700"
+            >
+              <Download size={15} /> CSV
+            </button>
+          )}
           {view === 'inbox' && (
             <button
               onClick={() => setAddOpen(true)}
@@ -385,13 +395,18 @@ function PaymentsView({ view, onChanged, canDelete }: { view: Exclude<View, 'rep
               <ClipboardCheck size={14} /> ตรวจแล้ว
             </button>
           )}
-          <button
-            onClick={bulkFlagToggle}
-            disabled={bulkBusy}
-            className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 disabled:opacity-40"
-          >
-            <Flag size={14} /> {view === 'flags' ? 'เคลียร์ธง' : 'ปักธง'}
-          </button>
+          {/* Bulk flag: on the flags tab this CLEARS (เคลียร์ธง) — CEO-only, mirrors the server's
+              flagged===false supervisor gate. Elsewhere it RAISES (ปักธง), which finance may do.
+              So the button is hidden on the flags tab for non-CEO, kept on the others. */}
+          {(view !== 'flags' || isCeo) && (
+            <button
+              onClick={bulkFlagToggle}
+              disabled={bulkBusy}
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 disabled:opacity-40"
+            >
+              <Flag size={14} /> {view === 'flags' ? 'เคลียร์ธง' : 'ปักธง'}
+            </button>
+          )}
           {bulkVoidConfirm ? (
             <span className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-rose-900/40">
               <AlertTriangle size={14} /> ยืนยันการยกเลิก {checkedIds.size} รายการ?
@@ -553,6 +568,7 @@ function PaymentsView({ view, onChanged, canDelete }: { view: Exclude<View, 'rep
             onPrint={(p) => setPrintQueue([p])}
             showExpressConfirm={view === 'cashcheque'}
             canDelete={canDelete}
+            isCeo={isCeo}
           />
         )}
       </div>
@@ -845,9 +861,9 @@ function AddPaymentModal({ onClose, onSaved }: { onClose: () => void; onSaved: (
 // transfers reach 'recorded' via the CEO's bulk-confirm in กระทบยอด instead (owner decision
 // 2026-07-05, JUNO bulk-actions brief §3). Cash/cheque have no bank reconciliation step, so
 // they keep the per-row action here.
-function Detail({ payment, onClose, onUpdate, onDelete, onPrint, showExpressConfirm, canDelete }: {
+function Detail({ payment, onClose, onUpdate, onDelete, onPrint, showExpressConfirm, canDelete, isCeo }: {
   payment: Payment; onClose: () => void; onUpdate: (p: Payment) => void; onDelete: (id: string) => void;
-  onPrint: (p: Payment) => void; showExpressConfirm: boolean; canDelete: boolean;
+  onPrint: (p: Payment) => void; showExpressConfirm: boolean; canDelete: boolean; isCeo: boolean;
 }) {
   const [busy, setBusy] = useState('');
   const [flagNote, setFlagNote] = useState('');
@@ -971,7 +987,10 @@ function Detail({ payment, onClose, onUpdate, onDelete, onPrint, showExpressConf
               {rail('print', p.reNumbers.length > 0 ? 'พิมพ์ใบปะหน้า' : 'พิมพ์ใบปะหน้า (ต้องมีเลข RE ก่อน)', <Printer size={16} />, () => onPrint(p), {
                 disabled: p.reNumbers.length === 0,
               })}
-              {rail('flag', p.flagged ? 'เคลียร์ธงตรวจสอบ' : 'ติดธงตรวจสอบยอด', <Flag size={16} />, () => {
+              {/* Flag toggle: raising (ติดธง) is finance-allowed; clearing (เคลียร์ธง) is CEO-only
+                  (server 403s flagged===false for non-supervisor). So a flagged row shows the clear
+                  button only for CEO; an unflagged row shows the raise button for everyone. */}
+              {(!p.flagged || isCeo) && rail('flag', p.flagged ? 'เคลียร์ธงตรวจสอบ' : 'ติดธงตรวจสอบยอด', <Flag size={16} />, () => {
                 if (p.flagged) void run('flag', () => setFlag(p.id, false));
                 else setFlagOpen((v) => !v);
               }, { active: p.flagged })}
