@@ -15,7 +15,7 @@ import {
   poPdfUrl,
   type PurchaseOrder,
 } from '../lib/api';
-import GmailCard from './GmailCard';
+import MailCard from './MailCard';
 import SendEmailModal from './SendEmailModal';
 
 // Purchase Orders — draft POs (grouped by vendor) with a "Generate PDF" action per PO. The PDF is
@@ -59,8 +59,8 @@ export default function PurchaseOrders() {
 
   return (
     <div>
-      {/* Gmail connection — needed before a PO can be emailed. */}
-      <GmailCard />
+      {/* SMTP mail status — must be configured before a PO can be emailed. */}
+      <MailCard />
 
       <div className="text-xs text-slate-500 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 mb-3">
         ใบสั่งซื้อ (draft) จัดกลุ่มตามผู้ขาย · กด &quot;สร้าง PDF&quot; เพื่อออกไฟล์ (อังกฤษ, ไต้หวันแยก normal/special, มีรูปสินค้าต่อบรรทัด) แล้ว
