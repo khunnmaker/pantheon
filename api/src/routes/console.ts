@@ -74,14 +74,19 @@ export async function consoleRoutes(app: FastifyInstance) {
     return { queue };
   });
 
-  // GET /api/customers — lightweight list for the console selector.
-  app.get('/api/customers', async () => {
+  // GET /api/customers — lightweight list for the console selector. Also returns the
+  // current agent's pinned customer ids (private per-agent — never trust a client agentId)
+  // so the console can render the "ปักหมุด" section; the `customers` shape is unchanged.
+  app.get('/api/customers', async (req) => {
     const customers = await prisma.customer.findMany({
       where: { active: true },
       orderBy: { lastSeen: 'desc' },
       select: { id: true, lineUserId: true, displayName: true, nickname: true, code: true, category: true, stage: true, suggestedStage: true, firstSeen: true, lastSeen: true },
     });
-    return { customers };
+    const pinnedIds = (
+      await prisma.pin.findMany({ where: { agentId: req.agent!.id }, select: { customerId: true } })
+    ).map((p) => p.customerId);
+    return { customers, pinnedIds };
   });
 
   // GET /api/customers/search?q= — find ANY customer (including ended chats) by
@@ -104,6 +109,24 @@ export async function consoleRoutes(app: FastifyInstance) {
       select: { id: true, lineUserId: true, displayName: true, nickname: true, code: true, category: true, stage: true, suggestedStage: true, firstSeen: true, lastSeen: true },
     });
     return { customers };
+  });
+
+  // POST /api/customers/:id/pin — pin this customer chat for the current agent (private).
+  // Idempotent: a duplicate (P2002 on the agentId+customerId unique) is treated as success.
+  app.post<{ Params: { id: string } }>('/api/customers/:id/pin', async (req) => {
+    try {
+      await prisma.pin.create({ data: { agentId: req.agent!.id, customerId: req.params.id } });
+    } catch (err) {
+      // Already pinned (unique constraint) → still ok; rethrow anything else.
+      if (!(err && typeof err === 'object' && (err as { code?: string }).code === 'P2002')) throw err;
+    }
+    return { ok: true, pinned: true };
+  });
+
+  // DELETE /api/customers/:id/pin — unpin (manual unpin only). deleteMany so a missing pin is a no-op.
+  app.delete<{ Params: { id: string } }>('/api/customers/:id/pin', async (req) => {
+    await prisma.pin.deleteMany({ where: { agentId: req.agent!.id, customerId: req.params.id } });
+    return { ok: true, pinned: false };
   });
 
   // GET /api/customers/:id — profile + recent messages + simple stats.

@@ -179,8 +179,16 @@ export async function getLogins(app: 'minerva' | 'ceres'): Promise<LoginCard[]> 
 }
 
 export const getQueue = () => authed<{ queue: QueueItem[] }>('/api/queue');
-export const getCustomers = () => authed<{ customers: CustomerLite[] }>('/api/customers');
+// Also returns the current agent's pinned customer ids (private per-agent) for the "ปักหมุด" section.
+export const getCustomers = () =>
+  authed<{ customers: CustomerLite[]; pinnedIds: string[] }>('/api/customers');
 export const getCustomer = (id: string) => authed<CustomerDetail>(`/api/customers/${id}`);
+
+// Per-agent private pin chats — pin/unpin a customer for the logged-in agent (manual unpin only).
+export const pinCustomer = (id: string) =>
+  authed<{ ok: boolean; pinned: boolean }>(`/api/customers/${id}/pin`, { method: 'POST' });
+export const unpinCustomer = (id: string) =>
+  authed<{ ok: boolean; pinned: boolean }>(`/api/customers/${id}/pin`, { method: 'DELETE' });
 
 export const searchCustomers = (q: string) =>
   authed<{ customers: CustomerLite[] }>(`/api/customers/search?q=${encodeURIComponent(q)}`);

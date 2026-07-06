@@ -94,6 +94,20 @@ model CustomerMemory {
   updatedAt          DateTime @updatedAt
 }
 
+// Per-agent private "pin chat": a sales agent pins customer chats they're working on
+// so their in-progress deals stay one click away, in a "ปักหมุด" section at the top of
+// the console queue. Private (keyed by agentId), manual unpin only. Bare String ids —
+// no @relation — matching the house cross-reference style (e.g. Message.agentId).
+model Pin {
+  id         String   @id @default(cuid())
+  agentId    String
+  customerId String
+  createdAt  DateTime @default(now())
+
+  @@unique([agentId, customerId])
+  @@index([agentId])
+}
+
 model Agent {
   id           String   @id @default(cuid())
   email        String   @unique

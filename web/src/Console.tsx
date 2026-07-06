@@ -2,10 +2,11 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import {
   User, LogOut, Clock, Inbox, Wifi, WifiOff, Loader2, ShieldCheck, MessageSquare,
   Send, Check, CheckCircle2, RefreshCw, Brain, GraduationCap, Wand2, Pencil, AlertTriangle, Search,
-  Download, Paperclip, Camera, Banknote, X, ChevronDown, ChevronUp, Crown,
+  Download, Paperclip, Camera, Banknote, X, ChevronDown, ChevronUp, Crown, Pin,
 } from 'lucide-react';
 import {
   getQueue, getCustomers, getCustomer, searchCustomers, clearSession, regenerateDraft, rewriteText, sendReply, setNickname, setCategory, setStage, STAGES,
+  pinCustomer, unpinCustomer,
   uploadAttachment, getLearned, getLearnedMetrics, promoteLearned, rejectLearned, endSession, API_URL, flatSku, getToken,
   getFinanceAudits, resolveFinanceAudit, type FinanceAudit,
   getQuickReplies, addQuickReply, deleteQuickReply, sendQuickReply, sendMessage, sendPhotoNow, searchCatalog, addProductToDraft, readSlip, sendToFinance,
@@ -487,6 +488,8 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
   const [rewriteNote, setRewriteNote] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [searchResults, setSearchResults] = useState<CustomerLite[] | null>(null);
+  const [pinnedIds, setPinnedIds] = useState<Set<string>>(new Set()); // this agent's pinned customer ids (private)
+  const [pinnedOpen, setPinnedOpen] = useState(true); // "ปักหมุด" section collapse state
   const [categoryFilters, setCategoryFilters] = useState<string[]>(() => [...CATEGORIES]); // all selected = show all
   const [catOpen, setCatOpen] = useState(false);
   const [stageFilters, setStageFilters] = useState<string[]>(() => [...STAGES]); // all selected = show all
@@ -533,8 +536,9 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const refreshLists = useCallback(async () => {
-    const [{ customers: cs }, { queue }] = await Promise.all([getCustomers(), getQueue()]);
+    const [{ customers: cs, pinnedIds: pins }, { queue }] = await Promise.all([getCustomers(), getQueue()]);
     setCustomers(cs);
+    setPinnedIds(new Set(pins));
     setWaitingIds(new Set(queue.map((q) => q.customer.id)));
   }, []);
 
@@ -673,6 +677,30 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
     if (toastTimer.current) clearTimeout(toastTimer.current);
     setToast(msg);
     toastTimer.current = setTimeout(() => setToast(''), 2600);
+  }
+
+  // Pin/unpin a customer chat for THIS agent (private). Optimistically flip local state,
+  // then persist; revert + toast on failure.
+  async function togglePin(id: string) {
+    const wasPinned = pinnedIds.has(id);
+    setPinnedIds((prev) => {
+      const next = new Set(prev);
+      if (wasPinned) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+    try {
+      if (wasPinned) await unpinCustomer(id);
+      else await pinCustomer(id);
+    } catch {
+      setPinnedIds((prev) => {
+        const next = new Set(prev);
+        if (wasPinned) next.add(id);
+        else next.delete(id);
+        return next;
+      });
+      flashToast('ปักหมุดไม่สำเร็จ');
+    }
   }
 
   function logout() {
@@ -1097,6 +1125,43 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
     (c.category == null || categoryFilters.includes(c.category)) &&
     (c.stage == null || stageFilters.includes(c.stage)),
   );
+  // This agent's pinned chats — from the FULL customer list so they show regardless of
+  // the category/stage filters (only meaningful when NOT searching; search is a flat list).
+  const pinnedList = searchResults === null ? customers.filter((c) => pinnedIds.has(c.id)) : [];
+
+  // One customer card — reused in both the "ปักหมุด" section and the normal list.
+  function renderCard(c: CustomerLite) {
+    const waiting = waitingIds.has(c.id);
+    const active = selectedId === c.id;
+    const pinned = pinnedIds.has(c.id);
+    return (
+      <button key={c.id} onClick={() => setSelectedId(c.id)}
+        className={'w-full text-left px-3 py-2 rounded-xl border transition ' + (active ? 'bg-sky-50 border-sky-300' : 'bg-white border-slate-100 hover:bg-slate-50')}>
+        <div className="flex items-center gap-2">
+          <span className="w-8 h-8 rounded-full bg-slate-200 text-slate-600 flex items-center justify-center shrink-0"><User size={15} /></span>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-1">
+              <span className="font-medium text-sm truncate">{nameOf(c)}</span>
+              {waiting && <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0" title="รอตอบ" />}
+              <span className="ml-auto flex items-center gap-1 shrink-0">
+                {c.suggestedStage && c.suggestedStage !== c.stage && <span className="w-1.5 h-1.5 rounded-full bg-amber-400" title={'AI แนะนำ: ' + c.suggestedStage} />}
+                {c.stage && <span className="text-[9px] px-1 py-0.5 rounded bg-indigo-100 text-indigo-700">{c.stage}</span>}
+                {c.category && <span className="text-[9px] px-1 py-0.5 rounded bg-sky-100 text-sky-700">{c.category}</span>}
+                <span role="button" tabIndex={0}
+                  onClick={(e) => { e.stopPropagation(); void togglePin(c.id); }}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); void togglePin(c.id); } }}
+                  title={pinned ? 'เลิกปักหมุด' : 'ปักหมุด'} aria-label={pinned ? 'เลิกปักหมุด' : 'ปักหมุด'}
+                  className="shrink-0 cursor-pointer">
+                  <Pin size={13} className={pinned ? 'fill-sky-500 text-sky-500' : 'text-slate-300 hover:text-sky-500'} />
+                </span>
+              </span>
+            </div>
+            <div className="text-[11px] text-slate-400 flex items-center gap-1"><Clock size={10} /> {fmtTime(c.lastSeen)}</div>
+          </div>
+        </div>
+      </button>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-slate-100 p-3 sm:p-5 font-sans text-slate-800">
@@ -1197,37 +1262,28 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                 {searchResults !== null && searchResults.length > 0 && (
                   <div className="px-1 pb-1 text-[11px] text-slate-400">ผลค้นหา {searchResults.length} ราย (รวมแชทที่จบแล้ว)</div>
                 )}
-                {displayList.length === 0 && (
+                {displayList.length === 0 && pinnedList.length === 0 && (
                   <div className="text-slate-400 text-sm text-center py-10 px-3">
                     {searchResults !== null ? 'ไม่พบลูกค้าที่ตรงกับคำค้นหา' : (
                       <>ยังไม่มีข้อความจากลูกค้า<br /><span className="text-xs">เมื่อมีข้อความเข้า LINE จะปรากฏที่นี่แบบเรียลไทม์</span></>
                     )}
                   </div>
                 )}
-                {displayList.map((c) => {
-                  const waiting = waitingIds.has(c.id);
-                  const active = selectedId === c.id;
-                  return (
-                    <button key={c.id} onClick={() => setSelectedId(c.id)}
-                      className={'w-full text-left px-3 py-2 rounded-xl border transition ' + (active ? 'bg-sky-50 border-sky-300' : 'bg-white border-slate-100 hover:bg-slate-50')}>
-                      <div className="flex items-center gap-2">
-                        <span className="w-8 h-8 rounded-full bg-slate-200 text-slate-600 flex items-center justify-center shrink-0"><User size={15} /></span>
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-1">
-                            <span className="font-medium text-sm truncate">{nameOf(c)}</span>
-                            {waiting && <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0" title="รอตอบ" />}
-                            <span className="ml-auto flex items-center gap-1 shrink-0">
-                              {c.suggestedStage && c.suggestedStage !== c.stage && <span className="w-1.5 h-1.5 rounded-full bg-amber-400" title={'AI แนะนำ: ' + c.suggestedStage} />}
-                              {c.stage && <span className="text-[9px] px-1 py-0.5 rounded bg-indigo-100 text-indigo-700">{c.stage}</span>}
-                              {c.category && <span className="text-[9px] px-1 py-0.5 rounded bg-sky-100 text-sky-700">{c.category}</span>}
-                            </span>
-                          </div>
-                          <div className="text-[11px] text-slate-400 flex items-center gap-1"><Clock size={10} /> {fmtTime(c.lastSeen)}</div>
-                        </div>
-                      </div>
+                {/* "ปักหมุด" — this agent's pinned chats, pinned above the queue regardless of
+                    answered-state or category/stage filters. Only when not searching. */}
+                {searchResults === null && pinnedList.length > 0 && (
+                  <div className="mb-1">
+                    <button type="button" onClick={() => setPinnedOpen((v) => !v)}
+                      className="w-full flex items-center gap-1 px-1 py-1 text-[11px] font-semibold text-sky-700">
+                      <Pin size={12} className="fill-sky-500 text-sky-500" />
+                      <span>ปักหมุด ({pinnedList.length})</span>
+                      {pinnedOpen ? <ChevronUp size={12} className="ml-auto text-slate-400" /> : <ChevronDown size={12} className="ml-auto text-slate-400" />}
                     </button>
-                  );
-                })}
+                    {pinnedOpen && <div className="space-y-1">{pinnedList.map((c) => renderCard(c))}</div>}
+                    <div className="border-b border-slate-200 mt-1" />
+                  </div>
+                )}
+                {(searchResults === null ? displayList.filter((c) => !pinnedIds.has(c.id)) : displayList).map((c) => renderCard(c))}
               </div>
             </div>
           </div>
