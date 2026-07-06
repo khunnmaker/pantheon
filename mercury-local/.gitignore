@@ -1,0 +1,41 @@
+# mercury-local — LOCAL, on-prem app. Holds ALL procurement secrets.
+# Commit ONLY source + config + the initial migration. NEVER a real secret or the .db.
+
+# dependencies
+node_modules/
+**/node_modules/
+
+# build output
+dist/
+build/
+client/dist/
+server/dist/
+*.tsbuildinfo
+# tsc -b emitted artifacts next to the vite config
+client/vite.config.js
+client/vite.config.d.ts
+# generated prisma client lives in node_modules/.prisma (already ignored); belt-and-suspenders:
+**/.prisma/
+server/src/generated/
+
+# ── LOCAL SECRETS — never commit ────────────────────────────────────────
+# the sqlite database (holds the alias→real-item map, vendor names, costs)
+*.db
+*.db-journal
+*.sqlite
+*.sqlite-journal
+prisma/*.db
+prisma/*.db-journal
+
+# env + Gmail OAuth token (added in a later chunk)
+.env
+**/.env
+!.env.example
+gmail-token*.json
+
+# logs / editor / os
+*.log
+.DS_Store
+.vscode/
+.idea/
+*.swp
