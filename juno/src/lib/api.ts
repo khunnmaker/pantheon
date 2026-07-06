@@ -616,3 +616,75 @@ export const getBankSummary = () => authed<BankSummary>('/api/juno/bank/summary'
 
 export const getBankWatchlist = (limit?: number) =>
   authed<{ payments: Payment[] }>(`/api/juno/bank/watchlist${limit ? `?limit=${limit}` : ''}`);
+
+// ── RE reconciliation (กระทบยอด RE) ─────────────────────────────────────────
+// Imports Express's periodic ARRCPDAT.TXT (AR-receipt report) and cross-checks every RE
+// against the Juno Payment(s) carrying it — the "future RE-import" the WHT feature's
+// grossOf() was built for. Import is CEO-only; the list is visible to every Juno user.
+
+export type ReReconStatus = 'matched' | 'mismatch' | 'unpaid';
+export type ReReconStatusFilter = 'all' | ReReconStatus;
+
+export interface ReReceiptInvoice {
+  docNo: string;
+  date: string;
+  amount: number;
+}
+
+export interface ReReconRow {
+  id: string;
+  reNumber: string;
+  receiptDate: string;
+  customerName: string;
+  salesName: string;
+  amount: number; // ยอดตามใบกำกับ
+  notPosted: boolean;
+  invoices: ReReceiptInvoice[];
+  status: ReReconStatus;
+  paidGross: number; // sum of grossOf() over every Payment whose reNumbers include this RE
+  diff: number; // paidGross - amount (0 when matched)
+  paymentCount: number;
+}
+
+export interface ReReconSummary {
+  total: number;
+  matched: number;
+  mismatch: number;
+  unpaid: number;
+  totalAmount: number;
+  matchedAmount: number;
+}
+
+export interface ReImportResult {
+  parsed: number;
+  imported: number;
+  updated: number;
+  cancelledSkipped: number;
+  totalAmount: number;
+  fileTotal: number | null;
+  totalsMatch: boolean;
+}
+
+export const importReReceipts = (dataB64: string, fileName: string) =>
+  authed<ReImportResult>('/api/juno/re/import', {
+    method: 'POST',
+    body: JSON.stringify({ dataB64, fileName }),
+  });
+
+export interface ReReconFilter {
+  status?: ReReconStatusFilter;
+  q?: string;
+  from?: string;
+  to?: string;
+}
+function reReconFilterQuery(f: ReReconFilter): string {
+  const p = new URLSearchParams();
+  if (f.status && f.status !== 'all') p.set('status', f.status);
+  if (f.q) p.set('q', f.q);
+  if (f.from) p.set('from', f.from);
+  if (f.to) p.set('to', f.to);
+  const s = p.toString();
+  return s ? `?${s}` : '';
+}
+export const getReReconciliation = (f: ReReconFilter) =>
+  authed<{ rows: ReReconRow[]; summary: ReReconSummary }>(`/api/juno/re${reReconFilterQuery(f)}`);

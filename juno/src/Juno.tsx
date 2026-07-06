@@ -3,7 +3,7 @@ import {
   LogOut, Search, Download, Flag, FileText, Inbox, BarChart3, Scale,
   Loader2, AlertTriangle, CheckCircle2, X, RefreshCw, ExternalLink, Ban, Crown, Printer,
   Undo2, ClipboardCheck, CheckCheck, Banknote, Plus, Paperclip, Check, Trash2, HandCoins, Percent,
-  PenLine,
+  PenLine, FileCheck,
 } from 'lucide-react';
 
 // Portal-back link (Jupiter). URL from build-time env; the link is hidden when unset, so it
@@ -19,6 +19,7 @@ import {
 } from './lib/api';
 import PrintCovers from './PrintCovers';
 import Recon from './Recon';
+import ReRecon from './ReRecon';
 import AppSwitcher from './AppSwitcher';
 
 // No ใบกำกับภาษี tab: Prominent issues a tax invoice on EVERY sale (in Express, as part of
@@ -28,7 +29,10 @@ import AppSwitcher from './AppSwitcher';
 // physical receipt confirmation — separate from เงินสด/เช็ค settle state, folded into inbox/flags.
 // 'wht' = หัก ณ ที่จ่าย (WHT, task 2): every withheld payment — visible to ALL Juno users
 // (not CEO-only, unlike 'reports'/'receive').
-type View = 'inbox' | 'flags' | 'reports' | 'recon' | 'receive' | 'wht';
+// 'reRecon' = กระทบยอด RE: the Express ARRCPDAT.TXT (AR-receipt) import + live RE-vs-Payment
+// cross-check — visible to ALL Juno users (only the นำเข้าไฟล์ RE upload inside it is CEO-only,
+// same isCeo-gated-control-within-an-open-tab pattern as 'recon's ImportPanel).
+type View = 'inbox' | 'flags' | 'reports' | 'recon' | 'receive' | 'wht' | 'reRecon';
 
 // Withholding tax (task 2) rate options — 0 (ไม่มี) plus the Thai statutory rates FIN picks
 // from in the ตรวจแล้ว dialog. Mirrors the server's WHT_RATES (api/src/routes/juno.ts).
@@ -114,6 +118,10 @@ export default function Juno({ agent, onLogout }: { agent: Agent; onLogout: () =
     ...(isCeo ? [{ key: 'receive' as const, label: 'รอยืนยันรับเงิน', icon: <HandCoins size={16} />, count: summary?.awaitingReceive }] : []),
     { key: 'flags', label: 'ปักธง', icon: <Flag size={16} />, count: summary?.flagged },
     { key: 'recon', label: 'กระทบยอด', icon: <Scale size={16} />, count: bankUnmatched },
+    // กระทบยอด RE — visible to EVERY Juno user (only the นำเข้าไฟล์ RE upload inside it is
+    // CEO-only, same as 'recon's ImportPanel). Match status is computed live, so no badge
+    // count here (its own totals bar inside ReRecon covers the summary).
+    { key: 'reRecon', label: 'กระทบยอด RE', icon: <FileCheck size={16} /> },
     // รายงาน is CEO-only (server 403s /reports + /export.csv for non-supervisor) — omit the tab
     // for finance/MD so it's never shown. Their default tab (inbox) is one they can use.
     ...(isCeo ? [{ key: 'reports' as const, label: 'รายงาน', icon: <BarChart3 size={16} /> }] : []),
@@ -164,6 +172,8 @@ export default function Juno({ agent, onLogout }: { agent: Agent; onLogout: () =
           <Reports />
         ) : view === 'recon' ? (
           <Recon isCeo={isCeo} />
+        ) : view === 'reRecon' ? (
+          <ReRecon isCeo={isCeo} />
         ) : (
           <PaymentsView view={view === 'reports' ? 'inbox' : view} onChanged={refreshSummary} canDelete={canDelete} isCeo={isCeo} />
         )}
@@ -173,7 +183,7 @@ export default function Juno({ agent, onLogout }: { agent: Agent; onLogout: () =
 }
 
 // ── Payments list + detail (inbox / flags share this) ──────────────────────
-function PaymentsView({ view, onChanged, canDelete, isCeo }: { view: Exclude<View, 'reports' | 'recon'>; onChanged: () => void; canDelete: boolean; isCeo: boolean }) {
+function PaymentsView({ view, onChanged, canDelete, isCeo }: { view: Exclude<View, 'reports' | 'recon' | 'reRecon'>; onChanged: () => void; canDelete: boolean; isCeo: boolean }) {
   const [q, setQ] = useState('');
   const [status, setStatusFilter] = useState<'all' | PaymentStatus>('all');
   // วิธีรับเงิน (payment-method) filter — inbox only, folds the old separate เงินสด/เช็ค tab
