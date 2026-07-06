@@ -14,7 +14,7 @@ import {
   type StockAdjustmentRow, type ImportPreview,
   type CatalogGroupInfo, type GroupProduct, type Pillar,
   getSummary, getStockList, adjustStock, setReorderPoint, renameProduct, getImports, getAdjustments,
-  previewImport, applyImport, clearSession, API_URL, flatSku,
+  previewImport, applyImport, logout as logoutSuite, API_URL, flatSku,
   generateAliases, setAlias,
   getGroups, getGroupProducts, autoAssignGroups, setProductGroup, setSubgroup,
   type NameProposalRow, type ProposalSummary, type ProposalFilter,
@@ -100,7 +100,7 @@ export default function Stock({ agent, onLogout }: { agent: Agent; onLogout: () 
   }
 
   function logout() {
-    clearSession();
+    void logoutSuite(); // clears the shared SSO cookie + local session (fire-and-forget)
     onLogout();
   }
 

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Loader2, AlertTriangle, RefreshCw } from 'lucide-react';
-import { getBootstrap, clearSession, type Agent, type Bootstrap } from './lib/api';
+import { getBootstrap, logout as logoutSuite, type Agent, type Bootstrap } from './lib/api';
 import { CeresContext } from './lib/bootstrapContext';
 import MessengerHome from './Messenger';
 import MdApp from './Md';
@@ -45,7 +45,7 @@ export default function Ceres({ agent, onLogout }: { agent: Agent; onLogout: () 
         </button>
         <button
           onClick={() => {
-            clearSession();
+            void logoutSuite();
             onLogout();
           }}
           className="text-xs text-slate-400 underline underline-offset-2 hover:text-slate-600"

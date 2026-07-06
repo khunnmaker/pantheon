@@ -29,6 +29,12 @@ const schema = z.object({
 
   WEB_ORIGIN: z.string().default('http://localhost:5173'),
 
+  // Suite-wide SSO (Jupiter Phase 3): parent domain for the shared session cookie, e.g.
+  // ".prominentdental.com" (leading dot = all subdomains). Set on the PRODUCTION api so the
+  // login cookie is shared across every *.prominentdental.com app. Unset (local/dev) →
+  // host-only cookie, no cross-subdomain SSO. See api/src/auth/cookies.ts.
+  COOKIE_DOMAIN: z.string().default(''),
+
   // Per-agent 6-digit PINs "name:pin,name:pin" (name = email local part). An agent
   // absent from the list falls back to STAFF_PASSWORD.
   // Deprecated fallback (unified auth) — remove after cutover once EMPLOYEE_PINS covers everyone.

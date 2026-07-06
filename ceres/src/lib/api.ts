@@ -93,9 +93,40 @@ export async function login(email: string, password: string): Promise<{ token: s
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ email, password }),
+    // Suite SSO: let the browser STORE the parent-domain httpOnly cookie the server sets
+    // on this response. Only login/bootstrap/logout use credentials — never state-changing calls.
+    credentials: 'include',
   });
   if (!res.ok) throw new ApiError('invalid_credentials', res.status, null);
   return res.json() as Promise<{ token: string; agent: Agent }>;
+}
+
+// Suite SSO bootstrap: with NO stored token, ask /me using ONLY the shared parent-domain
+// cookie (credentials:'include', no Authorization header). If the cookie authenticates,
+// the server returns a fresh bearer token + agent; we store the session and return the agent.
+// Never throws — a missing/invalid cookie just yields null (→ show Login).
+export async function bootstrap(): Promise<Agent | null> {
+  try {
+    const res = await fetch(`${API_URL}/api/auth/me`, { credentials: 'include' });
+    if (!res.ok) return null;
+    const { agent, token } = (await res.json()) as { agent: Agent; token: string };
+    setSession(token, agent);
+    return agent;
+  } catch {
+    return null;
+  }
+}
+
+// Suite-wide logout: clear the shared cookie server-side (best-effort), THEN clear this
+// app's local session. Used by the user-facing "log out" action so logging out here
+// propagates across the suite.
+export async function logout(): Promise<void> {
+  try {
+    await fetch(`${API_URL}/api/auth/logout`, { method: 'POST', credentials: 'include' });
+  } catch {
+    // Network failure clearing the cookie shouldn't block local logout.
+  }
+  clearSession();
 }
 
 function queryString(q: Record<string, string | number | boolean | undefined>): string {

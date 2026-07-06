@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Crown, LogOut, Loader2, ExternalLink } from 'lucide-react';
-import { clearSession, getBadges, type Agent, type Badges } from './lib/api';
+import { logout as logoutSuite, getBadges, type Agent, type Badges } from './lib/api';
 import { tilesFor, type AppDef } from './lib/apps';
 
 // The portal home: a tile grid, one tile per app this account is GRANTED (with a configured
@@ -25,7 +25,7 @@ export default function Portal({ agent, onLogout }: { agent: Agent; onLogout: ()
   }, []);
 
   function logout() {
-    clearSession();
+    void logoutSuite(); // clears the shared SSO cookie + local session (fire-and-forget)
     onLogout();
   }
 

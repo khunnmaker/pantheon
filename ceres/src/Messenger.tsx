@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { LogOut, Loader2, AlertTriangle, Plus, Pencil, Trash2, CheckCircle2, Crown } from 'lucide-react';
-import { listExpenses, deleteExpense, clearSession, type Expense, type ExpenseStatus, baht } from './lib/api';
+import { listExpenses, deleteExpense, logout as logoutSuite, type Expense, type ExpenseStatus, baht } from './lib/api';
 import { useCeres } from './lib/bootstrapContext';
 
 // Portal-back link (Jupiter). URL from build-time env; hidden when unset, so it is completely
@@ -86,7 +86,7 @@ export default function MessengerHome() {
             )}
             <button
               onClick={() => {
-                clearSession();
+                void logoutSuite();
                 onLogout();
               }}
               className="flex items-center gap-1 text-sm text-slate-500 hover:text-rose-600"
