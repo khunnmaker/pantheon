@@ -3,7 +3,7 @@ import {
   User, LogOut, Clock, Inbox, Loader2, ShieldCheck, MessageSquare,
   Send, Check, CheckCircle2, RefreshCw, Brain, GraduationCap, Wand2, Pencil, AlertTriangle, Search,
   Download, Paperclip, Camera, Banknote, X, ChevronDown, ChevronUp, Crown, Pin, CornerUpLeft, Volume2, VolumeX,
-  ExternalLink, Eye,
+  ExternalLink, Eye, ArrowLeft, Sparkles,
 } from 'lucide-react';
 import {
   getQueue, getCustomers, getCustomer, searchCustomers, logout as logoutSuite, regenerateDraft, rewriteText, sendReply, setNickname, setCategory, setStage, STAGES,
@@ -555,6 +555,13 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
   const [customers, setCustomers] = useState<CustomerLite[]>([]);
   const [waitingIds, setWaitingIds] = useState<Set<string>>(new Set());
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // Mobile-only (< md) master-detail nav: true = the conversation pane is showing full-screen
+  // in place of the queue, like the LINE app. Has no effect at md+, where both panes are
+  // always shown side by side regardless of this flag.
+  const [mobileShowChat, setMobileShowChat] = useState(false);
+  // Mobile-only (< md) bottom-sheet state for the AI panel (long-term memory + draft composer +
+  // product picker). At md+ the panel is always a normal inline column, ignoring this flag.
+  const [aiDrawerOpen, setAiDrawerOpen] = useState(false);
   const [detail, setDetail] = useState<CustomerDetail | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
   // Notification sound on inbound customer messages (per-browser mute, throttled).
@@ -763,6 +770,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
       if (selectedRef.current !== payload.customerId) return;
       if (payload.ended) {
         setSelectedId(null); // another staff ended this chat — close it here too
+        setMobileShowChat(false); // mobile: return to the queue list
         setDetail(null);
       } else if (payload.message) {
         // append the new message without clobbering the open composer / draft text
@@ -1286,7 +1294,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
     const active = selectedId === c.id;
     const pinned = pinnedIds.has(c.id);
     return (
-      <button key={c.id} onClick={() => setSelectedId(c.id)}
+      <button key={c.id} onClick={() => { setSelectedId(c.id); setMobileShowChat(true); }}
         className={'w-full text-left px-3 py-2 rounded-xl border transition ' + (active ? 'bg-sky-50 border-sky-300' : 'bg-white border-slate-100 hover:bg-slate-50')}>
         <div className="flex items-center gap-2">
           <Avatar src={c.pictureUrl} size={32} />
@@ -1337,9 +1345,10 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
             }}
           />
         )}
-        <div className="grid md:grid-cols-[300px_1fr] gap-4 h-[calc(100vh-2.5rem)]">
-          {/* LEFT: icon bar (top) + queue (bottom) */}
-          <div className="flex flex-col gap-3 min-h-0">
+        <div className="grid md:grid-cols-[300px_1fr] gap-4 h-[calc(100dvh-2.5rem)]">
+          {/* LEFT: icon bar (top) + queue (bottom). Hidden on mobile once a chat is open
+              (mobileShowChat) so only one pane shows at a time; always shown at md+. */}
+          <div className={(mobileShowChat ? 'hidden' : 'flex') + ' md:flex flex-col gap-3 min-h-0'}>
             {/* icon bar */}
             <div className="bg-white rounded-2xl shadow-sm border border-slate-200 flex items-center gap-1 px-2 py-2 shrink-0">
               <AppSwitcher agent={agent} />
@@ -1440,8 +1449,9 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
             </div>
           </div>
 
-          {/* RIGHT: conversation (or learning) */}
-          <div className="min-h-0 overflow-y-auto">
+          {/* RIGHT: conversation (or learning). Shown on mobile only once a chat is open
+              (mobileShowChat); always shown at md+. */}
+          <div className={(mobileShowChat ? 'block' : 'hidden') + ' md:block min-h-0 overflow-y-auto'}>
             {view === 'audit' ? (
               <FinanceAuditView audits={audits} onResolve={doResolveAudit} onRefresh={() => { void refreshAudits(); }} />
             ) : view === 'learning' ? (
@@ -1457,6 +1467,12 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
             ) : (
             <div className="bg-white rounded-2xl shadow-sm border border-slate-200 flex flex-col h-full">
               <div className="px-4 py-2.5 bg-sky-600 text-white rounded-t-2xl font-semibold flex items-center gap-2">
+                {/* mobile-only: back to the queue list (keeps selectedId — desktop stays selected) */}
+                <button type="button" onClick={() => setMobileShowChat(false)}
+                  title="กลับไปที่คิว" aria-label="กลับไปที่คิว"
+                  className="md:hidden shrink-0 -ml-1 p-1.5 rounded-lg text-white/90 hover:text-white hover:bg-white/10">
+                  <ArrowLeft size={18} />
+                </button>
                 <div className="flex items-center gap-2 min-w-0 flex-1">
                   {detail
                     ? <Avatar src={detail.customer.pictureUrl} size={28} />
@@ -1627,8 +1643,38 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                     <div ref={endRef} />
                   </div>
                     </div>{/* /LEFT column */}
-                    {/* RIGHT: drafting / composer. Full width on phones, 42% split on desktop. */}
-                    <div className="flex flex-col w-full md:w-[42%] md:min-w-[360px] min-h-0 overflow-y-auto">
+
+                    {/* mobile-only ✨ trigger: opens the AI panel (memory + draft + products) as a
+                        bottom-sheet drawer. Hidden once the drawer is open; irrelevant at md+. */}
+                    {!aiDrawerOpen && (
+                      <button type="button" onClick={() => setAiDrawerOpen(true)}
+                        title="เปิดแผงร่างคำตอบ / สินค้า" aria-label="เปิดแผงร่างคำตอบ / สินค้า"
+                        className="md:hidden fixed bottom-5 right-5 z-20 w-12 h-12 rounded-full bg-sky-600 hover:bg-sky-700 text-white shadow-lg flex items-center justify-center">
+                        <Sparkles size={20} />
+                      </button>
+                    )}
+                    {/* mobile-only dim backdrop behind the open drawer; tap to close */}
+                    {aiDrawerOpen && (
+                      <div className="fixed inset-0 bg-black/30 z-30 md:hidden" onClick={() => setAiDrawerOpen(false)} />
+                    )}
+
+                    {/* RIGHT: drafting / composer (long-term memory + AI draft + product picker).
+                        Full width on phones as a hidden-by-default bottom-sheet drawer (aiDrawerOpen);
+                        the md: classes restore the normal static 42%-split column on desktop. */}
+                    <div className={
+                      'flex flex-col w-full md:w-[42%] md:min-w-[360px] min-h-0 overflow-y-auto bg-white ' +
+                      'fixed inset-x-0 bottom-0 z-40 max-h-[85dvh] rounded-t-2xl shadow-2xl transition-transform ' +
+                      (aiDrawerOpen ? 'translate-y-0 ' : 'translate-y-full ') +
+                      'md:static md:inset-auto md:z-auto md:max-h-none md:rounded-none md:shadow-none md:translate-y-0 md:transition-none'
+                    }>
+                      {/* mobile-only drag handle + close button for the bottom-sheet drawer */}
+                      <div className="md:hidden relative shrink-0 flex items-center justify-center py-2 border-b border-slate-100">
+                        <div className="w-10 h-1 rounded-full bg-slate-300" />
+                        <button type="button" onClick={() => setAiDrawerOpen(false)} title="ปิด" aria-label="ปิด"
+                          className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
+                          <X size={18} />
+                        </button>
+                      </div>
                   {detail?.memory?.summary && (
                     <div className="shrink-0 bg-slate-50 border-b border-slate-100 p-2">
                       <div className="text-[11px] text-sky-800 bg-sky-50 border border-sky-200 rounded-lg p-2">
