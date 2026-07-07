@@ -2,12 +2,19 @@ import { useEffect, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import Login from './Login';
 import Portal from './Portal';
+import Accounting from './Accounting';
 import { getStoredAgent, getToken, setOnUnauthorized, bootstrap, type Agent } from './lib/api';
+
+// Views inside the authenticated app. 'portal' = the tile home; 'accounting' = the Jupiter
+// accounting cockpit (supervisor-only, opened from the portal). A simple state switch (no
+// router) matching how the app already toggles Login ↔ Portal.
+type View = 'portal' | 'accounting';
 
 export default function App() {
   const [agent, setAgent] = useState<Agent | null>(() =>
     getToken() ? getStoredAgent() : null,
   );
+  const [view, setView] = useState<View>('portal');
   // Only bootstrap when there's NO local session. If we already have one, this stays false
   // and the portal renders exactly as before (no /me call, no delay).
   const [booting, setBooting] = useState<boolean>(() => !getToken());
@@ -39,5 +46,15 @@ export default function App() {
     );
   }
   if (!agent) return <Login onLogin={setAgent} />;
-  return <Portal agent={agent} onLogout={() => setAgent(null)} />;
+  // Accounting is supervisor-only — if a non-supervisor somehow lands here, fall back to the portal.
+  if (view === 'accounting' && agent.role === 'supervisor') {
+    return <Accounting onBack={() => setView('portal')} />;
+  }
+  return (
+    <Portal
+      agent={agent}
+      onLogout={() => { setView('portal'); setAgent(null); }}
+      onOpenAccounting={agent.role === 'supervisor' ? () => setView('accounting') : undefined}
+    />
+  );
 }

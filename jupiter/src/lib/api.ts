@@ -112,3 +112,136 @@ export async function getBadges(): Promise<Badges> {
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json() as Promise<Badges>;
 }
+
+// ─── Jupiter accounting (Phase 1 cockpit) — supervisor-only endpoints under /api/jupiter/acct ──
+// All calls carry the bearer token and clear the session + notify on a 401 (same as getBadges).
+
+export type Direction = 'income' | 'expense';
+
+export interface AcctCompany {
+  code: string;
+  name: string;
+  nameTh: string;
+  kind: string;
+  color: string;
+}
+
+export interface AcctSummaryCompany {
+  code: string;
+  name: string;
+  nameTh: string;
+  color: string;
+  revenue: number;
+  expense: number;
+  profit: number;
+}
+export interface AcctSummary {
+  month: string;
+  companies: AcctSummaryCompany[];
+  total: { revenue: number; expense: number; profit: number };
+}
+
+export interface AcctTxn {
+  id: string;
+  companyCode: string;
+  direction: Direction;
+  date: string;
+  party: string;
+  category: string;
+  amount: string;
+  vatAmount: string;
+  whtAmount: string;
+  note: string;
+  source: string;
+  sourceRef: string;
+  createdById: string | null;
+  createdByName: string;
+  createdAt: string;
+}
+
+export interface AcctRegisterRow {
+  code: string;
+  name: string;
+  nameTh: string;
+  color: string;
+  sales: number;
+  outputVat: number;
+  purchases: number;
+  inputVat: number;
+  wht: number;
+  vatNet: number;
+}
+export interface AcctRegisters {
+  month: string;
+  companies: AcctRegisterRow[];
+}
+
+// A proposed txn from POST /parse (before the user confirms + saves it).
+export interface ProposedTxn {
+  direction: Direction;
+  companyCode: string;
+  category: string;
+  party: string;
+  amount: string;
+  vatAmount: string;
+  whtAmount: string;
+  note: string;
+}
+
+// Shared authed-fetch: attaches the bearer token, handles 401 → logout, parses JSON.
+async function acctFetch<T>(path: string, init?: RequestInit): Promise<T> {
+  const token = getToken();
+  const res = await fetch(`${API_URL}${path}`, {
+    ...init,
+    headers: {
+      ...(init?.body ? { 'content-type': 'application/json' } : {}),
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
+      ...(init?.headers ?? {}),
+    },
+  });
+  if (res.status === 401) {
+    clearSession();
+    onUnauthorized?.();
+    throw new Error('unauthorized');
+  }
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json() as Promise<T>;
+}
+
+export function acctCompanies(): Promise<AcctCompany[]> {
+  return acctFetch<AcctCompany[]>('/api/jupiter/acct/companies');
+}
+export function acctSummary(month?: string): Promise<AcctSummary> {
+  return acctFetch<AcctSummary>(`/api/jupiter/acct/summary${month ? `?month=${month}` : ''}`);
+}
+export function acctTxns(params: { company?: string; month?: string; direction?: Direction; limit?: number } = {}): Promise<AcctTxn[]> {
+  const qs = new URLSearchParams();
+  if (params.company) qs.set('company', params.company);
+  if (params.month) qs.set('month', params.month);
+  if (params.direction) qs.set('direction', params.direction);
+  if (params.limit) qs.set('limit', String(params.limit));
+  const q = qs.toString();
+  return acctFetch<AcctTxn[]>(`/api/jupiter/acct/txns${q ? `?${q}` : ''}`);
+}
+export function acctCreateTxn(body: {
+  companyCode: string;
+  direction: Direction;
+  date?: string;
+  party?: string;
+  category?: string;
+  amount: string;
+  vatAmount?: string;
+  whtAmount?: string;
+  note?: string;
+}): Promise<AcctTxn> {
+  return acctFetch<AcctTxn>('/api/jupiter/acct/txns', { method: 'POST', body: JSON.stringify(body) });
+}
+export function acctDeleteTxn(id: string): Promise<{ ok: boolean }> {
+  return acctFetch<{ ok: boolean }>(`/api/jupiter/acct/txns/${id}`, { method: 'DELETE' });
+}
+export function acctRegisters(month?: string): Promise<AcctRegisters> {
+  return acctFetch<AcctRegisters>(`/api/jupiter/acct/registers${month ? `?month=${month}` : ''}`);
+}
+export function acctParse(text: string): Promise<{ ok: boolean; via?: 'ai' | 'heuristic'; proposed?: ProposedTxn }> {
+  return acctFetch('/api/jupiter/acct/parse', { method: 'POST', body: JSON.stringify({ text }) });
+}

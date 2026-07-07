@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Crown, LogOut, Loader2, ExternalLink } from 'lucide-react';
+import { Crown, LogOut, Loader2, ExternalLink, Calculator, ChevronRight } from 'lucide-react';
 import { logout as logoutSuite, getBadges, type Agent, type Badges } from './lib/api';
 import { tilesFor, type AppDef } from './lib/apps';
 
@@ -7,7 +7,7 @@ import { tilesFor, type AppDef } from './lib/apps';
 // URL), each showing the deity name + Thai job label + a live pending-work badge. A tile opens
 // the app's URL in the same tab. Tiles are grant-gated (tilesFor) so they match the caller's
 // badges exactly. Phase 1: apps still ask for their own login when opened (SSO is Phase 3).
-export default function Portal({ agent, onLogout }: { agent: Agent; onLogout: () => void }) {
+export default function Portal({ agent, onLogout, onOpenAccounting }: { agent: Agent; onLogout: () => void; onOpenAccounting?: () => void }) {
   const [badges, setBadges] = useState<Badges | null>(null);
   const [loading, setLoading] = useState(true);
   const tiles = tilesFor(agent);
@@ -48,6 +48,24 @@ export default function Portal({ agent, onLogout }: { agent: Agent; onLogout: ()
       </header>
 
       <main className="max-w-3xl mx-auto p-4 sm:p-6">
+        {/* Supervisor-only: the Jupiter group-accounting cockpit (Phase 1). Rendered inside
+            this app (not an external tile) — hidden entirely for non-supervisors. */}
+        {onOpenAccounting && (
+          <button
+            onClick={onOpenAccounting}
+            className="w-full mb-4 group bg-gradient-to-r from-violet-700 to-violet-600 text-white rounded-2xl p-4 flex items-center gap-4 hover:shadow-md transition text-left"
+          >
+            <div className="w-11 h-11 rounded-xl bg-white/15 flex items-center justify-center">
+              <Calculator size={20} />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="font-bold">บัญชีกลุ่มบริษัท</div>
+              <div className="text-xs text-violet-100/90">ภาพรวมรายรับรายจ่าย · บันทึกด้วย AI · ปิดรอบบัญชี (5 บริษัท)</div>
+            </div>
+            <ChevronRight size={18} className="text-violet-200 group-hover:translate-x-0.5 transition" />
+          </button>
+        )}
+
         <p className="text-sm text-slate-500 mb-4">เลือกแอปที่ต้องการเปิด</p>
         {loading && !badges && (
           <div className="flex items-center gap-2 text-slate-400 text-sm mb-4">

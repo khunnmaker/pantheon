@@ -19,6 +19,7 @@ import { stockRoutes } from './routes/stock.js';
 import { dianaRoutes } from './routes/diana.js';
 import { junoRoutes } from './routes/juno.js';
 import { jupiterRoutes } from './routes/jupiter.js';
+import { jupiterAccountingRoutes } from './routes/jupiterAccounting.js';
 import { venusRoutes } from './routes/venus.js';
 import { initIo } from './ws/io.js';
 import { sweepIdleSessions } from './memory/summarize.js';
@@ -90,6 +91,7 @@ async function buildServer() {
   await app.register(dianaRoutes);
   await app.register(junoRoutes);
   await app.register(jupiterRoutes);
+  await app.register(jupiterAccountingRoutes);
   await app.register(ceresRoutes);
   await app.register(venusRoutes);
   await app.register(mercuryRoutes);
