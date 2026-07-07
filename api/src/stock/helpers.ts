@@ -17,6 +17,9 @@ export interface StockRow {
   stockAt: string | null; // ISO; null = unknown
   reorderPoint: number | null;
   low: boolean;
+  // true = a row created from the Express import that isn't in the merchandised catalog yet
+  // (status 'stock_only'): tracked in Vulcan, hidden from Diana/AI. No price/photo/Thai name yet.
+  stockOnly: boolean;
   // Short human code (e.g. "TR34"); filled by the /api/stock/list route, not toStockRow.
   alias?: string | null;
 }
@@ -32,5 +35,6 @@ export function toStockRow(p: Product): StockRow {
     stockAt: p.stockAt ? p.stockAt.toISOString() : null,
     reorderPoint: p.reorderPoint,
     low: isLow(p.stock, p.reorderPoint),
+    stockOnly: p.status === 'stock_only',
   };
 }

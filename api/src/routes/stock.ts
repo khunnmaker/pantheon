@@ -58,6 +58,12 @@ function stash(s: StagedImport): string {
   return token;
 }
 
+// Vulcan manages catalog products ('active') PLUS 'stock_only' rows created from the Express stock
+// import — tracked here but HIDDEN from Diana + the AI, which whitelist 'active'. Use this in
+// Vulcan's own product queries so those rows show up; never widen a Diana/Minerva query with it.
+const VULCAN_STATUS = { in: ['active', 'stock_only'] };
+const VULCAN_STATUSES = ['active', 'stock_only'];
+
 export async function stockRoutes(app: FastifyInstance) {
   // Auth runs at onRequest (BEFORE body parsing) so unauthenticated bodies are never
   // parsed — preHandler runs AFTER body parsing, and with a 17 MB route limit that
@@ -68,10 +74,10 @@ export async function stockRoutes(app: FastifyInstance) {
   // GET /api/stock/summary — headline counts for the Vulcan dashboard / login landing.
   app.get('/api/stock/summary', async () => {
     const [total, withStock, outOfStock, unknown, lastImport] = await Promise.all([
-      prisma.product.count({ where: { status: 'active' } }),
-      prisma.product.count({ where: { status: 'active', stock: { not: null } } }),
-      prisma.product.count({ where: { status: 'active', stock: 0 } }),
-      prisma.product.count({ where: { status: 'active', stock: null } }),
+      prisma.product.count({ where: { status: VULCAN_STATUS } }),
+      prisma.product.count({ where: { status: VULCAN_STATUS, stock: { not: null } } }),
+      prisma.product.count({ where: { status: VULCAN_STATUS, stock: 0 } }),
+      prisma.product.count({ where: { status: VULCAN_STATUS, stock: null } }),
       prisma.stockImport.findFirst({ orderBy: { importedAt: 'desc' } }),
     ]);
     // Low count needs a column-vs-column compare (stock <= reorderPoint) → raw SQL.
@@ -94,7 +100,7 @@ export async function stockRoutes(app: FastifyInstance) {
     let products;
     if (query) {
       // Reuse Minerva's name/SKU search, then re-fetch full rows (search returns a lite shape).
-      const matches = await searchProducts(query, take);
+      const matches = await searchProducts(query, take, VULCAN_STATUSES);
       const skus = matches.map((m) => m.sku);
       products = skus.length
         ? await prisma.product.findMany({ where: { sku: { in: skus } } })
@@ -119,25 +125,25 @@ export async function stockRoutes(app: FastifyInstance) {
       products.sort((a, b) => (ord.get(a.sku) ?? 0) - (ord.get(b.sku) ?? 0));
     } else if (filter === 'out') {
       products = await prisma.product.findMany({
-        where: { status: 'active', stock: 0 },
+        where: { status: VULCAN_STATUS, stock: 0 },
         orderBy: { sku: 'asc' },
         take,
       });
     } else if (filter === 'unknown') {
       products = await prisma.product.findMany({
-        where: { status: 'active', stock: null },
+        where: { status: VULCAN_STATUS, stock: null },
         orderBy: { sku: 'asc' },
         take,
       });
     } else if (filter === 'noname') {
       products = await prisma.product.findMany({
-        where: { status: 'active', nameTh: '' },
+        where: { status: VULCAN_STATUS, nameTh: '' },
         orderBy: { sku: 'asc' },
         take,
       });
     } else {
       products = await prisma.product.findMany({
-        where: { status: 'active' },
+        where: { status: VULCAN_STATUS },
         orderBy: [{ stockAt: 'desc' }, { updatedAt: 'desc' }],
         take,
       });
@@ -317,7 +323,7 @@ export async function stockRoutes(app: FastifyInstance) {
   // POST /api/stock/import/apply { token, note } — apply a previewed import. Writes
   // Product.stock = qty + stockAt = now for every MATCHED SKU; logs a StockImport row.
   app.post('/api/stock/import/apply', async (req, reply) => {
-    const { token, note } = req.body as { token?: string; note?: string };
+    const { token, note, createNew } = req.body as { token?: string; note?: string; createNew?: boolean };
     const staged = token ? previews.get(token) : undefined;
     // Enforce the TTL explicitly here — eviction elsewhere is lazy (only on new uploads).
     if (!token || !staged || Date.now() - staged.at > PREVIEW_TTL_MS) {
@@ -355,11 +361,41 @@ export async function stockRoutes(app: FastifyInstance) {
     } catch (err) {
       failNote = `partial_failure: ${err instanceof Error ? err.message : String(err)}`.slice(0, 300);
     }
-    const skusUnmatched = staged.rows.length - toApply.length;
+
+    // Optionally CREATE the SKUs not yet in the catalog as 'stock_only' rows — tracked in Vulcan
+    // (stock + grouping) but hidden from Diana + the AI (they whitelist 'active') until someone
+    // enriches them (price/photo/proper name) and promotes them to 'active'. Name = the raw Express
+    // text; price 0 = unknown. skipDuplicates guards a concurrent create. Only when the stock
+    // update above fully succeeded.
+    let created = 0;
+    if (createNew && !failNote) {
+      const toCreate = staged.rows.filter((r) => !known.has(r.sku) && r.name.trim());
+      const CREATE_CHUNK = 100;
+      try {
+        for (let i = 0; i < toCreate.length; i += CREATE_CHUNK) {
+          const data = toCreate.slice(i, i + CREATE_CHUNK).map((r) => ({
+            sku: r.sku,
+            nameEn: r.name.trim(),
+            keywords: [...new Set(r.name.toLowerCase().split(/[^a-z0-9฀-๿]+/i).filter((t) => t.length >= 2))].slice(0, 30),
+            price: 0,
+            status: 'stock_only',
+            stock: r.qty,
+            stockAt,
+          }));
+          const res = await prisma.product.createMany({ data, skipDuplicates: true });
+          created += res.count;
+        }
+      } catch (err) {
+        failNote = `create_failure: ${err instanceof Error ? err.message : String(err)}`.slice(0, 300);
+      }
+    }
+    // remaining "not in catalog" after this import (created ones now exist)
+    const skusUnmatched = staged.rows.length - toApply.length - created;
 
     const noteJoined = [
       String(note ?? ''),
       staged.asOf ? `asOf:${staged.asOf.toISOString().slice(0, 10)}` : '',
+      created > 0 ? `created:${created}` : '',
       staged.unresolved > 0 ? `unresolved_lines:${staged.unresolved}` : '',
       failNote,
     ].filter(Boolean).join(' | ');
@@ -379,11 +415,12 @@ export async function stockRoutes(app: FastifyInstance) {
       return reply.code(500).send({
         error: 'apply_partial',
         skusUpdated,
+        created,
         importId: imp.id,
         detail: 'นำเข้าไม่สมบูรณ์ — บางรายการอาจอัปเดตแล้ว กรุณาอัปโหลดและนำเข้าใหม่',
       });
     }
-    return { ok: true, skusUpdated, skusUnmatched, importId: imp.id };
+    return { ok: true, skusUpdated, skusUnmatched, created, importId: imp.id };
   });
 
   // ─── Product aliases (short human codes, e.g. "TR34") ──────────────────
@@ -391,7 +428,7 @@ export async function stockRoutes(app: FastifyInstance) {
   app.get('/api/stock/aliases', async () => {
     const [products, aliases] = await Promise.all([
       prisma.product.findMany({
-        where: { status: 'active' },
+        where: { status: VULCAN_STATUS },
         select: { sku: true, nameEn: true, nameTh: true },
         orderBy: { sku: 'asc' },
       }),
@@ -420,7 +457,7 @@ export async function stockRoutes(app: FastifyInstance) {
   app.post('/api/stock/aliases/generate', async (req) => {
     const regenerate = (req.body as { regenerate?: boolean }).regenerate === true;
     const products = await prisma.product.findMany({
-      where: { status: 'active', catalogGroup: { not: null } },
+      where: { status: VULCAN_STATUS, catalogGroup: { not: null } },
       select: { sku: true, catalogGroup: true, catalogSubgroup: true },
     });
     const existing = await prisma.productAlias.findMany();
@@ -452,7 +489,7 @@ export async function stockRoutes(app: FastifyInstance) {
         written++;
       }
     }
-    const ungrouped = await prisma.product.count({ where: { status: 'active', catalogGroup: null } });
+    const ungrouped = await prisma.product.count({ where: { status: VULCAN_STATUS, catalogGroup: null } });
     return { ok: true, mode: regenerate ? 'regenerate' : 'fill', coded: assignments.length, written, ungrouped };
   });
 
@@ -468,7 +505,7 @@ export async function stockRoutes(app: FastifyInstance) {
     if (clash) return reply.code(409).send({ error: 'prefix_taken' });
 
     const products = await prisma.product.findMany({
-      where: { status: 'active', sku: { startsWith: `${g}-` } },
+      where: { status: VULCAN_STATUS, sku: { startsWith: `${g}-` } },
       select: { sku: true },
     });
     if (!products.length) return reply.code(404).send({ error: 'empty_group' });
@@ -523,7 +560,7 @@ export async function stockRoutes(app: FastifyInstance) {
   app.get('/api/stock/groups', async () => {
     const counts = await prisma.product.groupBy({
       by: ['catalogGroup'],
-      where: { status: 'active' },
+      where: { status: VULCAN_STATUS },
       _count: { _all: true },
     });
     const byKey = new Map(counts.map((c) => [c.catalogGroup ?? '', c._count._all]));
@@ -543,13 +580,13 @@ export async function stockRoutes(app: FastifyInstance) {
     const take = Math.min(Math.max(Number(limit) || 2000, 1), 2000);
     const query = String(q ?? '').trim();
 
-    const where: Record<string, unknown> = { status: 'active' };
+    const where: Record<string, unknown> = { status: VULCAN_STATUS };
     if (group) where.catalogGroup = group;
     else if (filter === 'unassigned') where.catalogGroup = null;
 
     let products;
     if (query) {
-      const matches = await searchProducts(query, take);
+      const matches = await searchProducts(query, take, VULCAN_STATUSES);
       const skus = matches.map((m) => m.sku);
       products = skus.length
         ? await prisma.product.findMany({ where: { ...where, sku: { in: skus } } })
@@ -570,6 +607,7 @@ export async function stockRoutes(app: FastifyInstance) {
         catalogGroup: p.catalogGroup, catalogSubgroup: p.catalogSubgroup,
         alias: aliasBySku.get(p.sku) ?? null,
         stock: p.stock, reorderPoint: p.reorderPoint,
+        stockOnly: p.status === 'stock_only',
       })),
     };
   });
@@ -596,7 +634,7 @@ export async function stockRoutes(app: FastifyInstance) {
 
     // ── GROUP pass ──
     const groupScope = await prisma.product.findMany({
-      where: onlyUnassigned ? { status: 'active', catalogGroup: null } : { status: 'active' },
+      where: onlyUnassigned ? { status: VULCAN_STATUS, catalogGroup: null } : { status: VULCAN_STATUS },
       select: { sku: true, nameEn: true, nameTh: true, keywords: true },
     });
     const groupBySku = new Map<string, string>();
@@ -605,14 +643,14 @@ export async function stockRoutes(app: FastifyInstance) {
 
     // ── SUBGROUP pass ── (after groups are written, so newly-grouped items are included)
     const subScope = await prisma.product.findMany({
-      where: { status: 'active', catalogGroup: { not: null }, ...(onlyUnassigned ? { catalogSubgroup: null } : {}) },
+      where: { status: VULCAN_STATUS, catalogGroup: { not: null }, ...(onlyUnassigned ? { catalogSubgroup: null } : {}) },
       select: { sku: true, nameEn: true, nameTh: true, keywords: true, catalogGroup: true },
     });
     const subBySku = new Map<string, string>();
     for (const p of subScope) { const s = autoAssignSubgroup(p.catalogGroup!, p); if (s) subBySku.set(p.sku, s); }
     const subAssigned = await writeBucketed(subBySku, 'catalogSubgroup');
 
-    const stillNull = await prisma.product.count({ where: { status: 'active', catalogGroup: null } });
+    const stillNull = await prisma.product.count({ where: { status: VULCAN_STATUS, catalogGroup: null } });
     return { ok: true, assigned, subAssigned, unassigned: stillNull, scanned: groupScope.length };
   });
 
@@ -658,7 +696,7 @@ export async function stockRoutes(app: FastifyInstance) {
     const group = body.group === null || body.group === '' || body.group === undefined ? null : String(body.group);
     if (group !== null && !(await loadTaxonomy()).groupKeys.has(group)) return reply.code(400).send({ error: 'bad_group' });
     const res = await prisma.product.updateMany({
-      where: { status: 'active', sku: { startsWith: `${family}-` }, catalogGroup: group === null ? { not: null } : undefined },
+      where: { status: VULCAN_STATUS, sku: { startsWith: `${family}-` }, catalogGroup: group === null ? { not: null } : undefined },
       data: { catalogGroup: group },
     });
     return { ok: true, family, group, updated: res.count };
@@ -684,11 +722,11 @@ export async function stockRoutes(app: FastifyInstance) {
       const slice = skus.slice(i, i + CHUNK);
       // clear the sub-group only where the group is actually changing
       await prisma.product.updateMany({
-        where: { sku: { in: slice }, status: 'active', NOT: { catalogGroup: group } },
+        where: { sku: { in: slice }, status: VULCAN_STATUS, NOT: { catalogGroup: group } },
         data: { catalogSubgroup: null },
       });
       const res = await prisma.product.updateMany({
-        where: { sku: { in: slice }, status: 'active' },
+        where: { sku: { in: slice }, status: VULCAN_STATUS },
         data: { catalogGroup: group },
       });
       updated += res.count;
@@ -713,7 +751,7 @@ export async function stockRoutes(app: FastifyInstance) {
       let updated = 0;
       for (let i = 0; i < skus.length; i += CHUNK) {
         const res = await prisma.product.updateMany({
-          where: { sku: { in: skus.slice(i, i + CHUNK) }, status: 'active' },
+          where: { sku: { in: skus.slice(i, i + CHUNK) }, status: VULCAN_STATUS },
           data: { catalogSubgroup: null },
         });
         updated += res.count;
@@ -722,7 +760,7 @@ export async function stockRoutes(app: FastifyInstance) {
     }
     // set: keep only the SKUs whose current group defines this sub-code
     const prods = await prisma.product.findMany({
-      where: { sku: { in: skus }, status: 'active' },
+      where: { sku: { in: skus }, status: VULCAN_STATUS },
       select: { sku: true, catalogGroup: true },
     });
     const tax = await loadTaxonomy();
@@ -730,7 +768,7 @@ export async function stockRoutes(app: FastifyInstance) {
     let updated = 0;
     for (let i = 0; i < valid.length; i += CHUNK) {
       const res = await prisma.product.updateMany({
-        where: { sku: { in: valid.slice(i, i + CHUNK) }, status: 'active' },
+        where: { sku: { in: valid.slice(i, i + CHUNK) }, status: VULCAN_STATUS },
         data: { catalogSubgroup: sub },
       });
       updated += res.count;

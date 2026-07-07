@@ -513,7 +513,10 @@ function RowItem({
           <div className="flex items-center gap-2.5">
             <Thumb photoSku={row.photoSku} />
             <div className="min-w-0">
-              <div className="font-medium text-slate-800 truncate">{row.nameTh || row.nameEn || flatSku(row.sku)}</div>
+              <div className="font-medium text-slate-800 truncate">
+                {row.nameTh || row.nameEn || flatSku(row.sku)}
+                {row.stockOnly && <span className="ml-1.5 align-middle text-[9px] font-bold uppercase tracking-wide bg-sky-100 text-sky-700 rounded px-1 py-px" title="เพิ่มจาก Express — ยังไม่ลงแคตตาล็อก (ไม่ขึ้นเว็บ/AI)">Express</span>}
+              </div>
               <div className="text-xs text-slate-400 font-mono">
                 {row.alias && <span className="text-indigo-600 font-semibold">{row.alias} · </span>}
                 {flatSku(row.sku)}
@@ -731,7 +734,9 @@ function ImportTab({ onApplied }: { onApplied: () => void }) {
   const [fileName, setFileName] = useState('');
   const [busy, setBusy] = useState<'preview' | 'apply' | null>(null);
   const [err, setErr] = useState('');
-  const [done, setDone] = useState<{ updated: number; unmatched: number } | null>(null);
+  const [done, setDone] = useState<{ updated: number; unmatched: number; created: number } | null>(null);
+  // opt-in: also create the not-in-catalog SKUs as hidden 'stock_only' products
+  const [createNew, setCreateNew] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   async function onFile(file: File) {
@@ -772,8 +777,8 @@ function ImportTab({ onApplied }: { onApplied: () => void }) {
     setBusy('apply');
     setErr('');
     try {
-      const res = await applyImport(preview.token);
-      setDone({ updated: res.skusUpdated, unmatched: res.skusUnmatched });
+      const res = await applyImport(preview.token, undefined, createNew);
+      setDone({ updated: res.skusUpdated, unmatched: res.skusUnmatched, created: res.created ?? 0 });
       setPreview(null);
       onApplied();
     } catch (e) {
@@ -838,8 +843,9 @@ function ImportTab({ onApplied }: { onApplied: () => void }) {
 
         {done && (
           <div className="mt-4 p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-sm flex items-center gap-2">
-            <Check size={16} /> นำเข้าสำเร็จ — อัปเดต {done.updated} รายการ
-            {done.unmatched > 0 && ` · ไม่พบในแคตตาล็อก ${done.unmatched} รายการ`}
+            <Check size={16} /> นำเข้าสำเร็จ — อัปเดต {done.updated.toLocaleString('th-TH')} รายการ
+            {done.created > 0 && ` · เพิ่มสินค้าใหม่ ${done.created.toLocaleString('th-TH')} รายการ`}
+            {done.unmatched > 0 && ` · ไม่พบในแคตตาล็อก ${done.unmatched.toLocaleString('th-TH')} รายการ`}
           </div>
         )}
       </div>
@@ -876,12 +882,20 @@ function ImportTab({ onApplied }: { onApplied: () => void }) {
           {unmatchedRows.length > 0 && (
             <div className="mb-3 p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-xs">
               <div className="font-semibold mb-1 flex items-center gap-1">
-                <AlertTriangle size={13} /> SKU ที่ไม่พบในแคตตาล็อก (จะถูกข้าม ไม่สร้างใหม่):
+                <AlertTriangle size={13} /> SKU ที่ไม่พบในแคตตาล็อก ({unmatchedRows.length.toLocaleString('th-TH')} รายการ):
               </div>
-              <div className="font-mono">
+              <div className="font-mono mb-2">
                 {unmatchedRows.slice(0, 30).map((r) => flatSku(r.sku)).join(', ')}
                 {unmatchedRows.length > 30 && ` … (+${unmatchedRows.length - 30})`}
               </div>
+              <label className="flex items-start gap-2 cursor-pointer bg-white/60 rounded-lg p-2 border border-amber-200">
+                <input type="checkbox" checked={createNew} onChange={(e) => setCreateNew(e.target.checked)}
+                  className="mt-0.5 w-4 h-4 rounded border-amber-300 text-indigo-600 focus:ring-indigo-400" />
+                <span>
+                  <b>เพิ่มสินค้าใหม่เหล่านี้เข้าระบบ (นับสต็อกในVulcan)</b> — ใช้ชื่อจาก Express, ยังไม่มีราคา/รูป/หมวด
+                  <br /><span className="text-amber-600">จะแสดงเฉพาะใน Vulcan เท่านั้น · ไม่ขึ้นเว็บไซต์และ AI ไม่นำไปตอบลูกค้า จนกว่าจะจัดข้อมูลให้ครบ</span>
+                </span>
+              </label>
             </div>
           )}
 
@@ -1298,7 +1312,10 @@ function GroupProductRow({
         />
         <Thumb photoSku={product.photoSku} size={34} />
         <div className="min-w-0 flex-1">
-          <div className="text-sm text-slate-700 truncate">{product.nameTh || product.nameEn || flatSku(product.sku)}</div>
+          <div className="text-sm text-slate-700 truncate">
+            {product.nameTh || product.nameEn || flatSku(product.sku)}
+            {product.stockOnly && <span className="ml-1.5 align-middle text-[9px] font-bold uppercase tracking-wide bg-sky-100 text-sky-700 rounded px-1 py-px" title="เพิ่มจาก Express — ยังไม่ลงแคตตาล็อก">Express</span>}
+          </div>
           <div className="text-[10px] text-slate-400 font-mono">
             {product.alias && <span className="text-indigo-600 font-semibold">{product.alias} · </span>}
             {flatSku(product.sku)}

@@ -1,4 +1,5 @@
 import type { Product } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { prisma } from '../db/prisma.js';
 import { isLow } from '../stock/helpers.js';
 
@@ -109,7 +110,10 @@ export async function findProducts(query: string, limit = 5): Promise<ProductMat
 // SKU matching is DASH-INSENSITIVE: "071009", "07-10-09", and "0710" all match the
 // stored "07-10-09" (codes are entered/shown bare for easy typing; the stored key keeps
 // its dashes). SKU matches rank first; returns more results than findProducts.
-export async function searchProducts(query: string, limit = 12): Promise<ProductMatch[]> {
+// statuses: which Product.status values are searchable. Default ['active'] (console + AI never
+// see stock-only rows); Vulcan passes ['active','stock_only'] so its own search finds the
+// Express-imported stubs it manages.
+export async function searchProducts(query: string, limit = 12, statuses: string[] = ['active']): Promise<ProductMatch[]> {
   const raw = (query || '').trim();
   if (!raw) return [];
   const tokens = questionKeywords(raw);
@@ -125,7 +129,7 @@ export async function searchProducts(query: string, limit = 12): Promise<Product
   if (skuFlat.length >= 2) {
     const rows = await prisma.$queryRaw<{ sku: string }[]>`
       SELECT sku FROM "Product"
-      WHERE status = 'active' AND replace(lower(sku), '-', '') LIKE ${`%${skuFlat}%`}
+      WHERE status IN (${Prisma.join(statuses)}) AND replace(lower(sku), '-', '') LIKE ${`%${skuFlat}%`}
       LIMIT 80`;
     skuHits = rows.map((r) => r.sku);
   }
@@ -158,7 +162,7 @@ export async function searchProducts(query: string, limit = 12): Promise<Product
   if (or.length === 0) return []; // no SKU/alias hit and no usable tokens
 
   const candidates = await prisma.product.findMany({
-    where: { status: 'active', OR: or },
+    where: { status: { in: statuses }, OR: or },
     take: 80,
   });
 

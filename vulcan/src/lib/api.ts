@@ -43,6 +43,7 @@ export interface StockRow {
   stockAt: string | null; // ISO; null = unknown
   reorderPoint: number | null;
   low: boolean;
+  stockOnly: boolean; // created from the Express import, not merchandised yet (hidden from web/AI)
   alias?: string | null; // short human code (e.g. "TR34")
 }
 
@@ -106,6 +107,7 @@ export interface ImportApplyResult {
   ok: boolean;
   skusUpdated: number;
   skusUnmatched: number;
+  created?: number; // new 'stock_only' products created (when createNew was set)
   importId: string;
 }
 
@@ -254,10 +256,11 @@ export const previewImport = (dataB64: string, fileName: string) =>
   });
 
 // Apply a previously previewed import (by its token) → writes Product.stock/stockAt.
-export const applyImport = (token: string, note?: string) =>
+// createNew=true also creates SKUs not in the catalog as hidden 'stock_only' products.
+export const applyImport = (token: string, note?: string, createNew?: boolean) =>
   authed<ImportApplyResult>('/api/stock/import/apply', {
     method: 'POST',
-    body: JSON.stringify({ token, note }),
+    body: JSON.stringify({ token, note, createNew }),
   });
 
 // ── Product codes (group-based human codes, e.g. "IM01", "EN12") ─────────
@@ -305,6 +308,7 @@ export interface GroupProduct {
   alias: string | null;
   stock: number | null; // remaining qty (null = unknown)
   reorderPoint: number | null;
+  stockOnly?: boolean; // from the Express import, not merchandised yet (hidden from web/AI)
 }
 
 export const getGroups = () =>
