@@ -852,6 +852,18 @@ export async function stockRoutes(app: FastifyInstance) {
     return { ok: true, groupKey, code };
   });
 
+  // POST /api/stock/groups/empty-trash — archive every product currently in the ถังขยะ (trash)
+  // group: status -> 'archived'. Archived rows are hidden from Vulcan (VULCAN_STATUS) AND from
+  // Diana + the AI (they whitelist 'active'), and a re-import updates their stock but leaves them
+  // archived — so trashed items don't resurrect. Reversible (status only), not a hard delete.
+  app.post('/api/stock/groups/empty-trash', async () => {
+    const res = await prisma.product.updateMany({
+      where: { catalogGroup: 'trash', status: { in: VULCAN_STATUSES } },
+      data: { status: 'archived' },
+    });
+    return { ok: true, archived: res.count };
+  });
+
   // ─── Name-normalization review (ตรวจทาน) ───────────────────────────────
   // Supervisors review AI-normalized English names before they replace the live name. A
   // proposal lives in Product.proposedNameEn (STAGING); the live Product.nameEn is left

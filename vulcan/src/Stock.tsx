@@ -18,7 +18,7 @@ import {
   generateAliases, setAlias,
   getGroups, getGroupProducts, autoAssignGroups, setProductGroup, setSubgroup,
   setProductsGroup, setSubgroups,
-  createGroup, createSubgroup, deleteGroup, deleteSubgroup,
+  createGroup, createSubgroup, deleteGroup, deleteSubgroup, emptyTrash,
   type NameProposalRow, type ProposalSummary, type ProposalFilter,
   getProposalSummary, getProposals, loadProposals, decideProposal, bulkApproveSafe,
 } from './lib/api';
@@ -1248,7 +1248,7 @@ const PILLAR_LABEL: Record<Pillar, string> = {
   digital: 'ดิจิทัล',
   clinical: 'คลินิก',
   equipment: 'อุปกรณ์และของใช้',
-  review: 'รอตัดสินใจ / ตรวจสอบภายหลัง',
+  review: 'อื่นๆ / จัดการภายหลัง',
 };
 const PILLAR_ORDER: Pillar[] = ['lab', 'digital', 'clinical', 'equipment', 'review'];
 
@@ -1629,6 +1629,17 @@ function GroupTab() {
     try { await deleteGroup(openGroup.key); setSel(null); await loadGroups(); }
     catch { setBatchNote('ลบกลุ่มไม่สำเร็จ ลองใหม่อีกครั้ง'); }
   }
+  async function doEmptyTrash() {
+    const n = openGroup?.count ?? 0;
+    if (n === 0) return;
+    if (!window.confirm(`ล้างถังขยะ — เก็บ ${n.toLocaleString('th-TH')} รายการเข้าที่เก็บถาวร?\nจะถูกซ่อนจากทุกที่ (ไม่กลับมาเมื่อนำเข้าใหม่) แต่ยังกู้คืนได้ภายหลัง`)) return;
+    try {
+      const r = await emptyTrash();
+      setBatchNote(`ล้างถังขยะแล้ว — เก็บ ${r.archived.toLocaleString('th-TH')} รายการ`);
+      await loadGroups();
+      await loadProducts('trash', q);
+    } catch { setBatchNote('ล้างถังขยะไม่สำเร็จ ลองใหม่อีกครั้ง'); }
+  }
   function toggleAll() {
     setSelected(allSelected ? new Set() : new Set(products.map((p) => p.sku)));
   }
@@ -1745,6 +1756,14 @@ function GroupTab() {
               <button onClick={removeGroup} title="ลบกลุ่มนี้" className="text-slate-300 hover:text-rose-600"><Trash2 size={15} /></button>
             )}
             <button onClick={() => setSel(null)} className="text-slate-400 hover:text-slate-600"><X size={16} /></button>
+            {sel === 'trash' && products.length > 0 && (
+              <button
+                onClick={doEmptyTrash}
+                className="px-3 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-sm font-medium flex items-center gap-1.5 whitespace-nowrap"
+              >
+                <Trash2 size={14} /> ล้างถังขยะ ({openGroup?.count.toLocaleString('th-TH')})
+              </button>
+            )}
             <div className="relative flex-1 min-w-[200px]">
               <Search size={15} className="absolute left-3 top-2.5 text-slate-400" />
               <input

@@ -396,6 +396,11 @@ export const deleteSubgroup = (groupKey: string, code: string) =>
     body: JSON.stringify({ groupKey, code }),
   });
 
+// Archive every product in the ถังขยะ (trash) group → hidden from Vulcan + web + AI; won't
+// resurrect on re-import. Reversible (status only), not a hard delete.
+export const emptyTrash = () =>
+  authed<{ ok: boolean; archived: number }>('/api/stock/groups/empty-trash', { method: 'POST' });
+
 // ── Name-normalization review (ตรวจทาน tab) ─────────────────────────────
 // A staged proposed English name awaiting review. The live nameEn is untouched until the
 // proposal is APPROVED. status: pending (awaiting) | approved (now live) | rejected (dropped).
