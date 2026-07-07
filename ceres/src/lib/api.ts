@@ -185,8 +185,16 @@ export interface OcrResult {
   vendor: string;
   dateText: string;
 }
+// Backend flags a receipt photo that hash-matches one already used on another expense.
+// Surfaced as a non-blocking warning in ExpenseSheet and, via Expense.duplicateReceipt,
+// as a badge in the MD/CEO review screens (MdApproval/MdExpenses).
+export interface DuplicateReceipt {
+  partyName: string;
+  amount: string;
+  spentAt: string;
+}
 export const uploadReceipt = (dataB64: string, contentType: string) =>
-  authed<{ uploadId: string; url: string; ocr: OcrResult }>('/api/ceres/receipts', {
+  authed<{ uploadId: string; url: string; ocr: OcrResult; duplicate: DuplicateReceipt | null }>('/api/ceres/receipts', {
     method: 'POST',
     body: JSON.stringify({ dataB64, contentType }),
   });
@@ -209,6 +217,7 @@ export interface Expense {
   ocrAmount: string;
   ocrVendor: string;
   ocrDate: string;
+  duplicateReceipt: boolean;
   status: ExpenseStatus;
   approvedById: string | null;
   approvedAt: string | null;

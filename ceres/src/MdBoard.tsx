@@ -1,17 +1,29 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Loader2, AlertTriangle, RefreshCw, AlertCircle } from 'lucide-react';
-import { getBoard, baht, type Board } from './lib/api';
+import { getBoard, listMovements, baht, type Board } from './lib/api';
 
-export default function MdBoard() {
+export default function MdBoard({ onViewPendingParty }: { onViewPendingParty: (partyId: string) => void }) {
   const [board, setBoard] = useState<Board | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  // Opening-balance guard rail: box reads 0 AND no movement has EVER been recorded —
+  // a brand-new/never-set-up box, not just one that happens to be drained today.
+  const [needsOpeningBalance, setNeedsOpeningBalance] = useState(false);
 
   const load = useCallback(() => {
     setLoading(true);
     setError('');
     getBoard()
-      .then(setBoard)
+      .then((b) => {
+        setBoard(b);
+        if (b.box.balance === 0) {
+          listMovements({})
+            .then((r) => setNeedsOpeningBalance(r.movements.length === 0))
+            .catch(() => setNeedsOpeningBalance(false));
+        } else {
+          setNeedsOpeningBalance(false);
+        }
+      })
       .catch(() => setError('โหลดข้อมูลไม่สำเร็จ'))
       .finally(() => setLoading(false));
   }, []);
@@ -43,6 +55,12 @@ export default function MdBoard() {
         </div>
       ) : (
         <>
+          {needsOpeningBalance && (
+            <div className="mb-3 flex items-start gap-2 px-3 py-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-sm">
+              <AlertCircle size={16} className="mt-0.5 shrink-0" />
+              <span>ยังไม่ได้ตั้งยอดเงินตั้งต้น — นับเงินสดในกล่อง แล้วบันทึกที่แท็บ เบิก/คืน → ฝากเข้ากล่อง</span>
+            </div>
+          )}
           <div className="bg-white rounded-xl border border-slate-200 p-5 mb-3">
             <div className="text-xs text-slate-400 mb-1">ยอดเงินกล่อง</div>
             <div className="text-3xl font-bold text-amber-700">{baht(board.box.balance)}</div>
@@ -66,9 +84,12 @@ export default function MdBoard() {
                 <div className="flex items-center justify-between mb-2">
                   <span className="font-semibold">{p.partyName}</span>
                   {p.pendingCount > 0 && (
-                    <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 text-xs font-semibold">
+                    <button
+                      onClick={() => onViewPendingParty(p.partyId)}
+                      className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 text-xs font-semibold hover:bg-amber-200 active:bg-amber-300"
+                    >
                       รอตรวจ {p.pendingCount}
-                    </span>
+                    </button>
                   )}
                 </div>
                 <div className="grid grid-cols-2 gap-y-1 text-xs text-slate-500">
@@ -110,9 +131,12 @@ export default function MdBoard() {
                     <td className="px-4 py-2 text-right font-bold text-amber-700">{baht(p.expectedChange)}</td>
                     <td className="px-4 py-2 text-right">
                       {p.pendingCount > 0 && (
-                        <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 text-xs font-semibold">
+                        <button
+                          onClick={() => onViewPendingParty(p.partyId)}
+                          className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 text-xs font-semibold hover:bg-amber-200 active:bg-amber-300"
+                        >
                           {p.pendingCount}
-                        </span>
+                        </button>
                       )}
                     </td>
                   </tr>

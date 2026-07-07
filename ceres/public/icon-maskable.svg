@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="ceresIconBg" x1="0" y1="0" x2="512" y2="512" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ea580c"/>
+      <stop offset="1" stop-color="#c2410c"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" fill="url(#ceresIconBg)"/>
+  <rect x="178" y="180" width="156" height="36" rx="13" fill="#ffffff" fill-opacity="0.9"/>
+  <rect x="154" y="199" width="204" height="114" rx="17" fill="#ffffff"/>
+  <circle cx="325" cy="256" r="11" fill="#c2410c"/>
+</svg>

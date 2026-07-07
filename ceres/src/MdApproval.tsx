@@ -3,15 +3,35 @@ import { Loader2, AlertTriangle, X, ThumbsUp } from 'lucide-react';
 import { listExpenses, approveExpense, rejectExpense, baht, type Expense } from './lib/api';
 import { useCeres } from './lib/bootstrapContext';
 
-export default function MdApproval() {
+// Prefill payload passed in from MdBoard's tappable "รอตรวจ" party badge — jumps here
+// pre-filtered to that party. Mirrors MdRequests's RequestPrefill pattern (see Md.tsx's
+// approvalPrefill state / goToApprovalWithPrefill).
+export interface ApprovalPrefill {
+  partyId: string;
+}
+
+export default function MdApproval({
+  prefill,
+  onConsumePrefill,
+}: {
+  prefill: ApprovalPrefill | null;
+  onConsumePrefill: () => void;
+}) {
   const { bootstrap } = useCeres();
-  const [partyId, setPartyId] = useState('');
+  const [partyId, setPartyId] = useState(prefill?.partyId ?? '');
   const [rows, setRows] = useState<Expense[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [busyId, setBusyId] = useState('');
   const [rejectingId, setRejectingId] = useState('');
   const [reason, setReason] = useState('');
+
+  useEffect(() => {
+    if (!prefill) return;
+    setPartyId(prefill.partyId);
+    onConsumePrefill();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prefill]);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -107,9 +127,18 @@ export default function MdApproval() {
                       <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 text-xs">{r.category}</span>
                     </div>
                     {r.customerNote && <div className="text-xs text-slate-400 mt-1">ลูกค้า: {r.customerNote}</div>}
-                    {ocrMismatch && (
-                      <div className="mt-1.5 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 text-xs">
-                        <AlertTriangle size={11} /> OCR อ่านได้ ฿{r.ocrAmount}
+                    {(ocrMismatch || r.duplicateReceipt) && (
+                      <div className="flex flex-wrap gap-1.5 mt-1.5">
+                        {ocrMismatch && (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 text-xs">
+                            <AlertTriangle size={11} /> OCR อ่านได้ ฿{r.ocrAmount}
+                          </span>
+                        )}
+                        {r.duplicateReceipt && (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-rose-100 text-rose-700 text-xs">
+                            <AlertTriangle size={11} /> ใบเสร็จซ้ำ
+                          </span>
+                        )}
                       </div>
                     )}
                   </div>
