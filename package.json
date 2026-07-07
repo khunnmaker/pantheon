@@ -1,0 +1,16 @@
+{
+  "name": "pantheon-monorepo",
+  "private": true,
+  "workspaces": [
+    "packages/*",
+    "web",
+    "juno",
+    "vulcan",
+    "ceres",
+    "jupiter",
+    "diana",
+    "mercury",
+    "venus",
+    "api"
+  ]
+}
