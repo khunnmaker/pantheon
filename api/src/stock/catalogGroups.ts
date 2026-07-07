@@ -30,6 +30,7 @@ export const CATALOG_GROUPS: CatalogGroup[] = [
   { key: 'gypsum', code: 'GY', nameTh: 'ปูนและวัสดุทำโมเดล', nameEn: 'Gypsum & Model Materials', pillar: 'lab' },
   { key: 'reline', code: 'RL', nameTh: 'วัสดุเสริมฐานและซ่อมฟันปลอม', nameEn: 'Reline & Repair', pillar: 'lab' },
   { key: 'alloy', code: 'AL', nameTh: 'โลหะผสมหล่อ', nameEn: 'Casting Alloys', pillar: 'lab' },
+  { key: 'lab_other', code: 'LO', nameTh: 'วัสดุแล็บอื่นๆ', nameEn: 'Other Lab Materials', pillar: 'lab' },
   // ── Digital ──
   { key: 'cadcam', code: 'CM', nameTh: 'แคดแคมและงานกัด', nameEn: 'CAD-CAM Milling', pillar: 'digital' },
   { key: 'printing', code: 'PR', nameTh: 'การพิมพ์ 3 มิติ', nameEn: '3D Printing', pillar: 'digital' },
@@ -135,6 +136,9 @@ export const SUBGROUPS: Record<string, SubGroup[]> = {
     { code: 'PN', nameTh: 'หมุด/ตะปู', nameEn: 'Pins & Nails' },
     { code: 'SA', nameTh: 'เลื่อย/อุปกรณ์', nameEn: 'Saws & Tools' },
   ],
+  lab_other: [
+    { code: 'TH', nameTh: 'แผ่นขึ้นรูป/เฝือก', nameEn: 'Thermoforming / Splint' },
+  ],
 };
 
 // Valid sub codes per group (for validation).
@@ -203,6 +207,9 @@ const SUBGROUP_RULES: Record<string, Array<{ sub: string; re: RegExp }>> = {
     { sub: 'SA', re: /\bsaw\b|เลื่อย/i },
     { sub: 'IN', re: /bellavest|wirovest|begosol|investment|ปูนหุ้ม/i },
   ],
+  lab_other: [
+    { sub: 'TH', re: /hard splint|\bsplint\b|thermoform|แผ่นขึ้นรูป|เฝือก/i },
+  ],
 };
 
 // Suggest a sub-group code for a product within its group, or null (no rule / group has no subs).
@@ -233,7 +240,8 @@ const RULES: Array<{ group: string; re: RegExp }> = [
   { group: 'restorative', re: /polycarboxylate|glass ?ionomer|composite|บอนดิ้ง|เรซินคอมโพสิต|\bbonding\b|retraction cord|แยกเหงือก|\bwedge\b|matrix|matrices/i },
   // ── lab / prosthetic ──
   { group: 'temp_crown', re: /tempor|temp ?crown|dentine|h\.?c\.?d\b|ครอบชั่วคราว|temporary/i },
-  { group: 'acrylic', re: /self ?cure|heat ?cure|monomer|โมโนเมอร์|tray material|ortho ?(plast|dppf|pmf)|ผงสี.*ortho|ผงสีชมพู|major base|vertex|ผงสำหรับทำฐาน|ผงต้ม|acrylic|อะคริลิก|hybird|hybrid|ผงอะคริลิค|ฐานฟันปลอม|hard splint|splint|เฝือกสบ/i },
+  { group: 'lab_other', re: /hard splint|\bsplint\b|thermoform|แผ่นขึ้นรูป|เฝือก/i },
+  { group: 'acrylic', re: /self ?cure|heat ?cure|monomer|โมโนเมอร์|tray material|ortho ?(plast|dppf|pmf)|ผงสี.*ortho|ผงสีชมพู|major base|vertex|ผงสำหรับทำฐาน|ผงต้ม|acrylic|อะคริลิก|hybird|hybrid|ผงอะคริลิค|ฐานฟันปลอม/i },
   { group: 'wax', re: /\bwax\b|แว็กซ์|เว็กซ์|aluwax|occlusal plate|แผ่นวัดการเรียงฟัน|ตะแกรง|เรียงฟัน/i },
   { group: 'investment', re: /bellavest|wirovest|begosol|investment|ปูนหุ้ม|casting|twin ?pins|special nail|set of nail|grid stainless|เลื่อยตัดปูน|dental saw|\bnail/i },
   { group: 'gypsum', re: /plaster|dental stone|die stone|ปูนปลาสเตอร์|ปูนโมเดล|ปูน ?ortho|\bstone\b|โมเดล/i },
