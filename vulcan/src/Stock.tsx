@@ -1232,12 +1232,13 @@ function GroupSelect({
 
 // One reviewable product row: group + sub-group pickers, remaining stock, and inline name edit.
 function GroupProductRow({
-  product, groups, checked, onToggleSelect, onChangeGroup, onChangeSubgroup, onRenamed,
+  product, groups, index, checked, onToggleSelect, onChangeGroup, onChangeSubgroup, onRenamed,
 }: {
   product: GroupProduct;
   groups: CatalogGroupInfo[];
+  index: number;
   checked: boolean;
-  onToggleSelect: (sku: string) => void;
+  onToggleSelect: (sku: string, index: number, shiftKey: boolean) => void;
   onChangeGroup: (sku: string, group: string | null) => void;
   onChangeSubgroup: (sku: string, sub: string | null) => void;
   onRenamed: (sku: string, nameTh: string, nameEn: string) => void;
@@ -1265,7 +1266,9 @@ function GroupProductRow({
         <input
           type="checkbox"
           checked={checked}
-          onChange={() => onToggleSelect(product.sku)}
+          onChange={() => {}}
+          onMouseDown={(e) => { if (e.shiftKey) e.preventDefault(); }}
+          onClick={(e) => onToggleSelect(product.sku, index, e.shiftKey)}
           className="shrink-0 w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-400 cursor-pointer"
         />
         <Thumb photoSku={product.photoSku} size={34} />
@@ -1341,6 +1344,8 @@ function GroupTab() {
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
   const [batchBusy, setBatchBusy] = useState(false);
   const [batchNote, setBatchNote] = useState('');
+  // Anchor row index for shift-click range selection (index into the current `products` order).
+  const lastIndexRef = useRef<number | null>(null);
 
   const loadGroups = useCallback(async () => {
     try {
@@ -1374,6 +1379,7 @@ function GroupTab() {
   // `products` without changing [sel, q]; it must NOT linger in `selected` and get swept into a
   // later batch acting on a row the supervisor can no longer see.
   useEffect(() => {
+    lastIndexRef.current = null; // list changed → the old anchor index is meaningless
     setSelected((s) => {
       if (s.size === 0) return s;
       const visible = new Set(products.map((p) => p.sku));
@@ -1425,8 +1431,24 @@ function GroupTab() {
   }
 
   // ── batch selection ──
-  function toggleSelect(sku: string) {
-    setSelected((s) => { const n = new Set(s); if (n.has(sku)) n.delete(sku); else n.add(sku); return n; });
+  // Toggle one row, or — with Shift held — select every row between the last-clicked anchor and
+  // this one (inclusive). The anchor is captured BEFORE setSelected so the state updater doesn't
+  // observe the ref we advance right after.
+  function toggleSelect(sku: string, index: number, shiftKey: boolean) {
+    const anchor = lastIndexRef.current;
+    setSelected((s) => {
+      const n = new Set(s);
+      if (shiftKey && anchor !== null) {
+        const [a, b] = anchor < index ? [anchor, index] : [index, anchor];
+        for (let i = a; i <= b; i++) { const p = products[i]; if (p) n.add(p.sku); }
+      } else if (n.has(sku)) {
+        n.delete(sku);
+      } else {
+        n.add(sku);
+      }
+      return n;
+    });
+    lastIndexRef.current = index;
   }
   const allSelected = products.length > 0 && products.every((p) => selected.has(p.sku));
   // True size of the open bucket (from the uncapped groupBy), vs how many rows actually loaded.
@@ -1623,11 +1645,12 @@ function GroupTab() {
             <p className="text-sm text-slate-400 py-4 text-center">ไม่มีสินค้าในรายการนี้</p>
           ) : (
             <div className="divide-y divide-slate-100 max-h-[60vh] overflow-auto">
-              {products.map((p) => (
+              {products.map((p, i) => (
                 <GroupProductRow
                   key={p.sku}
                   product={p}
                   groups={groups}
+                  index={i}
                   checked={selected.has(p.sku)}
                   onToggleSelect={toggleSelect}
                   onChangeGroup={changeProduct}
