@@ -7,7 +7,8 @@
 'use strict';
 
 const $ = (id) => document.getElementById(id);
-const DEFAULT_API = 'https://minerva-production-9309.up.railway.app';
+// The api's custom domain (the Railway URL still works as an alias for older setups).
+const DEFAULT_API = 'https://api.prominentdental.com';
 
 function show(view) {
   $('loginView').style.display = view === 'login' ? 'block' : 'none';

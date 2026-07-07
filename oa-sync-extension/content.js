@@ -27,37 +27,42 @@
     }
   }
 
-  // Best-effort header title + parenthesized subtitle. chat.line.biz is an SPA; document.title
-  // usually holds the open chat partner's name. We also probe a few defensive, text-based
-  // selectors for the header region and pull "(subname)" out of the nearest heading text.
+  // Best-effort header title + real-LINE-name subtitle. Anchors verified against the live
+  // chat.line.biz DOM (2026-07-07): the open chat's title is an <h4> in the chat-pane header
+  // (div.p-2.border-bottom); the customer's REAL LINE display name sits in the right profile
+  // panel as `div.h5 span.text-truncate` (shown as "(name)" — the parens are separate nodes,
+  // the span holds just the name). NOTE: the page has NO h1/h2 and document.title is a static
+  // "LINE Chat", so those older heuristics found nothing — kept only as last-resort fallbacks.
+  // Emoji in names are rendered as <img>, so textContent comes back emoji-less; the server
+  // matcher compensates with an emoji-insensitive comparison.
   function readHeaderNames() {
     let oaTitle;
     let oaSubName;
     try {
-      // document.title is typically "<partner name> | LINE Official Account" — take the head part.
-      const dt = (document.title || '').split('|')[0].trim();
-      if (dt && !/^LINE/i.test(dt)) oaTitle = dt;
+      // 1) Chat-pane header title (the OA-assigned name, e.g. "น.อ.หญิงกานดา ก323").
+      const h4 =
+        document.querySelector('div.p-2.border-bottom h4') ||
+        document.querySelector('h4.mb-0.text-truncate') ||
+        document.querySelector('h4.text-truncate');
+      const ht = h4 ? (h4.textContent || '').trim() : '';
+      if (ht && ht.length <= 120) oaTitle = ht;
 
-      // Probe likely header text nodes (defensive: try several, ignore failures). We look at the
-      // top-of-page headings and take the first short, non-empty one as a fallback/refinement.
-      const candidates = Array.from(
-        document.querySelectorAll('header h1, header h2, [class*="Header"] h1, [class*="header"] h2, h1, h2')
-      );
-      for (const el of candidates) {
-        const t = (el.textContent || '').trim();
-        if (t && t.length <= 120) {
-          if (!oaTitle) oaTitle = t;
-          // A parenthesized display name near the header, e.g. "น.อ.หญิงกานดา ก323 (kanda)".
-          const paren = t.match(/[（(]\s*([^（()）]{1,80}?)\s*[）)]/);
-          if (paren && paren[1].trim()) {
-            oaSubName = paren[1].trim();
-            // Strip the "(...)" from the title so oaTitle is just the OA-assigned name.
-            oaTitle = t.replace(/[（(][^（()）]*[）)]/g, '').trim() || oaTitle;
-          }
-          break;
-        }
+      // 2) Profile-panel real LINE name (the "(name)" under the title; span holds just the name).
+      const sub = document.querySelector('div.h5 span.text-truncate');
+      const st = sub ? (sub.textContent || '').trim() : '';
+      if (st && st.length <= 120 && st !== oaTitle) oaSubName = st;
+
+      // 3) Last-resort fallbacks (older heuristics; harmless when they find nothing).
+      if (!oaTitle) {
+        const prof = document.querySelector('h3 span.user-select-text, h3.h4 span');
+        const pt = prof ? (prof.textContent || '').trim() : '';
+        if (pt && pt.length <= 120) oaTitle = pt;
       }
-      // Also check the title itself for a parenthesized subname if not found above.
+      if (!oaTitle) {
+        const dt = (document.title || '').split('|')[0].trim();
+        if (dt && !/^LINE/i.test(dt)) oaTitle = dt;
+      }
+      // Parenthesized subname embedded in the title text, e.g. "ชื่อ (kanda)".
       if (!oaSubName && oaTitle) {
         const paren = oaTitle.match(/[（(]\s*([^（()）]{1,80}?)\s*[）)]/);
         if (paren && paren[1].trim()) {

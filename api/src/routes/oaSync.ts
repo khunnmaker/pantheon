@@ -63,6 +63,38 @@ export async function oaSyncRoutes(app: FastifyInstance) {
       if (oaSubName) customerId = await uniqueMatch({ displayName: oaSubName });
       if (!customerId && oaTitle) customerId = await uniqueMatch({ nickname: oaTitle });
       if (!customerId && oaTitle) customerId = await uniqueMatch({ displayName: oaTitle });
+
+      // Emoji-insensitive fallback: the OA Manager renders emoji in names as <img>, so the
+      // extension's textContent arrives emoji-less (e.g. "Fuse" for a LINE name "Fuse 🌅").
+      // Compare with pictographs/variation-selectors stripped + whitespace collapsed, still
+      // requiring a UNIQUE hit across displayName+nickname. Only runs when exact paths failed.
+      if (!customerId && (oaSubName || oaTitle)) {
+        const norm = (s: string) =>
+          s
+            .replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2190}-\u{21FF}\u{FE00}-\u{FE0F}\u{200D}\u{20E3}]/gu, '')
+            .replace(/\s+/g, ' ')
+            .trim()
+            .toLowerCase();
+        const targets = [oaSubName, oaTitle].filter((v): v is string => !!v).map(norm).filter(Boolean);
+        if (targets.length) {
+          const all = await prisma.customer.findMany({
+            where: { active: true },
+            select: { id: true, displayName: true, nickname: true },
+          });
+          for (const target of targets) {
+            const hits = all.filter(
+              (c) =>
+                (c.displayName && norm(c.displayName) === target) ||
+                (c.nickname && norm(c.nickname) === target),
+            );
+            if (hits.length === 1) {
+              customerId = hits[0].id;
+              break;
+            }
+          }
+        }
+      }
+
       if (customerId) {
         await prisma.oaReadSync.update({ where: { oaChatId }, data: { customerId } });
       }
