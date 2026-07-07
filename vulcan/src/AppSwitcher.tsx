@@ -13,14 +13,18 @@ import { hasAppAccess, type Agent, type AppName } from './lib/api';
 
 const CURRENT: AppName = 'vulcan';
 
-// Suite app URLs: VITE_*_URL env override (for the future custom-domain cutover), with the
-// current Railway production URL as a built-in default so the switcher works everywhere
-// without per-service env config. Ceres has no service yet → env-only (stays hidden).
+// Suite app URLs: VITE_*_URL env override, with the canonical *.prominentdental.com subdomain
+// as the built-in default. The default MUST be same-site with the api (api.prominentdental.com)
+// or suite SSO breaks: the shared session cookie is SameSite=Lax + Domain=.prominentdental.com,
+// so it is only sent to /api/auth/me when the app is opened from a *.prominentdental.com origin.
+// A raw *.up.railway.app URL is a DIFFERENT site → the Lax cookie is withheld → bootstrap /me
+// returns 401 → the app shows Login even though the user is signed in. Ceres has a subdomain
+// too; Mercury stays env-only until its service+domain exist.
 const APP_URL = {
-  minerva: import.meta.env.VITE_MINERVA_URL ?? 'https://heroic-contentment-production-16e7.up.railway.app',
-  vulcan: import.meta.env.VITE_VULCAN_URL ?? 'https://vulcan-production-dbba.up.railway.app',
-  juno: import.meta.env.VITE_JUNO_URL ?? 'https://juno-production-5cea.up.railway.app',
-  ceres: import.meta.env.VITE_CERES_URL as string | undefined,
+  minerva: import.meta.env.VITE_MINERVA_URL ?? 'https://minerva.prominentdental.com',
+  vulcan: import.meta.env.VITE_VULCAN_URL ?? 'https://vulcan.prominentdental.com',
+  juno: import.meta.env.VITE_JUNO_URL ?? 'https://juno.prominentdental.com',
+  ceres: import.meta.env.VITE_CERES_URL ?? 'https://ceres.prominentdental.com',
   mercury: import.meta.env.VITE_MERCURY_URL as string | undefined,
 };
 const APPS: { app: AppName; label: string; url: string | undefined }[] = [
