@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import {
   User, LogOut, Clock, Inbox, Loader2, ShieldCheck, MessageSquare,
   Send, Check, CheckCircle2, RefreshCw, Brain, GraduationCap, Wand2, Pencil, AlertTriangle, Search,
-  Download, Paperclip, Camera, Banknote, X, ChevronDown, ChevronUp, Crown, Pin, CornerUpLeft, Volume2, VolumeX, ExternalLink,
+  Download, Paperclip, Camera, Banknote, X, ChevronDown, ChevronUp, Crown, Pin, CornerUpLeft, Volume2, VolumeX,
 } from 'lucide-react';
 import {
   getQueue, getCustomers, getCustomer, searchCustomers, logout as logoutSuite, regenerateDraft, rewriteText, sendReply, setNickname, setCategory, setStage, STAGES,
@@ -18,11 +18,6 @@ import AppSwitcher from './AppSwitcher';
 // Portal-back link (Jupiter). URL from build-time env; hidden when unset, so it is completely
 // inert until VITE_PORTAL_URL is configured (Phase 1 go-live / Phase 2 domains).
 const PORTAL_URL: string | undefined = import.meta.env.VITE_PORTAL_URL;
-// LINE OA Manager chat deep-link — opens the customer's chat in LINE's own console (the only
-// place "Read/อ่านแล้ว" status is shown; the Messaging API doesn't expose it). The account id is
-// NOT a secret (only usable inside a logged-in OA Manager session); override via VITE_LINE_OA_ID.
-const LINE_OA_ID = (import.meta.env.VITE_LINE_OA_ID as string | undefined) ?? 'Uaaa328e6464049ed51e23b78c2184456';
-const oaChatUrl = (lineUserId: string) => `https://chat.line.biz/${LINE_OA_ID}/chat/${lineUserId}`;
 
 // Read a File as a base64 data URL (for upload).
 function fileToDataUrl(file: File): Promise<string> {
@@ -1409,11 +1404,6 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                     <>
                       <span className="shrink-0">{detail ? nameOf(detail.customer) : 'บทสนทนา'}</span>
                       {detail && <button onClick={() => setNickEdit({ code: detail.customer.code ?? '', nickname: detail.customer.nickname ?? '' })} title="แก้รหัส / ชื่อ" className="opacity-80 hover:opacity-100 shrink-0"><Pencil size={13} /></button>}
-                      {detail && (
-                        <a href={oaChatUrl(detail.customer.lineUserId)} target="_blank" rel="noopener noreferrer"
-                          title="เปิดแชทนี้ใน LINE OA (ดูสถานะ 'อ่านแล้ว')"
-                          className="opacity-80 hover:opacity-100 shrink-0 text-white"><ExternalLink size={13} /></a>
-                      )}
                       {detail && (
                         <div className="relative shrink-0">
                           <button type="button" onClick={() => setCatOpen((v) => !v)}
