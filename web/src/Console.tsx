@@ -25,6 +25,34 @@ const PORTAL_URL: string | undefined = import.meta.env.VITE_PORTAL_URL;
 const LINE_OA_ID = (import.meta.env.VITE_LINE_OA_ID as string | undefined) ?? 'Uaaa328e6464049ed51e23b78c2184456';
 
 // "x นาทีที่แล้ว" for a synced-at timestamp; falls back to HH:MM for older syncs / bad input.
+// Interpret the OA read marker ("Read 20:48" / "อ่านแล้ว 20:48") as an absolute moment — the
+// most recent occurrence of that wall-clock time at or before the sync observation (staff run
+// in the same Asia/Bangkok TZ LINE displays) — and compare it with our LATEST outgoing message.
+// If we sent something newer than the read point, the customer hasn't read it yet (as of the
+// last sync; it updates the next time the chat is opened in the OA Manager).
+function oaReadState(
+  readLabel: string | null,
+  readSeenAt: string | null,
+  messages: Array<{ role: string; createdAt: string }>,
+): { unread: boolean; readTime: string } | null {
+  if (!readLabel) return null;
+  const m = readLabel.match(/(\d{1,2}):(\d{2})/);
+  const readTime = m ? m[0] : readLabel;
+  const seen = readSeenAt ? new Date(readSeenAt) : null;
+  if (!m || !seen || Number.isNaN(seen.getTime())) return { unread: false, readTime };
+  const readUpTo = new Date(seen);
+  readUpTo.setHours(parseInt(m[1], 10), parseInt(m[2], 10), 59, 999); // end of the marker minute
+  if (readUpTo.getTime() > seen.getTime()) readUpTo.setDate(readUpTo.getDate() - 1);
+  let latestOut = 0;
+  for (const msg of messages) {
+    if (msg.role !== 'agent') continue;
+    const t = new Date(msg.createdAt).getTime();
+    if (t > latestOut) latestOut = t;
+  }
+  // 90s tolerance for clock skew between LINE's marker time and our server timestamps.
+  return { unread: latestOut > readUpTo.getTime() + 90_000, readTime };
+}
+
 function syncAgo(iso: string | null): string {
   if (!iso) return '';
   const d = new Date(iso);
@@ -1449,20 +1477,29 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                     <>
                       <span className="shrink-0">{detail ? nameOf(detail.customer) : 'บทสนทนา'}</span>
                       {detail && <button onClick={() => setNickEdit({ code: detail.customer.code ?? '', nickname: detail.customer.nickname ?? '' })} title="แก้รหัส / ชื่อ" className="opacity-80 hover:opacity-100 shrink-0"><Pencil size={13} /></button>}
-                      {detail?.oaRead && (
-                        <span className="flex items-center gap-1 shrink-0">
-                          {detail.oaRead.readLabel && (
-                            <span title="สถานะอ่านจาก LINE OA (ซิงก์ผ่านส่วนขยาย)"
-                              className="flex items-center gap-0.5 bg-white/20 text-white text-[10px] rounded px-1.5 py-0.5">
-                              <Eye size={11} /> {detail.oaRead.readLabel}
-                              {detail.oaRead.readSeenAt && <span className="opacity-80"> · ซิงก์ {syncAgo(detail.oaRead.readSeenAt)}</span>}
-                            </span>
-                          )}
-                          <a href={`https://chat.line.biz/${LINE_OA_ID}/chat/${detail.oaRead.oaChatId}`}
-                            target="_blank" rel="noreferrer" title="เปิดแชทนี้ใน LINE OA Manager"
-                            className="opacity-80 hover:opacity-100"><ExternalLink size={12} /></a>
-                        </span>
-                      )}
+                      {detail?.oaRead && (() => {
+                        const rs = oaReadState(detail.oaRead.readLabel, detail.oaRead.readSeenAt, detail.messages);
+                        return (
+                          <span className="flex items-center gap-1 shrink-0">
+                            {rs && (rs.unread ? (
+                              <span title={`มีข้อความที่ส่งหลังจากลูกค้าอ่านล่าสุด (อ่านถึง ${rs.readTime}) — สถานะจะอัปเดตเมื่อเปิดแชทนี้ใน LINE OA อีกครั้ง`}
+                                className="flex items-center gap-0.5 bg-amber-400/90 text-amber-950 text-[10px] font-medium rounded px-1.5 py-0.5">
+                                <Clock size={11} /> ยังไม่อ่าน
+                                {detail.oaRead.readSeenAt && <span className="opacity-70"> · ซิงก์ {syncAgo(detail.oaRead.readSeenAt)}</span>}
+                              </span>
+                            ) : (
+                              <span title="สถานะอ่านจาก LINE OA (ซิงก์ผ่านส่วนขยาย)"
+                                className="flex items-center gap-0.5 bg-white/20 text-white text-[10px] rounded px-1.5 py-0.5">
+                                <Eye size={11} /> อ่านแล้ว {rs.readTime}
+                                {detail.oaRead.readSeenAt && <span className="opacity-80"> · ซิงก์ {syncAgo(detail.oaRead.readSeenAt)}</span>}
+                              </span>
+                            ))}
+                            <a href={`https://chat.line.biz/${LINE_OA_ID}/chat/${detail.oaRead.oaChatId}`}
+                              target="_blank" rel="noreferrer" title="เปิดแชทนี้ใน LINE OA Manager"
+                              className="opacity-80 hover:opacity-100"><ExternalLink size={12} /></a>
+                          </span>
+                        );
+                      })()}
                       {detail && (
                         <div className="relative shrink-0">
                           <button type="button" onClick={() => setCatOpen((v) => !v)}
