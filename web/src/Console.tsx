@@ -1477,29 +1477,6 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                     <>
                       <span className="shrink-0">{detail ? nameOf(detail.customer) : 'บทสนทนา'}</span>
                       {detail && <button onClick={() => setNickEdit({ code: detail.customer.code ?? '', nickname: detail.customer.nickname ?? '' })} title="แก้รหัส / ชื่อ" className="opacity-80 hover:opacity-100 shrink-0"><Pencil size={13} /></button>}
-                      {detail?.oaRead && (() => {
-                        const rs = oaReadState(detail.oaRead.readLabel, detail.oaRead.readSeenAt, detail.messages);
-                        return (
-                          <span className="flex items-center gap-1 shrink-0">
-                            {rs && (rs.unread ? (
-                              <span title={`มีข้อความที่ส่งหลังจากลูกค้าอ่านล่าสุด (อ่านถึง ${rs.readTime}) — สถานะจะอัปเดตเมื่อเปิดแชทนี้ใน LINE OA อีกครั้ง`}
-                                className="flex items-center gap-0.5 bg-amber-400/90 text-amber-950 text-[10px] font-medium rounded px-1.5 py-0.5">
-                                <Clock size={11} /> ยังไม่อ่าน
-                                {detail.oaRead.readSeenAt && <span className="opacity-70"> · ซิงก์ {syncAgo(detail.oaRead.readSeenAt)}</span>}
-                              </span>
-                            ) : (
-                              <span title="สถานะอ่านจาก LINE OA (ซิงก์ผ่านส่วนขยาย)"
-                                className="flex items-center gap-0.5 bg-white/20 text-white text-[10px] rounded px-1.5 py-0.5">
-                                <Eye size={11} /> อ่านแล้ว {rs.readTime}
-                                {detail.oaRead.readSeenAt && <span className="opacity-80"> · ซิงก์ {syncAgo(detail.oaRead.readSeenAt)}</span>}
-                              </span>
-                            ))}
-                            <a href={`https://chat.line.biz/${LINE_OA_ID}/chat/${detail.oaRead.oaChatId}`}
-                              target="_blank" rel="noreferrer" title="เปิดแชทนี้ใน LINE OA Manager"
-                              className="opacity-80 hover:opacity-100"><ExternalLink size={12} /></a>
-                          </span>
-                        );
-                      })()}
                       {detail && (
                         <div className="relative shrink-0">
                           <button type="button" onClick={() => setCatOpen((v) => !v)}
@@ -1553,6 +1530,29 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                           💡 {detail.customer.suggestedStage} ✓
                         </button>
                       )}
+                      {detail?.oaRead && (() => {
+                        const rs = oaReadState(detail.oaRead.readLabel, detail.oaRead.readSeenAt, detail.messages);
+                        return (
+                          <span className="flex items-center gap-1 shrink-0">
+                            {rs && (rs.unread ? (
+                              <span title={`มีข้อความที่ส่งหลังจากลูกค้าอ่านล่าสุด (อ่านถึง ${rs.readTime}) — สถานะจะอัปเดตเมื่อเปิดแชทนี้ใน LINE OA อีกครั้ง`}
+                                className="flex items-center gap-0.5 bg-amber-400/90 text-amber-950 text-[10px] font-medium rounded px-1.5 py-0.5">
+                                <Clock size={11} /> ยังไม่อ่าน
+                                {detail.oaRead.readSeenAt && <span className="opacity-70"> · ซิงก์ {syncAgo(detail.oaRead.readSeenAt)}</span>}
+                              </span>
+                            ) : (
+                              <span title="สถานะอ่านจาก LINE OA (ซิงก์ผ่านส่วนขยาย)"
+                                className="flex items-center gap-0.5 bg-white/20 text-white text-[10px] rounded px-1.5 py-0.5">
+                                <Eye size={11} /> อ่านแล้ว {rs.readTime}
+                                {detail.oaRead.readSeenAt && <span className="opacity-80"> · ซิงก์ {syncAgo(detail.oaRead.readSeenAt)}</span>}
+                              </span>
+                            ))}
+                            <a href={`https://chat.line.biz/${LINE_OA_ID}/chat/${detail.oaRead.oaChatId}`}
+                              target="_blank" rel="noreferrer" title="เปิดแชทนี้ใน LINE OA Manager"
+                              className="opacity-80 hover:opacity-100"><ExternalLink size={12} /></a>
+                          </span>
+                        );
+                      })()}
                       {detail && <span className="text-[11px] font-normal text-sky-100 truncate min-w-0">· {detail.customer.lineUserId}</span>}
                       {detail && <span className="text-[11px] font-normal text-sky-100 shrink-0">· ถาม {detail.stats.questions} · ตอบ {detail.stats.replies}</span>}
                     </>
