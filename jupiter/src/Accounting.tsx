@@ -8,6 +8,7 @@ import {
   acctDeleteTxn,
   acctRegisters,
   acctParse,
+  acctSyncJuno,
   type AcctCompany,
   type AcctSummary,
   type AcctTxn,
@@ -111,6 +112,23 @@ export default function Accounting({ onBack }: { onBack: () => void }) {
     reloadTxns();
   };
 
+  // Phase-1b: pull PROM income from Juno (recorded payments) into the books, then refresh.
+  const [syncing, setSyncing] = useState(false);
+  const [syncMsg, setSyncMsg] = useState<string | null>(null);
+  const syncJuno = async () => {
+    setSyncing(true);
+    setSyncMsg(null);
+    try {
+      const r = await acctSyncJuno();
+      setSyncMsg(`ดึงจาก Juno สำเร็จ · income ${r.synced} รายการ${r.removed ? ` (นำออก ${r.removed})` : ''}`);
+      reloadAll();
+    } catch {
+      setSyncMsg('ดึงจาก Juno ไม่สำเร็จ');
+    } finally {
+      setSyncing(false);
+    }
+  };
+
   const selectedSummary = useMemo(() => {
     if (!summary) return null;
     const list = company === ALL ? summary.companies : summary.companies.filter((c) => c.code === company);
@@ -169,6 +187,18 @@ export default function Accounting({ onBack }: { onBack: () => void }) {
       </div>
 
       <main className="max-w-4xl mx-auto p-4">
+        {/* Phase-1b: sync PROM income from Juno's recorded payments into the books. */}
+        <div className="mb-3 flex items-center gap-3 flex-wrap">
+          <button
+            onClick={syncJuno}
+            disabled={syncing}
+            className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg border border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100 disabled:opacity-50"
+          >
+            {syncing ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
+            ดึงรายรับจาก Juno
+          </button>
+          {syncMsg && <span className="text-xs text-slate-500">{syncMsg}</span>}
+        </div>
         {err && (
           <div className="mb-4 text-sm text-rose-700 bg-rose-50 border border-rose-200 rounded-xl px-4 py-3">
             โหลดข้อมูลไม่สำเร็จ: {err}

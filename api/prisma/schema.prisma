@@ -1060,6 +1060,12 @@ model JupiterTxn {
   amount        String         @default("")
   vatAmount     String         @default("") // ภาษีขาย (income) / ภาษีซื้อ (expense)
   whtAmount     String         @default("") // หัก ณ ที่จ่าย withheld on this txn
+  // Exact-decimal SHADOW of the three String money fields (P2 double-entry precondition —
+  // a ledger must balance debit==credit to the satang, which lossy parseFloat sums can't do).
+  // Populated on every write from now on; the String fields stay the live read path for Phase 1.
+  amountNum     Decimal?       @db.Decimal(14, 2)
+  vatNum        Decimal?       @db.Decimal(14, 2)
+  whtNum        Decimal?       @db.Decimal(14, 2)
   note          String         @default("")
   // provenance: 'manual' = typed in Jupiter, 'ai' = AI natural-language entry, 'sync:<deity>'
   // = mirrored from another app (juno/ceres/venus) in Phase 1b. sourceRef = the source row id

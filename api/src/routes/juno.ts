@@ -10,6 +10,7 @@ import { paymentTimestamp, amountsEqual, dayDistance, nameSimilarity } from '../
 import type { BankSource, ParsedBankRow } from '../bank/types.js';
 import { BankParseError } from '../bank/types.js';
 import { readStaffUploadFile, readStaffUploadMeta, UPLOAD_ID_RE } from '../line/staffUploads.js';
+import { syncPaymentToJupiter } from '../jupiter/sync.js';
 import { readSlipFromBuffer } from '../llm/readSlip.js';
 import { parseReReceipts, decodeExpressBytes } from '../finance/parseReReceipts.js';
 
@@ -750,6 +751,10 @@ export async function junoRoutes(app: FastifyInstance) {
           : { verifiedById: null, verifiedAt: null }),   // received/void clear the stamps
       },
     });
+    // Phase-1b: mirror this payment into the Jupiter group books (PROM income) now it is
+    // 'recorded', or drop it if it just left 'recorded' (void/undo). Fire-and-forget — a books
+    // sync must NEVER affect the Juno flow. Bank-reconciliation records sync via /sync/juno.
+    void syncPaymentToJupiter(p.id).catch((err) => req.log.error({ err }, 'jupiter sync failed'));
     return { ok: true, payment: toRow(p) };
   });
 

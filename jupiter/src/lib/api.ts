@@ -245,3 +245,7 @@ export function acctRegisters(month?: string): Promise<AcctRegisters> {
 export function acctParse(text: string): Promise<{ ok: boolean; via?: 'ai' | 'heuristic'; proposed?: ProposedTxn }> {
   return acctFetch('/api/jupiter/acct/parse', { method: 'POST', body: JSON.stringify({ text }) });
 }
+// Phase-1b: pull every recorded Juno payment into the books as PROM income (idempotent).
+export function acctSyncJuno(): Promise<{ ok: boolean; synced: number; removed: number }> {
+  return acctFetch('/api/jupiter/acct/sync/juno', { method: 'POST' });
+}

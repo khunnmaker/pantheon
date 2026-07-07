@@ -1,8 +1,10 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
+import { Prisma } from '@prisma/client';
 import { prisma } from '../db/prisma.js';
 import { requireAuth, requireRole } from '../auth/middleware.js';
 import { callClaude, llmAvailable } from '../llm/anthropic.js';
+import { syncAllJunoToJupiter } from '../jupiter/sync.js';
 
 // Jupiter accounting — the GROUP-WIDE consolidated cockpit + monthly close pack (Phase 1).
 // A thin income/expense ledger over JupiterTxn across the 5 group companies (JupiterCompany),
@@ -18,6 +20,13 @@ function baht(s: string | null | undefined): number {
   if (!s) return 0;
   const n = parseFloat(String(s).replace(/[,\s]/g, ''));
   return Number.isNaN(n) ? 0 : n;
+}
+
+// String baht → exact Decimal for the P2 shadow columns; "" (none) → null (not 0), so an
+// absent vat/wht stays absent rather than a false zero. amount is regex-validated numeric.
+function decOf(s: string | null | undefined): Prisma.Decimal | null {
+  if (!s) return null;
+  return new Prisma.Decimal(baht(s));
 }
 
 // A YYYY-MM month string → [start, end) DateTime window (local server time, inclusive start /
@@ -179,6 +188,9 @@ export async function jupiterAccountingRoutes(app: FastifyInstance) {
         amount: b.amount,
         vatAmount: b.vatAmount ?? '',
         whtAmount: b.whtAmount ?? '',
+        amountNum: decOf(b.amount),
+        vatNum: decOf(b.vatAmount),
+        whtNum: decOf(b.whtAmount),
         note: b.note ?? '',
         source: 'manual',
         createdById: agent.id,
@@ -221,22 +233,31 @@ export async function jupiterAccountingRoutes(app: FastifyInstance) {
     if (b.date !== undefined) data.date = new Date(b.date);
     if (b.party !== undefined) data.party = b.party;
     if (b.category !== undefined) data.category = b.category;
-    if (b.amount !== undefined) data.amount = b.amount;
-    if (b.vatAmount !== undefined) data.vatAmount = b.vatAmount;
-    if (b.whtAmount !== undefined) data.whtAmount = b.whtAmount;
+    if (b.amount !== undefined) { data.amount = b.amount; data.amountNum = decOf(b.amount); }
+    if (b.vatAmount !== undefined) { data.vatAmount = b.vatAmount; data.vatNum = decOf(b.vatAmount); }
+    if (b.whtAmount !== undefined) { data.whtAmount = b.whtAmount; data.whtNum = decOf(b.whtAmount); }
     if (b.note !== undefined) data.note = b.note;
 
     const row = await prisma.jupiterTxn.update({ where: { id }, data });
     return row;
   });
 
-  // 5b) DELETE /txns/:id.
+  // 5b) DELETE /txns/:id. (Manual rows only in practice; synced rows are reconciled by /sync.)
   app.delete('/api/jupiter/acct/txns/:id', gate, async (req, reply) => {
     const { id } = req.params as { id: string };
     const existing = await prisma.jupiterTxn.findUnique({ where: { id } });
     if (!existing) return reply.code(404).send({ error: 'not_found' });
     await prisma.jupiterTxn.delete({ where: { id } });
     return { ok: true };
+  });
+
+  // 8) POST /sync/juno — batch pull: mirror every 'recorded' Juno payment into JupiterTxn as
+  //    PROM income (idempotent by source+sourceRef; also removes synced rows whose payment was
+  //    voided/undone since). This is the "batch import" half of the deity feed; the live per-slip
+  //    half is a fire-and-forget hook in juno.ts. Supervisor-only.
+  app.post('/api/jupiter/acct/sync/juno', gate, async () => {
+    const res = await syncAllJunoToJupiter();
+    return { ok: true, ...res };
   });
 
   // 6) GET /registers?month= — per-company tax-register rollup for the close pack.
