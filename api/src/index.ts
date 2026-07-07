@@ -31,6 +31,7 @@ import { ensureQuickReplies } from './db/ensureQuickReplies.js';
 import { ensureCeres } from './db/ensureCeres.js';
 import { ceresRoutes } from './routes/ceres/index.js';
 import { mercuryRoutes } from './routes/mercury/index.js';
+import { oaSyncRoutes } from './routes/oaSync.js';
 
 // Raw body is needed to verify the LINE webhook signature.
 declare module 'fastify' {
@@ -95,6 +96,7 @@ async function buildServer() {
   await app.register(ceresRoutes);
   await app.register(venusRoutes);
   await app.register(mercuryRoutes);
+  await app.register(oaSyncRoutes);
 
   return app;
 }

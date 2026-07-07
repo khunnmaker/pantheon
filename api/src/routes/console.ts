@@ -182,6 +182,13 @@ export async function consoleRoutes(app: FastifyInstance) {
 
     const memory = await prisma.customerMemory.findUnique({ where: { customerId: id } });
 
+    // OA read-sync: the latest LINE OA Manager "Read"/"อ่านแล้ว" status the Chrome extension has
+    // mapped to this customer (null when none synced/matched yet). See routes/oaSync.ts.
+    const oaSync = await prisma.oaReadSync.findFirst({ where: { customerId: id } });
+    const oaRead = oaSync
+      ? { readLabel: oaSync.readLabel, readSeenAt: oaSync.readSeenAt, oaChatId: oaSync.oaChatId }
+      : null;
+
     // Catalog product the AI confidently drafted about (auto-selected photo).
     let pendingProduct: ProductCard | null = null;
     if (pendingDraft?.productSku) {
@@ -257,6 +264,7 @@ export async function consoleRoutes(app: FastifyInstance) {
       crossSellCandidates,
       pendingMessageId,
       memory: memory ? { summary: memory.summary, updatedAt: memory.updatedAt } : null,
+      oaRead,
       stats: {
         questions: customerCount,
         replies: agentCount,

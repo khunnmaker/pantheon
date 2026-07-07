@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Minerva OA Read Sync</title>
+  <style>
+    :root { color-scheme: light; }
+    body {
+      font-family: -apple-system, "Segoe UI", "Sarabun", Tahoma, sans-serif;
+      width: 300px; margin: 0; padding: 14px; color: #0f172a; background: #f8fafc;
+    }
+    h1 { font-size: 14px; margin: 0 0 2px; display: flex; align-items: center; gap: 6px; }
+    .sub { font-size: 11px; color: #64748b; margin: 0 0 12px; line-height: 1.4; }
+    label { display: block; font-size: 11px; color: #475569; margin: 8px 0 3px; }
+    input[type=text], input[type=email], input[type=password] {
+      width: 100%; box-sizing: border-box; font-size: 13px; padding: 7px 9px;
+      border: 1px solid #cbd5e1; border-radius: 8px; outline: none; background: #fff;
+    }
+    input:focus { border-color: #0ea5e9; }
+    button.primary {
+      width: 100%; margin-top: 12px; padding: 9px; font-size: 13px; font-weight: 600;
+      color: #fff; background: #0284c7; border: none; border-radius: 8px; cursor: pointer;
+    }
+    button.primary:hover { background: #0369a1; }
+    button.link {
+      background: none; border: none; color: #dc2626; font-size: 12px; cursor: pointer; padding: 0;
+    }
+    .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .who { font-size: 12px; color: #0f172a; }
+    .who b { color: #0284c7; }
+    .msg { font-size: 11px; margin-top: 8px; min-height: 14px; }
+    .msg.err { color: #dc2626; }
+    .msg.ok { color: #16a34a; }
+    .toggle { display: flex; align-items: center; gap: 8px; margin-top: 12px; font-size: 12px; }
+    .toggle input { width: 16px; height: 16px; }
+    hr { border: none; border-top: 1px solid #e2e8f0; margin: 12px 0; }
+    .hint { font-size: 10px; color: #94a3b8; margin-top: 10px; line-height: 1.4; }
+  </style>
+</head>
+<body>
+  <h1>👁 Minerva OA Read Sync</h1>
+  <p class="sub">ซิงก์สถานะ “อ่านแล้ว” จาก LINE OA Manager เข้าสู่ Minerva โดยอัตโนมัติ</p>
+
+  <!-- Logged-out view -->
+  <div id="loginView">
+    <label for="apiUrl">เซิร์ฟเวอร์ Minerva</label>
+    <input type="text" id="apiUrl" value="https://minerva-production-9309.up.railway.app" />
+    <label for="email">อีเมล</label>
+    <input type="email" id="email" placeholder="you@prominent.co.th" autocomplete="username" />
+    <label for="password">รหัสผ่าน</label>
+    <input type="password" id="password" placeholder="รหัสผ่าน Minerva" autocomplete="current-password" />
+    <button class="primary" id="loginBtn">เข้าสู่ระบบ</button>
+    <div class="msg" id="loginMsg"></div>
+  </div>
+
+  <!-- Logged-in view -->
+  <div id="sessionView" style="display:none">
+    <div class="row">
+      <span class="who">ซิงก์ในนาม: <b id="agentName">—</b></span>
+      <button class="link" id="logoutBtn">ออกจากระบบ</button>
+    </div>
+    <label class="toggle">
+      <input type="checkbox" id="enabledToggle" />
+      <span>เปิดใช้งานการซิงก์</span>
+    </label>
+    <div class="msg" id="sessionMsg"></div>
+    <hr />
+    <p class="hint">เปิดแชทลูกค้าใน chat.line.biz ตามปกติ — สถานะอ่านจะซิงก์เข้า Minerva เอง ส่วนขยายนี้อ่านเฉพาะชื่อ/รหัสแชท/ป้าย “อ่านแล้ว” เท่านั้น ไม่อ่านเนื้อหาข้อความ และไม่เก็บรหัสผ่าน LINE</p>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

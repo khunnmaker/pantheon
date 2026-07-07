@@ -1082,6 +1082,27 @@ model JupiterTxn {
   @@index([sourceRef])
 }
 
+// OA read-sync — surfaces LINE OA Manager "Read"/"อ่านแล้ว" status inside Minerva.
+// The Messaging API has NO outbound read receipts, and the OA Manager uses a DIFFERENT
+// per-customer id namespace than the U… ids we store, so a passive Chrome MV3 extension
+// in staff's own logged-in browsers reads the open chat's Read marker + OA chat id and
+// posts them to POST /api/oa-sync. We map OA chats to our Customer conservatively (unique
+// exact name matches only) — customerId stays null when ambiguous (harmless). ADD-ONLY.
+model OaReadSync {
+  id            String    @id @default(cuid())
+  oaChatId      String    @unique // OA-Manager-native customer id (U…32hex)
+  customerId    String? // our Customer.id once matched (nullable)
+  oaTitle       String? // OA header title (may be an OA-assigned nickname)
+  oaSubName     String? // parenthesized/subtitle LINE display name if present
+  readLabel     String? // raw marker text e.g. "Read 16:50" / "อ่านแล้ว 16:50"
+  readSeenAt    DateTime? // when the extension observed the marker
+  reportedById  String? // agent who synced
+  updatedAt     DateTime  @updatedAt
+  createdAt     DateTime  @default(now())
+
+  @@index([customerId])
+}
+
 // ─── DEFERRED TO M3: pgvector embedding tables (spec §5 note) ────────────
 // Activate in M3 once the database has the `vector` extension. Steps:
 //   1. add `previewFeatures = ["postgresqlExtensions"]` to the generator

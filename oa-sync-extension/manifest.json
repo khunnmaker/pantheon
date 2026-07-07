@@ -1,0 +1,25 @@
+{
+  "manifest_version": 3,
+  "name": "Minerva OA Read Sync",
+  "version": "0.1.0",
+  "description": "Passively syncs LINE OA Manager \"Read\" status of the chat you have open into Minerva. Reads only ids, names and the Read marker — never message content, never LINE credentials.",
+  "permissions": ["storage"],
+  "host_permissions": [
+    "https://chat.line.biz/*",
+    "https://minerva-production-9309.up.railway.app/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://chat.line.biz/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Minerva OA Read Sync"
+  }
+}

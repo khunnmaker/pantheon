@@ -98,6 +98,8 @@ export interface CustomerDetail {
   crossSellCandidates: PendingProduct[]; // AI cross-sell suggestions
   pendingMessageId: string | null;
   memory: { summary: string; updatedAt: string } | null;
+  // Latest LINE OA Manager "Read" status synced by the Chrome extension (null = none/unmatched).
+  oaRead?: { readLabel: string | null; readSeenAt: string | null; oaChatId: string } | null;
   stats: { questions: number; replies: number; lastSeen: string };
 }
 export interface LearnedAnswer {

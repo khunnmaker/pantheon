@@ -3,6 +3,7 @@ import {
   User, LogOut, Clock, Inbox, Loader2, ShieldCheck, MessageSquare,
   Send, Check, CheckCircle2, RefreshCw, Brain, GraduationCap, Wand2, Pencil, AlertTriangle, Search,
   Download, Paperclip, Camera, Banknote, X, ChevronDown, ChevronUp, Crown, Pin, CornerUpLeft, Volume2, VolumeX,
+  ExternalLink, Eye,
 } from 'lucide-react';
 import {
   getQueue, getCustomers, getCustomer, searchCustomers, logout as logoutSuite, regenerateDraft, rewriteText, sendReply, setNickname, setCategory, setStage, STAGES,
@@ -18,6 +19,24 @@ import AppSwitcher from './AppSwitcher';
 // Portal-back link (Jupiter). URL from build-time env; hidden when unset, so it is completely
 // inert until VITE_PORTAL_URL is configured (Phase 1 go-live / Phase 2 domains).
 const PORTAL_URL: string | undefined = import.meta.env.VITE_PORTAL_URL;
+
+// LINE OA account id for the per-customer OA Manager deep-link. The read-sync chip's link uses
+// the OA-native oaChatId (from the extension), so chat.line.biz/{oa}/chat/{oaChatId} now resolves.
+const LINE_OA_ID = (import.meta.env.VITE_LINE_OA_ID as string | undefined) ?? 'Uaaa328e6464049ed51e23b78c2184456';
+
+// "x นาทีที่แล้ว" for a synced-at timestamp; falls back to HH:MM for older syncs / bad input.
+function syncAgo(iso: string | null): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  const ms = Date.now() - d.getTime();
+  if (Number.isNaN(ms)) return '';
+  const min = Math.floor(ms / 60000);
+  if (min < 1) return 'เมื่อสักครู่';
+  if (min < 60) return `${min} นาทีที่แล้ว`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr} ชม.ที่แล้ว`;
+  return d.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
+}
 
 // Read a File as a base64 data URL (for upload).
 function fileToDataUrl(file: File): Promise<string> {
@@ -1404,6 +1423,20 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                     <>
                       <span className="shrink-0">{detail ? nameOf(detail.customer) : 'บทสนทนา'}</span>
                       {detail && <button onClick={() => setNickEdit({ code: detail.customer.code ?? '', nickname: detail.customer.nickname ?? '' })} title="แก้รหัส / ชื่อ" className="opacity-80 hover:opacity-100 shrink-0"><Pencil size={13} /></button>}
+                      {detail?.oaRead && (
+                        <span className="flex items-center gap-1 shrink-0">
+                          {detail.oaRead.readLabel && (
+                            <span title="สถานะอ่านจาก LINE OA (ซิงก์ผ่านส่วนขยาย)"
+                              className="flex items-center gap-0.5 bg-white/20 text-white text-[10px] rounded px-1.5 py-0.5">
+                              <Eye size={11} /> {detail.oaRead.readLabel}
+                              {detail.oaRead.readSeenAt && <span className="opacity-80"> · ซิงก์ {syncAgo(detail.oaRead.readSeenAt)}</span>}
+                            </span>
+                          )}
+                          <a href={`https://chat.line.biz/${LINE_OA_ID}/chat/${detail.oaRead.oaChatId}`}
+                            target="_blank" rel="noreferrer" title="เปิดแชทนี้ใน LINE OA Manager"
+                            className="opacity-80 hover:opacity-100"><ExternalLink size={12} /></a>
+                        </span>
+                      )}
                       {detail && (
                         <div className="relative shrink-0">
                           <button type="button" onClick={() => setCatOpen((v) => !v)}
