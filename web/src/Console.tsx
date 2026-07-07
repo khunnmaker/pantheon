@@ -1323,7 +1323,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
   }
 
   return (
-    <div className="min-h-screen bg-slate-100 p-3 sm:p-5 font-sans text-slate-800">
+    <div className="min-h-screen bg-slate-100 p-3 sm:p-5 font-sans text-slate-800 overflow-x-hidden max-w-full">
       <div className="max-w-6xl mx-auto">
         {toast && <div className="mb-3 text-sm bg-sky-50 border border-sky-200 text-sky-700 rounded-xl px-3 py-2 flex items-center gap-2"><Check size={15} /> {toast}</div>}
         {lightbox && (
@@ -1473,7 +1473,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                   className="md:hidden shrink-0 -ml-1 p-1.5 rounded-lg text-white/90 hover:text-white hover:bg-white/10">
                   <ArrowLeft size={18} />
                 </button>
-                <div className="flex items-center gap-2 min-w-0 flex-1">
+                <div className="flex flex-wrap md:flex-nowrap items-center gap-x-2 gap-y-1 min-w-0 flex-1">
                   {detail
                     ? <Avatar src={detail.customer.pictureUrl} size={28} />
                     : <MessageSquare size={18} className="shrink-0" />}
@@ -1569,7 +1569,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                           </span>
                         );
                       })()}
-                      {detail && <span className="text-[11px] font-normal text-sky-100 truncate min-w-0">· {detail.customer.lineUserId}</span>}
+                      {detail && <span className="text-[11px] font-normal text-sky-100 truncate min-w-0 max-w-full">· {detail.customer.lineUserId}</span>}
                       {detail && <span className="text-[11px] font-normal text-sky-100 shrink-0">· ถาม {detail.stats.questions} · ตอบ {detail.stats.replies}</span>}
                     </>
                   )}
