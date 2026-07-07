@@ -783,7 +783,13 @@ function ImportTab({ onApplied }: { onApplied: () => void }) {
       onApplied();
     } catch (e) {
       const msg = e instanceof Error ? e.message : '';
-      setErr(msg.includes('410') ? 'พรีวิวหมดอายุ — กรุณาอัปโหลดไฟล์ใหม่' : 'นำเข้าไม่สำเร็จ');
+      setErr(
+        msg === 'unauthorized' ? 'เซสชันหมดอายุ — กรุณาเข้าสู่ระบบใหม่'
+        : msg.includes('410') || msg.includes('preview_expired') ? 'พรีวิวหมดอายุ — กรุณาอัปโหลดไฟล์ใหม่'
+        // the server now returns a Thai reason in `detail` ("นำเข้าไม่สมบูรณ์ — …")
+        : msg.startsWith('นำเข้า') ? msg
+        : `นำเข้าไม่สำเร็จ — ${msg}`,
+      );
     } finally {
       setBusy(null);
     }

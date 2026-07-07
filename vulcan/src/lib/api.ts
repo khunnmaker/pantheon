@@ -155,7 +155,12 @@ async function authed<T>(path: string, init?: RequestInit): Promise<T> {
     throw new Error('unauthorized');
   }
   if (res.status === 403) throw new Error('forbidden');
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  if (!res.ok) {
+    // Surface the server's own `detail`/`error` (e.g. why an import apply failed) instead of a
+    // bare "HTTP 500" — callers can show it to the supervisor. Falls back to the status code.
+    const body = (await res.json().catch(() => null)) as { detail?: string; error?: string } | null;
+    throw new Error(body?.detail || body?.error || `HTTP ${res.status}`);
+  }
   return res.json() as Promise<T>;
 }
 

@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { randomUUID } from 'node:crypto';
+import { Prisma } from '@prisma/client';
 import { prisma } from '../db/prisma.js';
 import { LOW_STOCK_WHERE, LOW_STOCK_ORDER } from '../db/lowStock.js';
 import { requireAuth, requireRole } from '../auth/middleware.js';
@@ -343,23 +344,28 @@ export async function stockRoutes(app: FastifyInstance) {
     });
     const known = new Set(existing.map((p) => p.sku));
 
-    // Apply only matched SKUs, chunked so a 1000+ row import doesn't serialize forever.
+    // Apply matched SKUs in BULK — one UPDATE ... FROM (VALUES …) per chunk rather than 1000+
+    // single-row updates, which on a small connection pool exhaust it / time out (that was the
+    // "นำเข้าไม่สำเร็จ" on a full ~5k-row report). Each chunk sets every row's new qty in one query;
+    // stockAt is the same date for all rows.
     const toApply = staged.rows.filter((r) => known.has(r.sku));
     let skusUpdated = 0;
     let failNote = '';
-    const CHUNK = 50;
+    const CHUNK = 500;
     try {
       for (let i = 0; i < toApply.length; i += CHUNK) {
         const slice = toApply.slice(i, i + CHUNK);
-        const results = await Promise.all(
-          slice.map((r) =>
-            prisma.product.updateMany({ where: { sku: r.sku }, data: { stock: r.qty, stockAt } }),
-          ),
-        );
-        skusUpdated += results.reduce((n, x) => n + x.count, 0);
+        // Explicit per-param casts so Postgres never fails to infer the VALUES column types.
+        const tuples = Prisma.join(slice.map((r) => Prisma.sql`(${r.sku}::text, ${r.qty}::int)`));
+        const n = await prisma.$executeRaw`
+          UPDATE "Product" AS p
+          SET stock = v.qty, "stockAt" = ${stockAt}
+          FROM (VALUES ${tuples}) AS v(sku, qty)
+          WHERE p.sku = v.sku`;
+        skusUpdated += Number(n);
       }
     } catch (err) {
-      failNote = `partial_failure: ${err instanceof Error ? err.message : String(err)}`.slice(0, 300);
+      failNote = `update_failure: ${err instanceof Error ? err.message : String(err)}`.slice(0, 300);
     }
 
     // Optionally CREATE the SKUs not yet in the catalog as 'stock_only' rows — tracked in Vulcan
@@ -370,7 +376,7 @@ export async function stockRoutes(app: FastifyInstance) {
     let created = 0;
     if (createNew && !failNote) {
       const toCreate = staged.rows.filter((r) => !known.has(r.sku) && r.name.trim());
-      const CREATE_CHUNK = 100;
+      const CREATE_CHUNK = 500;
       try {
         for (let i = 0; i < toCreate.length; i += CREATE_CHUNK) {
           const data = toCreate.slice(i, i + CREATE_CHUNK).map((r) => ({
@@ -412,12 +418,15 @@ export async function stockRoutes(app: FastifyInstance) {
     });
 
     if (failNote) {
+      // The real cause is saved to StockImport.note (visible in ประวัติ) AND logged here for the
+      // Railway logs. detail carries a trimmed reason so the supervisor sees WHY, not just "failed".
+      req.log.error({ failNote, fileName: staged.fileName }, 'stock import apply failed');
       return reply.code(500).send({
         error: 'apply_partial',
         skusUpdated,
         created,
         importId: imp.id,
-        detail: 'นำเข้าไม่สมบูรณ์ — บางรายการอาจอัปเดตแล้ว กรุณาอัปโหลดและนำเข้าใหม่',
+        detail: `นำเข้าไม่สมบูรณ์ — ${failNote.slice(0, 160)}`,
       });
     }
     return { ok: true, skusUpdated, skusUnmatched, created, importId: imp.id };
