@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import {
   getMe, getFacets, getClinicToken, getStoredClinic, setClinicSession, clearClinicSession,
@@ -33,6 +33,7 @@ interface Store {
   approved: boolean;
   login: (c: Clinic, token: string) => void;
   logout: () => void;
+  sessionExpired: () => void;
   cart: Record<string, CartItem>;
   cartCount: number;
   addToCart: (p: PricedProduct) => void;
@@ -78,10 +79,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }, []);
   function pick<T>(th: T, en: T): T { return lang === 'th' ? th : en; }
 
-  // Refresh approval status on load (approve-since-last-visit takes effect on the same token).
-  useEffect(() => {
+  // Keep approval status fresh so a clinic approved mid-session sees prices without a manual
+  // reload. Only drops the session on a real auth failure, NOT a transient network/5xx blip.
+  const lastRefreshRef = useRef(0);
+  const refreshMe = useCallback(() => {
     const token = getClinicToken();
     if (!token) return;
+    lastRefreshRef.current = Date.now();
     getMe()
       .then(({ clinic: c }) => {
         if (getClinicToken() !== token) return; // logged out/in during the request — ignore
@@ -89,13 +93,30 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         setClinicSession(token, c);
       })
       .catch((e) => {
-        // Only drop the session on a real auth failure, NOT a transient network/5xx blip.
         if ((e as Error).message === 'unauthorized' && getClinicToken() === token) {
           clearClinicSession();
           setClinic(null);
         }
       });
   }, []);
+
+  // Run on mount, then again on tab focus/visibility (throttled to once / 15s, only when a
+  // clinic is signed in) so an approval that lands while the tab sits open is picked up.
+  useEffect(() => {
+    refreshMe();
+    const maybeRefresh = () => {
+      if (!getClinicToken()) return;
+      if (Date.now() - lastRefreshRef.current < 15_000) return;
+      refreshMe();
+    };
+    const onVisible = () => { if (document.visibilityState === 'visible') maybeRefresh(); };
+    window.addEventListener('focus', maybeRefresh);
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      window.removeEventListener('focus', maybeRefresh);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [refreshMe]);
 
   // Facets (brands/categories) once.
   useEffect(() => { getFacets().then(setFacets).catch(() => undefined); }, []);
@@ -112,6 +133,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     setClinicSession(token, c); setClinic(c); setAuthOpen(false);
   }, []);
   const logout = useCallback(() => { clearClinicSession(); setClinic(null); setCart({}); }, []);
+  // Token died server-side (expired/invalid) mid-action: drop the session and prompt re-login,
+  // but KEEP the cart — the same clinic signs back in (login() only clears on identity change).
+  const sessionExpired = useCallback(() => { clearClinicSession(); setClinic(null); setAuthOpen(true); }, []);
 
   const addToCart = useCallback((p: PricedProduct) => {
     setCart((c) => ({ ...c, [p.sku]: { p, qty: (c[p.sku]?.qty ?? 0) + 1 } }));
@@ -129,7 +153,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const approved = clinic?.status === 'approved';
 
   const value: Store = {
-    route, navigate, lang, toggleLang, pick, clinic, approved, login, logout,
+    route, navigate, lang, toggleLang, pick, clinic, approved, login, logout, sessionExpired,
     cart, cartCount, addToCart, setQty, clearCart, facets,
     authOpen, setAuthOpen, cartOpen, setCartOpen,
   };

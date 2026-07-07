@@ -94,7 +94,7 @@ export function HomePage() {
         <div className="wrap split">
           <div className="split-art">
             <img src="/section-digital.jpg" alt="" className="split-img" />
-            <div className="pill" style={{ top: 18, left: 18 }}><span style={{ width: 10, height: 10, borderRadius: 9, background: 'var(--coral)' }} /> Intraoral scan</div>
+            <div className="pill" style={{ top: 18, left: 18 }}><span style={{ width: 10, height: 10, borderRadius: 9, background: 'var(--coral)' }} /> {pick('สแกนช่องปาก', 'Intraoral scan')}</div>
             <div className="pill" style={{ bottom: 18, right: 18 }}><span style={{ width: 10, height: 10, borderRadius: 9, background: 'var(--teal)' }} /> Exocad CAD/CAM</div>
           </div>
           <div>
@@ -352,7 +352,7 @@ export function ContactPage() {
             <div className="ci-row"><div className="ci-ic"><Mail size={21} /></div><div><b>{pick('อีเมล', 'Email')}</b><a href={`mailto:${COMPANY.email}`}>{COMPANY.email}</a></div></div>
             <div className="ci-row"><div className="ci-ic"><LineIcon size={21} /></div><div><b>LINE</b><a href={COMPANY.line.url} target="_blank" rel="noreferrer">{COMPANY.line.id}</a></div></div>
             <div style={{ borderRadius: 'var(--r-md)', overflow: 'hidden', border: '1px solid var(--line)', marginTop: 24, height: 240 }}>
-              <iframe title="Prominent location" loading="lazy" referrerPolicy="no-referrer-when-downgrade" style={{ width: '100%', height: '100%', border: 0 }}
+              <iframe title={pick('แผนที่ Prominent', 'Prominent location')} loading="lazy" referrerPolicy="no-referrer-when-downgrade" style={{ width: '100%', height: '100%', border: 0 }}
                 src="https://www.google.com/maps?q=Soi%20Inthamara%2019%20Samsen%20Nai%20Phaya%20Thai%20Bangkok%2010400&output=embed" />
             </div>
           </div>

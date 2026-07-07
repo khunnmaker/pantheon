@@ -1,13 +1,13 @@
 import { useEffect, useState } from 'react';
 import {
   ShieldCheck, LogIn, LogOut, Loader2, AlertTriangle, Check, X, Clock, ClipboardList,
-  Users, CheckCircle2, FileText, Ban, Tags, Search, Save, ChevronLeft, ChevronRight, Trash2,
+  Users, CheckCircle2, FileText, Ban, Tags, Search, Save, ChevronLeft, ChevronRight, Trash2, KeyRound,
 } from 'lucide-react';
 import {
   loginStaff, setStaffSession, getStaffToken, getStoredStaff, clearStaffSession,
-  adminListClinics, adminApproveClinic, adminRejectClinic, adminDeleteClinic,
+  adminListClinics, adminApproveClinic, adminRejectClinic, adminDeleteClinic, adminResetClinicPassword,
   adminListOrders, adminOrderTransition,
-  adminListEnrichment, adminSaveEnrichment, mediaUrl, formatBaht,
+  adminListEnrichment, adminSaveEnrichment, mediaUrl, formatBaht, orderNoLabel,
   type Agent, type AdminClinic, type AdminOrder, type ClinicStatus, type OrderStatus,
   type EnrichRow, type EnrichInput,
 } from './lib/api';
@@ -82,6 +82,15 @@ function ClinicsPanel() {
     setBusyId(c.id);
     try { await adminDeleteClinic(c.id); load(); } catch { setError('ลบไม่สำเร็จ'); } finally { setBusyId(''); }
   }
+  async function resetPw(c: AdminClinic) {
+    if (!window.confirm(`รีเซ็ตรหัสผ่านของ "${c.clinicName}"?`)) return;
+    setBusyId(c.id);
+    try {
+      const { tempPassword } = await adminResetClinicPassword(c.id);
+      // window.prompt shows the value in a copyable field — staff read/paste it to the caller over LINE.
+      window.prompt('รหัสผ่านชั่วคราว — คัดลอกส่งให้ลูกค้าทาง LINE:', tempPassword);
+    } catch { setError('รีเซ็ตรหัสผ่านไม่สำเร็จ'); } finally { setBusyId(''); }
+  }
 
   return (
     <>
@@ -106,6 +115,7 @@ function ClinicsPanel() {
                 ) : (
                   <StatusChip status={c.status} />
                 )}
+                <button disabled={busyId === c.id} onClick={() => resetPw(c)} title="รีเซ็ตรหัสผ่าน" aria-label="รีเซ็ตรหัสผ่าน" className="p-1.5 rounded-lg text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 disabled:opacity-50"><KeyRound size={16} /></button>
                 <button disabled={busyId === c.id} onClick={() => del(c)} title="ลบบัญชี (ถาวร)" aria-label="ลบบัญชี" className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 disabled:opacity-50"><Trash2 size={16} /></button>
               </div>
             </div>
@@ -156,7 +166,7 @@ function OrdersPanel() {
               <div key={o.id} className="bg-white rounded-xl border border-slate-200 p-4">
                 <div className="flex items-center justify-between mb-1">
                   <div className="font-semibold">{o.clinicAccount.clinicName} {o.clinicAccount.customerCode && <span className="text-xs text-indigo-600 font-mono">({o.clinicAccount.customerCode})</span>}</div>
-                  <div className="text-xs text-slate-400 font-mono">#{o.id.slice(-8)}</div>
+                  <div className="text-xs text-slate-400 font-mono">{orderNoLabel(o.orderNo, o.id)}</div>
                 </div>
                 <div className="text-xs text-slate-500 mb-2">{o.clinicAccount.email} · {new Date(o.createdAt).toLocaleString('th-TH')}</div>
                 <div className="space-y-0.5 mb-2">
