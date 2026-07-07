@@ -1,0 +1,36 @@
+name: CI
+
+# First automated CI for the Minerva monorepo. Scoped to the `api` package (Punch #6):
+# typecheck + the vitest money-lane regression tests. Deterministic — no DB/network,
+# fixtures only.
+on:
+  push:
+  pull_request:
+
+jobs:
+  api:
+    name: api — typecheck + tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: api
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: api/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
