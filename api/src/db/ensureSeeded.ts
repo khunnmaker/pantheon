@@ -19,7 +19,7 @@ import { env } from '../env.js';
 // cute avatars) — they mirror Jupiter's portal grouping and have nothing to do with auth.
 export const TIER_ACCOUNTS = [
   { email: 'drm@prominent.local', name: 'Dr. M', role: 'supervisor', pwEnvs: ['SEED_PASSWORD'], group: 'ceo', gender: 'male' },
-  { email: 'md@prominent.local', name: 'Nee', role: 'md', pwEnvs: ['MD_PASSWORD', 'CERES_MD_PASSWORD'], group: 'md', gender: 'female' }, // first non-empty wins; using the 2nd logs a deprecation warn
+  { email: 'md@prominent.local', name: 'Nee', role: 'md', pwEnvs: ['MD_PASSWORD'], group: 'md', gender: 'female' },
 ] as const;
 
 // Every employee, each with their own 6-digit PIN (EMPLOYEE_PINS) and a per-person set of
@@ -90,26 +90,17 @@ export function parseAgentPins(raw: string, label = 'AGENT_PINS'): Map<string, s
 // skips just that account (never seeds a blank/default password); pruning is guarded so a
 // misconfigured env can never delete the last working login.
 //
-// Transition fallbacks (unified auth cutover): while EMPLOYEE_PINS is being rolled out, an
-// employee without a PIN there falls back to the legacy AGENT_PINS map, and — for the three
-// original console agents only (nadeer/anny/noey) — finally to the shared STAFF_PASSWORD, so
-// live sales keep working uninterrupted. Each fallback logs a one-line deprecation warn.
+// Staff credentials come from env: SEED_PASSWORD (Dr. M), MD_PASSWORD (Nee), EMPLOYEE_PINS (all
+// employees, "slug:pin,…"). An account with no configured secret is skipped — never seeded with
+// a blank/default — and a fully-unprovisioned env can never prune/lock everyone out (see the
+// allProvisioned guard below). The old AGENT_PINS / STAFF_PASSWORD / CERES_MD_PASSWORD transition
+// fallbacks were removed 2026-07-07 once the new vars were confirmed live on Railway.
 async function syncStaff(): Promise<void> {
   let allProvisioned = true;
 
   // Tier accounts (supervisor, md).
   for (const t of TIER_ACCOUNTS) {
-    let pw: string | undefined;
-    if (t.email === 'md@prominent.local') {
-      pw = process.env.MD_PASSWORD || undefined;
-      if (!pw && process.env.CERES_MD_PASSWORD) {
-        pw = process.env.CERES_MD_PASSWORD;
-        // eslint-disable-next-line no-console
-        console.warn('[staff] CERES_MD_PASSWORD is deprecated — rename it to MD_PASSWORD');
-      }
-    } else {
-      pw = process.env[t.pwEnvs[0]] || undefined;
-    }
+    const pw = process.env[t.pwEnvs[0]] || undefined; // SEED_PASSWORD (Dr. M) / MD_PASSWORD (Nee)
     if (!pw) {
       allProvisioned = false;
       // eslint-disable-next-line no-console
@@ -137,23 +128,9 @@ async function syncStaff(): Promise<void> {
 
   // Employees, each with their own 6-digit PIN and per-person app grants.
   const employeePins = parseAgentPins(env.EMPLOYEE_PINS, 'EMPLOYEE_PINS');
-  const legacyAgentPins = parseAgentPins(env.AGENT_PINS, 'AGENT_PINS');
-  const consoleLegacySlugs = new Set(['nadeer', 'anny', 'noey']);
   for (const e of EMPLOYEES) {
     const email = employeeEmail(e.slug);
-    let pin = employeePins.get(e.slug);
-    if (!pin) {
-      pin = legacyAgentPins.get(e.slug);
-      if (pin) {
-        // eslint-disable-next-line no-console
-        console.warn(`[staff] AGENT_PINS is deprecated — move "${e.slug}" to EMPLOYEE_PINS`);
-      }
-    }
-    if (!pin && consoleLegacySlugs.has(e.slug) && process.env.STAFF_PASSWORD) {
-      pin = process.env.STAFF_PASSWORD;
-      // eslint-disable-next-line no-console
-      console.warn(`[staff] STAFF_PASSWORD is deprecated — give "${e.slug}" a PIN in EMPLOYEE_PINS`);
-    }
+    const pin = employeePins.get(e.slug);
     if (!pin) {
       allProvisioned = false;
       // eslint-disable-next-line no-console
