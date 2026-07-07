@@ -34,3 +34,14 @@ jobs:
 
       - name: Test
         run: npm test
+
+  shared-drift:
+    name: shared frontend files — drift guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Check shared-file / AppName drift
+        run: node scripts/check-shared-drift.mjs
