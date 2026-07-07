@@ -277,6 +277,7 @@ export interface SubGroupInfo {
   code: string; // 2-letter, within its group (e.g. "AL" → IMAL01)
   nameTh: string;
   nameEn: string;
+  custom?: boolean; // staff-created (deletable) vs built-in
 }
 export interface CatalogGroupInfo {
   key: string;
@@ -286,6 +287,7 @@ export interface CatalogGroupInfo {
   pillar: Pillar;
   count: number;
   subgroups: SubGroupInfo[];
+  custom?: boolean; // staff-created (deletable) vs built-in
 }
 export interface GroupProduct {
   sku: string;
@@ -350,6 +352,33 @@ export const setSubgroups = (skus: string[], subgroup: string | null) =>
   authed<{ ok: boolean; subgroup: string | null; updated: number; skipped: number }>('/api/stock/groups/set-subgroups', {
     method: 'POST',
     body: JSON.stringify({ skus, subgroup }),
+  });
+
+// ── Create / delete staff-defined groups + sub-groups ────────────────────
+// code = 2 uppercase letters (product-code prefix). Throws 'HTTP 409' on a duplicate code.
+export const createGroup = (nameTh: string, nameEn: string, code: string, pillar: Pillar) =>
+  authed<{ ok: boolean; group: CatalogGroupInfo }>('/api/stock/groups/create', {
+    method: 'POST',
+    body: JSON.stringify({ nameTh, nameEn, code, pillar }),
+  });
+
+export const createSubgroup = (groupKey: string, nameTh: string, nameEn: string, code: string) =>
+  authed<{ ok: boolean; groupKey: string; subgroup: SubGroupInfo }>('/api/stock/groups/create-subgroup', {
+    method: 'POST',
+    body: JSON.stringify({ groupKey, nameTh, nameEn, code }),
+  });
+
+// Delete a staff-created group (its products become ungrouped). Built-ins return HTTP 404.
+export const deleteGroup = (key: string) =>
+  authed<{ ok: boolean; key: string; ungrouped: number }>('/api/stock/groups/delete', {
+    method: 'POST',
+    body: JSON.stringify({ key }),
+  });
+
+export const deleteSubgroup = (groupKey: string, code: string) =>
+  authed<{ ok: boolean; groupKey: string; code: string }>('/api/stock/groups/delete-subgroup', {
+    method: 'POST',
+    body: JSON.stringify({ groupKey, code }),
   });
 
 // ── Name-normalization review (ตรวจทาน tab) ─────────────────────────────

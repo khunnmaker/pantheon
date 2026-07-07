@@ -3,7 +3,7 @@ import {
   Boxes, Search, Upload, History, LogOut, AlertTriangle, Check, Loader2,
   Package, RefreshCw, ChevronRight, X, LayoutDashboard, PackageX, PackageCheck,
   HelpCircle, Clock, ArrowRight, Crown, Tag, Wand2, Layers, Pencil,
-  ClipboardCheck, Sparkles,
+  ClipboardCheck, Sparkles, Plus, Trash2,
 } from 'lucide-react';
 
 // Portal-back link (Jupiter). URL from build-time env; hidden when unset, so it is completely
@@ -18,6 +18,7 @@ import {
   generateAliases, setAlias,
   getGroups, getGroupProducts, autoAssignGroups, setProductGroup, setSubgroup,
   setProductsGroup, setSubgroups,
+  createGroup, createSubgroup, deleteGroup, deleteSubgroup,
   type NameProposalRow, type ProposalSummary, type ProposalFilter,
   getProposalSummary, getProposals, loadProposals, decideProposal, bulkApproveSafe,
 } from './lib/api';
@@ -1329,6 +1330,124 @@ function GroupProductRow({
   );
 }
 
+// Inline form to create a new staff-defined group (name Th/En + 2-letter code + pillar).
+function CreateGroupForm({ onCreated }: { onCreated: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [nameTh, setNameTh] = useState('');
+  const [nameEn, setNameEn] = useState('');
+  const [code, setCode] = useState('');
+  const [pillar, setPillar] = useState<Pillar>('lab');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+
+  async function submit() {
+    setErr('');
+    if (!nameTh.trim() && !nameEn.trim()) { setErr('กรอกชื่อกลุ่ม'); return; }
+    if (!/^[A-Za-z]{2}$/.test(code.trim())) { setErr('รหัสต้องเป็นตัวอักษร 2 ตัว'); return; }
+    setBusy(true);
+    try {
+      await createGroup(nameTh.trim(), nameEn.trim(), code.trim().toUpperCase(), pillar);
+      setNameTh(''); setNameEn(''); setCode(''); setPillar('lab'); setOpen(false);
+      onCreated();
+    } catch (e) {
+      setErr(e instanceof Error && e.message.includes('409') ? 'รหัสนี้ถูกใช้แล้ว' : 'สร้างไม่สำเร็จ');
+    } finally { setBusy(false); }
+  }
+
+  if (!open) {
+    return (
+      <button onClick={() => setOpen(true)} className="px-3 py-2 rounded-xl border border-dashed border-indigo-300 text-indigo-600 hover:bg-indigo-50 text-sm font-medium flex items-center gap-1.5">
+        <Plus size={15} /> สร้างกลุ่มใหม่
+      </button>
+    );
+  }
+  return (
+    <div className="w-full mt-2 p-3 rounded-xl border border-indigo-200 bg-indigo-50/50 flex flex-wrap items-end gap-2">
+      <label className="text-xs text-slate-500">ชื่อไทย
+        <input value={nameTh} onChange={(e) => setNameTh(e.target.value)} placeholder="เช่น วัสดุพิเศษ"
+          className="block mt-0.5 w-40 px-2 py-1.5 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+      </label>
+      <label className="text-xs text-slate-500">ชื่ออังกฤษ
+        <input value={nameEn} onChange={(e) => setNameEn(e.target.value)} placeholder="Special"
+          className="block mt-0.5 w-40 px-2 py-1.5 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+      </label>
+      <label className="text-xs text-slate-500">รหัส (2 ตัว)
+        <input value={code} onChange={(e) => setCode(e.target.value.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 2))} placeholder="ZX"
+          className="block mt-0.5 w-16 px-2 py-1.5 rounded-lg border border-slate-300 text-sm font-mono uppercase focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+      </label>
+      <label className="text-xs text-slate-500">หมวด
+        <select value={pillar} onChange={(e) => setPillar(e.target.value as Pillar)}
+          className="block mt-0.5 w-44 px-2 py-1.5 rounded-lg border border-slate-300 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-400">
+          {PILLAR_ORDER.map((pl) => (<option key={pl} value={pl}>{PILLAR_LABEL[pl]}</option>))}
+        </select>
+      </label>
+      <button onClick={submit} disabled={busy}
+        className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium flex items-center gap-1 disabled:opacity-50">
+        {busy ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />} สร้าง
+      </button>
+      <button onClick={() => { setOpen(false); setErr(''); }} className="px-2 py-1.5 text-xs text-slate-500 hover:text-slate-700">ยกเลิก</button>
+      {err && <span className="w-full text-rose-600 text-xs flex items-center gap-1"><AlertTriangle size={12} /> {err}</span>}
+    </div>
+  );
+}
+
+// Sub-group manager for the open group: lists sub-groups (custom ones deletable) + a create form.
+function SubgroupManager({ group, onChanged }: { group: CatalogGroupInfo; onChanged: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [nameTh, setNameTh] = useState('');
+  const [nameEn, setNameEn] = useState('');
+  const [code, setCode] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+
+  async function submit() {
+    setErr('');
+    if (!nameTh.trim() && !nameEn.trim()) { setErr('กรอกชื่อชนิด'); return; }
+    if (!/^[A-Za-z]{2}$/.test(code.trim())) { setErr('รหัส 2 ตัวอักษร'); return; }
+    setBusy(true);
+    try {
+      await createSubgroup(group.key, nameTh.trim(), nameEn.trim(), code.trim().toUpperCase());
+      setNameTh(''); setNameEn(''); setCode(''); setOpen(false);
+      onChanged();
+    } catch (e) {
+      setErr(e instanceof Error && e.message.includes('409') ? 'รหัสซ้ำ' : 'ไม่สำเร็จ');
+    } finally { setBusy(false); }
+  }
+  async function removeSub(c: string) {
+    const s = group.subgroups.find((x) => x.code === c);
+    if (!window.confirm(`ลบชนิด “${s?.nameTh || s?.nameEn || c}”? สินค้าจะไม่ถูกลบ แต่จะไม่มีชนิดนี้กำกับ`)) return;
+    setErr('');
+    try { await deleteSubgroup(group.key, c); onChanged(); } catch { setErr('ลบชนิดไม่สำเร็จ'); }
+  }
+
+  return (
+    <div className="mb-3 flex flex-wrap items-center gap-1.5">
+      <span className="text-[11px] text-slate-400">ชนิด:</span>
+      {group.subgroups.length === 0 && <span className="text-[11px] text-slate-300">— ยังไม่มี —</span>}
+      {group.subgroups.map((s) => (
+        <span key={s.code} className="inline-flex items-center gap-1 pl-2 pr-1.5 py-0.5 rounded-full bg-slate-100 text-slate-600 text-[11px]">
+          <b className="font-mono text-indigo-600">{s.code}</b> {s.nameTh || s.nameEn}
+          {s.custom && <button onClick={() => removeSub(s.code)} className="text-slate-400 hover:text-rose-600" title="ลบชนิด"><X size={11} /></button>}
+        </span>
+      ))}
+      {open ? (
+        <span className="inline-flex items-center gap-1">
+          <input value={nameTh} onChange={(e) => setNameTh(e.target.value)} placeholder="ชื่อไทย" className="w-24 px-2 py-1 rounded-lg border border-slate-300 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+          <input value={nameEn} onChange={(e) => setNameEn(e.target.value)} placeholder="อังกฤษ" className="w-20 px-2 py-1 rounded-lg border border-slate-300 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+          <input value={code} onChange={(e) => setCode(e.target.value.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 2))} placeholder="รหัส" className="w-14 px-2 py-1 rounded-lg border border-slate-300 text-xs font-mono uppercase focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+          <button onClick={submit} disabled={busy} className="px-2 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs disabled:opacity-50">{busy ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}</button>
+          <button onClick={() => { setOpen(false); setErr(''); }} className="text-xs text-slate-400 hover:text-slate-600 px-1">✕</button>
+        </span>
+      ) : (
+        <button onClick={() => setOpen(true)} className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full border border-dashed border-indigo-300 text-indigo-600 text-[11px] hover:bg-indigo-50">
+          <Plus size={11} /> เพิ่มชนิด
+        </button>
+      )}
+      {err && <span className="text-rose-600 text-[10px]">{err}</span>}
+    </div>
+  );
+}
+
 function GroupTab() {
   const [groups, setGroups] = useState<CatalogGroupInfo[]>([]);
   const [total, setTotal] = useState(0);
@@ -1456,6 +1575,13 @@ function GroupTab() {
   // Loaded fewer than the bucket holds (only possible if a bucket ever exceeds the fetch cap) —
   // "select all" would then miss the overflow, so we say so instead of moving a silent subset.
   const truncated = !q.trim() && products.length < bucketTotal;
+  const openGroup = groups.find((g) => g.key === sel);
+  async function removeGroup() {
+    if (!openGroup) return;
+    if (!window.confirm(`ลบกลุ่ม “${openGroup.nameTh || openGroup.nameEn}”? สินค้า ${openGroup.count.toLocaleString('th-TH')} รายการจะกลายเป็น “ยังไม่จัด”`)) return;
+    try { await deleteGroup(openGroup.key); setSel(null); await loadGroups(); }
+    catch { setBatchNote('ลบกลุ่มไม่สำเร็จ ลองใหม่อีกครั้ง'); }
+  }
   function toggleAll() {
     setSelected(allSelected ? new Set() : new Set(products.map((p) => p.sku)));
   }
@@ -1523,6 +1649,7 @@ function GroupTab() {
           >
             {busy === 'redo' ? <Loader2 size={15} className="animate-spin inline" /> : 'จัดใหม่ทั้งหมด'}
           </button>
+          <CreateGroupForm onCreated={loadGroups} />
           <div className="ml-auto text-sm text-slate-500">
             จัดแล้ว <b className="text-slate-800">{assigned.toLocaleString('th-TH')}</b> / {total.toLocaleString('th-TH')} ·{' '}
             <button
@@ -1567,6 +1694,9 @@ function GroupTab() {
         <div className="mt-5 bg-white rounded-2xl border border-slate-200 p-4">
           <div className="flex flex-wrap items-center gap-2 mb-3">
             <h3 className="font-semibold text-slate-800">{selName}</h3>
+            {openGroup?.custom && (
+              <button onClick={removeGroup} title="ลบกลุ่มนี้" className="text-slate-300 hover:text-rose-600"><Trash2 size={15} /></button>
+            )}
             <button onClick={() => setSel(null)} className="text-slate-400 hover:text-slate-600"><X size={16} /></button>
             <div className="relative flex-1 min-w-[200px]">
               <Search size={15} className="absolute left-3 top-2.5 text-slate-400" />
@@ -1586,6 +1716,10 @@ function GroupTab() {
               </button>
             )}
           </div>
+
+          {sel !== 'unassigned' && openGroup && (
+            <SubgroupManager group={openGroup} onChanged={() => { loadGroups(); loadProducts(sel, q); }} />
+          )}
 
           {selected.size > 0 && (
             <div className="flex flex-wrap items-center gap-2 mb-3 p-2.5 rounded-xl bg-indigo-50 border border-indigo-200">

@@ -17,10 +17,17 @@ export interface AliasAssignment {
 
 // The alpha prefix for a product's code: group code, plus its subgroup code when it has a
 // valid one for that group (e.g. "IM" or "IMAL"). null if the product has no/invalid group.
-export function codePrefix(catalogGroup: string | null, catalogSubgroup: string | null): string | null {
-  if (!catalogGroup || !GROUP_CODE.has(catalogGroup)) return null;
-  const g = GROUP_CODE.get(catalogGroup)!;
-  const sub = catalogSubgroup && SUBGROUP_CODES[catalogGroup]?.has(catalogSubgroup) ? catalogSubgroup : '';
+// groupCode / subCodes default to the built-in maps; callers pass the MERGED maps (from
+// stock/taxonomy.ts) so staff-created groups get codes too.
+export function codePrefix(
+  catalogGroup: string | null,
+  catalogSubgroup: string | null,
+  groupCode: Map<string, string> = GROUP_CODE,
+  subCodes: Record<string, Set<string>> = SUBGROUP_CODES,
+): string | null {
+  if (!catalogGroup || !groupCode.has(catalogGroup)) return null;
+  const g = groupCode.get(catalogGroup)!;
+  const sub = catalogSubgroup && subCodes[catalogGroup]?.has(catalogSubgroup) ? catalogSubgroup : '';
   return g + sub;
 }
 
@@ -30,14 +37,16 @@ export function codePrefix(catalogGroup: string | null, catalogSubgroup: string 
 // APPENDS new items after the bucket's current max, so codes stay stable as items are added.
 export function buildGroupAliases(
   products: { sku: string; catalogGroup: string | null; catalogSubgroup?: string | null }[],
-  opts?: { keep?: Record<string, string> },
+  opts?: { keep?: Record<string, string>; groupCode?: Map<string, string>; subCodes?: Record<string, Set<string>> },
 ): AliasAssignment[] {
   const keep = opts?.keep ?? {};
+  const groupCode = opts?.groupCode ?? GROUP_CODE;
+  const subCodes = opts?.subCodes ?? SUBGROUP_CODES;
   const sorted = [...products].sort((a, b) => (a.sku < b.sku ? -1 : a.sku > b.sku ? 1 : 0));
   // Bucket by resolved prefix (group or group+subgroup), in ascending SKU order.
   const byPrefix = new Map<string, { sku: string; groupKey: string }[]>();
   for (const p of sorted) {
-    const prefix = codePrefix(p.catalogGroup, p.catalogSubgroup ?? null);
+    const prefix = codePrefix(p.catalogGroup, p.catalogSubgroup ?? null, groupCode, subCodes);
     if (!prefix) continue;
     if (!byPrefix.has(prefix)) byPrefix.set(prefix, []);
     byPrefix.get(prefix)!.push({ sku: p.sku, groupKey: p.catalogGroup! });

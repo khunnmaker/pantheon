@@ -463,6 +463,33 @@ model ProductAlias {
   @@index([groupKey])
 }
 
+// User-created catalog groups + sub-groups (Vulcan จัดกลุ่ม tab). These OVERLAY the built-in
+// vocabulary hardcoded in api/src/stock/catalogGroups.ts — the merged view is loaded by
+// stock/taxonomy.ts. Built-ins live in code (they can never disappear); only staff-created ones
+// are stored here. A custom sub-group may attach to ANY group (built-in or custom) via groupKey.
+model CatalogGroupDef {
+  key       String   @id // stable slug (e.g. "cg_zx"); never collides with a built-in key
+  code      String   @unique // 2-letter product-code prefix (globally unique across built-in + custom)
+  nameTh    String   @default("")
+  nameEn    String   @default("")
+  pillar    String   @default("lab") // lab | digital | clinical | equipment | review
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+}
+
+model CatalogSubgroupDef {
+  id        String   @id @default(cuid())
+  groupKey  String // the parent group (built-in key or a CatalogGroupDef.key)
+  code      String // 2-letter, unique WITHIN its group
+  nameTh    String   @default("")
+  nameEn    String   @default("")
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+
+  @@unique([groupKey, code])
+  @@index([groupKey])
+}
+
 // ─── Vulcan (stock management) ───────────────────────────────────────────
 // Vulcan writes Product.stock/stockAt on each daily Express CSV import and on
 // manual corrections; Minerva reads those same rows. These two tables give
