@@ -9,7 +9,7 @@ export const BRAND_RULES: { re: RegExp; brand: string }[] = [
   { re: /valplast/i, brand: 'Valplast' },
   { re: /\bmajor\b/i, brand: 'Major' },
   { re: /cadstar|cad ?star/i, brand: 'CADstar' },
-  { re: /dentory/i, brand: 'Dentory' },
+  { re: /dentor(y|ies)/i, brand: 'Dentories' },
   { re: /sunshine/i, brand: 'Sunshine' },
   { re: /ivoclar|ips ?e\.?max|emax/i, brand: 'Ivoclar' },
   { re: /\bgc\b/i, brand: 'GC' },
@@ -43,21 +43,31 @@ export function deriveCategory(text: string): { th: string; en: string } {
   return { th: '', en: '' };
 }
 
-// Seed ProductEnrichment on boot when empty (fresh deploy), mirroring ensureCatalog.
-// Skips entirely once any rows exist, so it never re-runs or clobbers staff edits.
+// Seed ProductEnrichment on boot, mirroring ensureCatalog. TOPS UP: derives facets only
+// for products that have no enrichment row yet, so SKUs added after the first seed still get
+// brand/category. Never modifies existing rows (staff edits are safe) — except one idempotent
+// heal of the old 'Dentory' spelling. Fail-open: any error is logged and swallowed.
 export async function ensureEnrichment(): Promise<void> {
   try {
-    if ((await prisma.productEnrichment.count()) > 0) return;
-    const products = await prisma.product.findMany({ select: { sku: true, nameEn: true, nameTh: true, keywords: true } });
+    // Idempotent brand-name correction — applies to old derived/manual rows too.
+    await prisma.productEnrichment.updateMany({ where: { brand: 'Dentory' }, data: { brand: 'Dentories' } });
+    const [products, existing] = await Promise.all([
+      prisma.product.findMany({ select: { sku: true, nameEn: true, nameTh: true, keywords: true } }),
+      prisma.productEnrichment.findMany({ select: { sku: true } }),
+    ]);
     if (products.length === 0) return;
-    const data = products.map((p) => {
-      const text = `${p.nameTh} ${p.nameEn} ${p.keywords.join(' ')}`;
-      const cat = deriveCategory(text);
-      return { sku: p.sku, brand: deriveBrand(text), category: cat.th, categoryEn: cat.en, source: 'derived' };
-    });
+    const have = new Set(existing.map((e) => e.sku));
+    const data = products
+      .filter((p) => !have.has(p.sku))
+      .map((p) => {
+        const text = `${p.nameTh} ${p.nameEn} ${p.keywords.join(' ')}`;
+        const cat = deriveCategory(text);
+        return { sku: p.sku, brand: deriveBrand(text), category: cat.th, categoryEn: cat.en, source: 'derived' };
+      });
+    if (data.length === 0) return;
     const res = await prisma.productEnrichment.createMany({ data, skipDuplicates: true });
     // eslint-disable-next-line no-console
-    console.log(`[enrichment] derived ${res.count} products (brand/category facets)`);
+    if (res.count > 0) console.log(`[enrichment] derived ${res.count} new products (brand/category facets)`);
   } catch (err) {
     // eslint-disable-next-line no-console
     console.error('[enrichment] ensureEnrichment failed', err);

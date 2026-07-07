@@ -7,7 +7,7 @@ import {
 import { useStore } from './store';
 import {
   getPublicCatalog, getPricedCatalog, loginClinic, registerClinic, submitOrder, getMyOrders,
-  mediaUrl, formatBaht,
+  mediaUrl, formatBaht, orderNoLabel, NotApprovedError,
   type PublicProduct, type PricedProduct, type CatalogPage, type WebOrder, type Availability, type Facets,
 } from './lib/api';
 import { COMPANY } from './company';
@@ -210,10 +210,16 @@ export function StatusBanner({ status }: { status: 'pending' | 'rejected' }) {
 
 // ── Orders page ─────────────────────────────────────────────────────────────
 export function OrdersPage() {
-  const { approved, navigate, pick } = useStore();
+  const { approved, navigate, pick, sessionExpired } = useStore();
   const [orders, setOrders] = useState<WebOrder[] | null>(null);
   const [error, setError] = useState('');
-  useEffect(() => { if (approved) getMyOrders().then(({ orders: o }) => setOrders(o)).catch(() => setError(pick('โหลดออเดอร์ไม่สำเร็จ', 'Failed to load orders'))); }, [approved]);
+  useEffect(() => {
+    if (!approved) return;
+    getMyOrders().then(({ orders: o }) => setOrders(o)).catch((e) => {
+      if ((e as Error).message === 'unauthorized') sessionExpired();
+      else setError(pick('โหลดออเดอร์ไม่สำเร็จ', 'Failed to load orders'));
+    });
+  }, [approved]);
 
   return (
     <div className="wrap" style={{ paddingTop: 34, paddingBottom: 80, maxWidth: 820 }}>
@@ -230,7 +236,7 @@ export function OrdersPage() {
               return (
                 <div key={o.id} style={{ background: '#fff', border: '1px solid var(--line)', borderRadius: 16, padding: 20 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
-                    <span style={{ fontFamily: 'monospace', fontSize: '.8rem', color: 'var(--muted)' }}>#{o.id.slice(-8)}</span>
+                    <span style={{ fontFamily: 'monospace', fontSize: '.8rem', color: 'var(--muted)' }}>{orderNoLabel(o.orderNo, o.id)}</span>
                     <span style={{ fontSize: '.78rem', fontWeight: 700, color: st.color }}>{pick(st.th, st.en)}</span>
                   </div>
                   <div style={{ fontSize: '.8rem', color: 'var(--muted)', marginBottom: 10 }}>{new Date(o.createdAt).toLocaleString(pick('th-TH', 'en-GB'))}</div>
@@ -255,7 +261,7 @@ export function OrdersPage() {
 
 // ── Cart drawer ─────────────────────────────────────────────────────────────
 export function CartDrawer() {
-  const { cart, setQty, clearCart, setCartOpen, navigate, pick } = useStore();
+  const { cart, setQty, clearCart, setCartOpen, navigate, pick, sessionExpired } = useStore();
   const items = Object.values(cart);
   const [taxName, setTaxName] = useState('');
   const [taxId, setTaxId] = useState('');
@@ -272,7 +278,12 @@ export function CartDrawer() {
     try {
       await submitOrder({ items: items.map((it) => ({ sku: it.p.sku, qty: it.qty })), note, tax: taxName || taxId || taxAddress ? { name: taxName, id: taxId, address: taxAddress } : undefined });
       clearCart(); setCartOpen(false); navigate('/orders');
-    } catch { setError(pick('ส่งคำสั่งซื้อไม่สำเร็จ กรุณาลองใหม่', 'Could not submit. Please try again.')); setBusy(false); }
+    } catch (e) {
+      if (e instanceof NotApprovedError) setError(pick('บัญชีของคุณยังไม่พร้อมสั่งซื้อ (รอการอนุมัติหรือถูกระงับ) กรุณาติดต่อทีมงาน', 'Your account is not ready to order (pending or suspended). Please contact us.'));
+      else if ((e as Error).message === 'unauthorized') { sessionExpired(); setError(pick('เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่ ตะกร้าของคุณยังอยู่', 'Session expired — please sign in again. Your cart is saved.')); }
+      else setError(pick('ส่งคำสั่งซื้อไม่สำเร็จ กรุณาลองใหม่', 'Could not submit. Please try again.'));
+      setBusy(false);
+    }
   }
 
   return (

@@ -22,7 +22,9 @@ export async function contentRoutes(app: FastifyInstance) {
       const buf = await fs.readFile(path.join(PRODUCT_PHOTO_DIR, `${sku}.png`));
       return reply
         .header('content-type', 'image/png')
-        .header('cache-control', 'public, max-age=86400')
+        // Long cache with revalidation. NOT immutable — the URL is sku-addressed (not
+        // content-addressed), so a re-uploaded photo must still be picked up eventually.
+        .header('cache-control', 'public, max-age=2592000, stale-while-revalidate=86400')
         .header('x-content-type-options', 'nosniff')
         .send(buf);
     } catch {

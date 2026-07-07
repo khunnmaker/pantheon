@@ -1,3 +1,4 @@
+import { randomInt } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import type { Product, ProductEnrichment } from '@prisma/client';
 import { z } from 'zod';
@@ -110,13 +111,25 @@ async function catalogWhere(q: string | undefined, brand?: string, category?: st
   const where: Record<string, unknown> = { status: 'active' };
   const raw = (q ?? '').trim();
   if (raw) {
-    const skuLike = raw.replace(/\s+/g, '');
-    where.OR = [
-      { sku: { contains: skuLike, mode: 'insensitive' as const } },
+    const nameArms = [
       { nameEn: { contains: raw, mode: 'insensitive' as const } },
       { nameTh: { contains: raw, mode: 'insensitive' as const } },
       { keywords: { hasSome: raw.toLowerCase().split(/\s+/).filter(Boolean) } },
     ];
+    // SKU is DASH-INSENSITIVE: a buyer typing "071009" must match the stored "07-10-09".
+    // Prisma can't transform a column inside `contains`, so resolve matching skus in raw SQL
+    // (mirrors searchProducts in catalog/match.ts), then match by the resolved set.
+    const skuFlat = raw.replace(/[^0-9a-z]/gi, '').toLowerCase();
+    if (skuFlat.length >= 2) {
+      const rows = await prisma.$queryRaw<{ sku: string }[]>`
+        SELECT sku FROM "Product"
+        WHERE status = 'active' AND replace(lower(sku), '-', '') LIKE ${`%${skuFlat}%`}
+        LIMIT 500`;
+      const hits = rows.map((r) => r.sku);
+      where.OR = [{ sku: { in: hits } }, ...nameArms];
+    } else {
+      where.OR = nameArms;
+    }
   }
   if (brand || category) {
     const enriched = await prisma.productEnrichment.findMany({
@@ -142,15 +155,25 @@ async function loadPage(where: Record<string, unknown>, page: number, pageSize: 
 // Best-effort LINE alert to the CEO when a web order lands, so this low-volume,
 // LINE-driven business never leaves an order sitting unseen. Fail-open: a LINE
 // failure must never affect the order flow (the order is already persisted).
-async function notifyNewOrder(o: { lines: { qty: number }[] }, clinicName: string): Promise<void> {
+async function notifyNewOrder(o: { orderNo: number; lines: { qty: number }[] }, clinicName: string): Promise<void> {
   const ceo = env.CEO_LINE_USER_ID || env.CERES_CEO_LINE_USER_ID;
   if (!ceo) return;
   try {
     const units = o.lines.reduce((n, l) => n + l.qty, 0);
-    await sendLineText(ceo, `🛒 Diana ออเดอร์ใหม่จาก ${clinicName}\n${o.lines.length} รายการ (รวม ${units} ชิ้น)\nเปิด Diana admin เพื่อยืนยัน`);
+    const label = `WD-${String(o.orderNo).padStart(5, '0')}`;
+    await sendLineText(ceo, `🛒 Diana ออเดอร์ใหม่ ${label} จาก ${clinicName}\n${o.lines.length} รายการ (รวม ${units} ชิ้น)\nเปิด Diana admin เพื่อยืนยัน`);
   } catch {
     // best-effort only — never let a LINE failure affect the order flow.
   }
+}
+
+// Unambiguous alphabet for staff-read temp passwords — excludes 0/O/1/l/I/o so a
+// supervisor can read the code aloud over LINE without transcription mistakes.
+const PW_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789';
+function randomPassword(len: number): string {
+  let out = '';
+  for (let i = 0; i < len; i++) out += PW_ALPHABET[randomInt(PW_ALPHABET.length)];
+  return out;
 }
 
 export async function dianaRoutes(app: FastifyInstance) {
@@ -379,6 +402,20 @@ export async function dianaRoutes(app: FastifyInstance) {
     },
   );
 
+  // SUPERVISOR only: reset a clinic's password to a random temp value. No email/reset-link
+  // infra exists — staff verify the caller over LINE, then read this one-time password to them.
+  app.post<{ Params: { id: string } }>(
+    '/api/diana/admin/clinics/:id/reset-password',
+    { preHandler: [requireAuth, requireRole('supervisor')] },
+    async (req, reply) => {
+      const clinic = await prisma.clinicAccount.findUnique({ where: { id: req.params.id } });
+      if (!clinic) return reply.code(404).send({ error: 'not_found' });
+      const tempPassword = randomPassword(10);
+      await prisma.clinicAccount.update({ where: { id: clinic.id }, data: { passwordHash: await hashPassword(tempPassword) } });
+      return { ok: true, tempPassword }; // returned exactly once — never logged.
+    },
+  );
+
   // ── STAFF admin: order queue ──────────────────────────────────────────────
   const adminOrdersQuery = z.object({ status: z.enum(['submitted', 'confirmed', 'invoiced', 'cancelled']).optional() });
   app.get('/api/diana/admin/orders', { preHandler: [requireAuth, requireApp('diana')] }, async (req, reply) => {
@@ -402,11 +439,15 @@ export async function dianaRoutes(app: FastifyInstance) {
     data: Record<string, unknown>,
     reply: import('fastify').FastifyReply,
   ) {
-    const order = await prisma.webOrder.findUnique({ where: { id } });
-    if (!order) return reply.code(404).send({ error: 'not_found' });
-    if (!from.includes(order.status)) return reply.code(409).send({ error: 'bad_state', status: order.status });
-    const updated = await prisma.webOrder.update({ where: { id }, data });
-    return { ok: true, status: updated.status };
+    // Compare-and-swap: only flip when the row is still in an expected `from` state, so two
+    // staff acting at once can't double-transition (no read-then-write TOCTOU window).
+    const r = await prisma.webOrder.updateMany({ where: { id, status: { in: from } }, data });
+    if (r.count === 0) {
+      const current = await prisma.webOrder.findUnique({ where: { id } });
+      if (!current) return reply.code(404).send({ error: 'not_found' });
+      return reply.code(409).send({ error: 'bad_state', status: current.status });
+    }
+    return { ok: true, status: data.status };
   }
 
   app.post<{ Params: { id: string } }>(

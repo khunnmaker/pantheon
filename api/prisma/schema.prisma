@@ -575,6 +575,8 @@ model WebOrder {
   confirmedBy     String? // agent id
   invoicedAt      DateTime?
   createdAt       DateTime       @default(now())
+  // Human-readable, monotonic order number shown as WD-00001 (additive; SERIAL backfills existing rows).
+  orderNo         Int            @default(autoincrement()) @unique
   lines           WebOrderLine[]
 
   @@index([clinicAccountId])

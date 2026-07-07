@@ -16,6 +16,11 @@ export const mediaUrl = (p: string): string => `${API_URL}${p}`;
 export const formatBaht = (n: number): string =>
   n > 0 ? `฿${n.toLocaleString('th-TH')}` : '—';
 
+// Human-readable order label, e.g. WD-00042. Falls back to the id tail for any row that
+// predates the orderNo column (0/undefined — shouldn't happen since the DB default backfills).
+export const orderNoLabel = (orderNo: number, id: string): string =>
+  orderNo ? `WD-${String(orderNo).padStart(5, '0')}` : `#${id.slice(-8)}`;
+
 // ── shared catalog shapes (mirror api/src/routes/diana.ts DTOs) ─────────────
 export interface PublicProduct {
   sku: string;
@@ -82,6 +87,7 @@ export type OrderStatus = 'submitted' | 'confirmed' | 'invoiced' | 'cancelled';
 
 export interface WebOrder {
   id: string;
+  orderNo: number;
   status: OrderStatus;
   note: string;
   taxName: string;
@@ -268,6 +274,13 @@ export const adminRejectClinic = (id: string, note: string) =>
 // Supervisor-only: permanently delete a clinic account + all its orders (test cleanup).
 export const adminDeleteClinic = (id: string) =>
   staffCall<{ ok: boolean }>(`/api/diana/admin/clinics/${encodeURIComponent(id)}`, { method: 'DELETE' });
+
+// Supervisor-only: reset a clinic's password to a random temp value, returned once so staff
+// can read it to the (LINE-verified) caller. No email/reset-link infra exists.
+export const adminResetClinicPassword = (id: string) =>
+  staffCall<{ ok: boolean; tempPassword: string }>(`/api/diana/admin/clinics/${encodeURIComponent(id)}/reset-password`, {
+    method: 'POST',
+  });
 
 export interface AdminOrder extends WebOrder {
   clinicAccount: { id: string; clinicName: string; email: string; customerCode: string | null };
