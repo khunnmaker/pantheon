@@ -81,7 +81,7 @@ export function HomePage() {
 
       <section className="section">
         <div className="wrap">
-          <div className="section-head">
+          <div className="section-head reveal">
             <span className="eyebrow">{pick('เลือกซื้อตามหมวด', 'Shop by category')}</span>
             <h2 className="serif">{pick('ครบทุกอย่างที่คลินิกและแล็บต้องการ', 'Everything your clinic or lab needs')}</h2>
             <p>{pick('ตั้งแต่วัสดุสิ้นเปลืองประจำวัน ไปจนถึงเครื่องมือดิจิทัล — จัดหมวดให้คุณหาเจอในไม่กี่วินาที', 'From everyday consumables to digital machines — organised so you find the right product in seconds.')}</p>
@@ -91,9 +91,9 @@ export function HomePage() {
       </section>
 
       <section className="section">
-        <div className="wrap split">
+        <div className="wrap split reveal">
           <div className="split-art">
-            <img src="/section-digital.jpg" alt="" className="split-img" />
+            <img src="/section-digital.jpg" alt={pick('เวิร์กโฟลว์ทันตกรรมดิจิทัล — สแกนช่องปากและออกแบบด้วย CAD/CAM', 'Digital dentistry workflow — intraoral scanning and CAD/CAM design')} className="split-img" loading="lazy" />
             <div className="pill" style={{ top: 18, left: 18 }}><span style={{ width: 10, height: 10, borderRadius: 9, background: 'var(--coral)' }} /> {pick('สแกนช่องปาก', 'Intraoral scan')}</div>
             <div className="pill" style={{ bottom: 18, right: 18 }}><span style={{ width: 10, height: 10, borderRadius: 9, background: 'var(--teal)' }} /> Exocad CAD/CAM</div>
           </div>
@@ -111,19 +111,19 @@ export function HomePage() {
         </div>
       </section>
 
-      <section className="section" style={{ background: 'var(--sand)' }}>
+      <section className="section section-dark">
         <div className="wrap">
-          <div className="section-head center">
+          <div className="section-head center reveal">
             <span className="eyebrow">{pick('ทำไมต้องเลือกเรา', 'Why choose us')}</span>
             <h2 className="serif">{pick('คุณภาพรับรองมาตรฐานสากล', 'Quality certified to international standards')}</h2>
             <p>{pick('ทุกกลุ่มสินค้าผ่านการรับรองระบบคุณภาพ และเป็นสินค้าของแท้ตรวจสอบได้', 'Every product line is backed by recognised quality systems and genuine, traceable supply.')}</p>
           </div>
-          <div className="trust-grid">
+          <div className="trust-grid stagger">
             {CERTS.map((c) => (
               <div key={c.code} className="trust-card"><div className="badge-ic"><ShieldCheck size={30} /></div><h3>{c.code}</h3><p>{pick(c.desc, c.descEn)}</p></div>
             ))}
           </div>
-          <div className="stats">
+          <div className="stats stagger">
             <div className="stat"><b>1,187</b><span>{pick('รายการสินค้า', 'Products')}</span></div>
             <div className="stat"><b>3</b><span>{pick('บริษัทในเครือ', 'Group companies')}</span></div>
             <div className="stat"><b>30+</b><span>{pick('ปีผลิตเอง', 'Years making')}</span></div>
@@ -141,7 +141,7 @@ export function HomePage() {
 function CatGrid() {
   const { pick } = useStore();
   return (
-    <div className="catbanners">
+    <div className="catbanners stagger">
       {CATEGORIES.map((c) => (
         <a key={c.key} className="catbanner" href={`#${catHref(c)}`} aria-label={pick(c.nameTh, c.nameEn)}>
           <img src={CAT_IMG[c.key]} alt={pick(c.nameTh, c.nameEn)} loading="lazy" />
@@ -156,12 +156,12 @@ function Divisions() {
   return (
     <section className="section">
       <div className="wrap">
-        <div className="section-head">
+        <div className="section-head reveal">
           <span className="eyebrow">{pick('กลุ่มบริษัท Prominent', 'The Prominent group')}</span>
           <h2 className="serif">{pick('สามบริษัท หนึ่งพันธมิตรทันตกรรม', 'Three companies, one dental partner')}</h2>
           <p>{pick('ตัวแทนจำหน่าย แล็บทันตกรรมของเราเอง และโรงงานผลิต — ดูแลคุณครบทั้งวงจร', 'Distribution, an in-house dental lab, and manufacturing — supporting you across the whole chain.')}</p>
         </div>
-        <div className="div-grid">
+        <div className="div-grid stagger">
           {ARMS.map((a) => (
             <button key={a.key} className="div-card" onClick={() => navigate(a.key === 'lab' ? '/lab' : a.key === 'manufacturing' ? '/manufacturing' : '/about')}>
               <div className="dh" style={{ background: ARM_BG[a.key] }}><Ic name={a.icon} size={46} /></div>
@@ -177,7 +177,7 @@ function Divisions() {
 function CtaBand() {
   const { pick } = useStore();
   return (
-    <div className="cta-band">
+    <div className="cta-band reveal">
       <div>
         <h2 className="serif">{pick('ไม่แน่ใจว่าควรใช้สินค้าไหน?', 'Not sure which product is right?')}</h2>
         <p>{pick('บอกเราเกี่ยวกับคลินิกหรือแล็บของคุณ ทีมงานจะแนะนำสินค้าที่เหมาะที่สุด พร้อมเสนอราคาให้ทันทีผ่าน LINE', 'Tell us about your clinic or lab and our team will recommend the best fit — with a quote on the spot via LINE.')}</p>
@@ -197,23 +197,23 @@ export function AboutPage() {
     <>
       <PageHero eyebrow={pick('เกี่ยวกับ Prominent', 'About Prominent')} title={pick('พันธมิตรด้านวัสดุทันตกรรม ที่สร้างบนคุณภาพและความใส่ใจ', 'A dental supply partner built on quality and care')} desc={pick(COMPANY.introTh, COMPANY.introEn)} />
       <section className="section">
-        <div className="wrap split">
+        <div className="wrap split reveal">
           <div>
             <span className="eyebrow">{pick('เรื่องราวของเรา', 'Our story')}</span>
             <h2 className="serif" style={{ fontSize: 'clamp(1.7rem,3.4vw,2.4rem)', margin: '14px 0 16px' }}>{pick('วัสดุทันตกรรมครบวงจร ในราคาที่เข้าถึงได้', 'Comprehensive dental supply, the affordable way')}</h2>
             <p style={{ color: 'var(--muted)', marginBottom: 14 }}>{pick('เรานำเสนอสินค้าหลากหลายที่ครอบคลุมทุกงานทันตกรรม — ตั้งแต่วัสดุสิ้นเปลืองประจำวันของคลินิก ไปจนถึงการวางระบบแล็บดิจิทัลครบวงจร ด้วยสินค้าของแท้และการดูแลที่จริงใจ', "We offer a wide range of products for every dental practice — from a clinic's daily consumables to a full digital lab build — with genuine brands and real support.")}</p>
             <p style={{ color: 'var(--muted)' }}>{pick('ปัจจุบันกลุ่ม Prominent ประกอบด้วยสามบริษัท — ตัวแทนจำหน่าย แล็บทันตกรรม และโรงงานผลิต — ทำให้เราดูแลลูกค้าได้ตลอดทั้งห่วงโซ่งานทันตกรรม', 'Today the Prominent group spans three companies — distribution, an in-house dental laboratory, and manufacturing — supporting customers across the entire supply chain.')}</p>
-            <div className="stats" style={{ marginTop: 34, gridTemplateColumns: 'repeat(3,1fr)' }}>
+            <div className="stats stagger" style={{ marginTop: 34, gridTemplateColumns: 'repeat(3,1fr)' }}>
               <div className="stat"><b>6</b><span>{pick('กลุ่มสินค้า', 'Product lines')}</span></div>
               <div className="stat"><b>3</b><span>{pick('บริษัทในเครือ', 'Group companies')}</span></div>
               <div className="stat"><b>ISO</b><span>9001 &amp; 13485</span></div>
             </div>
           </div>
-          <div className="split-art"><img src="/arm-distribution.jpg" alt="" className="split-img" /><div className="pill" style={{ top: 18, left: 18 }}><span style={{ width: 10, height: 10, borderRadius: 9, background: 'var(--coral)' }} /> {pick('ไว้วางใจโดยคลินิกและแล็บ', 'Trusted by clinics & labs')}</div></div>
+          <div className="split-art"><img src="/arm-distribution.jpg" alt={pick('ศูนย์กระจายสินค้าและคลังวัสดุทันตกรรมของ Prominent', 'Prominent dental distribution centre and warehouse')} className="split-img" loading="lazy" /><div className="pill" style={{ top: 18, left: 18 }}><span style={{ width: 10, height: 10, borderRadius: 9, background: 'var(--coral)' }} /> {pick('ไว้วางใจโดยคลินิกและแล็บ', 'Trusted by clinics & labs')}</div></div>
         </div>
       </section>
       <section className="section" style={{ background: 'var(--sand)' }}>
-        <div className="wrap"><div className="section-head"><span className="eyebrow">{pick('บริษัทในเครือ', 'Our companies')}</span><h2 className="serif">{pick('กลุ่มบริษัท Prominent', 'The Prominent group')}</h2></div><DivCards /></div>
+        <div className="wrap"><div className="section-head reveal"><span className="eyebrow">{pick('บริษัทในเครือ', 'Our companies')}</span><h2 className="serif">{pick('กลุ่มบริษัท Prominent', 'The Prominent group')}</h2></div><DivCards /></div>
       </section>
       <section className="section"><div className="wrap"><CtaBand /></div></section>
     </>
@@ -222,7 +222,7 @@ export function AboutPage() {
 function DivCards() {
   const { pick } = useStore();
   return (
-    <div className="div-grid">
+    <div className="div-grid stagger">
       {ARMS.map((a) => (
         <div key={a.key} className="div-card">
           <div className="dh" style={{ background: ARM_BG[a.key] }}><Ic name={a.icon} size={46} /></div>
@@ -239,7 +239,7 @@ export function ProductsPage() {
   return (
     <>
       <PageHero eyebrow={pick('สินค้า', 'Products')} title={pick('เลือกชมตามหมวด', 'Browse by category')} desc={pick('เลือกหมวดที่สนใจ แล้วเข้าสู่ระบบเพื่อดูราคาและสั่งซื้อ', 'Pick a category, then sign in to see prices and order.')} />
-      <div className="wrap" style={{ paddingTop: 32 }}><img className="page-banner" src="/our-products.jpg" alt={pick('กลุ่มสินค้าที่เราผลิต', 'Our product range')} /></div>
+      <div className="wrap" style={{ paddingTop: 32 }}><img className="page-banner" src="/our-products.jpg" alt={pick('กลุ่มสินค้าที่เราผลิต', 'Our product range')} loading="lazy" /></div>
       <section className="section"><div className="wrap"><CatGrid /></div></section>
     </>
   );
@@ -252,7 +252,7 @@ export function BrandsPage() {
     <>
       <PageHero eyebrow={pick('แบรนด์', 'Brands')} title={pick('แบรนด์ชั้นนำที่เราจัดจำหน่ายและผลิตเอง', 'Brands we carry and make')} />
       <section className="section">
-        <div className="wrap" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(240px,1fr))', gap: 20 }}>
+        <div className="wrap stagger" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(240px,1fr))', gap: 20 }}>
           {BRANDS.map((b) => (
             <div key={b.name} className="trust-card" style={{ textAlign: 'left' }}>
               <h3 style={{ fontFamily: "'Fraunces',serif", fontSize: '1.4rem' }}>{b.name}</h3>
@@ -280,9 +280,9 @@ export function LabPage() {
   return (
     <>
       <PageHero eyebrow="DentalPort" title={pick('แล็บทันตกรรมด้วยเทคโนโลยีดิจิทัล', 'A dental laboratory powered by digital technology')} desc={pick(ARMS[1].blurb, ARMS[1].blurbEn)} />
-      <div className="wrap" style={{ paddingTop: 32 }}><img className="page-banner" src="/arm-lab.jpg" alt="" /></div>
+      <div className="wrap" style={{ paddingTop: 32 }}><img className="page-banner" src="/arm-lab.jpg" alt={pick('งานแล็บทันตกรรมดิจิทัลของ DentalPort', 'DentalPort digital dental laboratory work')} loading="lazy" /></div>
       <section className="section">
-        <div className="wrap" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(260px,1fr))', gap: 16 }}>
+        <div className="wrap stagger" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(260px,1fr))', gap: 16 }}>
           {services.map((s) => (
             <div key={s.en} className="trust-card" style={{ textAlign: 'left', display: 'flex', gap: 12, alignItems: 'flex-start' }}>
               <CheckCircle2 size={20} style={{ color: 'var(--teal)', flexShrink: 0, marginTop: 2 }} /> <span>{pick(s.th, s.en)}</span>
@@ -308,16 +308,16 @@ export function ManufacturingPage() {
   return (
     <>
       <PageHero eyebrow="Dentories · KPK" title={pick('โรงงานผลิตวัสดุทันตกรรม กว่า 30 ปี', 'Manufacturing dental materials for 30+ years')} desc={pick(ARMS[2].blurb, ARMS[2].blurbEn)} />
-      <div className="wrap" style={{ paddingTop: 32 }}><img className="page-banner" src="/arm-manufacturing.jpg" alt="" /></div>
+      <div className="wrap" style={{ paddingTop: 32 }}><img className="page-banner" src="/arm-manufacturing.jpg" alt={pick('โรงงานผลิตวัสดุทันตกรรม KPK', 'KPK dental materials manufacturing facility')} loading="lazy" /></div>
       <section className="section">
-        <div className="wrap" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(220px,1fr))', gap: 16, marginBottom: 28 }}>
+        <div className="wrap stagger" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(220px,1fr))', gap: 16, marginBottom: 28 }}>
           {products.map((p) => (
             <div key={p.en} className="trust-card" style={{ textAlign: 'left', display: 'flex', gap: 12, alignItems: 'center' }}>
               <Factory size={20} style={{ color: 'var(--teal)', flexShrink: 0 }} /> <span>{pick(p.th, p.en)}</span>
             </div>
           ))}
         </div>
-        <div className="wrap trust-grid">
+        <div className="wrap trust-grid stagger">
           {CERTS.map((c) => (
             <div key={c.code} className="trust-card"><div className="badge-ic"><ShieldCheck size={30} /></div><h3>{c.code}</h3><p>{pick(c.desc, c.descEn)}</p></div>
           ))}

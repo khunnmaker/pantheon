@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import {
   Search, ShoppingCart, X, Loader2, AlertTriangle, CheckCircle2, Plus, Minus, Trash2,
-  ChevronLeft, ChevronRight, ClipboardList, Clock, Package, User,
+  ChevronLeft, ChevronRight, ClipboardList, Clock, Package, User, SlidersHorizontal,
 } from 'lucide-react';
 import { useStore } from './store';
 import {
@@ -37,6 +37,7 @@ export function CatalogPage() {
   const [data, setData] = useState<CatalogPage<PublicProduct | PricedProduct> | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [filtersOpen, setFiltersOpen] = useState(false);
 
   useEffect(() => {
     setCategory(route.query.get('category') ?? '');
@@ -58,6 +59,7 @@ export function CatalogPage() {
 
   const totalPages = data ? Math.max(1, Math.ceil(data.total / data.pageSize)) : 1;
   const clearAll = () => { setCategory(''); setBrand(''); setQuery(''); };
+  const activeFilterCount = [category, brand, query.trim()].filter(Boolean).length;
 
   return (
     <div className="wrap" style={{ paddingTop: 34, paddingBottom: 80 }}>
@@ -75,7 +77,11 @@ export function CatalogPage() {
       )}
 
       <div className="catalog">
-        <aside className="filters">
+        <button className="mobile-filter-btn" onClick={() => setFiltersOpen((v) => !v)} aria-expanded={filtersOpen} aria-controls="catalog-filters">
+          <SlidersHorizontal size={16} /> {pick('ตัวกรอง', 'Filters')}
+          {activeFilterCount > 0 && <span className="mfb-badge">{activeFilterCount}</span>}
+        </button>
+        <aside id="catalog-filters" className={`filters${filtersOpen ? ' open' : ''}`}>
           <h4 style={{ marginTop: 0 }}>{pick('ค้นหา', 'Search')}</h4>
           <div className="fsearch">
             <Search size={16} />
@@ -93,11 +99,11 @@ export function CatalogPage() {
 
           {error && <Notice tone="error">{error}</Notice>}
           {loading && !data ? (
-            <div style={{ display: 'flex', justifyContent: 'center', padding: '80px 0', color: 'var(--muted)' }}><Loader2 className="animate-spin" /></div>
+            <SkeletonGrid />
           ) : data && data.total === 0 ? (
-            <div style={{ textAlign: 'center', padding: '60px 0', color: 'var(--muted)' }}>
-              <Search size={46} style={{ margin: '0 auto 14px', opacity: .5 }} />
-              <p style={{ fontWeight: 700, color: 'var(--ink)', fontSize: '1.1rem' }}>{pick('ไม่พบสินค้าตามตัวกรอง', 'No products match those filters')}</p>
+            <div className="empty-state">
+              <Search size={46} />
+              <p className="es-title">{pick('ไม่พบสินค้าตามตัวกรอง', 'No products match those filters')}</p>
               <p>{pick('ลองล้างตัวกรองหรือค้นหาด้วยคำอื่น', 'Try clearing a filter or searching a different term.')}</p>
               <button className="btn btn-primary btn-sm" style={{ marginTop: 16 }} onClick={clearAll}>{pick('ล้างตัวกรอง', 'Clear filters')}</button>
             </div>
@@ -181,6 +187,29 @@ function ProductCard({ product: p }: { product: PublicProduct | PricedProduct })
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+// Skeleton placeholders shown during the initial catalogue load — mirrors the product-card
+// grid dimensions so the layout doesn't jump when real data arrives.
+function SkeletonGrid() {
+  return (
+    <div className="prod-grid" aria-hidden="true">
+      {Array.from({ length: 8 }).map((_, i) => (
+        <div className="pcard skel" key={i}>
+          <div className="pimg sk" />
+          <div className="pbody">
+            <div className="sk-line sk" style={{ width: '38%' }} />
+            <div className="sk-line sk" style={{ width: '82%', height: 15 }} />
+            <div className="sk-line sk" style={{ width: '52%' }} />
+            <div className="pfoot">
+              <div className="sk-line sk" style={{ width: 74, height: 22, margin: 0 }} />
+              <div className="sk-line sk" style={{ width: 66, height: 32, margin: 0, borderRadius: 999 }} />
+            </div>
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
@@ -295,7 +324,13 @@ export function CartDrawer() {
           <button className="icon-btn" style={{ width: 36, height: 36 }} onClick={() => setCartOpen(false)}><X size={18} /></button>
         </div>
         <div style={{ flex: 1, overflowY: 'auto', padding: 18, display: 'flex', flexDirection: 'column', gap: 14 }}>
-          {items.length === 0 && <p style={{ textAlign: 'center', color: 'var(--muted)', padding: '40px 0' }}>{pick('ตะกร้าว่าง', 'Your cart is empty')}</p>}
+          {items.length === 0 && (
+            <div className="cart-empty">
+              <ShoppingCart size={40} />
+              <p className="ce-title">{pick('ตะกร้าว่าง', 'Your cart is empty')}</p>
+              <p className="ce-sub">{pick('เพิ่มสินค้าที่ต้องการ แล้วส่งคำขอสั่งซื้อให้ทีมงานของเรา', 'Add the items you need, then send a quote request to our team.')}</p>
+            </div>
+          )}
           {items.map((it) => (
             <div key={it.p.sku} style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
               <div style={{ flex: 1 }}>

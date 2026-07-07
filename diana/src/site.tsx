@@ -1,10 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import {
   Menu, X, ShoppingCart, ClipboardList, Search, User, Mail, MapPin,
   Facebook, Instagram, Youtube,
 } from 'lucide-react';
-import { useStore } from './store';
+import { useReveal, useStore } from './store';
 import { COMPANY, CATEGORIES } from './company';
 
 const NAV = [
@@ -26,6 +26,7 @@ export function LineIcon({ size = 18 }: { size?: number }) {
 }
 
 export function Layout({ children }: { children: ReactNode }) {
+  useReveal();
   return (
     <>
       <TopBar />
@@ -74,10 +75,19 @@ function TopBar() {
 function SiteHeader() {
   const { route, pick, clinic, approved, cartCount, setAuthOpen, setCartOpen, logout } = useStore();
   const [open, setOpen] = useState(false);
+  const [scrolled, setScrolled] = useState(false);
   const active = (to: string) => (to === '/' ? route.path === '/' : route.path.startsWith(to));
 
+  // Firm up the sticky header (shadow + more opaque bg) once the page scrolls past the top.
+  useEffect(() => {
+    const onScroll = () => setScrolled(window.scrollY > 8);
+    onScroll();
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => window.removeEventListener('scroll', onScroll);
+  }, []);
+
   return (
-    <header className="site">
+    <header className={`site${scrolled ? ' scrolled' : ''}`}>
       <div className="wrap nav">
         <a className="brand" href="#/">
           <img src="/logo.png" alt="Prominent — Premium Dental Solutions" style={{ height: 34, width: 'auto' }} />
