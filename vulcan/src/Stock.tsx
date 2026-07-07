@@ -11,7 +11,7 @@ import {
 const PORTAL_URL: string | undefined = import.meta.env.VITE_PORTAL_URL;
 import {
   type Agent, type StockRow, type StockSummary, type StockImportRow,
-  type StockAdjustmentRow, type ImportPreview,
+  type StockAdjustmentRow, type ImportPreview, type ImportPreviewRow,
   type CatalogGroupInfo, type GroupProduct, type Pillar,
   getSummary, getStockList, adjustStock, setReorderPoint, renameProduct, getImports, getAdjustments,
   previewImport, applyImport, logout as logoutSuite, API_URL, flatSku,
@@ -44,6 +44,7 @@ function Thumb({ photoSku, size = 36 }: { photoSku: string | null; size?: number
     <img
       src={`${API_URL}/content/product/${photoSku}`}
       alt=""
+      loading="lazy"
       style={{ width: size, height: size }}
       className="shrink-0 rounded object-contain bg-white border border-slate-100"
       onError={(e) => {
@@ -751,10 +752,14 @@ function ImportTab({ onApplied }: { onApplied: () => void }) {
     } catch (e) {
       const msg = e instanceof Error ? e.message : '';
       setErr(
-        msg === 'forbidden'
+        msg === 'unauthorized'
+          ? 'เซสชันหมดอายุ — กรุณาเข้าสู่ระบบใหม่'
+          : msg === 'forbidden'
           ? 'ไม่มีสิทธิ์'
           : msg.includes('413')
           ? 'ไฟล์ใหญ่เกินไป — เกินขีดจำกัดของเซิร์ฟเวอร์'
+          : msg.includes('422')
+          ? 'ไม่พบรายการสินค้าในไฟล์ — ตรวจสอบว่าเป็นรายงานสินค้าคงเหลือจาก Express'
           : 'อ่านไฟล์ไม่สำเร็จ — ตรวจสอบว่าเป็นไฟล์รายงานสต็อกจาก Express (.txt)',
       );
     } finally {
@@ -783,6 +788,16 @@ function ImportTab({ onApplied }: { onApplied: () => void }) {
     () => (preview ? preview.rows.filter((r) => !r.matched) : []),
     [preview],
   );
+
+  // The full Express report spans ~5k SKUs while the catalog is ~1.2k — rendering every row
+  // (each with an <img>) freezes the tab. Show what needs eyes first (changes, then unmatched,
+  // then unchanged) and cap the DOM; the apply itself always uses the full parsed set server-side.
+  const PREVIEW_CAP = 800;
+  const sortedRows = useMemo(() => {
+    if (!preview) return [];
+    const weight = (r: ImportPreviewRow) => (r.willChange ? 0 : !r.matched ? 1 : 2);
+    return [...preview.rows].sort((a, b) => weight(a) - weight(b));
+  }, [preview]);
 
   return (
     <div className="max-w-3xl">
@@ -837,6 +852,9 @@ function ImportTab({ onApplied }: { onApplied: () => void }) {
             <Stat label="จะเปลี่ยนแปลง" value={preview.willChange} tone="change" />
             <Stat label="ไม่พบในแคตตาล็อก" value={preview.unmatched} tone={preview.unmatched ? 'warn' : undefined} />
             <span className="ml-auto text-xs text-slate-400 self-center">
+              {preview.asOfText && (
+                <span className="mr-3 text-slate-600 font-medium">ข้อมูล ณ วันที่ {preview.asOfText}</span>
+              )}
               encoding: {preview.encoding}
             </span>
           </div>
@@ -878,7 +896,7 @@ function ImportTab({ onApplied }: { onApplied: () => void }) {
                 </tr>
               </thead>
               <tbody>
-                {preview.rows.map((r, i) => (
+                {sortedRows.slice(0, PREVIEW_CAP).map((r, i) => (
                   <tr key={`${r.sku}-${i}`} className={`border-t border-slate-100 ${!r.matched ? 'bg-amber-50/40' : ''}`}>
                     <td className="px-3 py-1.5">
                       <div className="flex items-center gap-2">
@@ -904,6 +922,12 @@ function ImportTab({ onApplied }: { onApplied: () => void }) {
                 ))}
               </tbody>
             </table>
+            {sortedRows.length > PREVIEW_CAP && (
+              <div className="px-3 py-2 text-center text-xs text-slate-400 border-t border-slate-100">
+                แสดง {PREVIEW_CAP.toLocaleString('th-TH')} จาก {sortedRows.length.toLocaleString('th-TH')} แถว
+                (เรียงรายการที่เปลี่ยน/ไม่พบขึ้นก่อน) — การนำเข้าใช้ข้อมูลครบทุกแถว
+              </div>
+            )}
           </div>
 
           <div className="mt-4 flex items-center gap-3">

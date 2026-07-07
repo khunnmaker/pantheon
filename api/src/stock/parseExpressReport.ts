@@ -33,6 +33,42 @@ export interface ParseResult {
   lineCount: number; // SKU lines seen
   unresolved: number; // SKU lines we couldn't extract a qty from
   unresolvedSamples: string[]; // up to 5 raw offending lines, for human review
+  asOf: Date | null; // the report's own "ณ วันที่ …" header date (null = not found)
+  asOfText: string; // the date as printed (for display), '' when not found
+}
+
+// The report header carries its own as-of date — "ณ วันที่  7 ก.ค. 2569" (Thai month
+// abbreviation + Buddhist year) or "ณ วันที่ : 25/06/69" (2-digit Buddhist year) depending
+// on the Express print variant. Stock figures are as-of THAT date, not upload time, so the
+// import stamps stockAt from here (yesterday's report imported today shows as yesterday).
+const THAI_MONTHS: Record<string, number> = {
+  'ม.ค.': 1, 'ก.พ.': 2, 'มี.ค.': 3, 'เม.ย.': 4, 'พ.ค.': 5, 'มิ.ย.': 6,
+  'ก.ค.': 7, 'ส.ค.': 8, 'ก.ย.': 9, 'ต.ค.': 10, 'พ.ย.': 11, 'ธ.ค.': 12,
+};
+function parseAsOf(lines: string[]): { asOf: Date | null; asOfText: string } {
+  // Header sits in the first few lines of page 1 (repeated per page — first hit wins).
+  for (const line of lines.slice(0, 12)) {
+    if (!line.includes('วันที่')) continue;
+    // "ณ วันที่  7 ก.ค. 2569" — Thai month abbrev + 4-digit Buddhist year
+    const th = line.match(/วันที่\s*:?\s*(\d{1,2})\s*(ม\.ค\.|ก\.พ\.|มี\.ค\.|เม\.ย\.|พ\.ค\.|มิ\.ย\.|ก\.ค\.|ส\.ค\.|ก\.ย\.|ต\.ค\.|พ\.ย\.|ธ\.ค\.)\s*(\d{4})/);
+    if (th) {
+      const [, d, mon, by] = th;
+      const y = parseInt(by, 10) - 543;
+      const dt = new Date(Date.UTC(y, THAI_MONTHS[mon] - 1, parseInt(d, 10)));
+      if (!Number.isNaN(dt.getTime())) return { asOf: dt, asOfText: th[0].replace(/^วันที่\s*:?\s*/, '') };
+    }
+    // "ณ วันที่ : 25/06/69" — dd/mm/yy, 2-digit Buddhist year (69 → 2569 → CE 2026)
+    const num = line.match(/วันที่\s*:?\s*(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);
+    if (num) {
+      const [, d, mo, yr] = num;
+      let y = parseInt(yr, 10);
+      if (y < 100) y += 2500; // 2-digit years in this report are Buddhist
+      if (y > 2400) y -= 543;
+      const dt = new Date(Date.UTC(y, parseInt(mo, 10) - 1, parseInt(d, 10)));
+      if (!Number.isNaN(dt.getTime())) return { asOf: dt, asOfText: `${d}/${mo}/${yr}` };
+    }
+  }
+  return { asOf: null, asOfText: '' };
 }
 
 const SKU_RE = /^\s*(\d{2}-\d{2}-\d+)\s+(.*)$/;
@@ -123,5 +159,5 @@ export function parseExpressReport(text: string): ParseResult {
     bySku.set(sku, { sku, name, qty: Math.round(qty) });
   }
 
-  return { rows: [...bySku.values()], lineCount, unresolved, unresolvedSamples };
+  return { rows: [...bySku.values()], lineCount, unresolved, unresolvedSamples, ...parseAsOf(lines) };
 }

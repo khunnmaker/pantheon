@@ -45,7 +45,7 @@ const MAX_UPLOAD_BYTES = 12 * 1024 * 1024; // Express reports are ~1.5 MB; cap g
 // In-memory staging for previewed imports: the manager previews, eyeballs the diff,
 // then applies the EXACT parsed set (server-authoritative — the client can't re-send
 // tampered numbers). Lost on restart (harmless: just re-upload). Small + short-lived.
-interface StagedImport { fileName: string; rows: ParsedStockRow[]; unresolved: number; at: number }
+interface StagedImport { fileName: string; rows: ParsedStockRow[]; unresolved: number; at: number; asOf: Date | null }
 const PREVIEW_TTL_MS = 30 * 60 * 1000;
 const previews = new Map<string, StagedImport>();
 function stash(s: StagedImport): string {
@@ -295,11 +295,15 @@ export async function stockRoutes(app: FastifyInstance) {
       };
     });
 
-    const token = stash({ fileName: String(fileName ?? ''), rows: parsed.rows, unresolved: parsed.unresolved, at: Date.now() });
+    const token = stash({ fileName: String(fileName ?? ''), rows: parsed.rows, unresolved: parsed.unresolved, at: Date.now(), asOf: parsed.asOf });
     return {
       token,
       fileName: String(fileName ?? ''),
       encoding,
+      // the report's own "ณ วันที่" header — stock figures are as-of THIS date, and apply
+      // stamps stockAt with it (fallback: apply time when the header wasn't found)
+      asOf: parsed.asOf ? parsed.asOf.toISOString() : null,
+      asOfText: parsed.asOfText,
       rowsParsed: parsed.rows.length,
       matched,
       unmatched: parsed.rows.length - matched,
@@ -323,6 +327,9 @@ export async function stockRoutes(app: FastifyInstance) {
     previews.delete(token);
 
     const importedAt = new Date();
+    // Stock figures are as-of the REPORT's header date, not upload time — stamping upload
+    // time would make yesterday's report look fresher than it is (staleness badge lies).
+    const stockAt = staged.asOf ?? importedAt;
     const skus = staged.rows.map((r) => r.sku);
     const existing = await prisma.product.findMany({
       where: { sku: { in: skus } },
@@ -340,7 +347,7 @@ export async function stockRoutes(app: FastifyInstance) {
         const slice = toApply.slice(i, i + CHUNK);
         const results = await Promise.all(
           slice.map((r) =>
-            prisma.product.updateMany({ where: { sku: r.sku }, data: { stock: r.qty, stockAt: importedAt } }),
+            prisma.product.updateMany({ where: { sku: r.sku }, data: { stock: r.qty, stockAt } }),
           ),
         );
         skusUpdated += results.reduce((n, x) => n + x.count, 0);
@@ -352,6 +359,7 @@ export async function stockRoutes(app: FastifyInstance) {
 
     const noteJoined = [
       String(note ?? ''),
+      staged.asOf ? `asOf:${staged.asOf.toISOString().slice(0, 10)}` : '',
       staged.unresolved > 0 ? `unresolved_lines:${staged.unresolved}` : '',
       failNote,
     ].filter(Boolean).join(' | ');

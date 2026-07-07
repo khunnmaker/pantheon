@@ -92,6 +92,8 @@ export interface ImportPreview {
   token: string; // opaque handle to apply this exact parsed set
   fileName: string;
   encoding: string; // detected source encoding (e.g. "windows-874")
+  asOf: string | null; // ISO date from the report's own "ณ วันที่" header (stockAt stamps this)
+  asOfText: string; // the date as printed in the report, '' when not found
   rowsParsed: number;
   matched: number;
   unmatched: number;
@@ -143,7 +145,11 @@ async function authed<T>(path: string, init?: RequestInit): Promise<T> {
     },
   });
   if (res.status === 401) {
+    // Session expired/invalid. Clear it and reload so App re-boots into the Login screen —
+    // without this the UI stays "logged in" and every action fails with a generic error
+    // (e.g. an import upload showing "อ่านไฟล์ไม่สำเร็จ" when the file was fine all along).
     clearSession();
+    window.location.reload();
     throw new Error('unauthorized');
   }
   if (res.status === 403) throw new Error('forbidden');
