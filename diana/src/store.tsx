@@ -1,24 +1,21 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import {
   getMe, getFacets, getClinicToken, getStoredClinic, setClinicSession, clearClinicSession,
   type Clinic, type PricedProduct, type Facets,
 } from './lib/api';
 
-// App-wide store: hash route, clinic session, cart, facets, and modal UI flags.
-// One provider at the top; the header, marketing pages, and shop all read from it.
+// App-wide store: current route (derived from the History-API location), clinic session, cart,
+// facets, and modal UI flags. One provider at the top; the header, marketing pages, and shop
+// all read from it. Routing itself is react-router — this store just re-exposes the location
+// as { path, query } and wraps navigate() so existing call sites keep working unchanged.
 
 export type CartItem = { p: PricedProduct; qty: number };
 
 export interface RouteState {
   path: string; // e.g. "/", "/about", "/catalog"
   query: URLSearchParams;
-}
-
-function parseHash(): RouteState {
-  const h = window.location.hash.replace(/^#/, '') || '/';
-  const [path, qs] = h.split('?');
-  return { path: path || '/', query: new URLSearchParams(qs ?? '') };
 }
 
 export type Lang = 'th' | 'en';
@@ -54,24 +51,31 @@ export const useStore = (): Store => {
 };
 
 export function StoreProvider({ children }: { children: ReactNode }) {
-  const [route, setRoute] = useState<RouteState>(parseHash);
-  const [lang, setLang] = useState<Lang>(() => (localStorage.getItem('diana_lang') === 'en' ? 'en' : 'th'));
-  const [clinic, setClinic] = useState<Clinic | null>(() => (getClinicToken() ? getStoredClinic() : null));
-  // Hydrate the cart from localStorage so it survives refreshes/reloads.
+  const location = useLocation();
+  const rrNavigate = useNavigate();
+  // Re-expose the router location as the { path, query } shape the pages already consume.
+  const route = useMemo<RouteState>(
+    () => ({ path: location.pathname, query: new URLSearchParams(location.search) }),
+    [location.pathname, location.search],
+  );
+  const navigate = useCallback((to: string) => { rrNavigate(to); }, [rrNavigate]);
+
+  // lang + clinic start at their SSR-safe defaults and are hydrated from localStorage in an
+  // effect below — the prerendered marketing HTML must match the client's first render (lang
+  // "th", logged-out) or hydration mismatches. The cart is read synchronously (guarded) since
+  // its only UI, the header badge, is gated behind `approved` and never shows on first paint.
+  const [lang, setLang] = useState<Lang>('th');
+  const [clinic, setClinic] = useState<Clinic | null>(null);
   const [cart, setCart] = useState<Record<string, CartItem>>(() => {
+    if (typeof window === 'undefined') return {};
     try { return JSON.parse(localStorage.getItem('diana_cart') || '{}') as Record<string, CartItem>; } catch { return {}; }
   });
   const [facets, setFacets] = useState<Facets | null>(null);
   const [authOpen, setAuthOpen] = useState(false);
   const [cartOpen, setCartOpen] = useState(false);
 
-  // Hash routing.
-  useEffect(() => {
-    const onHash = () => { setRoute(parseHash()); window.scrollTo(0, 0); };
-    window.addEventListener('hashchange', onHash);
-    return () => window.removeEventListener('hashchange', onHash);
-  }, []);
-  const navigate = useCallback((to: string) => { window.location.hash = to; }, []);
+  // Scroll to the top on every real navigation (matches the old hash-router behaviour).
+  useEffect(() => { window.scrollTo(0, 0); }, [route.path]);
 
   // Language toggle (persisted). pick(th, en) returns the value for the current language.
   const toggleLang = useCallback(() => {
@@ -100,9 +104,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       });
   }, []);
 
-  // Run on mount, then again on tab focus/visibility (throttled to once / 15s, only when a
-  // clinic is signed in) so an approval that lands while the tab sits open is picked up.
+  // Client-only hydration: pick up the persisted language + cached clinic identity, then refresh
+  // /me. Deferred to an effect so it never runs during prerender and never fights hydration.
   useEffect(() => {
+    if (localStorage.getItem('diana_lang') === 'en') setLang('en');
+    if (getClinicToken()) setClinic(getStoredClinic());
     refreshMe();
     const maybeRefresh = () => {
       if (!getClinicToken()) return;
@@ -121,7 +127,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   // Facets (brands/categories) once.
   useEffect(() => { getFacets().then(setFacets).catch(() => undefined); }, []);
 
-  // Persist the cart across refreshes; keep <html lang> in sync on load + toggle.
+  // Persist the cart across refreshes; keep <html lang> in sync with the active language.
   useEffect(() => { localStorage.setItem('diana_cart', JSON.stringify(cart)); }, [cart]);
   useEffect(() => { document.documentElement.lang = lang; }, [lang]);
 
@@ -161,8 +167,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 }
 
 // Scroll-reveal: one IntersectionObserver per route fades `.reveal` / `.stagger` elements in
-// as they enter the viewport, then unobserves them. Re-scans on route change (SPA remount).
-// Respects prefers-reduced-motion — elements are shown immediately with no motion.
+// as they enter the viewport, then unobserves them. Re-scans on route change (client nav), so
+// animations fire on every route. Respects prefers-reduced-motion — elements show immediately.
 export function useReveal(): void {
   const { route } = useStore();
   useEffect(() => {

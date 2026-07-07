@@ -194,6 +194,12 @@ export const getPublicCatalog = (p: CatalogParams) =>
 
 export const getFacets = () => call<Facets>('/api/diana/facets', undefined, null);
 
+// Public single-product detail (no auth, no price). A 404 rejects with Error('not_found').
+// The sku is the exact DB key (e.g. "07-10-09"); encode it for the URL — the backend's
+// findUnique matches it verbatim (dashes and all), so never strip/normalise it here.
+export const getPublicProduct = (sku: string) =>
+  call<{ product: PublicProduct }>(`/api/diana/product/${encodeURIComponent(sku)}`, undefined, null);
+
 // ── clinic auth ─────────────────────────────────────────────────────────────
 export interface RegisterInput {
   email: string;

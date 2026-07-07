@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
+import { Link } from 'react-router-dom';
 import {
   Menu, X, ShoppingCart, ClipboardList, Search, User, Mail, MapPin,
   Facebook, Instagram, Youtube,
@@ -89,25 +90,25 @@ function SiteHeader() {
   return (
     <header className={`site${scrolled ? ' scrolled' : ''}`}>
       <div className="wrap nav">
-        <a className="brand" href="#/">
+        <Link className="brand" to="/">
           <img src="/logo.png" alt="Prominent — Premium Dental Solutions" style={{ height: 34, width: 'auto' }} />
-        </a>
+        </Link>
 
         <nav className="nav-links">
           {NAV.map((n) => (
-            <a key={n.to} href={`#${n.to}`} className={active(n.to) ? 'active' : ''}>{pick(n.th, n.en)}</a>
+            <Link key={n.to} to={n.to} className={active(n.to) ? 'active' : ''}>{pick(n.th, n.en)}</Link>
           ))}
         </nav>
 
         <div className="nav-actions">
-          <a className="icon-btn" href="#/catalog" aria-label={pick('ค้นหา', 'Search')}><Search size={19} /></a>
+          <Link className="icon-btn" to="/catalog" aria-label={pick('ค้นหา', 'Search')}><Search size={19} /></Link>
           {approved && (
             <button className="icon-btn" onClick={() => setCartOpen(true)} aria-label={pick('ตะกร้า', 'Cart')}>
               <ShoppingCart size={19} />
               {cartCount > 0 && <span className="badge">{cartCount}</span>}
             </button>
           )}
-          {approved && <a className="icon-btn" href="#/orders" aria-label={pick('ออเดอร์', 'Orders')}><ClipboardList size={19} /></a>}
+          {approved && <Link className="icon-btn" to="/orders" aria-label={pick('ออเดอร์', 'Orders')}><ClipboardList size={19} /></Link>}
           {clinic ? (
             <button className="icon-btn" onClick={logout} aria-label={pick('ออกจากระบบ', 'Sign out')} title={`${pick('ออกจากระบบ', 'Sign out')} (${clinic.clinicName})`}><User size={19} /></button>
           ) : (
@@ -124,10 +125,10 @@ function SiteHeader() {
       {open && (
         <div style={{ borderTop: '1px solid var(--line)', background: 'var(--cream)', padding: '8px 24px 14px' }}>
           {NAV.map((n) => (
-            <a key={n.to} href={`#${n.to}`} onClick={() => setOpen(false)}
+            <Link key={n.to} to={n.to} onClick={() => setOpen(false)}
               style={{ display: 'block', padding: '11px 4px', fontWeight: 600, color: active(n.to) ? 'var(--teal-d)' : 'var(--ink)', borderBottom: '1px solid var(--line)' }}>
               {pick(n.th, n.en)}
-            </a>
+            </Link>
           ))}
           <div style={{ marginTop: 12, display: 'flex', gap: 10 }}>
             <a className="btn btn-line btn-sm" href={COMPANY.line.url} target="_blank" rel="noreferrer" style={{ flex: 1, justifyContent: 'center' }}><LineIcon size={16} /> LINE</a>
@@ -157,15 +158,15 @@ function SiteFooter() {
         <div className="fcol">
           <h4>{pick('แคตตาล็อก', 'Catalogue')}</h4>
           {CATEGORIES.map((c) => (
-            <a key={c.key} href={c.catalogCategory ? `#/catalog?category=${encodeURIComponent(c.catalogCategory)}` : '#/catalog'}>{pick(c.nameTh, c.nameEn)}</a>
+            <Link key={c.key} to={c.catalogCategory ? `/catalog?category=${encodeURIComponent(c.catalogCategory)}` : '/catalog'}>{pick(c.nameTh, c.nameEn)}</Link>
           ))}
         </div>
         <div className="fcol">
           <h4>{pick('บริษัท', 'Company')}</h4>
-          <a href="#/about">{pick('เกี่ยวกับเรา', 'About us')}</a>
-          <a href="#/lab">{pick('แล็บทันตกรรม', 'Dental Lab')}</a>
-          <a href="#/manufacturing">{pick('โรงงานผลิต', 'Manufacturing')}</a>
-          <a href="#/contact">{pick('ติดต่อเรา', 'Contact')}</a>
+          <Link to="/about">{pick('เกี่ยวกับเรา', 'About us')}</Link>
+          <Link to="/lab">{pick('แล็บทันตกรรม', 'Dental Lab')}</Link>
+          <Link to="/manufacturing">{pick('โรงงานผลิต', 'Manufacturing')}</Link>
+          <Link to="/contact">{pick('ติดต่อเรา', 'Contact')}</Link>
         </div>
         <div className="fcol">
           <h4>{pick('ติดต่อเรา', 'Get in touch')}</h4>

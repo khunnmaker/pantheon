@@ -5,15 +5,17 @@
   "type": "module",
   "description": "Diana — Prominent B2B website (prominentdental.com). Public catalog + login-gated pricing/ordering. Reads the shared Minerva/Vulcan Product catalog; never forks it.",
   "scripts": {
-    "dev": "vite --host --port 5175",
-    "build": "tsc -b && vite build",
+    "dev": "vite --host",
+    "build": "tsc -b && vite-react-ssg build",
     "preview": "vite preview --host --port 5175",
     "typecheck": "tsc -b --noEmit"
   },
   "dependencies": {
     "lucide-react": "^0.454.0",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.30.4",
+    "vite-react-ssg": "^0.9.0"
   },
   "devDependencies": {
     "@types/node": "^20.16.5",

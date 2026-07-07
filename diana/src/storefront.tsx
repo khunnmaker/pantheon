@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
+import { Link } from 'react-router-dom';
 import {
   Search, ShoppingCart, X, Loader2, AlertTriangle, CheckCircle2, Plus, Minus, Trash2,
   ChevronLeft, ChevronRight, ClipboardList, Clock, Package, User, SlidersHorizontal,
 } from 'lucide-react';
 import { useStore } from './store';
+import { Seo, SITE, breadcrumbJsonLd } from './seo';
 import {
   getPublicCatalog, getPricedCatalog, loginClinic, registerClinic, submitOrder, getMyOrders,
   mediaUrl, formatBaht, orderNoLabel, NotApprovedError,
@@ -61,10 +63,22 @@ export function CatalogPage() {
   const clearAll = () => { setCategory(''); setBrand(''); setQuery(''); };
   const activeFilterCount = [category, brand, query.trim()].filter(Boolean).length;
 
+  const crumbs = [
+    { name: pick('หน้าแรก', 'Home'), url: `${SITE}/` },
+    { name: pick('แคตตาล็อก', 'Catalogue'), url: `${SITE}/catalog` },
+    ...(category ? [{ name: category, url: `${SITE}/catalog?category=${encodeURIComponent(category)}` }] : []),
+  ];
+
   return (
     <div className="wrap" style={{ paddingTop: 34, paddingBottom: 80 }}>
+      <Seo
+        title={category ? `${category} — Prominent Dental` : pick('แคตตาล็อก — Prominent Dental', 'Catalogue — Prominent Dental')}
+        description={pick('เลือกซื้อสินค้าทันตกรรมกว่า 1,000 รายการ — รากเทียม หัวกรอ สแกนเนอร์ ด้ามกรอ และวัสดุสิ้นเปลือง เข้าสู่ระบบเพื่อดูราคา', 'Browse 1,000+ dental products — implants, burs, scanners, handpieces and consumables. Sign in to see prices.')}
+        path={category ? `/catalog?category=${encodeURIComponent(category)}` : '/catalog'}
+        jsonLd={breadcrumbJsonLd(crumbs)}
+      />
       <div className="breadcrumb" style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: '.85rem', color: 'var(--muted)', marginBottom: 22 }}>
-        <a href="#/">{pick('หน้าแรก', 'Home')}</a><ChevronRight size={14} /><span>{category || pick('แคตตาล็อก', 'Catalogue')}</span>
+        <Link to="/">{pick('หน้าแรก', 'Home')}</Link><ChevronRight size={14} /><span>{category || pick('แคตตาล็อก', 'Catalogue')}</span>
       </div>
 
       {clinic && clinic.status !== 'approved' && <div style={{ marginBottom: 22 }}><StatusBanner status={clinic.status} /></div>}
@@ -164,14 +178,14 @@ function ProductCard({ product: p }: { product: PublicProduct | PricedProduct })
   const [imgOk, setImgOk] = useState(true);
   return (
     <div className="pcard">
-      <div className="pimg">
+      <Link className="pimg" to={`/product/${p.sku}`} aria-label={pick(p.nameTh || p.nameEn, p.nameEn || p.nameTh)}>
         {p.promo && <span className="ptag">{p.promo}</span>}
         {imgOk ? <img src={mediaUrl(p.photo)} alt={p.nameTh || p.nameEn} onError={() => setImgOk(false)} loading="lazy" />
           : <span className="pico"><Package /></span>}
-      </div>
+      </Link>
       <div className="pbody">
         <div className="pbrand">{p.brand || p.category || 'Prominent'}</div>
-        <div className="pname">{pick(p.nameTh || p.nameEn, p.nameEn || p.nameTh)}</div>
+        <Link className="pname" to={`/product/${p.sku}`}>{pick(p.nameTh || p.nameEn, p.nameEn || p.nameTh)}</Link>
         <div className="psku">{p.sku}</div>
         <div className="pdesc">{p.nameEn && p.nameTh ? pick(p.nameEn, p.nameTh) : p.note}</div>
         <div className="pfoot">
@@ -256,7 +270,7 @@ export function OrdersPage() {
       {!approved ? <p style={{ color: 'var(--muted)' }}>{pick('กรุณาเข้าสู่ระบบด้วยบัญชีที่ได้รับอนุมัติเพื่อดูออเดอร์', 'Sign in with an approved account to view orders.')}</p>
         : error ? <Notice tone="error">{error}</Notice>
         : !orders ? <div style={{ display: 'flex', justifyContent: 'center', padding: '60px 0', color: 'var(--muted)' }}><Loader2 className="animate-spin" /></div>
-        : orders.length === 0 ? <p style={{ color: 'var(--muted)' }}>{pick('ยังไม่มีคำสั่งซื้อ — ', 'No orders yet — ')}<a href="#/catalog" style={{ color: 'var(--teal-d)' }}>{pick('เลือกซื้อสินค้า', 'browse products')}</a></p>
+        : orders.length === 0 ? <p style={{ color: 'var(--muted)' }}>{pick('ยังไม่มีคำสั่งซื้อ — ', 'No orders yet — ')}<Link to="/catalog" style={{ color: 'var(--teal-d)' }}>{pick('เลือกซื้อสินค้า', 'browse products')}</Link></p>
         : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
             {orders.map((o) => {

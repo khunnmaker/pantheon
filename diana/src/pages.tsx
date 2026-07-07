@@ -4,8 +4,10 @@ import {
   ArrowRight, Search, ShieldCheck, CheckCircle2, Clock, Boxes,
   Phone, Mail, MapPin, Send,
 } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { useStore } from './store';
 import { LineIcon } from './site';
+import { Seo, orgJsonLd } from './seo';
 import { COMPANY, CERTS, ARMS, CATEGORIES, BRANDS, type CatGroup } from './company';
 
 const LU: Record<string, typeof Truck> = {
@@ -42,6 +44,12 @@ export function HomePage() {
 
   return (
     <>
+      <Seo
+        title={pick('Prominent Dental — วัสดุและอุปกรณ์ทันตกรรมสำหรับคลินิกและแล็บ', 'Prominent Dental — Dental supplies for clinics & labs')}
+        description={pick('แคตตาล็อกวัสดุ อุปกรณ์ และโซลูชันดิจิทัลทันตกรรมจาก Prominent สำหรับคลินิกและแล็บ — เข้าสู่ระบบเพื่อดูราคาและสั่งซื้อ', 'Prominent supplies dental materials, equipment and digital solutions for clinics and labs across Thailand. Sign in to see prices and order.')}
+        path="/"
+        jsonLd={orgJsonLd()}
+      />
       <section className="hero">
         <div className="wrap">
           <div>
@@ -143,9 +151,9 @@ function CatGrid() {
   return (
     <div className="catbanners stagger">
       {CATEGORIES.map((c) => (
-        <a key={c.key} className="catbanner" href={`#${catHref(c)}`} aria-label={pick(c.nameTh, c.nameEn)}>
+        <Link key={c.key} className="catbanner" to={catHref(c)} aria-label={pick(c.nameTh, c.nameEn)}>
           <img src={CAT_IMG[c.key]} alt={pick(c.nameTh, c.nameEn)} loading="lazy" />
-        </a>
+        </Link>
       ))}
     </div>
   );
@@ -195,6 +203,11 @@ export function AboutPage() {
   const { pick } = useStore();
   return (
     <>
+      <Seo
+        title={pick('เกี่ยวกับเรา — Prominent Dental', 'About Us — Prominent Dental')}
+        description={pick('กลุ่มบริษัท Prominent — ตัวแทนจำหน่าย แล็บทันตกรรม DentalPort และโรงงานผลิต Dentories/KPK ดูแลลูกค้าครบทั้งวงจรงานทันตกรรม', 'The Prominent group — distribution, the DentalPort dental lab and Dentories/KPK manufacturing — supporting clinics and labs across the whole chain.')}
+        path="/about"
+      />
       <PageHero eyebrow={pick('เกี่ยวกับ Prominent', 'About Prominent')} title={pick('พันธมิตรด้านวัสดุทันตกรรม ที่สร้างบนคุณภาพและความใส่ใจ', 'A dental supply partner built on quality and care')} desc={pick(COMPANY.introTh, COMPANY.introEn)} />
       <section className="section">
         <div className="wrap split reveal">
@@ -238,6 +251,11 @@ export function ProductsPage() {
   const { pick } = useStore();
   return (
     <>
+      <Seo
+        title={pick('สินค้า — Prominent Dental', 'Products — Prominent Dental')}
+        description={pick('เลือกชมสินค้าทันตกรรมตามหมวด — คลินิก แล็บ เครื่องมือดิจิทัล รากเทียม หัวกรอ และด้ามกรอ/ไมโครมอเตอร์', 'Browse dental products by category — clinic, lab, digital machines, implants, burs and handpieces.')}
+        path="/products"
+      />
       <PageHero eyebrow={pick('สินค้า', 'Products')} title={pick('เลือกชมตามหมวด', 'Browse by category')} desc={pick('เลือกหมวดที่สนใจ แล้วเข้าสู่ระบบเพื่อดูราคาและสั่งซื้อ', 'Pick a category, then sign in to see prices and order.')} />
       <div className="wrap" style={{ paddingTop: 32 }}><img className="page-banner" src="/our-products.jpg" alt={pick('กลุ่มสินค้าที่เราผลิต', 'Our product range')} loading="lazy" /></div>
       <section className="section"><div className="wrap"><CatGrid /></div></section>
@@ -250,6 +268,11 @@ export function BrandsPage() {
   const { pick } = useStore();
   return (
     <>
+      <Seo
+        title={pick('แบรนด์ — Prominent Dental', 'Brands — Prominent Dental')}
+        description={pick('แบรนด์ทันตกรรมชั้นนำที่เราจัดจำหน่ายและผลิตเอง — BEGO, Sunshine Diamond, ExoCAD และ Dentories แบรนด์ของเราเอง', 'Leading dental brands we carry and make — BEGO, Sunshine Diamond, ExoCAD and our own Dentories.')}
+        path="/brands"
+      />
       <PageHero eyebrow={pick('แบรนด์', 'Brands')} title={pick('แบรนด์ชั้นนำที่เราจัดจำหน่ายและผลิตเอง', 'Brands we carry and make')} />
       <section className="section">
         <div className="wrap stagger" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(240px,1fr))', gap: 20 }}>
@@ -279,6 +302,11 @@ export function LabPage() {
   ];
   return (
     <>
+      <Seo
+        title={pick('แล็บทันตกรรม DentalPort — Prominent Dental', 'DentalPort Dental Lab — Prominent Dental')}
+        description={pick('แล็บทันตกรรม DentalPort — ครอบฟัน สะพานฟัน ฟันปลอม รากเทียม และงานดิจิทัล CAD/CAM พร้อมการพิมพ์ 3 มิติ', 'DentalPort dental laboratory — crowns, bridges, dentures, implant work and digital CAD/CAM with 3D printing.')}
+        path="/lab"
+      />
       <PageHero eyebrow="DentalPort" title={pick('แล็บทันตกรรมด้วยเทคโนโลยีดิจิทัล', 'A dental laboratory powered by digital technology')} desc={pick(ARMS[1].blurb, ARMS[1].blurbEn)} />
       <div className="wrap" style={{ paddingTop: 32 }}><img className="page-banner" src="/arm-lab.jpg" alt={pick('งานแล็บทันตกรรมดิจิทัลของ DentalPort', 'DentalPort digital dental laboratory work')} loading="lazy" /></div>
       <section className="section">
@@ -307,6 +335,11 @@ export function ManufacturingPage() {
   ];
   return (
     <>
+      <Seo
+        title={pick('โรงงานผลิต Dentories / KPK — Prominent Dental', 'Manufacturing — Dentories / KPK — Prominent Dental')}
+        description={pick('โรงงาน KPK ผลิตวัสดุทันตกรรมแบรนด์ Dentories กว่า 30 ปี — วัสดุพิมพ์ปาก แว็กซ์ ถาดพิมพ์ ภายใต้ ISO 9001 และ ISO 13485', 'The KPK factory has made Dentories dental materials for 30+ years — impression materials, wax and trays under ISO 9001 and ISO 13485.')}
+        path="/manufacturing"
+      />
       <PageHero eyebrow="Dentories · KPK" title={pick('โรงงานผลิตวัสดุทันตกรรม กว่า 30 ปี', 'Manufacturing dental materials for 30+ years')} desc={pick(ARMS[2].blurb, ARMS[2].blurbEn)} />
       <div className="wrap" style={{ paddingTop: 32 }}><img className="page-banner" src="/arm-manufacturing.jpg" alt={pick('โรงงานผลิตวัสดุทันตกรรม KPK', 'KPK dental materials manufacturing facility')} loading="lazy" /></div>
       <section className="section">
@@ -343,6 +376,11 @@ export function ContactPage() {
   );
   return (
     <>
+      <Seo
+        title={pick('ติดต่อเรา — Prominent Dental', 'Contact Us — Prominent Dental')}
+        description={pick('ติดต่อ Prominent ทางโทรศัพท์ อีเมล หรือ LINE — เราพร้อมช่วยคุณเลือก สั่งซื้อ และติดตั้งอุปกรณ์ทันตกรรม', 'Contact Prominent by phone, email or LINE — we help you choose, order and install dental equipment.')}
+        path="/contact"
+      />
       <PageHero eyebrow={pick('ติดต่อเรา', 'Contact us')} title={pick('เราพร้อมช่วยคุณเลือก สั่งซื้อ และติดตั้ง', "We're here to help you choose, order and install")} desc={pick('ติดต่อเราทางโทรศัพท์ อีเมล หรือ LINE — หรือส่งข้อความ แล้วเราจะติดต่อกลับพร้อมคำแนะนำและใบเสนอราคา', "Reach us by phone, email or LINE — or send a message and we'll reply with a recommendation and quote.")} />
       <section className="section">
         <div className="wrap contact-grid">

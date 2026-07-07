@@ -15,4 +15,8 @@ RUN npm install -g serve@14
 COPY --from=build /app/dist ./dist
 EXPOSE 5175
 # Listen on the platform-provided PORT (Railway), falling back to 5175 locally.
-CMD ["sh", "-c", "serve -s dist -l ${PORT:-5175}"]
+# NOTE: NOT `serve -s` — `--single` rewrites EVERY path to /index.html, which would clobber the
+# prerendered marketing pages (e.g. /lab would serve Home). Instead, dist/serve.json (from
+# public/serve.json) serves the static prerendered files at their clean URLs and rewrites only
+# the client-rendered routes (/catalog, /orders, /admin, /product/:sku) back to /index.html.
+CMD ["sh", "-c", "serve dist -l ${PORT:-5175}"]
