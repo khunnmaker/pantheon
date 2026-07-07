@@ -263,7 +263,7 @@ const JUPITER_COMPANIES = [
   { code: 'TONR', name: 'Tonmai Residence', nameTh: 'ต้นไม้ เรสซิเดนซ์', kind: 'property', color: '#16A34A', sortOrder: 2 },
   { code: 'DENC', name: 'DentalPort Dental Clinic', nameTh: 'เดนทัลพอร์ต คลินิกทันตกรรม', kind: 'clinic', color: '#8B5CF6', sortOrder: 3 },
   { code: 'DENL', name: 'DentalPort', nameTh: 'เดนทัลพอร์ต', kind: 'lab', color: '#EC4899', sortOrder: 4 },
-  { code: 'KPKF', name: 'Khun Phua Khun', nameTh: '', kind: '', color: '#F59E0B', sortOrder: 5 },
+  { code: 'KPKF', name: 'Khun Phua Khun', nameTh: '', kind: 'manufacturing', color: '#F59E0B', sortOrder: 5 }, // factory — fabricates product for PROM
 ];
 
 async function syncCompanies(): Promise<void> {
