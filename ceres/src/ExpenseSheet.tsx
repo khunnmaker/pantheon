@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Camera, Loader2, AlertTriangle, X, Check, ImageOff } from 'lucide-react';
-import { createExpense, updateExpense, uploadReceipt, type Expense, type OcrResult } from './lib/api';
+import { createExpense, updateExpense, uploadReceipt, type Expense, type OcrResult, type DuplicateReceipt } from './lib/api';
 import { downscaleImage } from './lib/image';
 import { useCeres } from './lib/bootstrapContext';
 
@@ -35,6 +35,7 @@ export default function ExpenseSheet({
   const [receiptUploadId, setReceiptUploadId] = useState<string | null>(editing?.receiptUploadId ?? null);
   const [receiptPreview, setReceiptPreview] = useState<string | null>(editing?.receiptUrl ?? null);
   const [ocr, setOcr] = useState<OcrResult | null>(null);
+  const [duplicate, setDuplicate] = useState<DuplicateReceipt | null>(null);
   const [noReceiptConfirming, setNoReceiptConfirming] = useState(false);
   const [noReceipt, setNoReceipt] = useState(!!editing && !editing.receiptUploadId);
   const [uploadBusy, setUploadBusy] = useState(false);
@@ -56,12 +57,14 @@ export default function ExpenseSheet({
   async function handleFile(file: File) {
     setUploadError('');
     setUploadBusy(true);
+    setDuplicate(null);
     try {
       const { dataB64, contentType } = await downscaleImage(file);
       setReceiptPreview(`data:${contentType};base64,${dataB64}`);
       const result = await uploadReceipt(dataB64, contentType);
       setReceiptUploadId(result.uploadId);
       setOcr(result.ocr);
+      setDuplicate(result.duplicate);
       setNoReceipt(false);
       // prefill amount from OCR ONLY if the field is currently empty
       if (result.ocr.amount && amount.trim() === '') {
@@ -207,6 +210,17 @@ export default function ExpenseSheet({
             {uploadError && (
               <div className="flex items-center gap-1 text-rose-600 text-xs mt-1.5">
                 <AlertTriangle size={12} /> {uploadError}
+              </div>
+            )}
+            {duplicate && !noReceipt && (
+              <div className="mt-2 px-3 py-2.5 rounded-xl border border-rose-300 bg-rose-50 text-rose-700">
+                <div className="flex items-start gap-1.5 text-sm font-semibold">
+                  <AlertTriangle size={15} className="mt-0.5 shrink-0" />
+                  <span>⚠️ ใบเสร็จรูปนี้ถูกใช้บันทึกไปแล้ว (ของ {duplicate.partyName} ฿{duplicate.amount})</span>
+                </div>
+                <div className="text-xs text-rose-600 mt-1 pl-[22px]">
+                  ตรวจสอบก่อนบันทึก — ถ้าถ่ายใหม่จากบิลใบเดิมของคนอื่น อย่าส่งซ้ำ
+                </div>
               </div>
             )}
 

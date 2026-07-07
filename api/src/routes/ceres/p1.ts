@@ -68,12 +68,23 @@ export function p1Routes(app: FastifyInstance) {
       if (!saved) return reply.code(400).send({ error: 'invalid_image' });
 
       const buf = Buffer.from(body.data.dataB64, 'base64');
-      const ocrFields = await readReceiptImage(buf, body.data.contentType).catch(() => ({ amount: '', vendor: '', dateText: '' }));
+      // Duplicate check + OCR are independent reads off the just-saved upload — run
+      // them concurrently rather than back-to-back.
+      const [dup, ocrFields] = await Promise.all([
+        prisma.ceresExpense.findFirst({
+          where: { receiptSha: saved.sha256, status: { notIn: ['rejected', 'void'] } },
+          orderBy: { createdAt: 'desc' },
+        }),
+        readReceiptImage(buf, body.data.contentType).catch(() => ({ amount: '', vendor: '', dateText: '' })),
+      ]);
 
       return {
         uploadId: saved.uploadId,
         url: ceresReceiptUrl(reqBase(req), saved.uploadId),
         ocr: ocrFields,
+        // Informational only — nothing is blocked. No ids: the messenger only needs
+        // the human summary of the earlier entry that used this same photo.
+        duplicate: dup ? { partyName: dup.partyName, amount: dup.amount, spentAt: dup.spentAt.toISOString() } : null,
       };
     },
   );
@@ -172,7 +183,33 @@ export function p1Routes(app: FastifyInstance) {
 
     const rows = await prisma.ceresExpense.findMany({ where, orderBy: { createdAt: 'desc' }, take: 500 });
     const base = reqBase(req);
-    return { expenses: rows.map((e) => toExpenseRow(e, base)) };
+
+    // Batch duplicate-receipt detection (no N+1): one findMany for every OTHER
+    // non-rejected/void expense sharing one of this page's receipt hashes, then flag
+    // a row when at least one match isn't the row itself (covers a returned row that
+    // is itself rejected/void: it still counts as a duplicate if a live expense shares
+    // its sha, but two rejected/void copies of the same photo don't flag each other).
+    const shas = [...new Set(rows.map((e) => e.receiptSha).filter((s): s is string => !!s))];
+    const idsBySha = new Map<string, Set<string>>();
+    if (shas.length > 0) {
+      const matches = await prisma.ceresExpense.findMany({
+        where: { receiptSha: { in: shas }, status: { notIn: ['rejected', 'void'] } },
+        select: { id: true, receiptSha: true },
+      });
+      for (const m of matches) {
+        const set = idsBySha.get(m.receiptSha) ?? new Set<string>();
+        set.add(m.id);
+        idsBySha.set(m.receiptSha, set);
+      }
+    }
+    const isDuplicate = (e: (typeof rows)[number]): boolean => {
+      if (!e.receiptSha) return false;
+      const ids = idsBySha.get(e.receiptSha);
+      if (!ids) return false;
+      return ids.has(e.id) ? ids.size > 1 : ids.size > 0;
+    };
+
+    return { expenses: rows.map((e) => toExpenseRow(e, base, isDuplicate(e))) };
   });
 
   // PATCH /api/ceres/expenses/:id — edit (own+pending for messenger; any non-settled for md/ceo).

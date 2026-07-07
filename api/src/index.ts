@@ -30,6 +30,7 @@ import { ensureStock } from './db/ensureStock.js';
 import { ensureQuickReplies } from './db/ensureQuickReplies.js';
 import { ensureCeres } from './db/ensureCeres.js';
 import { ceresRoutes } from './routes/ceres/index.js';
+import { startCeresDigestScheduler } from './ceres/nightlyDigest.js';
 import { mercuryRoutes } from './routes/mercury/index.js';
 import { oaSyncRoutes } from './routes/oaSync.js';
 
@@ -94,6 +95,9 @@ async function buildServer() {
   await app.register(jupiterRoutes);
   await app.register(jupiterAccountingRoutes);
   await app.register(ceresRoutes);
+  // Nightly CEO digest scheduler (fire-and-forget; self-rechaining + .unref()'d — see
+  // ceres/nightlyDigest.ts). Started here, right alongside the rest of Ceres's wiring.
+  startCeresDigestScheduler(app.log);
   await app.register(venusRoutes);
   await app.register(mercuryRoutes);
   await app.register(oaSyncRoutes);

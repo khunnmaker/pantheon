@@ -41,6 +41,11 @@ export function toExpenseRow(
     settlementId: string | null; aiVerdict: string; note: string; createdAt: Date;
   },
   base: string,
+  // Whether another (non-rejected/void) expense shares this one's receiptSha — batch-computed
+  // by callers that list multiple rows (see GET /api/ceres/expenses); defaults to false so
+  // every other call site (single-expense responses, CEO overview, CSV export) still gets the
+  // field on its row without having to compute it.
+  duplicateReceipt = false,
 ) {
   return {
     id: e.id,
@@ -70,6 +75,7 @@ export function toExpenseRow(
     aiVerdict: e.aiVerdict,
     note: e.note,
     createdAt: e.createdAt.toISOString(),
+    duplicateReceipt,
   };
 }
 

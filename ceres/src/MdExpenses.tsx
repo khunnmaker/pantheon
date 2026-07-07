@@ -136,6 +136,11 @@ export default function MdExpenses() {
                       <span className={`font-bold ${voided ? 'line-through text-slate-400' : ''}`}>{baht(r.amountNum)}</span>
                     </div>
                     {r.customerNote && <div className="text-xs text-slate-400">ลูกค้า: {r.customerNote}</div>}
+                    {r.duplicateReceipt && (
+                      <div className="inline-flex items-center gap-1 mt-1 px-1.5 py-0.5 rounded bg-rose-50 text-rose-600 text-[11px] font-medium">
+                        <AlertTriangle size={10} /> ใบเสร็จซ้ำ
+                      </div>
+                    )}
                     {r.status === 'rejected' && r.rejectReason && (
                       <div className="text-xs text-rose-600 mt-1">เหตุผล: {r.rejectReason}</div>
                     )}

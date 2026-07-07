@@ -15,7 +15,7 @@ import {
 import { useCeres } from './lib/bootstrapContext';
 import { logout as logoutSuite } from './lib/api';
 import MdBoard from './MdBoard';
-import MdApproval from './MdApproval';
+import MdApproval, { type ApprovalPrefill } from './MdApproval';
 import MdMoney from './MdMoney';
 import MdClose from './MdClose';
 import MdExpenses from './MdExpenses';
@@ -45,6 +45,7 @@ export default function MdApp() {
   const { agent, bootstrap, onLogout } = useCeres();
   const [tab, setTab] = useState<Tab>('board');
   const [requestPrefill, setRequestPrefill] = useState<RequestPrefill | null>(null);
+  const [approvalPrefill, setApprovalPrefill] = useState<ApprovalPrefill | null>(null);
 
   const isCeo = bootstrap.role === 'ceo';
   const TABS: { key: Tab; label: string; icon: React.ReactNode }[] = isCeo
@@ -54,6 +55,11 @@ export default function MdApp() {
   function goToRequestsWithPrefill(prefill: RequestPrefill) {
     setRequestPrefill(prefill);
     setTab('requests');
+  }
+
+  function goToApprovalWithPrefill(partyId: string) {
+    setApprovalPrefill({ partyId });
+    setTab('approval');
   }
 
   return (
@@ -102,8 +108,10 @@ export default function MdApp() {
       </header>
 
       <main className="max-w-5xl mx-auto p-4">
-        {tab === 'board' && <MdBoard />}
-        {tab === 'approval' && <MdApproval />}
+        {tab === 'board' && <MdBoard onViewPendingParty={goToApprovalWithPrefill} />}
+        {tab === 'approval' && (
+          <MdApproval prefill={approvalPrefill} onConsumePrefill={() => setApprovalPrefill(null)} />
+        )}
         {tab === 'money' && <MdMoney />}
         {tab === 'requests' && (
           <MdRequests prefill={requestPrefill} onConsumePrefill={() => setRequestPrefill(null)} />
