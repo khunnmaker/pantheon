@@ -5,8 +5,9 @@ import { requireCeresRole } from '../../ceres/auth.js';
 import { reviewPaymentRequest } from '../../ceres/aiReview.js';
 import { notifyCeoEscalation } from '../../ceres/notifyCeo.js';
 import { isValidAmount, num, thaiDayKey, thaiDayRange } from './common.js';
+import { GROUP_COMPANY_CODES } from '../../jupiter/companies.js';
 
-const ENTITIES = ['PROM', 'DENL'] as const;
+const ENTITIES = GROUP_COMPANY_CODES; // 5 group companies (SSOT: jupiter/companies.ts)
 
 interface RequestRow {
   id: string;

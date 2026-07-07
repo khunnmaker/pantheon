@@ -7,8 +7,12 @@ import { saveCeresReceipt, readCeresReceiptMeta } from '../../ceres/receiptStore
 import { readReceiptImage } from '../../llm/readReceipt.js';
 import { reviewExpensePostHoc } from '../../ceres/aiReview.js';
 import { ceresReceiptUrl, isValidAmount, thaiDayKey, thaiDayRange, toExpenseRow, computeBoard } from './common.js';
+import { GROUP_COMPANY_CODES } from '../../jupiter/companies.js';
 
-const ENTITIES = ['PROM', 'DENL'] as const;
+// The 5 group companies (SSOT: jupiter/companies.ts, matches JupiterCompany). Widened from the
+// old ['PROM','DENL'] so Ceres can record TONR/DENC/KPKF spend and a future Ceres→Jupiter sync
+// can attribute it to the right company. Ceres emits this list to the client via bootstrap.
+const ENTITIES = GROUP_COMPANY_CODES;
 
 function reqBase(req: { headers: Record<string, unknown> }): string {
   const proto = (req.headers['x-forwarded-proto'] as string) || 'http';

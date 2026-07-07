@@ -249,21 +249,9 @@ export async function messageRoutes(app: FastifyInstance) {
       return reply.code(500).send({ error: 'payment_record_failed' });
     }
 
-    const result = await sendToFinance({
-      code: customer.code ?? '',
-      nickname,
-      realName,
-      amount,
-      bank,
-      transferAt,
-      ref,
-      taxInvoice,
-      note,
-      slipUrl,
-      sales,
-    });
-    if (!result.ok) return reply.code(502).send({ error: 'finance_send_failed', detail: result.error });
-
+    // Source-of-truth side effects run REGARDLESS of the legacy sheet mirror's health — the
+    // Payment row committed above is already authoritative (Juno). Previously a sheet 502 here
+    // returned early and SKIPPED the audit + financeSentAt stamp on an already-recorded payment.
     // FinanceAudit: NOT a sheet sales can edit — surfaced only to supervisors for verification.
     if (corrected) {
       const diff = (parseFloat(amount || '0') - parseFloat(ocrAmount || '0')).toFixed(2);
@@ -278,6 +266,15 @@ export async function messageRoutes(app: FastifyInstance) {
 
     const updated = await prisma.message.update({ where: { id: msg.id }, data: { financeSentAt: new Date() } });
     pushToConsole('finance:sent', { messageId: msg.id });
+
+    // Legacy Google-Sheet mirror — FIRE-AND-FORGET. A sheet outage must never 502 a committed
+    // payment or block the sales agent; the DB is the record of truth. Logged, non-fatal.
+    void sendToFinance({
+      code: customer.code ?? '', nickname, realName, amount, bank, transferAt, ref, taxInvoice, note, slipUrl, sales,
+    })
+      .then((r) => { if (!r.ok) req.log.warn({ messageId: msg.id, error: r.error }, 'finance sheet mirror failed (non-fatal)'); })
+      .catch((err) => req.log.warn({ err, messageId: msg.id }, 'finance sheet mirror threw (non-fatal)'));
+
     return { ok: true, financeSentAt: updated.financeSentAt, corrected };
   });
 

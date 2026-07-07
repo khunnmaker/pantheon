@@ -15,6 +15,28 @@ const loginBody = z.object({
 // APP_NAMES is imported from auth/jwt.ts — the single source of truth for both the type and
 // this runtime membership check, so a new god is added in exactly one place.
 
+// Per-ACCOUNT login lockout (on top of the per-IP rate limit). The per-IP limit doesn't stop a
+// distributed / IP-rotating guesser grinding ONE known staff email, so after MAX_FAILS failures
+// for an email we lock THAT account for LOCK_MS. In-memory (the api runs a single instance) and
+// best-effort — a restart clears it, an acceptable weakening for a ~15-person internal team. A
+// locked account returns a generic 429 that never reveals whether the email exists.
+const LOGIN_FAILS = new Map<string, { fails: number; lockedUntil: number }>();
+const MAX_FAILS = 8;
+const LOCK_MS = 15 * 60_000;
+function loginLocked(email: string): boolean {
+  const e = LOGIN_FAILS.get(email);
+  return !!e && e.lockedUntil > Date.now();
+}
+function noteLoginFail(email: string): void {
+  const e = LOGIN_FAILS.get(email) ?? { fails: 0, lockedUntil: 0 };
+  e.fails += 1;
+  if (e.fails >= MAX_FAILS) {
+    e.lockedUntil = Date.now() + LOCK_MS;
+    e.fails = 0;
+  }
+  LOGIN_FAILS.set(email, e);
+}
+
 export async function authRoutes(app: FastifyInstance) {
   // POST /api/auth/login — { email, password } -> { token, agent }. Any role may log in here;
   // per-app access is enforced later by requireApp/requireRole on each app's own routes.
@@ -29,13 +51,19 @@ export async function authRoutes(app: FastifyInstance) {
       }
       const { email, password } = parsed.data;
 
+      // Per-account lockout — a targeted email that has failed too many times is frozen briefly,
+      // regardless of source IP. Generic 429 (does not confirm the email exists).
+      if (loginLocked(email)) return reply.code(429).send({ error: 'too_many_attempts' });
+
       const agent = await prisma.agent.findUnique({ where: { email } });
       // Always run a bcrypt compare — against the real hash, or a dummy hash when
       // the email is unknown — so timing is uniform and emails can't be enumerated.
       const ok = await verifyPassword(password, agent?.passwordHash ?? DUMMY_HASH);
       if (!agent || !ok) {
+        noteLoginFail(email);
         return reply.code(401).send({ error: 'invalid_credentials' });
       }
+      LOGIN_FAILS.delete(email); // successful login clears the counter
 
       const identity = {
         id: agent.id,

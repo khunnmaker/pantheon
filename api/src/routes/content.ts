@@ -23,6 +23,7 @@ export async function contentRoutes(app: FastifyInstance) {
       return reply
         .header('content-type', 'image/png')
         .header('cache-control', 'public, max-age=86400')
+        .header('x-content-type-options', 'nosniff')
         .send(buf);
     } catch {
       return reply.code(404).send({ error: 'not_found' });
@@ -35,7 +36,12 @@ export async function contentRoutes(app: FastifyInstance) {
     const meta = await readStaffUploadMeta(req.params.id);
     const buf = await readStaffUploadFile(req.params.id);
     if (!meta || !buf) return reply.code(404).send({ error: 'not_found' });
-    reply.header('content-type', meta.contentType).header('cache-control', 'public, max-age=86400');
+    reply
+      .header('content-type', meta.contentType)
+      .header('cache-control', 'public, max-age=86400')
+      // Never let the browser sniff a mislabeled body into an executable type; only allowlisted
+      // rasters ever reach kind='image' (see saveStaffUpload), everything else downloads.
+      .header('x-content-type-options', 'nosniff');
     if (meta.kind === 'file') {
       reply.header('content-disposition', `attachment; filename*=UTF-8''${encodeURIComponent(meta.fileName)}`);
     }
@@ -54,6 +60,7 @@ export async function contentRoutes(app: FastifyInstance) {
     return reply
       .header('content-type', msg.attachmentRef || 'image/jpeg')
       .header('cache-control', 'private, max-age=3600')
+      .header('x-content-type-options', 'nosniff')
       .send(buf);
   });
 }

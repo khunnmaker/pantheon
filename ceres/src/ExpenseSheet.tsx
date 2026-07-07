@@ -18,7 +18,7 @@ export default function ExpenseSheet({
   onSaved: () => void;
 }) {
   const { bootstrap } = useCeres();
-  const entities = bootstrap.entities.length ? bootstrap.entities : ['PROM', 'DENL'];
+  const entities = bootstrap.entities.length ? bootstrap.entities : ['PROM', 'TONR', 'DENC', 'DENL', 'KPKF'];
   const categories = [...bootstrap.categories].filter((c) => c.active).sort((a, b) => a.sortOrder - b.sortOrder);
 
   const [entity, setEntity] = useState(editing?.entity || entities[0] || 'PROM');
@@ -255,8 +255,8 @@ export default function ExpenseSheet({
           {/* Entity segmented control */}
           <div>
             <div className="text-xs font-semibold text-slate-500 mb-1.5">บริษัท</div>
-            <div className="grid grid-cols-2 gap-2">
-              {['PROM', 'DENL'].map((e) => (
+            <div className="grid grid-cols-3 gap-2">
+              {entities.map((e) => (
                 <button
                   key={e}
                   onClick={() => setEntity(e)}
