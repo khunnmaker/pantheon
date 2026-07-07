@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { prisma } from '../db/prisma.js';
+import { LOW_STOCK_WHERE } from '../db/lowStock.js';
 import { requireAnyAuth } from '../auth/middleware.js';
 import { hasAppAccess, type AppName } from '../auth/jwt.js';
 import { ceresRole } from '../ceres/auth.js';
@@ -62,9 +63,7 @@ async function minervaPending(): Promise<number> {
 // compare → raw SQL (same query the Vulcan summary uses in stock.ts).
 async function vulcanLowStock(): Promise<number> {
   const rows = await prisma.$queryRaw<{ n: bigint }[]>`
-    SELECT count(*)::bigint AS n FROM "Product"
-    WHERE status = 'active' AND stock IS NOT NULL AND "reorderPoint" IS NOT NULL
-      AND stock <= "reorderPoint"`;
+    SELECT count(*)::bigint AS n FROM "Product" WHERE ${LOW_STOCK_WHERE}`;
   return Number(rows[0]?.n ?? 0);
 }
 

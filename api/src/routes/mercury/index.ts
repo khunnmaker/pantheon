@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { prisma } from '../../db/prisma.js';
+import { LOW_STOCK_WHERE, LOW_STOCK_ORDER } from '../../db/lowStock.js';
 import { requireAuth, requireApp } from '../../auth/middleware.js';
 import { buildLoginCards } from '../../auth/loginCards.js';
 import { adjustStock } from '../../stock/adjust.js';
@@ -126,11 +127,7 @@ export async function mercuryRoutes(app: FastifyInstance) {
     scoped.get('/api/mercury/reorder-queue', async (req) => {
       const take = Math.min(Math.max(Number((req.query as { limit?: string }).limit) || 200, 1), 500);
       const lowSkus = await prisma.$queryRaw<{ sku: string }[]>`
-        SELECT sku FROM "Product"
-        WHERE status = 'active' AND stock IS NOT NULL AND "reorderPoint" IS NOT NULL
-          AND stock <= "reorderPoint"
-        ORDER BY (stock::float / NULLIF("reorderPoint", 0)) ASC NULLS FIRST, stock ASC
-        LIMIT ${take}`;
+        SELECT sku FROM "Product" WHERE ${LOW_STOCK_WHERE} ${LOW_STOCK_ORDER} LIMIT ${take}`;
       const skus = lowSkus.map((r) => r.sku);
       if (!skus.length) return { products: [] };
       const [products, items] = await Promise.all([

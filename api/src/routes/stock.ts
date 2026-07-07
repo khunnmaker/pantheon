@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { randomUUID } from 'node:crypto';
 import { prisma } from '../db/prisma.js';
+import { LOW_STOCK_WHERE, LOW_STOCK_ORDER } from '../db/lowStock.js';
 import { requireAuth, requireRole } from '../auth/middleware.js';
 import { searchProducts } from '../catalog/match.js';
 import { toStockRow } from '../stock/helpers.js';
@@ -75,9 +76,7 @@ export async function stockRoutes(app: FastifyInstance) {
     ]);
     // Low count needs a column-vs-column compare (stock <= reorderPoint) → raw SQL.
     const lowRows = await prisma.$queryRaw<{ n: bigint }[]>`
-      SELECT count(*)::bigint AS n FROM "Product"
-      WHERE status = 'active' AND stock IS NOT NULL AND "reorderPoint" IS NOT NULL
-        AND stock <= "reorderPoint"`;
+      SELECT count(*)::bigint AS n FROM "Product" WHERE ${LOW_STOCK_WHERE}`;
     const low = Number(lowRows[0]?.n ?? 0);
     return { total, withStock, outOfStock, unknown, low, lastImport };
   });
@@ -114,11 +113,7 @@ export async function stockRoutes(app: FastifyInstance) {
     if (filter === 'low') {
       // Column-vs-column compare → raw SQL for the SKUs, then fetch full rows.
       const lowSkus = await prisma.$queryRaw<{ sku: string }[]>`
-        SELECT sku FROM "Product"
-        WHERE status = 'active' AND stock IS NOT NULL AND "reorderPoint" IS NOT NULL
-          AND stock <= "reorderPoint"
-        ORDER BY (stock::float / NULLIF("reorderPoint", 0)) ASC NULLS FIRST, stock ASC
-        LIMIT ${take}`;
+        SELECT sku FROM "Product" WHERE ${LOW_STOCK_WHERE} ${LOW_STOCK_ORDER} LIMIT ${take}`;
       products = await prisma.product.findMany({ where: { sku: { in: lowSkus.map((r) => r.sku) } } });
       const ord = new Map(lowSkus.map((r, i) => [r.sku, i]));
       products.sort((a, b) => (ord.get(a.sku) ?? 0) - (ord.get(b.sku) ?? 0));

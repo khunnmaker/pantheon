@@ -685,6 +685,31 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
 
   useEffect(() => { refreshAudits().catch(() => undefined); }, [refreshAudits, view]);
 
+  // #12: when a message lands while the console is BACKGROUNDED (or closed), the WebAudio ding is
+  // silent, so staff miss it. Also raise a desktop notification (if the browser allows) and flash
+  // an unread count in the tab title; both clear when the tab regains focus.
+  const unreadRef = useRef(0);
+  const notifyNewMessage = useCallback(() => {
+    if (document.visibilityState !== 'hidden') return; // a focused tab already gets the ding
+    unreadRef.current += 1;
+    document.title = `(${unreadRef.current}) Minerva`;
+    if ('Notification' in window && Notification.permission === 'granted') {
+      try {
+        new Notification('Minerva · ข้อความใหม่', { body: 'ลูกค้าส่งข้อความใหม่ — แตะเพื่อเปิดคอนโซล', tag: 'minerva-new' });
+      } catch { /* blocked/unsupported — the title flash still shows */ }
+    }
+  }, []);
+  useEffect(() => {
+    if ('Notification' in window && Notification.permission === 'default') {
+      void Notification.requestPermission().catch(() => undefined);
+    }
+    const onVis = () => {
+      if (document.visibilityState === 'visible') { unreadRef.current = 0; document.title = 'Minerva'; }
+    };
+    document.addEventListener('visibilitychange', onVis);
+    return () => document.removeEventListener('visibilitychange', onVis);
+  }, []);
+
   // initial load + live socket
   useEffect(() => {
     refreshLists().catch(() => undefined);
@@ -695,6 +720,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
     };
     const onMessage = (payload: { customer: CustomerLite }) => {
       playChime(); // ding on any inbound customer message
+      notifyNewMessage(); // + desktop notification / tab-title flash when backgrounded
       refreshLists().catch(() => undefined);
       if (selectedRef.current === payload.customer.id) loadDetail(payload.customer.id).catch(() => undefined);
     };
@@ -1510,9 +1536,10 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                 </div>
               ) : (
                 <>
-                  <div className="flex flex-1 min-h-0">
-                    {/* LEFT: conversation history (full height) */}
-                    <div className="flex flex-col flex-1 min-w-0 border-r border-slate-200">
+                  <div className="flex flex-col md:flex-row flex-1 min-h-0">
+                    {/* LEFT: conversation history. Stacks above the composer below md (phones); the
+                        md: classes keep the desktop split-pane byte-identical. */}
+                    <div className="flex flex-col flex-1 min-w-0 min-h-0 border-b md:border-b-0 md:border-r border-slate-200">
                   <div className="flex-1 overflow-y-auto p-3 space-y-2 bg-sky-50"
                     onClick={(e) => { const img = (e.target as HTMLElement).closest('img[data-zoom]') as HTMLImageElement | null; if (img) setLightbox(img.currentSrc || img.src); }}>
                     {loadingDetail && !detail && <div className="flex justify-center py-8 text-slate-400"><Loader2 size={18} className="animate-spin" /></div>}
@@ -1563,8 +1590,8 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                     <div ref={endRef} />
                   </div>
                     </div>{/* /LEFT column */}
-                    {/* RIGHT: drafting / composer (full height) */}
-                    <div className="flex flex-col w-[42%] min-w-[360px] min-h-0 overflow-y-auto">
+                    {/* RIGHT: drafting / composer. Full width on phones, 42% split on desktop. */}
+                    <div className="flex flex-col w-full md:w-[42%] md:min-w-[360px] min-h-0 overflow-y-auto">
                   {detail?.memory?.summary && (
                     <div className="shrink-0 bg-slate-50 border-b border-slate-100 p-2">
                       <div className="text-[11px] text-sky-800 bg-sky-50 border border-sky-200 rounded-lg p-2">
