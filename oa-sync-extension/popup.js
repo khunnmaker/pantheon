@@ -64,10 +64,26 @@ async function doLogin() {
       setMsg($('loginMsg'), 'ไม่ได้รับ token จากเซิร์ฟเวอร์', 'err');
       return;
     }
+    // Exchange the 12h console login for a long-lived (~180d), sync-only token so the background
+    // sync doesn't die daily. Best-effort: if the endpoint is missing/old, keep the login token
+    // (still works, just expires in 12h). The password is never stored either way.
+    let token = data.token;
+    try {
+      const ex = await fetch(apiUrl + '/api/oa-sync/token', {
+        method: 'POST',
+        headers: { Authorization: 'Bearer ' + data.token },
+      });
+      if (ex.ok) {
+        const exd = await ex.json();
+        if (exd && exd.token) token = exd.token;
+      }
+    } catch (_e) {
+      // network hiccup — fall back to the login token
+    }
     // Store ONLY the JWT + apiUrl + display name. The password is discarded here and now.
     await chrome.storage.local.set({
       apiUrl,
-      token: data.token,
+      token,
       agentName: (data.agent && data.agent.name) || email,
       enabled: true,
       needsLogin: false,

@@ -1,7 +1,8 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { prisma } from '../db/prisma.js';
-import { requireAuth, requireApp } from '../auth/middleware.js';
+import { requireAuth, requireApp, requireAuthScoped } from '../auth/middleware.js';
+import { signOaSyncToken, OA_SYNC_SCOPE } from '../auth/jwt.js';
 
 // Body posted by the passive Chrome MV3 extension's service worker. The extension only ever
 // sends ids + names + the raw "Read" marker text — NEVER message bodies (see oa-sync-extension/).
@@ -18,13 +19,20 @@ const syncSchema = z.object({
 // (a) records it and (b) conservatively maps it to one of our Customers by UNIQUE exact name.
 //
 // Auth is the sole gate: requests come from the extension's service worker (no browser Origin),
-// so Bearer auth (requireAuth) + Minerva app access (requireApp) is what protects it — no CORS
-// change needed. We never log tokens or message content (none is ever received).
+// so Bearer auth + Minerva app access is what protects it — no CORS change needed. We never log
+// tokens or message content (none is ever received). Per-route preHandlers (not a plugin-wide
+// hook) so the two routes can differ: the sync POST accepts the long-lived OA-sync-scoped token
+// (requireAuthScoped), while the token-mint route requires a FULL console token so a scoped
+// token can't renew itself. Both still re-check live Minerva access via requireApp.
 export async function oaSyncRoutes(app: FastifyInstance) {
-  app.addHook('preHandler', requireAuth);
-  app.addHook('preHandler', requireApp('minerva'));
+  // Exchange a fresh full console login for a long-lived, sync-scoped token. The extension's
+  // popup calls this once right after /api/auth/login, then stores ONLY this token — so the
+  // background sync survives ~180d instead of dying with the 12h console token.
+  app.post('/api/oa-sync/token', { preHandler: [requireAuth, requireApp('minerva')] }, async (req) => {
+    return { token: signOaSyncToken(req.agent!) };
+  });
 
-  app.post('/api/oa-sync', async (req, reply) => {
+  app.post('/api/oa-sync', { preHandler: [requireAuthScoped(OA_SYNC_SCOPE), requireApp('minerva')] }, async (req, reply) => {
     const p = syncSchema.safeParse(req.body);
     if (!p.success) return reply.code(400).send({ error: 'invalid_body' });
     const { oaChatId, oaTitle, oaSubName, readLabel } = p.data;

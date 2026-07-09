@@ -41,14 +41,42 @@ export function signToken(agent: Pick<AuthedAgent, 'id' | 'email' | 'name' | 'ro
   );
 }
 
+// The scope carried by the long-lived OA-read-sync token. A token bearing this scope verifies
+// ONLY on a matching-scope path (the /api/oa-sync endpoint passes { scope }); the default
+// verifyToken() every other route uses REJECTS it — so even a leaked sync token can do nothing
+// but post read-status. Access is still re-read from the live Agent row on every request (see
+// authedAgentFromToken → requireApp), so demotion/removal revokes it immediately despite the
+// long TTL. Long TTL because the Chrome extension can't silently re-auth (it never stores the
+// password), and a 12h console token made the sync die daily.
+export const OA_SYNC_SCOPE = 'oa-sync';
+const OA_SYNC_EXPIRES = '180d';
+
+export function signOaSyncToken(agent: Pick<AuthedAgent, 'id' | 'email' | 'name' | 'role'>): string {
+  return jwt.sign(
+    { email: agent.email, name: agent.name, role: agent.role, scope: OA_SYNC_SCOPE },
+    env.JWT_SECRET,
+    { subject: agent.id, expiresIn: OA_SYNC_EXPIRES, algorithm: 'HS256' },
+  );
+}
+
 // Returns the CLAIMED identity from the token, or null if missing/invalid/expired. The role
 // here is only a signed claim — every consumer re-reads the live Agent row (see
 // authedAgentFromToken) to get the real, current role + apps before trusting anything.
-export function verifyToken(token: string): { id: string; email: string; name: string; role: TokenRole } | null {
+//
+// Scope gate: a token that carries a `scope` claim (e.g. the OA-sync token) is accepted ONLY
+// when the caller passes the SAME `opts.scope`. So the default call verifyToken(token) (no
+// scope) rejects every scoped token, keeping the long-lived sync token off all other routes;
+// a normal console token (no scope claim) passes everywhere exactly as before.
+export function verifyToken(
+  token: string,
+  opts?: { scope?: string },
+): { id: string; email: string; name: string; role: TokenRole } | null {
   try {
     // Pin the accepted algorithm so verification can't drift to another scheme.
     const p = jwt.verify(token, env.JWT_SECRET, { algorithms: ['HS256'] }) as jwt.JwtPayload;
     if (!p.sub || !TOKEN_ROLES.includes(p.role)) return null;
+    const scope = typeof p.scope === 'string' ? p.scope : undefined;
+    if (scope && scope !== opts?.scope) return null; // scoped token: only valid on a matching-scope path
     return {
       id: String(p.sub),
       email: String(p.email ?? ''),
