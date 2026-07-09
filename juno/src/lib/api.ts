@@ -641,8 +641,8 @@ export interface ReReconRow {
   notPosted: boolean;
   invoices: ReReceiptInvoice[];
   status: ReReconStatus;
-  paidGross: number; // sum of grossOf() over every Payment whose reNumbers include this RE
-  diff: number; // paidGross - amount (0 when matched)
+  paidGross: number; // this RE's apportioned share of the covering transfer(s) — its own receipt amount when the transfer ties out, NOT the whole payment
+  diff: number; // paidGross - amount (≈0 when matched)
   paymentCount: number;
 }
 

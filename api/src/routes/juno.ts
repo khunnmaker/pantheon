@@ -13,6 +13,7 @@ import { readStaffUploadFile, readStaffUploadMeta, UPLOAD_ID_RE } from '../line/
 import { syncPaymentToJupiter } from '../jupiter/sync.js';
 import { readSlipFromBuffer } from '../llm/readSlip.js';
 import { parseReReceipts, decodeExpressBytes } from '../finance/parseReReceipts.js';
+import { computeReRow } from '../finance/reRecon.js';
 
 // Juno finance API. Reads the Payment table (written by Minerva's /to-finance hook) and
 // owns the finance lifecycle: verify → record, flag-queue triage, tax-invoice tracking,
@@ -1529,13 +1530,27 @@ export async function junoRoutes(app: FastifyInstance) {
       }
     }
 
+    // A transfer covering several REs must be priced against the SUM of the receipts it pays, so we
+    // need the gross of EVERY covered RE core — including ones a text filter dropped from `receipts`.
+    // Seed the amount map from the rows we already loaded (free), then fetch only the missing cores
+    // (usually none → still 2 queries; the gap query is bounded by the cores a payment references).
+    const reAmountByCore = new Map<string, string>();
+    for (const r of receipts) reAmountByCore.set(r.reNumber, r.amount);
+    const missingCores = [...byRe.keys()].filter((c) => !reAmountByCore.has(c));
+    if (missingCores.length) {
+      const extra = await prisma.reReceipt.findMany({
+        where: { reNumber: { in: missingCores } },
+        select: { reNumber: true, amount: true },
+      });
+      for (const rr of extra) reAmountByCore.set(rr.reNumber, rr.amount);
+    }
+
     const rows = receipts
       .filter((r) => receiptDateInRange(r.receiptDate))
       .map((r) => {
-        const payments = byRe.get(r.reNumber) ?? [];
-        const paidGross = payments.reduce((s, p) => s + grossOf(p), 0);
-        const status: 'unpaid' | 'matched' | 'mismatch' =
-          payments.length === 0 ? 'unpaid' : amountsEqual(r.amount, paidGross.toFixed(2)) ? 'matched' : 'mismatch';
+        // Apportion each covering transfer by this RE's own receipt amount — never add a multi-RE
+        // payment's whole gross to every RE it lists (that was the double-count bug). See reRecon.ts.
+        const c = computeReRow(r.amount, byRe.get(r.reNumber) ?? [], reAmountByCore);
         return {
           id: r.id,
           reNumber: r.reNumber,
@@ -1545,10 +1560,10 @@ export async function junoRoutes(app: FastifyInstance) {
           amount: num(r.amount),
           notPosted: r.notPosted,
           invoices: (r.invoices as unknown as { docNo: string; date: string; amount: number }[] | null) ?? [],
-          status,
-          paidGross,
-          diff: Number((paidGross - num(r.amount)).toFixed(2)),
-          paymentCount: payments.length,
+          status: c.status,
+          paidGross: c.paidGross,
+          diff: c.diff,
+          paymentCount: c.paymentCount,
         };
       })
       .filter((r) => !q.status || q.status === 'all' || r.status === q.status);
