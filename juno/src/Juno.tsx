@@ -12,7 +12,7 @@ const PORTAL_URL: string | undefined = import.meta.env.VITE_PORTAL_URL;
 import {
   getSummary, getPayments, setStatus, setFlag, verifyPayment, getReport, downloadCsv, baht,
   logout, getBankSummary, createPayment, settlePayment, uploadSlip, fileToBase64, readManualSlip,
-  deletePayment, confirmReceived, getWhtSummary, updatePayment,
+  deletePayment, confirmReceived, getWhtSummary, updatePayment, getFinanceAudits,
   type Agent, type Payment, type PaymentStatus, type Summary,
   type Report, type PaymentFilter, type CustomerType, type PaymentSource, type SettleState,
   type WhtRate, type WhtSummary, type EditPaymentBody,
@@ -20,6 +20,7 @@ import {
 import PrintCovers from './PrintCovers';
 import Recon from './Recon';
 import ReRecon from './ReRecon';
+import Audit from './Audit';
 import AppSwitcher from './AppSwitcher';
 
 // No ใบกำกับภาษี tab: Prominent issues a tax invoice on EVERY sale (in Express, as part of
@@ -32,7 +33,10 @@ import AppSwitcher from './AppSwitcher';
 // 'reRecon' = กระทบยอด RE: the Express ARRCPDAT.TXT (AR-receipt) import + live RE-vs-Payment
 // cross-check — visible to ALL Juno users (only the นำเข้าไฟล์ RE upload inside it is CEO-only,
 // same isCeo-gated-control-within-an-open-tab pattern as 'recon's ImportPanel).
-type View = 'inbox' | 'flags' | 'reports' | 'recon' | 'receive' | 'wht' | 'reRecon';
+// 'audit' = ตรวจสอบยอด: the FinanceAudit mis-read trail (slip amount ≠ OCR) — visible to ALL
+// Juno users (finance sees the flags on payments they process), but only the CEO can mark one
+// ตรวจแล้ว (resolve is supervisor-only server-side; the button is hidden otherwise).
+type View = 'inbox' | 'flags' | 'reports' | 'recon' | 'receive' | 'wht' | 'reRecon' | 'audit';
 
 // Withholding tax (task 2) rate options — 0 (ไม่มี) plus the Thai statutory rates FIN picks
 // from in the ตรวจแล้ว dialog. Mirrors the server's WHT_RATES (api/src/routes/juno.ts).
@@ -100,10 +104,13 @@ export default function Juno({ agent, onLogout }: { agent: Agent; onLogout: () =
   const canDelete = isCeo;
   // unmatched-in bank txn count — the badge on the กระทบยอด tab (phase B)
   const [bankUnmatched, setBankUnmatched] = useState<number | undefined>(undefined);
+  // open FinanceAudit (ตรวจสอบยอด) count — badge on the audit tab. Readable by every Juno user.
+  const [auditOpen, setAuditOpen] = useState<number | undefined>(undefined);
 
   const refreshSummary = useCallback(() => {
     getSummary().then(setSummary).catch(() => setSummary(null));
     getBankSummary().then((s) => setBankUnmatched(s.unmatchedIn.count)).catch(() => setBankUnmatched(undefined));
+    getFinanceAudits('open').then((r) => setAuditOpen(r.audits.length)).catch(() => setAuditOpen(undefined));
   }, []);
   useEffect(() => { refreshSummary(); }, [refreshSummary]);
 
@@ -122,6 +129,9 @@ export default function Juno({ agent, onLogout }: { agent: Agent; onLogout: () =
     // CEO-only, same as 'recon's ImportPanel). Match status is computed live, so no badge
     // count here (its own totals bar inside ReRecon covers the summary).
     { key: 'reRecon', label: 'กระทบยอด RE', icon: <FileCheck size={16} /> },
+    // ตรวจสอบยอด — the FinanceAudit mis-read trail, visible to EVERY Juno user (finance sees the
+    // flags on payments they verify); only the CEO can resolve, gated inside the tab itself.
+    { key: 'audit', label: 'ตรวจสอบยอด', icon: <Banknote size={16} />, count: auditOpen },
     // รายงาน is CEO-only (server 403s /reports + /export.csv for non-supervisor) — omit the tab
     // for finance/MD so it's never shown. Their default tab (inbox) is one they can use.
     ...(isCeo ? [{ key: 'reports' as const, label: 'รายงาน', icon: <BarChart3 size={16} /> }] : []),
@@ -158,7 +168,7 @@ export default function Juno({ agent, onLogout }: { agent: Agent; onLogout: () =
             >
               {t.icon} {t.label}
               {typeof t.count === 'number' && t.count > 0 && (
-                <span className={`ml-1 px-1.5 rounded-full text-xs ${t.key === 'flags' || t.key === 'recon' || t.key === 'receive' ? 'bg-rose-100 text-rose-700' : 'bg-slate-100 text-slate-600'}`}>
+                <span className={`ml-1 px-1.5 rounded-full text-xs ${t.key === 'flags' || t.key === 'recon' || t.key === 'receive' || t.key === 'audit' ? 'bg-rose-100 text-rose-700' : 'bg-slate-100 text-slate-600'}`}>
                   {t.count}
                 </span>
               )}
@@ -174,6 +184,8 @@ export default function Juno({ agent, onLogout }: { agent: Agent; onLogout: () =
           <Recon isCeo={isCeo} />
         ) : view === 'reRecon' ? (
           <ReRecon isCeo={isCeo} />
+        ) : view === 'audit' ? (
+          <Audit isCeo={isCeo} onResolved={refreshSummary} />
         ) : (
           <PaymentsView view={view === 'reports' ? 'inbox' : view} onChanged={refreshSummary} canDelete={canDelete} isCeo={isCeo} />
         )}
@@ -183,7 +195,7 @@ export default function Juno({ agent, onLogout }: { agent: Agent; onLogout: () =
 }
 
 // ── Payments list + detail (inbox / flags share this) ──────────────────────
-function PaymentsView({ view, onChanged, canDelete, isCeo }: { view: Exclude<View, 'reports' | 'recon' | 'reRecon'>; onChanged: () => void; canDelete: boolean; isCeo: boolean }) {
+function PaymentsView({ view, onChanged, canDelete, isCeo }: { view: Exclude<View, 'reports' | 'recon' | 'reRecon' | 'audit'>; onChanged: () => void; canDelete: boolean; isCeo: boolean }) {
   const [q, setQ] = useState('');
   const [status, setStatusFilter] = useState<'all' | PaymentStatus>('all');
   // วิธีรับเงิน (payment-method) filter — inbox only, folds the old separate เงินสด/เช็ค tab

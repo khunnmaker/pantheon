@@ -694,3 +694,28 @@ export const getReReconciliation = (f: ReReconFilter) =>
 // LINE display name. Returns {} when nothing's imported yet → the cover falls back to receiptName.
 export const getReNames = (reNumbers: string[]) =>
   authed<Record<string, string>>(`/api/juno/re/names?res=${encodeURIComponent([...new Set(reNumbers)].join(','))}`);
+
+// ── ตรวจสอบยอด (FinanceAudit mis-read trail) ─────────────────────────────────
+// Every time staff submit a slip amount that differs from what the AI read (OCR), Minerva logs
+// a FinanceAudit row. It lives on Juno now (api/src/routes/finance.ts, requireApp('juno')): any
+// Juno user can READ the open flags on payments they process; only a supervisor can RESOLVE.
+// Shape mirrors web/src/lib/api.ts (the Minerva console's supervisor-only view).
+export interface FinanceAudit {
+  id: string;
+  messageId: string;
+  customerId: string;
+  nickname: string;
+  senderName: string;
+  ocrAmount: string;
+  amount: string;
+  diff: string;
+  salesName: string;
+  resolvedAt: string | null;
+  createdAt: string;
+  slipUrl: string;
+}
+export const getFinanceAudits = (status = 'open') =>
+  authed<{ audits: FinanceAudit[] }>(`/api/finance/audits?status=${encodeURIComponent(status)}`);
+// Supervisor-only server-side (403 otherwise) — the Juno UI hides the button for non-supervisors.
+export const resolveFinanceAudit = (id: string) =>
+  authed<{ ok: boolean }>(`/api/finance/audits/${id}/resolve`, { method: 'POST' });
