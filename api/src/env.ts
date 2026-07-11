@@ -36,8 +36,11 @@ const schema = z.object({
   // host-only cookie, no cross-subdomain SSO. See api/src/auth/cookies.ts.
   COOKIE_DOMAIN: z.string().default(''),
 
-  // Unified auth: all 15 employees' 6-digit PINs, "slug:pin,slug:pin" (slug = EMPLOYEES entry).
+  // Unified auth: every employee's 6-digit PIN, "slug:pin,slug:pin" (slug = EMPLOYEES entry).
   EMPLOYEE_PINS: z.string().default(''),
+  // Legacy name for the same map — some deployments still maintain the var under AGENT_PINS.
+  // Read as an equal source and merged with EMPLOYEE_PINS (EMPLOYEE_PINS wins on any slug clash).
+  AGENT_PINS: z.string().default(''),
   // Unified auth: Nee's (MD) password.
   MD_PASSWORD: z.string().default(''),
 

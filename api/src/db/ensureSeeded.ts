@@ -129,8 +129,14 @@ async function syncStaff(): Promise<void> {
     });
   }
 
-  // Employees, each with their own 6-digit PIN and per-person app grants.
-  const employeePins = parseAgentPins(env.EMPLOYEE_PINS, 'EMPLOYEE_PINS');
+  // Employees, each with their own 6-digit PIN and per-person app grants. Accept BOTH the
+  // current EMPLOYEE_PINS and the legacy AGENT_PINS name (some deployments never renamed the
+  // Railway var): start from AGENT_PINS, then overlay EMPLOYEE_PINS so the canonical name wins
+  // on any slug that appears in both. Either var alone fully provisions the roster.
+  const employeePins = parseAgentPins(env.AGENT_PINS, 'AGENT_PINS');
+  for (const [slug, pin] of parseAgentPins(env.EMPLOYEE_PINS, 'EMPLOYEE_PINS')) {
+    employeePins.set(slug, pin);
+  }
   for (const e of EMPLOYEES) {
     const email = employeeEmail(e.slug);
     const pin = employeePins.get(e.slug);
