@@ -71,6 +71,9 @@ export const ROLE_GROUPS: RoleGroup[] = [
       { email: slugEmail('nadeer'), label: 'NaDeer', cred: 'pin', gender: 'female' },
       { email: slugEmail('anny'), label: 'Anny', cred: 'pin', gender: 'female' },
       { email: slugEmail('noey'), label: 'Noey', cred: 'pin', gender: 'female' },
+      { email: slugEmail('bow'), label: 'Bow', cred: 'pin', gender: 'female' },
+      { email: slugEmail('tham'), label: 'Tham', cred: 'pin', gender: 'female' },
+      { email: slugEmail('rak'), label: 'Rak', cred: 'pin', gender: 'female' },
     ],
   },
   {
