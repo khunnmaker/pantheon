@@ -647,6 +647,9 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
   const [learnNotice, setLearnNotice] = useState<{ kind: 'warn' | 'error'; text: string } | null>(null);
 
   const selectedRef = useRef<string | null>(null);
+  // Tracks the customer id we already asked the OA-sync extension to auto-open, so a same-customer
+  // detail reload (socket push, etc.) never re-fires the navigation — only an actual customer switch does.
+  const lastAutoOpenRef = useRef<string | null>(null);
   const endRef = useRef<HTMLDivElement | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
   const cameraRef = useRef<HTMLInputElement | null>(null);
@@ -765,6 +768,16 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
         loadDetail(selectedRef.current).catch(() => undefined);
       }
     };
+    // The 👁 read chip updates live when the extension (or another staff's console) syncs a new
+    // OA read marker for the currently-open customer, without needing a manual refresh.
+    const onOaRead = (payload: {
+      customerId: string;
+      oaRead: { oaChatId: string; readLabel: string | null; readSeenAt: string | null };
+    }) => {
+      if (selectedRef.current === payload.customerId) {
+        setDetail((d) => (d ? { ...d, oaRead: payload.oaRead } : d));
+      }
+    };
     const onConversation = (payload: { customerId: string; ended?: boolean; message?: Message }) => {
       refreshLists().catch(() => undefined);
       if (selectedRef.current !== payload.customerId) return;
@@ -787,11 +800,13 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
     socket.on('message:new', onMessage);
     socket.on('draft:new', onDraft);
     socket.on('conversation:update', onConversation);
+    socket.on('oa:read', onOaRead);
     return () => {
       socket.off('connect_error', onConnectError);
       socket.off('message:new', onMessage);
       socket.off('draft:new', onDraft);
       socket.off('conversation:update', onConversation);
+      socket.off('oa:read', onOaRead);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refreshLists, loadDetail, refreshLearned, playChime]);
@@ -804,6 +819,26 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [detail?.messages.length]);
+
+  // Auto-open in LINE OA: when the opened customer has a known OA read-sync chat id, ask the
+  // OA-sync Chrome extension (via a same-origin postMessage a content-script bridge relays to
+  // its background worker) to silently navigate a BACKGROUND chat.line.biz tab there, so the
+  // passive read-sync fires without staff manually hunting for the chat. Guarded by customer id
+  // (not object identity — `detail` reloads on socket events for the SAME open customer and must
+  // not re-trigger) and debounced 1500ms so click-skimming through the queue never fires it. If
+  // the extension isn't installed, the postMessage is simply never picked up (harmless no-op).
+  useEffect(() => {
+    const customerId = detail?.customer.id;
+    const oaChatId = detail?.oaRead?.oaChatId;
+    if (!customerId || !oaChatId) return;
+    if (lastAutoOpenRef.current === customerId) return;
+    if (document.visibilityState !== 'visible') return;
+    lastAutoOpenRef.current = customerId;
+    const t = setTimeout(() => {
+      window.postMessage({ type: 'minerva-oa-open', url: `https://chat.line.biz/${LINE_OA_ID}/chat/${oaChatId}` }, window.location.origin);
+    }, 1500);
+    return () => clearTimeout(t);
+  }, [detail?.customer.id, detail?.oaRead?.oaChatId]);
 
   // Debounced customer search (by nickname / LINE name) — includes ended chats.
   useEffect(() => {

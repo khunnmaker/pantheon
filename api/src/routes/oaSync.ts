@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { prisma } from '../db/prisma.js';
 import { requireAuth, requireApp, requireAuthScoped } from '../auth/middleware.js';
 import { signOaSyncToken, OA_SYNC_SCOPE } from '../auth/jwt.js';
+import { pushToConsole } from '../ws/io.js';
 
 // Body posted by the passive Chrome MV3 extension's service worker. The extension only ever
 // sends ids + names + the raw "Read" marker text — NEVER message bodies (see oa-sync-extension/).
@@ -38,9 +39,11 @@ export async function oaSyncRoutes(app: FastifyInstance) {
     const { oaChatId, oaTitle, oaSubName, readLabel } = p.data;
 
     // 1) Upsert by oaChatId. Only touch read* / reportedBy when a marker was actually observed,
-    //    so a plain chat-open (names only) never blanks a previously synced read status.
+    //    so a plain chat-open (names only) never blanks a previously synced read status. Hoisted
+    //    so the live socket push below shares the EXACT same timestamp as the DB write.
+    const now = new Date();
     const readFields = readLabel
-      ? { readLabel, readSeenAt: new Date(), reportedById: req.agent!.id }
+      ? { readLabel, readSeenAt: now, reportedById: req.agent!.id }
       : {};
     const row = await prisma.oaReadSync.upsert({
       where: { oaChatId },
@@ -106,6 +109,21 @@ export async function oaSyncRoutes(app: FastifyInstance) {
       if (customerId) {
         await prisma.oaReadSync.update({ where: { oaChatId }, data: { customerId } });
       }
+    }
+
+    // 3) Broadcast to open consoles so the 👁 read chip updates live, without a manual refresh —
+    //    only once a customer is actually linked (pre-existing or freshly matched above). Emits
+    //    the FINAL persisted values: this request's own marker when it sent one (sharing `now`
+    //    with the DB write above), otherwise whatever was already stored. Never emits names.
+    if (customerId) {
+      pushToConsole('oa:read', {
+        customerId,
+        oaRead: {
+          oaChatId,
+          readLabel: readLabel ? readLabel : row.readLabel,
+          readSeenAt: readLabel ? now : row.readSeenAt,
+        },
+      });
     }
 
     return { ok: true, matched: !!customerId };

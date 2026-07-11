@@ -26,12 +26,14 @@ async function render() {
     token: '',
     agentName: '',
     enabled: true,
+    autoOpen: true,
     needsLogin: false,
   });
   $('apiUrl').value = cfg.apiUrl || DEFAULT_API;
   if (cfg.token) {
     $('agentName').textContent = cfg.agentName || '(บัญชี Minerva)';
     $('enabledToggle').checked = cfg.enabled !== false;
+    $('autoOpenToggle').checked = cfg.autoOpen !== false;
     setMsg($('sessionMsg'), cfg.needsLogin ? 'เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่' : '', cfg.needsLogin ? 'err' : '');
     show('session');
   } else {
@@ -86,6 +88,7 @@ async function doLogin() {
       token,
       agentName: (data.agent && data.agent.name) || email,
       enabled: true,
+      autoOpen: true,
       needsLogin: false,
     });
     $('password').value = '';
@@ -108,10 +111,16 @@ async function onToggle() {
   setMsg($('sessionMsg'), $('enabledToggle').checked ? 'เปิดใช้งานแล้ว' : 'ปิดการซิงก์ชั่วคราว', 'ok');
 }
 
+async function onAutoOpenToggle() {
+  await chrome.storage.local.set({ autoOpen: $('autoOpenToggle').checked });
+  setMsg($('sessionMsg'), $('autoOpenToggle').checked ? 'เปิดใช้งานอัตโนมัติแล้ว' : 'ปิดการเปิดอัตโนมัติแล้ว', 'ok');
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   $('loginBtn').addEventListener('click', doLogin);
   $('password').addEventListener('keydown', (e) => { if (e.key === 'Enter') doLogin(); });
   $('logoutBtn').addEventListener('click', doLogout);
   $('enabledToggle').addEventListener('change', onToggle);
+  $('autoOpenToggle').addEventListener('change', onAutoOpenToggle);
   render();
 });
