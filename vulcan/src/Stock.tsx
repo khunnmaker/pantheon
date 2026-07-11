@@ -1510,8 +1510,9 @@ function GroupTab() {
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
   const [batchBusy, setBatchBusy] = useState(false);
   const [batchNote, setBatchNote] = useState('');
-  // sort order for the open bucket: 'sku' (default) or 'sub' (cluster same ชนิด/subgroup together)
-  const [sortBy, setSortBy] = useState<'sku' | 'sub'>('sku');
+  // sort order for the open bucket: รหัส (sku), ชื่อ (name — clusters similar items, best for the
+  // ยังไม่จัด pile), or ชนิด (subgroup — clusters subtypes within a group)
+  const [sortBy, setSortBy] = useState<'sku' | 'sub' | 'name'>('sku');
   // Anchor row index for shift-click range selection (index into the current `products` order).
   const lastIndexRef = useRef<number | null>(null);
 
@@ -1543,6 +1544,8 @@ function GroupTab() {
 
   // Keep selection within the current view: drop it when the bucket or search changes.
   useEffect(() => { setSelected(new Set()); setBatchNote(''); }, [sel, q]);
+  // Reset sort to รหัส when switching buckets (a group's "ชนิด" option may not exist in the next).
+  useEffect(() => { setSortBy('sku'); }, [sel]);
   // Prune selection to rows still present. A per-row move (changeProduct) filters a SKU out of
   // `products` without changing [sel, q]; it must NOT linger in `selected` and get swept into a
   // later batch acting on a row the supervisor can no longer see.
@@ -1775,17 +1778,16 @@ function GroupTab() {
                 className="w-full pl-9 pr-3 py-2 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
               />
             </div>
-            {sel !== 'unassigned' && (openGroup?.subgroups.length ?? 0) > 0 && (
-              <select
-                value={sortBy}
-                onChange={(e) => setSortBy(e.target.value as 'sku' | 'sub')}
-                title="เรียงลำดับรายการ"
-                className="shrink-0 px-2 py-2 rounded-xl border border-slate-300 bg-white text-sm text-slate-600 focus:outline-none focus:ring-2 focus:ring-indigo-400"
-              >
-                <option value="sku">เรียงตาม: รหัส</option>
-                <option value="sub">เรียงตาม: ชนิด</option>
-              </select>
-            )}
+            <select
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value as 'sku' | 'sub' | 'name')}
+              title="เรียงลำดับรายการ"
+              className="shrink-0 px-2 py-2 rounded-xl border border-slate-300 bg-white text-sm text-slate-600 focus:outline-none focus:ring-2 focus:ring-indigo-400"
+            >
+              <option value="sku">เรียงตาม: รหัส</option>
+              <option value="name">เรียงตาม: ชื่อ</option>
+              {(openGroup?.subgroups.length ?? 0) > 0 && <option value="sub">เรียงตาม: ชนิด</option>}
+            </select>
             {products.length > 0 && (
               <button
                 onClick={toggleAll}

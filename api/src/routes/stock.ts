@@ -603,10 +603,12 @@ export async function stockRoutes(app: FastifyInstance) {
       const order = new Map(skus.map((s, i) => [s, i]));
       products.sort((a, b) => (order.get(a.sku) ?? 0) - (order.get(b.sku) ?? 0));
     } else {
-      // sort=sub clusters same-subgroup (ชนิด) rows together (subgroup asc, nulls last, then SKU);
-      // default is SKU order. Only applies to the browse path — a search keeps its relevance rank.
-      const orderBy = sort === 'sub'
-        ? [{ catalogSubgroup: { sort: 'asc' as const, nulls: 'last' as const } }, { sku: 'asc' as const }]
+      // sort=sub clusters same-subgroup (ชนิด) rows; sort=name clusters similar names together
+      // (great for the ยังไม่จัด pile — pick a range, batch-group). default is SKU order. Only the
+      // browse path sorts — a search keeps its relevance rank.
+      const orderBy =
+        sort === 'sub' ? [{ catalogSubgroup: { sort: 'asc' as const, nulls: 'last' as const } }, { sku: 'asc' as const }]
+        : sort === 'name' ? [{ nameTh: 'asc' as const }, { nameEn: 'asc' as const }, { sku: 'asc' as const }]
         : { sku: 'asc' as const };
       products = await prisma.product.findMany({ where, orderBy, take });
     }
