@@ -31,6 +31,7 @@ export const EMPLOYEES = [
   { slug: 'nadeer', name: 'NaDeer', apps: ['minerva', 'ceres'], group: 'sales', gender: 'female' },
   { slug: 'anny', name: 'Anny', apps: ['minerva', 'ceres'], group: 'sales', gender: 'female' },
   { slug: 'noey', name: 'Noey', apps: ['minerva', 'ceres'], group: 'sales', gender: 'female' },
+  { slug: 'bow', name: 'Bow Tham Rak', apps: ['minerva', 'ceres'], group: 'sales', gender: 'female' },
   { slug: 'ta', name: 'ต้า', apps: ['ceres'], group: 'messengers', gender: 'male' },
   { slug: 'arm', name: 'อาร์ม', apps: ['ceres'], group: 'messengers', gender: 'male' },
   { slug: 'man', name: 'แมน', apps: ['ceres'], group: 'messengers', gender: 'male' },
