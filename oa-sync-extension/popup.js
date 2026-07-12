@@ -30,13 +30,16 @@ async function render() {
     needsLogin: false,
   });
   $('apiUrl').value = cfg.apiUrl || DEFAULT_API;
-  if (cfg.token) {
+  // An expired session (needsLogin, or token cleared by the worker after a 401) drops the
+  // popup STRAIGHT to the login form with a clear message — never a logged-in-looking view.
+  if (cfg.token && !cfg.needsLogin) {
     $('agentName').textContent = cfg.agentName || '(บัญชี Minerva)';
     $('enabledToggle').checked = cfg.enabled !== false;
     $('autoOpenToggle').checked = cfg.autoOpen !== false;
-    setMsg($('sessionMsg'), cfg.needsLogin ? 'เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่' : '', cfg.needsLogin ? 'err' : '');
+    setMsg($('sessionMsg'), '', '');
     show('session');
   } else {
+    if (cfg.needsLogin) setMsg($('loginMsg'), 'เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่', 'err');
     show('login');
   }
 }

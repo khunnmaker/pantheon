@@ -42,8 +42,11 @@ async function postSync(payload) {
       body: serialized,
     });
     if (res.status === 401) {
-      // token expired / revoked — flag for the popup, and stop treating this as posted.
-      try { await chrome.storage.local.set({ needsLogin: true }); } catch (_e) { /* ignore */ }
+      // Token expired / revoked — CLEAR it (stops further doomed posts) and flag the popup.
+      // With no token stored, the popup now falls straight to the login form instead of
+      // showing a logged-in-looking session with only a small red line (which proved easy
+      // to miss — the sync silently died for days while the popup still said "Dr. M").
+      try { await chrome.storage.local.set({ needsLogin: true, token: '' }); } catch (_e) { /* ignore */ }
       return;
     }
     if (res.ok) {
