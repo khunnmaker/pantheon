@@ -5,6 +5,12 @@ import { prisma } from '../db/prisma.js';
 import { requireAuth, requireRole } from '../auth/middleware.js';
 import { callClaude, llmAvailable } from '../llm/anthropic.js';
 import { syncAllJunoToJupiter } from '../jupiter/sync.js';
+import { runBackfill } from '../scripts/backfillParties.js';
+
+// Module-level guard so the ~15k-upsert APPLY backfill can never run twice at once (a second
+// APPLY returns {started:false, busy:true}). runBackfill itself keeps NO module state — each
+// call is self-contained — so this single flag is the only serialisation the routes need.
+let partyBackfillRunning = false;
 
 // Jupiter accounting — the GROUP-WIDE consolidated cockpit + monthly close pack (Phase 1).
 // A thin income/expense ledger over JupiterTxn across the 5 group companies (JupiterCompany),
@@ -392,5 +398,39 @@ export async function jupiterAccountingRoutes(app: FastifyInstance) {
 
     const proposed = heuristic();
     return { ok: true as const, via: 'heuristic' as const, proposed };
+  });
+
+  // 9) Party identity backfill (Punch #9) — make the run-once Party/PartyIdentity backfill
+  //    runnable from the cockpit (no CLI / no DB string). Supervisor-only, like everything here.
+
+  // 9a) POST /parties/backfill/dry — synchronous DRY-RUN: compute the full plan, write NOTHING,
+  //     return the Summary. A read-only pass over ~15k rows fits comfortably in one request.
+  app.post('/api/jupiter/acct/parties/backfill/dry', gate, async () => {
+    return runBackfill({ apply: false });
+  });
+
+  // 9b) POST /parties/backfill/apply — kick off the real write (~15k idempotent upserts) in the
+  //     BACKGROUND and return immediately; too slow for a sync response. Concurrency-guarded:
+  //     a second apply while one is running returns {started:false, busy:true}. Poll /status.
+  app.post('/api/jupiter/acct/parties/backfill/apply', gate, async () => {
+    if (partyBackfillRunning) return { started: false, busy: true };
+    partyBackfillRunning = true;
+    void runBackfill({ apply: true })
+      .then((s) => app.log.info({ backfill: s }, 'party backfill applied'))
+      .catch((e) => app.log.error({ err: e }, 'party backfill failed'))
+      .finally(() => {
+        partyBackfillRunning = false;
+      });
+    return { started: true };
+  });
+
+  // 9c) GET /parties/status — live spine counts + whether an apply is in flight (drives the
+  //     cockpit's "กำลังรวมข้อมูล…" spinner + final counts). Cheap: two COUNT(*)s.
+  app.get('/api/jupiter/acct/parties/status', gate, async () => {
+    const [parties, identities] = await Promise.all([
+      prisma.party.count(),
+      prisma.partyIdentity.count(),
+    ]);
+    return { parties, identities, running: partyBackfillRunning };
   });
 }

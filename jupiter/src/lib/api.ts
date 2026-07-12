@@ -249,3 +249,34 @@ export function acctParse(text: string): Promise<{ ok: boolean; via?: 'ai' | 'he
 export function acctSyncJuno(): Promise<{ ok: boolean; synced: number; removed: number }> {
   return acctFetch('/api/jupiter/acct/sync/juno', { method: 'POST' });
 }
+
+// ─── Punch #9: Party identity backfill (supervisor-only) ─────────────────────────────
+// Populate the canonical Party + PartyIdentity spine from the deity source tables, runnable
+// from the cockpit. Dry-run computes the plan (writes nothing); apply kicks off the writes in
+// the background; status polls the live counts + whether an apply is still running.
+
+// Mirror of the api Summary (api/src/scripts/backfillParties.ts).
+export interface BackfillSummary {
+  parties: number; // parties to create (dry) / created (apply)
+  identities: Record<string, number>; // by channel
+  conflicts: number;
+  sampleConflicts: string[]; // ≤20 "channel key → partyA vs partyB"
+}
+export interface BackfillStatus {
+  parties: number;
+  identities: number;
+  running: boolean;
+}
+
+// Dry-run: synchronous, returns the full Summary (writes nothing).
+export function acctPartyBackfillDry(): Promise<BackfillSummary> {
+  return acctFetch<BackfillSummary>('/api/jupiter/acct/parties/backfill/dry', { method: 'POST' });
+}
+// Apply: fire-and-forget on the server; returns immediately. busy:true ⇒ a run is already going.
+export function acctPartyBackfillApply(): Promise<{ started: boolean; busy?: boolean }> {
+  return acctFetch('/api/jupiter/acct/parties/backfill/apply', { method: 'POST' });
+}
+// Status: live spine counts + whether an apply is in flight (poll while running).
+export function acctPartyStatus(): Promise<BackfillStatus> {
+  return acctFetch<BackfillStatus>('/api/jupiter/acct/parties/status');
+}
