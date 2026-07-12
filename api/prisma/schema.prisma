@@ -299,6 +299,15 @@ model Payment {
   // banking event and does NOT set these — only POST /payments/:id/receive (supervisor-only) does.
   receivedAt       DateTime?
   receivedBy       String?
+  // Payment discrepancy ledger: FIN may override the RE-derived expected gross, records a
+  // resolution, and the CEO confirms it. Empty strings mean unset; computed diff stays live.
+  discExpected     String             @default("")
+  discResolution   String             @default("")
+  discNote         String             @default("")
+  discResolvedAt   DateTime?
+  discResolvedBy   String             @default("")
+  discConfirmedAt  DateTime?
+  discConfirmedBy  String             @default("")
   // cheque details (source='cheque' only)
   chequeNo         String             @default("")
   chequeBank       String             @default("")

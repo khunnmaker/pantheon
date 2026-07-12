@@ -14,6 +14,15 @@ import { syncPaymentToJupiter } from '../jupiter/sync.js';
 import { readSlipFromBuffer } from '../llm/readSlip.js';
 import { parseReReceipts, decodeExpressBytes } from '../finance/parseReReceipts.js';
 import { computeReRow } from '../finance/reRecon.js';
+import {
+  buildDiscrepancyComponents,
+  componentByPaymentId,
+  expectedForPayment,
+  grossSatang,
+  isMoneyString,
+  mismatchedMultiPaymentComponentCount,
+  satangToBaht,
+} from '../finance/discrepancy.js';
 
 // Juno finance API. Reads the Payment table (written by Minerva's /to-finance hook) and
 // owns the finance lifecycle: verify → record, flag-queue triage, tax-invoice tracking,
@@ -28,6 +37,8 @@ import { computeReRow } from '../finance/reRecon.js';
 // Lifecycle Juno owns. `flagged` is a SEPARATE boolean (the flag queue), independent of status.
 const STATUSES = ['received', 'verified', 'recorded', 'void'] as const;
 const TAX_STATUSES = ['none', 'requested', 'issued'] as const;
+const DISC_RESOLUTIONS = ['', 'refund', 'credit', 'chase', 'writeoff'] as const;
+const moneyStringSchema = z.string().max(40).refine((value) => isMoneyString(value), 'invalid_money');
 
 // All finance day-math is Thai business time (UTC+7) regardless of server TZ.
 const TH_OFFSET_MS = 7 * 3600 * 1000;
@@ -67,6 +78,9 @@ function toRow(p: {
   receivedAt: Date | null; receivedBy: string | null;
   chequeNo: string; chequeBank: string; chequeDueDate: string;
   whtRate: number; whtAmount: string;
+  discExpected: string; discResolution: string; discNote: string;
+  discResolvedAt: Date | null; discResolvedBy: string;
+  discConfirmedAt: Date | null; discConfirmedBy: string;
 }) {
   return {
     id: p.id,
@@ -116,6 +130,78 @@ function toRow(p: {
     chequeNo: p.chequeNo,
     chequeBank: p.chequeBank,
     chequeDueDate: p.chequeDueDate,
+    discExpected: p.discExpected,
+    discResolution: p.discResolution,
+    discNote: p.discNote,
+    discResolvedAt: p.discResolvedAt?.toISOString() ?? null,
+    discResolvedBy: p.discResolvedBy,
+    discConfirmedAt: p.discConfirmedAt?.toISOString() ?? null,
+    discConfirmedBy: p.discConfirmedBy,
+  };
+}
+
+async function getDiscrepancySnapshot() {
+  const [payments, receipts] = await Promise.all([
+    prisma.payment.findMany({ where: { status: { not: 'void' } }, orderBy: { createdAt: 'desc' } }),
+    prisma.reReceipt.findMany({ select: { reNumber: true, amount: true } }),
+  ]);
+  const components = buildDiscrepancyComponents(payments, receipts);
+  const componentsByPayment = componentByPaymentId(components);
+
+  const rows = payments.flatMap((payment) => {
+    let expected = expectedForPayment(payment, componentsByPayment.get(payment.id));
+    const hasStamps = !!(
+      payment.discResolution || payment.discResolvedAt || payment.discResolvedBy ||
+      payment.discConfirmedAt || payment.discConfirmedBy
+    );
+
+    // A resolved auto row may cease to be a single-payment candidate when a completing payment
+    // arrives. Keep its audit row visible and show the live self-healed diff as zero.
+    if (!expected && hasStamps) expected = { expectedSatang: grossSatang(payment), source: 're' as const };
+    if (!expected) return [];
+
+    const gross = grossSatang(payment);
+    const diff = gross - expected.expectedSatang;
+    if (diff === 0 && !hasStamps) return [];
+    return [{
+      id: payment.id,
+      transferAt: payment.transferAt,
+      createdAt: payment.createdAt.toISOString(),
+      customerCode: payment.customerCode,
+      customerName: payment.customerName,
+      receiptName: payment.receiptName,
+      source: payment.source,
+      hasSlip: !!payment.slipUrl,
+      reNumbers: payment.reNumbers,
+      status: payment.status,
+      expected: satangToBaht(expected.expectedSatang),
+      expectedSource: expected.source,
+      gross: satangToBaht(gross),
+      diff: satangToBaht(diff),
+      _diffSatang: diff,
+      direction: diff > 0 ? 'over' as const : diff < 0 ? 'under' as const : 'balanced' as const,
+      discExpected: payment.discExpected,
+      discResolution: payment.discResolution,
+      discNote: payment.discNote,
+      discResolvedAt: payment.discResolvedAt?.toISOString() ?? null,
+      discResolvedBy: payment.discResolvedBy,
+      discConfirmedAt: payment.discConfirmedAt?.toISOString() ?? null,
+      discConfirmedBy: payment.discConfirmedBy,
+    }];
+  });
+
+  const open = rows.filter((row) => row._diffSatang !== 0 && !row.discResolution);
+  const over = open.filter((row) => row._diffSatang > 0);
+  const under = open.filter((row) => row._diffSatang < 0);
+  return {
+    rows: rows.map(({ _diffSatang: _internal, ...row }) => row),
+    totals: {
+      over: { count: over.length, sum: satangToBaht(over.reduce((sum, row) => sum + row._diffSatang, 0)) },
+      under: { count: under.length, sum: satangToBaht(under.reduce((sum, row) => sum + row._diffSatang, 0)) },
+      pendingConfirm: rows.filter((row) => !!row.discResolution && !row.discConfirmedAt).length,
+    },
+    groupHints: mismatchedMultiPaymentComponentCount(components),
+    openCount: open.length,
   };
 }
 
@@ -405,7 +491,7 @@ export async function junoRoutes(app: FastifyInstance) {
 
   // GET /api/juno/summary — headline counts for the Juno dashboard / login landing.
   app.get('/api/juno/summary', async () => {
-    const [total, received, verified, recorded, flagged, taxRequested, cashChequePending, awaitingReceive] = await Promise.all([
+    const [total, received, verified, recorded, flagged, taxRequested, cashChequePending, awaitingReceive, discrepancy] = await Promise.all([
       prisma.payment.count(),
       prisma.payment.count({ where: { status: 'received' } }),
       prisma.payment.count({ where: { status: 'verified' } }),
@@ -418,8 +504,86 @@ export async function junoRoutes(app: FastifyInstance) {
       // physically received — SEPARATE from cashChequePending above (that's the banking
       // deposit/clear state; this is the receipt-verify gate).
       prisma.payment.count({ where: { source: { in: ['cash', 'cheque'] }, receivedAt: null, status: { not: 'void' } } }),
+      getDiscrepancySnapshot(),
     ]);
-    return { total, received, verified, recorded, flagged, taxRequested, cashChequePending, awaitingReceive };
+    return {
+      total, received, verified, recorded, flagged, taxRequested, cashChequePending, awaitingReceive,
+      discrepancyOpen: discrepancy.openCount,
+    };
+  });
+
+  // GET /api/juno/discrepancies — live single-payment discrepancy ledger plus preserved
+  // resolution/confirmation audit rows. Every comparison uses gross = amount + whtAmount.
+  app.get('/api/juno/discrepancies', async () => {
+    const { rows, totals, groupHints } = await getDiscrepancySnapshot();
+    return { rows, totals, groupHints };
+  });
+
+  // FIN may explicitly set, adjust, or clear the expected gross outside the RE-check dialog.
+  app.post<{ Params: { id: string } }>('/api/juno/payments/:id/discrepancy', async (req, reply) => {
+    const body = z.object({ expected: moneyStringSchema }).safeParse(req.body);
+    if (!body.success) return reply.code(400).send({ error: 'invalid_body' });
+    const current = await prisma.payment.findUnique({ where: { id: req.params.id }, select: { id: true, status: true } });
+    if (!current) return reply.code(404).send({ error: 'not_found' });
+    if (current.status === 'void') return reply.code(409).send({ error: 'void_locked' });
+    const payment = await prisma.payment.update({
+      where: { id: req.params.id },
+      data: { discExpected: body.data.expected.trim() },
+    });
+    return { ok: true, payment: toRow(payment) };
+  });
+
+  // FIN records how the difference was handled. An empty resolution is the explicit reset path.
+  app.post<{ Params: { id: string } }>('/api/juno/payments/:id/disc-resolve', async (req, reply) => {
+    const body = z.object({
+      resolution: z.enum(DISC_RESOLUTIONS),
+      note: z.string().max(600).optional(),
+    }).safeParse(req.body);
+    if (!body.success) return reply.code(400).send({ error: 'invalid_body' });
+    const current = await prisma.payment.findUnique({ where: { id: req.params.id }, select: { id: true, status: true } });
+    if (!current) return reply.code(404).send({ error: 'not_found' });
+    if (current.status === 'void') return reply.code(409).send({ error: 'void_locked' });
+
+    const clearing = body.data.resolution === '';
+    const payment = await prisma.payment.update({
+      where: { id: req.params.id },
+      data: clearing ? {
+        discResolution: '', discNote: '', discResolvedAt: null, discResolvedBy: '',
+        discConfirmedAt: null, discConfirmedBy: '',
+      } : {
+        discResolution: body.data.resolution,
+        discNote: body.data.note?.trim() ?? '',
+        discResolvedAt: new Date(),
+        discResolvedBy: req.agent?.email ?? req.agent?.id ?? '',
+        // Editing a resolution sends it back through the CEO confirmation gate.
+        discConfirmedAt: null,
+        discConfirmedBy: '',
+      },
+    });
+    return { ok: true, payment: toRow(payment) };
+  });
+
+  app.post<{ Params: { id: string } }>('/api/juno/payments/:id/disc-confirm', async (req, reply) => {
+    if (req.agent?.role !== 'supervisor') return reply.code(403).send({ error: 'forbidden' });
+    const body = z.object({ confirmed: z.boolean() }).safeParse(req.body);
+    if (!body.success) return reply.code(400).send({ error: 'invalid_body' });
+    const current = await prisma.payment.findUnique({
+      where: { id: req.params.id },
+      select: { id: true, status: true, discResolution: true },
+    });
+    if (!current) return reply.code(404).send({ error: 'not_found' });
+    if (current.status === 'void') return reply.code(409).send({ error: 'void_locked' });
+    if (body.data.confirmed && !current.discResolution) {
+      return reply.code(409).send({ error: 'resolution_required' });
+    }
+    const payment = await prisma.payment.update({
+      where: { id: req.params.id },
+      data: {
+        discConfirmedAt: body.data.confirmed ? new Date() : null,
+        discConfirmedBy: body.data.confirmed ? (req.agent?.email ?? req.agent?.id ?? '') : '',
+      },
+    });
+    return { ok: true, payment: toRow(payment) };
   });
 
   // GET /api/juno/wht/summary?from=&to= — period totals for the หัก ณ ที่จ่าย (WHT, task 2)
@@ -516,7 +680,8 @@ export async function junoRoutes(app: FastifyInstance) {
   //   id/source/slipUrl (identity + provenance), status/flagged (lifecycle, see /status /flag),
   //   reNumber(s)/receiptName/customerType/whtRate/whtAmount (FIN's check data, see /verify),
   //   settleState/receivedAt (banking/receipt gates, see /settle /receive), verifiedById/At
-  //   (stamped by /status /verify only).
+  //   (stamped by /status /verify only), and every disc* field (see the dedicated discrepancy,
+  //   disc-resolve, and disc-confirm routes). No disc* key exists in this schema by design.
   const editPaymentBodySchema = z.object({
     customerCode: z.string().max(40).optional(),
     customerName: z.string().max(200).optional(),
@@ -775,6 +940,7 @@ export async function junoRoutes(app: FastifyInstance) {
     customerType: customerTypeSchema.optional(),
     whtRate: z.union([z.literal(0), z.literal(1), z.literal(2), z.literal(3), z.literal(5)]).optional(),
     whtAmount: z.string().max(40).optional(),
+    discExpected: moneyStringSchema.optional(),
   });
   app.post<{ Params: { id: string } }>('/api/juno/payments/:id/verify', async (req, reply) => {
     const body = verifyBodySchema.safeParse(req.body);
@@ -816,6 +982,7 @@ export async function junoRoutes(app: FastifyInstance) {
         customerType: body.data.customerType ?? '',
         whtRate,
         whtAmount,
+        ...(body.data.discExpected === undefined ? {} : { discExpected: body.data.discExpected.trim() }),
         ...(keepRecorded ? {} : { verifiedById: req.agent?.id ?? null, verifiedAt: new Date() }),
       },
     });

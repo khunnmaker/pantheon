@@ -19,6 +19,7 @@ import {
 import PrintCovers from './PrintCovers';
 import Recon from './Recon';
 import ReRecon from './ReRecon';
+import Discrepancies, { PaymentDiscrepancyBlock } from './Discrepancies';
 import Audit from './Audit';
 import AppSwitcher from './AppSwitcher';
 
@@ -35,7 +36,7 @@ import AppSwitcher from './AppSwitcher';
 // 'audit' = ตรวจสอบยอด: the FinanceAudit mis-read trail (slip amount ≠ OCR) — visible to ALL
 // Juno users (finance sees the flags on payments they process), but only the CEO can mark one
 // ตรวจแล้ว (resolve is supervisor-only server-side; the button is hidden otherwise).
-type View = 'inbox' | 'flags' | 'reports' | 'recon' | 'receive' | 'wht' | 'reRecon' | 'audit';
+type View = 'inbox' | 'flags' | 'reports' | 'recon' | 'receive' | 'wht' | 'reRecon' | 'audit' | 'disc';
 
 // Withholding tax (task 2) rate options — 0 (ไม่มี) plus the Thai statutory rates FIN picks
 // from in the ตรวจแล้ว dialog. Mirrors the server's WHT_RATES (api/src/routes/juno.ts).
@@ -119,6 +120,7 @@ export default function Juno({ agent, onLogout }: { agent: Agent; onLogout: () =
     // รับเงิน/รายงาน below): list + period totals only, no certificate tracking. Its own totals
     // bar (fetched inside PaymentsView) covers the count, so no badge here.
     { key: 'wht', label: 'หัก ณ ที่จ่าย', icon: <Percent size={16} /> },
+    { key: 'disc', label: 'ยอดเกิน/ขาด', icon: <Scale size={16} />, count: summary?.discrepancyOpen },
     // รอยืนยันรับเงิน is CEO-only (server 403s POST /receive for non-supervisor; the confirm
     // action itself mirrors the delete gate) — omit the tab for finance/MD so it's never shown.
     ...(isCeo ? [{ key: 'receive' as const, label: 'รอยืนยันรับเงิน', icon: <HandCoins size={16} />, count: summary?.awaitingReceive }] : []),
@@ -167,7 +169,7 @@ export default function Juno({ agent, onLogout }: { agent: Agent; onLogout: () =
             >
               {t.icon} {t.label}
               {typeof t.count === 'number' && t.count > 0 && (
-                <span className={`ml-1 px-1.5 rounded-full text-xs ${t.key === 'flags' || t.key === 'recon' || t.key === 'receive' || t.key === 'audit' ? 'bg-rose-100 text-rose-700' : 'bg-slate-100 text-slate-600'}`}>
+                <span className={`ml-1 px-1.5 rounded-full text-xs ${t.key === 'flags' || t.key === 'recon' || t.key === 'receive' || t.key === 'audit' || t.key === 'disc' ? 'bg-rose-100 text-rose-700' : 'bg-slate-100 text-slate-600'}`}>
                   {t.count}
                 </span>
               )}
@@ -183,6 +185,8 @@ export default function Juno({ agent, onLogout }: { agent: Agent; onLogout: () =
           <Recon isCeo={isCeo} />
         ) : view === 'reRecon' ? (
           <ReRecon isCeo={isCeo} />
+        ) : view === 'disc' ? (
+          <Discrepancies isCeo={isCeo} onChanged={refreshSummary} />
         ) : view === 'audit' ? (
           <Audit isCeo={isCeo} onResolved={refreshSummary} />
         ) : (
@@ -194,7 +198,7 @@ export default function Juno({ agent, onLogout }: { agent: Agent; onLogout: () =
 }
 
 // ── Payments list + detail (inbox / flags share this) ──────────────────────
-function PaymentsView({ view, onChanged, canDelete, isCeo }: { view: Exclude<View, 'reports' | 'recon' | 'reRecon' | 'audit'>; onChanged: () => void; canDelete: boolean; isCeo: boolean }) {
+function PaymentsView({ view, onChanged, canDelete, isCeo }: { view: Exclude<View, 'reports' | 'recon' | 'reRecon' | 'audit' | 'disc'>; onChanged: () => void; canDelete: boolean; isCeo: boolean }) {
   const [q, setQ] = useState('');
   const [status, setStatusFilter] = useState<'all' | PaymentStatus>('all');
   // วิธีรับเงิน (payment-method) filter — inbox only, folds the old separate เงินสด/เช็ค tab
@@ -1446,6 +1450,8 @@ function Detail({ payment, onClose, onUpdate, onDelete, onPrint, canDelete, isCe
               </div>
             )}
 
+            <PaymentDiscrepancyBlock payment={p} isCeo={isCeo} onUpdated={onUpdate} />
+
             {p.note && (
               <div className="mx-4 mt-3 p-2 rounded-lg bg-slate-50 text-slate-600 text-xs whitespace-pre-wrap">{p.note}</div>
             )}
@@ -1825,6 +1831,8 @@ function CheckDialog({ payment, onClose, onSaved }: {
   // หัก ณ ที่จ่าย (WHT, task 2) — pre-filled from the payment when re-opening an already-checked
   // row (useWhtControl reads payment.whtRate/whtAmount on mount).
   const wht = useWhtControl(payment);
+  const [discExpected, setDiscExpected] = useState(payment.discExpected);
+  const discPreview = discExpected.trim() === '' ? 0 : round2(wht.grossPreview - (parseFloat(discExpected.replace(/,/g, '')) || 0));
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
 
@@ -1840,6 +1848,7 @@ function CheckDialog({ payment, onClose, onSaved }: {
         receiptName: receiptName.trim(),
         customerType,
         ...wht.toBody(),
+        discExpected: discExpected.trim(),
       });
       onSaved(res.payment);
     } catch (e) {
@@ -1892,6 +1901,23 @@ function CheckDialog({ payment, onClose, onSaved }: {
         </div>
 
         <WhtSection wht={wht} />
+
+        <label className="block rounded-lg border border-slate-200 p-2.5">
+          <span className="text-xs text-slate-500">ยอดตาม RE (ก่อนหัก) <span className="font-normal text-slate-400">— ไม่บังคับ</span></span>
+          <input
+            value={discExpected}
+            onChange={(e) => setDiscExpected(e.target.value)}
+            inputMode="decimal"
+            placeholder="เช่น 200.00"
+            className="mt-1 w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400"
+          />
+          {discExpected.trim() !== '' && discPreview !== 0 && (
+            <div className={`mt-1.5 text-xs font-semibold ${discPreview > 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+              {discPreview > 0 ? `เกิน +${baht(discPreview)}` : `ขาด −${baht(Math.abs(discPreview))}`}
+              <span className="ml-1 font-normal text-slate-400">(ยอดเต็ม {baht(wht.grossPreview)})</span>
+            </div>
+          )}
+        </label>
 
         {err && <div className="text-xs text-rose-600 bg-rose-50 border border-rose-200 rounded-lg p-2">{err}</div>}
 
