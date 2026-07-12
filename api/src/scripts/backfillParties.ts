@@ -21,6 +21,14 @@
 //   - CONSERVATIVE: if a key already belongs to a DIFFERENT party, we do NOT auto-merge —
 //     the collision is counted + logged for human review and the run continues.
 //
+// Two entry points:
+//   - runBackfill({apply}) — the CORE. Computes everything into a fresh, CALL-LOCAL RunState
+//     (no module-scoped mutable state), so it is safe to invoke from a long-lived server
+//     (the Jupiter cockpit runs it — see routes/jupiterAccounting.ts). DRY (apply:false)
+//     computes the full plan but WRITES NOTHING; returns a Summary either way.
+//   - main() — the CLI wrapper (only when this file is run directly): calls runBackfill and
+//     prints the Summary.
+//
 //   Usage:
 //     npx tsx src/scripts/backfillParties.ts            # dry-run: compute + print summary, write nothing
 //     npx tsx src/scripts/backfillParties.ts --apply    # write Party + PartyIdentity rows
@@ -63,7 +71,9 @@ export function normalize(channel: string, raw: string | null | undefined): stri
   }
 }
 
-// ─── Run state (module-scoped so the named helpers keep the spec'd signatures) ─
+// ─── Run state (CALL-LOCAL: one fresh RunState per runBackfill, threaded through the
+//     helpers). Nothing is module-scoped, so two concurrent callers can never clobber
+//     each other's counters/index/mode. ───────────────────────────────────────────────
 type Mode = 'dry' | 'apply';
 type PartyDefaults = Omit<Prisma.PartyCreateInput, 'identities'>;
 
@@ -87,7 +97,13 @@ interface RunState {
   conflicts: Conflict[];
 }
 
-let run: RunState;
+/** Compact result of a backfill run — what the CLI prints and the cockpit renders. */
+export interface Summary {
+  parties: number; // parties to create (dry) / created (apply)
+  identities: Record<string, number>; // identities to create / created, by channel
+  conflicts: number; // (channel,key) collisions NOT auto-merged
+  sampleConflicts: string[]; // ≤20 human lines: "channel key → partyA vs partyB"
+}
 
 const idxKeyOf = (channel: string, key: string) => `${channel}\x00${key}`;
 
@@ -95,7 +111,7 @@ function isUniqueViolation(e: unknown): boolean {
   return e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002';
 }
 
-function bumpChannel(channel: string): void {
+function bumpChannel(run: RunState, channel: string): void {
   run.identitiesCreated[channel] = (run.identitiesCreated[channel] ?? 0) + 1;
 }
 
@@ -108,6 +124,7 @@ function bumpChannel(channel: string): void {
  * The unique-violation race is caught → re-read the identity and reuse its party.
  */
 async function linkIdentity(
+  run: RunState,
   tx: Prisma.TransactionClient,
   channel: string,
   rawKey: string | null | undefined,
@@ -129,7 +146,7 @@ async function linkIdentity(
     const virt = `virt-${++run.virt}`;
     run.index.set(ik, virt);
     run.partiesCreated++;
-    bumpChannel(channel);
+    bumpChannel(run, channel);
     return virt;
   }
 
@@ -144,7 +161,7 @@ async function linkIdentity(
     });
     run.index.set(ik, party.id);
     run.partiesCreated++;
-    bumpChannel(channel);
+    bumpChannel(run, channel);
     return party.id;
   } catch (e) {
     if (isUniqueViolation(e)) {
@@ -165,6 +182,7 @@ async function linkIdentity(
  * belongs to a DIFFERENT party → NOT merged: counted + logged as a conflict, run continues.
  */
 async function attachIdentity(
+  run: RunState,
   tx: Prisma.TransactionClient,
   partyId: string,
   channel: string,
@@ -183,13 +201,13 @@ async function attachIdentity(
       return;
     }
     // Same (channel,key) already points at a different party → conflict, do not auto-merge.
-    recordConflict(channel, key, seen, partyId, source);
+    recordConflict(run, channel, key, seen, partyId, source);
     return;
   }
 
   if (run.mode === 'dry') {
     run.index.set(ik, partyId);
-    bumpChannel(channel);
+    bumpChannel(run, channel);
     return;
   }
 
@@ -198,13 +216,13 @@ async function attachIdentity(
       data: { partyId, channel, key, rawKey: (rawKey ?? '').trim(), confidence, source },
     });
     run.index.set(ik, partyId);
-    bumpChannel(channel);
+    bumpChannel(run, channel);
   } catch (e) {
     if (isUniqueViolation(e)) {
       const found = await tx.partyIdentity.findUnique({ where: { channel_key: { channel, key } } });
       if (found) {
         run.index.set(ik, found.partyId);
-        if (found.partyId !== partyId) recordConflict(channel, key, found.partyId, partyId, source);
+        if (found.partyId !== partyId) recordConflict(run, channel, key, found.partyId, partyId, source);
         else run.identitiesReused++;
         return;
       }
@@ -214,6 +232,7 @@ async function attachIdentity(
 }
 
 function recordConflict(
+  run: RunState,
   channel: string,
   key: string,
   existingPartyId: string,
@@ -228,7 +247,7 @@ function recordConflict(
 }
 
 // ─── Backfill sources (run in order; later sources may merge onto earlier parties) ──
-async function backfill(tx: Prisma.TransactionClient): Promise<void> {
+async function backfill(run: RunState, tx: Prisma.TransactionClient): Promise<void> {
   // 1. Customer → line_user (+ express_code onto the SAME party when a code is set).
   const custIdToLineUser = new Map<string, string>();
   const customers = await tx.customer.findMany({
@@ -238,6 +257,7 @@ async function backfill(tx: Prisma.TransactionClient): Promise<void> {
     custIdToLineUser.set(c.id, c.lineUserId);
     const displayName = c.nickname || c.displayName || '';
     const pid = await linkIdentity(
+      run,
       tx,
       'line_user',
       c.lineUserId,
@@ -245,7 +265,7 @@ async function backfill(tx: Prisma.TransactionClient): Promise<void> {
       'customer',
     );
     if (pid && normalize('express_code', c.code) !== '') {
-      await attachIdentity(tx, pid, 'express_code', c.code, 'customer');
+      await attachIdentity(run, tx, pid, 'express_code', c.code, 'customer');
     }
   }
 
@@ -256,6 +276,7 @@ async function backfill(tx: Prisma.TransactionClient): Promise<void> {
   });
   for (const v of venus) {
     await linkIdentity(
+      run,
       tx,
       'express_code',
       v.code,
@@ -271,6 +292,7 @@ async function backfill(tx: Prisma.TransactionClient): Promise<void> {
   });
   for (const a of clinics) {
     const pid = await linkIdentity(
+      run,
       tx,
       'diana_email',
       a.email,
@@ -280,7 +302,7 @@ async function backfill(tx: Prisma.TransactionClient): Promise<void> {
     if (pid && normalize('express_code', a.customerCode) !== '') {
       // Intended cross-channel bridge; conservative — flagged as a conflict if the code
       // already anchors a different (LINE/Express) party rather than silently merging.
-      await attachIdentity(tx, pid, 'express_code', a.customerCode, 'diana');
+      await attachIdentity(run, tx, pid, 'express_code', a.customerCode, 'diana');
     }
   }
 
@@ -300,7 +322,7 @@ async function backfill(tx: Prisma.TransactionClient): Promise<void> {
       console.warn(`SKIP oa_chat ${o.oaChatId}: no line_user party for customer ${o.customerId}`);
       continue;
     }
-    await attachIdentity(tx, pid, 'oa_chat', o.oaChatId, 'oa');
+    await attachIdentity(run, tx, pid, 'oa_chat', o.oaChatId, 'oa');
   }
 
   // 5. CeresParty → ceres_name (+ agent_email). kind: carrier stays carrier, else payee.
@@ -310,6 +332,7 @@ async function backfill(tx: Prisma.TransactionClient): Promise<void> {
   for (const p of ceres) {
     const kind = p.kind === 'carrier' ? 'carrier' : 'payee';
     const pid = await linkIdentity(
+      run,
       tx,
       'ceres_name',
       p.name,
@@ -317,34 +340,22 @@ async function backfill(tx: Prisma.TransactionClient): Promise<void> {
       'ceres',
     );
     if (pid && normalize('agent_email', p.agentEmail) !== '') {
-      await attachIdentity(tx, pid, 'agent_email', p.agentEmail, 'ceres');
+      await attachIdentity(run, tx, pid, 'agent_email', p.agentEmail, 'ceres');
     }
   }
 }
 
-// ─── Entry point ───────────────────────────────────────────────────────────────
-function printSummary(): void {
-  const totalIdentities = Object.values(run.identitiesCreated).reduce((a, b) => a + b, 0);
-  console.log('');
-  console.log(`=== backfillParties summary (${run.mode === 'dry' ? 'DRY-RUN — nothing written' : 'APPLIED'}) ===`);
-  console.log(`Parties ${run.mode === 'dry' ? 'to create' : 'created'}:        ${run.partiesCreated}`);
-  console.log(`Identities ${run.mode === 'dry' ? 'to create' : 'created'}:     ${totalIdentities}`);
-  const channels = Object.keys(run.identitiesCreated).sort();
-  for (const ch of channels) {
-    console.log(`    ${ch.padEnd(14)} ${run.identitiesCreated[ch]}`);
-  }
-  console.log(`Identities reused (already present): ${run.identitiesReused}`);
-  console.log(`Conflicts (NOT merged, need review): ${run.conflicts.length}`);
-  for (const c of run.conflicts) {
-    console.log(`    ${c.channel}/${c.key}  existing=${c.existingPartyId}  wanted=${c.wantedPartyId}  [${c.source}]`);
-  }
-  if (run.mode === 'dry') console.log('\nRe-run with --apply to write these rows.');
-}
-
-async function main(): Promise<void> {
-  const apply = process.argv.includes('--apply');
-  run = {
-    mode: apply ? 'apply' : 'dry',
+// ─── Public core ─────────────────────────────────────────────────────────────────
+/**
+ * Run the backfill and return a Summary. apply:false is a full DRY-RUN — it computes the
+ * entire plan (parties/identities/conflicts) but WRITES NOTHING. apply:true performs the
+ * ~15k idempotent upserts. Safe to call from a server: all state is call-local, so the
+ * caller only needs to serialise APPLY runs against each other (see the routes' `running`
+ * flag) — nothing here leaks across invocations.
+ */
+export async function runBackfill(opts: { apply: boolean }): Promise<Summary> {
+  const run: RunState = {
+    mode: opts.apply ? 'apply' : 'dry',
     index: new Map(),
     virt: 0,
     partiesCreated: 0,
@@ -353,22 +364,50 @@ async function main(): Promise<void> {
     conflicts: [],
   };
 
-  console.log(`backfillParties starting in ${run.mode === 'apply' ? 'APPLY' : 'DRY-RUN'} mode…`);
-
   // Seed the in-memory index from any identities already present → idempotent re-runs
   // and a dry-run that reports only the DELTA still to be written.
   const existing = await prisma.partyIdentity.findMany({
     select: { channel: true, key: true, partyId: true },
   });
   for (const r of existing) run.index.set(idxKeyOf(r.channel, r.key), r.partyId);
-  console.log(`Seeded ${existing.length} existing PartyIdentity rows.`);
 
-  await backfill(prisma);
-  printSummary();
+  await backfill(run, prisma);
+
+  return {
+    parties: run.partiesCreated,
+    identities: { ...run.identitiesCreated },
+    conflicts: run.conflicts.length,
+    sampleConflicts: run.conflicts
+      .slice(0, 20)
+      .map((c) => `${c.channel} ${c.key} → ${c.existingPartyId} vs ${c.wantedPartyId}`),
+  };
 }
 
-// Only self-run when invoked directly (so importing normalize() in tests never hits the DB).
-// Compare real filesystem paths (robust on Windows/tsx); fall back to a basename match.
+// ─── CLI wrapper ───────────────────────────────────────────────────────────────
+function printSummary(summary: Summary, apply: boolean): void {
+  const totalIdentities = Object.values(summary.identities).reduce((a, b) => a + b, 0);
+  console.log('');
+  console.log(`=== backfillParties summary (${apply ? 'APPLIED' : 'DRY-RUN — nothing written'}) ===`);
+  console.log(`Parties ${apply ? 'created' : 'to create'}:        ${summary.parties}`);
+  console.log(`Identities ${apply ? 'created' : 'to create'}:     ${totalIdentities}`);
+  for (const ch of Object.keys(summary.identities).sort()) {
+    console.log(`    ${ch.padEnd(14)} ${summary.identities[ch]}`);
+  }
+  console.log(`Conflicts (NOT merged, need review): ${summary.conflicts}`);
+  for (const line of summary.sampleConflicts) console.log(`    ${line}`);
+  if (!apply) console.log('\nRe-run with --apply to write these rows.');
+}
+
+async function main(): Promise<void> {
+  const apply = process.argv.includes('--apply');
+  console.log(`backfillParties starting in ${apply ? 'APPLY' : 'DRY-RUN'} mode…`);
+  const summary = await runBackfill({ apply });
+  printSummary(summary, apply);
+}
+
+// Only self-run when invoked directly (so importing normalize()/runBackfill() elsewhere
+// never triggers the backfill). Compare real filesystem paths (robust on Windows/tsx);
+// fall back to a basename match.
 const argvPath = process.argv[1] ? process.argv[1].replace(/\\/g, '/') : '';
 const selfPath = fileURLToPath(import.meta.url).replace(/\\/g, '/');
 const isMain = !!argvPath && (argvPath === selfPath || /\/backfillParties\.(ts|js)$/.test(argvPath));
