@@ -1,3 +1,5 @@
+> ⚠️ 2026-07 UPDATE: the portal this document describes was split out to the `pantheon/` app (pantheon.prominentdental.com). `jupiter/` is now the ACCOUNTING app (jupiter.prominentdental.com); portal.prominentdental.com no longer exists. Kept for history.
+
 # Jupiter — deploy & ops runbook (owner, no-code)
 
 Jupiter is the **staff portal** built INTO the Minerva monorepo (`jupiter/`). One login, then a

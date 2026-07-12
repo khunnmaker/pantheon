@@ -10,7 +10,7 @@ import { hasAppAccess, type Agent, type AppName, type Badges } from './api';
 // subdomain yet) — an unset URL hides that tile.
 //
 // Post unified-auth (PR #7): tile visibility is a PER-PERSON grant, not a role list — it must
-// match exactly what the caller can open (and what /api/jupiter/badges returns). hasAppAccess()
+// match exactly what the caller can open (and what /api/pantheon/badges returns). hasAppAccess()
 // below mirrors the server's gate (api/src/auth/jwt.ts) so tiles == badges == openable apps.
 // `order` is most-used-first and resolved in tilesFor().
 

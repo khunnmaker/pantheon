@@ -28,8 +28,8 @@ export default function Login({ onLogin }: { onLogin: (agent: Agent) => void }) 
   );
 }
 
-// ── Card flow: role-grouped, tap-to-drill-down, Metro-tile picker — the SAME UX as the Jupiter
-// portal (jupiter/src/Login.tsx), adapted to Ceres's amber accent. People come from the server
+// ── Card flow: role-grouped, tap-to-drill-down, Metro-tile picker — the SAME UX as the Pantheon
+// portal (pantheon/src/Login.tsx), adapted to Ceres's amber accent. People come from the server
 // (GET /api/ceres/logins) — a rich card list carrying group + gender. 3-level DRILL-DOWN:
 //   L1 role groups (2-col Metro grid) → L2 that group's people (avatar tiles) → L3 person + cred
 //   (password field for supervisor/MD, masked auto-submit 6-digit PIN for everyone else).

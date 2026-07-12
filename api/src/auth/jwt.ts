@@ -7,7 +7,7 @@ import { env } from '../env.js';
 export type Role = 'supervisor' | 'md' | 'employee';
 // Every live role, as a runtime tuple. Use where an endpoint means "any authenticated
 // account" and then gates per-app inside the handler (see middleware.requireAnyAuth /
-// the Jupiter badges route). Mirrors LIVE_ROLES in middleware.ts; adding a future role
+// the Pantheon badges route). Mirrors LIVE_ROLES in middleware.ts; adding a future role
 // here keeps those "any account" paths from silently omitting it.
 export const ALL_ROLES = ['supervisor', 'md', 'employee'] as const;
 // Accepted at TOKEN VERIFICATION ONLY, so an old token isn't rejected outright mid-rollout;

@@ -79,7 +79,7 @@ export default function MessengerHome() {
           <div className="font-bold text-base text-amber-700">{bootstrap.party?.name || bootstrap.agent.name}</div>
           <div className="flex items-center gap-3">
             {PORTAL_URL && (
-              <a href={PORTAL_URL} title="กลับพอร์ทัล Jupiter" className="flex items-center gap-1 text-sm text-slate-500 hover:text-violet-600">
+              <a href={PORTAL_URL} title="กลับพอร์ทัล Pantheon" className="flex items-center gap-1 text-sm text-slate-500 hover:text-violet-600">
                 <Crown size={15} /> <span className="hidden sm:inline">พอร์ทัล</span>
               </a>
             )}

@@ -146,7 +146,7 @@ export default function Stock({ agent, onLogout }: { agent: Agent; onLogout: () 
               </span>
             )}
             {PORTAL_URL && (
-              <a href={PORTAL_URL} title="กลับพอร์ทัล Jupiter" className="flex items-center gap-1 text-slate-500 hover:text-violet-600">
+              <a href={PORTAL_URL} title="กลับพอร์ทัล Pantheon" className="flex items-center gap-1 text-slate-500 hover:text-violet-600">
                 <Crown size={15} /> <span className="hidden sm:inline">พอร์ทัล</span>
               </a>
             )}

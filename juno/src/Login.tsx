@@ -5,8 +5,8 @@ import { groupLogins, type GroupMeta, memberAvatar, teamAvatar } from '@pantheon
 
 const PIN_LEN = 6;
 
-// Role-grouped, tap-to-drill-down, Metro-tile login picker — the SAME UX as the Jupiter portal
-// (jupiter/src/Login.tsx), adapted to Juno's emerald accent. The people come from the server
+// Role-grouped, tap-to-drill-down, Metro-tile login picker — the SAME UX as the Pantheon portal
+// (pantheon/src/Login.tsx), adapted to Juno's emerald accent. The people come from the server
 // (GET /api/auth/logins?app=juno) — a rich card list carrying group + gender. 3-level DRILL-DOWN:
 //   L1 role groups (2-col Metro grid) → L2 that group's people (avatar tiles) → L3 person + cred.
 // The auth mechanism is UNCHANGED: submit() still calls login() → setSession() → onLogin().

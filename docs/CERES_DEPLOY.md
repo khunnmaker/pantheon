@@ -15,7 +15,7 @@ list — each only when its table is empty.
 ## 1. Env vars on the EXISTING api service (add before/with the merge)
 
 > **Auth is UNIFIED suite-wide (owner decision 2026-07-04)** — one credential scheme covers
-> Minerva, Vulcan, Juno, Ceres and the future Jupiter portal. See docs/JUPITER_BRIEF.md §3a.
+> Minerva, Vulcan, Juno, Ceres and the Pantheon portal. See docs/JUPITER_BRIEF.md §3a.
 
 | Var | Value |
 |---|---|

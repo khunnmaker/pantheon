@@ -76,7 +76,7 @@ export async function logout(): Promise<void> {
 }
 export async function getBadges(): Promise<Badges> {
   const token = getToken();
-  const res = await fetch(`${API_URL}/api/jupiter/badges`, { headers: token ? { authorization: `Bearer ${token}` } : {} });
+  const res = await fetch(`${API_URL}/api/pantheon/badges`, { headers: token ? { authorization: `Bearer ${token}` } : {} });
   if (res.status === 401) { clearSession(); onUnauthorized?.(); throw new Error('unauthorized'); }
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json() as Promise<Badges>;

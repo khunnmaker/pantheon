@@ -14,10 +14,10 @@ import { backfillProductEmbeddings } from '../catalog/productEmbeddings.js';
 // Three tiers (unified auth):
 //   supervisor — Dr. M, implicit access to everything.
 //   md         — Nee, implicit access to Ceres (management side) only.
-//   employee   — all staff; per-person app access via Agent.apps (owner-edited, Jupiter's
+//   employee   — all staff; per-person app access via Agent.apps (owner-edited, Pantheon's
 //                admin UI — boot-sync never overwrites it on an existing row).
 // `group` + `gender` are DISPLAY metadata for the suite login screens (role-grouped tiles +
-// cute avatars) — they mirror Jupiter's portal grouping and have nothing to do with auth.
+// cute avatars) — they mirror Pantheon's portal grouping and have nothing to do with auth.
 export const TIER_ACCOUNTS = [
   { email: 'drm@prominent.local', name: 'Dr. M', role: 'supervisor', pwEnvs: ['SEED_PASSWORD'], group: 'ceo', gender: 'male' },
   { email: 'md@prominent.local', name: 'Nee', role: 'md', pwEnvs: ['MD_PASSWORD'], group: 'md', gender: 'female' },
@@ -27,7 +27,7 @@ export const TIER_ACCOUNTS = [
 // app grants. NOTE: นี (Nee) is the MD tier account above — she is NOT an employee row (the
 // old MESSENGERS list wrongly included her under a "nee" slug; fixed here).
 // `group` + `gender`: DISPLAY metadata for the login screens (see TIER_ACCOUNTS note). The
-// group mirrors Jupiter's portal grouping — note นุ่น displays under MD and พิณ/เล็ก under Others.
+// group mirrors Pantheon's portal grouping — note นุ่น displays under MD and พิณ/เล็ก under Others.
 export const EMPLOYEES = [
   { slug: 'nadeer', name: 'NaDeer', apps: ['minerva', 'ceres'], group: 'sales', gender: 'female' },
   { slug: 'anny', name: 'Anny', apps: ['minerva', 'ceres'], group: 'sales', gender: 'female' },
@@ -124,7 +124,7 @@ async function syncStaff(): Promise<void> {
         : await hashPassword(pw);
     await prisma.agent.upsert({
       where: { email: t.email },
-      // apps is never touched on update — Jupiter's admin UI owns it for existing rows.
+      // apps is never touched on update — Pantheon's admin UI owns it for existing rows.
       update: { name: t.name, role: t.role, passwordHash },
       create: { email: t.email, name: t.name, role: t.role, passwordHash, apps: [] },
     });

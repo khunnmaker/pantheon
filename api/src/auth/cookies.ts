@@ -1,4 +1,4 @@
-// Shared-session cookie for suite-wide SSO (Jupiter Phase 3). ONE cookie, scoped to the
+// Shared-session cookie for suite-wide SSO (Pantheon Phase 3). ONE cookie, scoped to the
 // parent domain (COOKIE_DOMAIN = ".prominentdental.com"), is set at login and is therefore
 // shared by every *.prominentdental.com app. Its ONLY job is to authenticate GET
 // /api/auth/me, which hands back a normal bearer token that each app then uses via the

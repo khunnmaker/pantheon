@@ -1406,7 +1406,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                 {soundOn ? <Volume2 size={17} /> : <VolumeX size={17} />}
               </button>
               {PORTAL_URL && (
-                <a href={PORTAL_URL} title="กลับพอร์ทัล Jupiter" className="p-2 rounded-xl text-slate-400 hover:text-violet-600 hover:bg-slate-100"><Crown size={17} /></a>
+                <a href={PORTAL_URL} title="กลับพอร์ทัล Pantheon" className="p-2 rounded-xl text-slate-400 hover:text-violet-600 hover:bg-slate-100"><Crown size={17} /></a>
               )}
               <span title={agent.name + (agent.role === 'supervisor' ? ' (หัวหน้า)' : '')}
                 className="relative w-8 h-8 rounded-full bg-sky-600 text-white flex items-center justify-center text-xs font-bold shrink-0">

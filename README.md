@@ -12,7 +12,8 @@ add-only).
 
 | App | Deity role | What it does | Status |
 |-----|-----------|--------------|--------|
-| **Jupiter** | king · portal | Staff front door — one login, app tiles, live "pending work" badges, app-switcher | Live |
+| **Pantheon** | suite portal · staff front door | One login, app tiles, live "pending work" badges, app-switcher | Live |
+| **Jupiter** | king · accounting | The group's multi-company accounting app | Live |
 | **Minerva** | wisdom · sales | LINE AI customer-reply console (human-in-the-loop); catalog + stock quoting | Live (flagship) |
 | **Vulcan** | forge · stock | Inventory: stock import, reorder points, low-stock, dashboard | Live |
 | **Juno** | ledger · income | Money-in: LINE payment slips, bank reconciliation, tax invoices, reports | Live |
@@ -21,8 +22,10 @@ add-only).
 | **Diana** | the hunt · B2B | Public login-gated B2B catalog (prominentdental.com) | Early |
 | **Mercury** | trade · procurement | Buy-side ordering; closes the buy → stock loop into Vulcan | Planned |
 
-The portal (Jupiter) is branded **"The Pantheon"** to users; internally it stays the `jupiter`
-service. Auth is unified suite-wide (supervisor / MD / employee with per-person app grants).
+The portal is the `pantheon/` app at **pantheon.prominentdental.com**; `jupiter/` is the
+accounting app at **jupiter.prominentdental.com**. The API service name and
+`/api/jupiter/acct/*` paths belong to the accounting lane. Auth is unified suite-wide
+(supervisor / MD / employee with per-person app grants).
 
 ---
 
@@ -135,5 +138,3 @@ docker compose up --build
 ## Safety defaults (always)
 Price / stock / clinical questions route to a human. KB-only answering. Never auto-send.
 On any LLM/parse error, safe-default to `needs_human`.
-
-<!-- Portal = Pantheon (pantheon.prominentdental.com); Jupiter = the accounting app (jupiter.prominentdental.com). -->

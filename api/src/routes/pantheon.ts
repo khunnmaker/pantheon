@@ -1,11 +1,11 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { prisma } from '../db/prisma.js';
 import { LOW_STOCK_WHERE } from '../db/lowStock.js';
 import { requireAnyAuth } from '../auth/middleware.js';
 import { hasAppAccess, type AppName } from '../auth/jwt.js';
 import { ceresRole } from '../ceres/auth.js';
 
-// Jupiter — the portal's badges endpoint. Returns pending-work counts ONLY for the
+// Pantheon — the portal's badges endpoint. Returns pending-work counts ONLY for the
 // apps the caller may actually enter (never leak a count for an app they can't open).
 // Phase 1: no SSO, any authenticated account, today's localStorage-JWT auth.
 // See docs/JUPITER_BRIEF.md §5.
@@ -102,9 +102,7 @@ async function ceresMessengerAwaiting(agentEmail: string): Promise<number> {
   return prisma.ceresExpense.count({ where: { partyId: party.id, status: { in: ['pending', 'rejected'] } } });
 }
 
-export async function jupiterRoutes(app: FastifyInstance) {
-  // GET /api/jupiter/badges — pending-work counts, gated to the apps this caller can enter.
-  app.get('/api/jupiter/badges', { preHandler: requireAnyAuth }, async (req) => {
+async function badgesHandler(req: FastifyRequest): Promise<BadgeBucket> {
     const agent = req.agent!;
 
     // Per-person grants ⇒ cache per identity, never per role (see note above).
@@ -143,5 +141,13 @@ export async function jupiterRoutes(app: FastifyInstance) {
 
     cache.set(cacheKey, { at: Date.now(), value });
     return value;
-  });
+}
+
+export async function pantheonRoutes(app: FastifyInstance) {
+  // GET /api/pantheon/badges — pending-work counts, gated to the apps this caller can enter.
+  app.get('/api/pantheon/badges', { preHandler: requireAnyAuth }, badgesHandler);
+
+  // Deprecated: kept so an already-open old portal bundle keeps its badges during a rolling
+  // deploy. Delete after a few weeks.
+  app.get('/api/jupiter/badges', { preHandler: requireAnyAuth }, badgesHandler);
 }

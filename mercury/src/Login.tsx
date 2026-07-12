@@ -5,8 +5,8 @@ import { groupLogins, type GroupMeta, memberAvatar, teamAvatar } from '@pantheon
 
 const PIN_LEN = 6;
 
-// Role-grouped, tap-to-drill-down, Metro-tile login picker — the SAME UX as the Jupiter portal
-// (jupiter/src/Login.tsx), adapted to Mercury's orange accent. People come from the server
+// Role-grouped, tap-to-drill-down, Metro-tile login picker — the SAME UX as the Pantheon portal
+// (pantheon/src/Login.tsx), adapted to Mercury's orange accent. People come from the server
 // (GET /api/auth/logins?app=mercury) — a rich card list carrying group + gender. Mercury is
 // per-grant (NOT supervisor-only like Vulcan): the guard admits anyone with the 'mercury' app
 // grant (hasAppAccess), mirroring the server's requireApp('mercury'). Owner-only today, so the

@@ -7,7 +7,7 @@ import ImportCustomers from './ImportCustomers';
 import ImportSales from './ImportSales';
 import Dashboard from './Dashboard';
 
-// Portal-back link (Jupiter). URL from build-time env; hidden when unset, so it stays
+// Portal-back link (Pantheon). URL from build-time env; hidden when unset, so it stays
 // completely inert until VITE_PORTAL_URL is configured (same convention as juno/vulcan).
 const PORTAL_URL: string | undefined = import.meta.env.VITE_PORTAL_URL;
 
@@ -31,7 +31,7 @@ export default function Venus({ agent, onLogout }: { agent: Agent; onLogout: () 
           </button>
           <div className="flex items-center gap-3 text-sm">
             {PORTAL_URL && (
-              <a href={PORTAL_URL} title="กลับพอร์ทัล Jupiter" className="flex items-center gap-1 text-slate-500 hover:text-violet-600">
+              <a href={PORTAL_URL} title="กลับพอร์ทัล Pantheon" className="flex items-center gap-1 text-slate-500 hover:text-violet-600">
                 <Crown size={15} /> <span className="hidden sm:inline">พอร์ทัล</span>
               </a>
             )}

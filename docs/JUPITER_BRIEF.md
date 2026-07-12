@@ -1,3 +1,5 @@
+> ⚠️ 2026-07 UPDATE: the portal this document describes was split out to the `pantheon/` app (pantheon.prominentdental.com). `jupiter/` is now the ACCOUNTING app (jupiter.prominentdental.com); portal.prominentdental.com no longer exists. Kept for history.
+
 # Jupiter — staff portal + SSO + suite connectivity (build brief)
 
 > Handoff brief for a fresh session. Written 2026-07-04 after a grilled requirements session with the owner (Dr. M / CEO). Read this whole file before writing code. Companion docs: `docs/VULCAN_BRIEF.md`, `docs/JUNO_BRIEF.md`, `docs/CERES_BRIEF.md` (same suite, same conventions).

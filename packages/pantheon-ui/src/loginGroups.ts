@@ -1,5 +1,5 @@
 // Fixed role-group metadata for the suite login screens — the SAME Thai labels + Metro tile
-// colors as the Jupiter portal (jupiter/src/lib/roster.ts). Login cards come from the server
+// colors as the Pantheon portal (pantheon/src/lib/roster.ts). Login cards come from the server
 // (GET /api/auth/logins?app=… — each card carries a `group` id); this file only decides the
 // display label, tile color, and the fixed order the groups render in. A card whose `group` isn't
 // in GROUP_META is bucketed under "others" so nobody ever disappears.

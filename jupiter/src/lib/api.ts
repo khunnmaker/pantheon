@@ -1,7 +1,6 @@
 // Typed API client for the Jupiter accounting app. Talks to the shared Minerva backend.
 //   POST /api/auth/login       — the suite's single login (Phase 1: localStorage-JWT, no SSO)
-//   GET  /api/jupiter/badges   — pending-work counts, gated to the apps this role can enter
-// Phase 1 reuses today's auth exactly; SSO (cookies, /api/auth/me bootstrap) is Phase 3.
+//   GET  /api/jupiter/acct/*   — the accounting cockpit's supervisor-only endpoints
 
 export const API_URL: string = import.meta.env.VITE_API_URL ?? 'http://localhost:3000';
 

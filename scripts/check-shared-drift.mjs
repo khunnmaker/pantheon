@@ -27,7 +27,7 @@ const fail = (msg) => {
   drift += 1;
 };
 
-// 1) Files that must be BYTE-IDENTICAL across these apps (jupiter is excluded — it owns the
+// 1) Files that must be BYTE-IDENTICAL across these apps (pantheon is excluded — it owns the
 //    canonical superset roster.ts and a matching avatar variant).
 const IDENTICAL = [
   { file: 'src/lib/avatar.ts', apps: ['web', 'juno', 'vulcan', 'ceres', 'mercury'] },

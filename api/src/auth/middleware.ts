@@ -71,7 +71,7 @@ export function requireAuthScoped(scope: string): preHandlerHookHandler {
 // (supervisor, md, employee — see ALL_ROLES in auth/jwt.ts). Functionally the same as
 // requireAuth today (whose default `allowed` is already all live roles), but named for
 // intent: use for endpoints that are open to every account and then gate per-app INSIDE
-// the handler with hasAppAccess (e.g. the Jupiter portal badges route). Deriving from
+// the handler with hasAppAccess (e.g. the Pantheon portal badges route). Deriving from
 // ALL_ROLES avoids silently omitting a future role.
 export const requireAnyAuth: preHandlerHookHandler = async (req: FastifyRequest, reply: FastifyReply) => {
   const agent = await authedAgentFromToken(bearer(req), ALL_ROLES);

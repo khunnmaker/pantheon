@@ -2,7 +2,7 @@
 // network/CDN calls at runtime). Deterministic by seed, so the same person/team always gets the
 // same face. Cached per (gender, seed) so re-renders don't regenerate the SVG.
 //
-// Copied from the Jupiter portal (jupiter/src/lib/avatar.ts) so every suite login screen shares
+// Copied from the Pantheon portal (pantheon/src/lib/avatar.ts) so every suite login screen shares
 // the exact same avatar look. Self-contained Gender type (matches the server login card's gender).
 import { createAvatar } from '@dicebear/core';
 import { adventurer, funEmoji } from '@dicebear/collection';

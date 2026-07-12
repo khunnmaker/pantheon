@@ -5,8 +5,8 @@ import { groupLogins, type GroupMeta, memberAvatar, teamAvatar } from '@pantheon
 
 const PIN_LEN = 6;
 
-// Role-grouped, tap-to-drill-down, Metro-tile login picker — the SAME UX as the Jupiter portal
-// (jupiter/src/Login.tsx), adapted to Vulcan's indigo accent. The people come from the server
+// Role-grouped, tap-to-drill-down, Metro-tile login picker — the SAME UX as the Pantheon portal
+// (pantheon/src/Login.tsx), adapted to Vulcan's indigo accent. The people come from the server
 // (GET /api/auth/logins?app=vulcan) — a rich card list carrying group + gender. Vulcan is
 // supervisor-only, so today the list resolves to a single "CEO" group with Dr. M — that's fine
 // (consistent with the other apps). 3-level DRILL-DOWN: L1 role groups → L2 people → L3 person +
