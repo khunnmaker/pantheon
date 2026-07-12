@@ -135,3 +135,5 @@ docker compose up --build
 ## Safety defaults (always)
 Price / stock / clinical questions route to a human. KB-only answering. Never auto-send.
 On any LLM/parse error, safe-default to `needs_human`.
+
+<!-- Portal = Pantheon (pantheon.prominentdental.com); Jupiter = the accounting app (jupiter.prominentdental.com). -->
