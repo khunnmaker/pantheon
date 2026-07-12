@@ -24,8 +24,12 @@ export interface Agent {
   apps: string[];
 }
 
-// Suite apps the switcher can link to. Keep in sync with AppName in api/src/auth/jwt.ts.
-export type AppName = 'minerva' | 'vulcan' | 'juno' | 'ceres' | 'mercury';
+// Suite apps the switcher can link to. The canonical list now lives in the shared package
+// (@pantheon/ui, mirroring the server SSOT api/src/auth/jwt.ts APP_NAMES). Imported for local
+// use below AND re-exported so existing consumers that import AppName from './lib/api' keep
+// working unchanged.
+import type { AppName } from '@pantheon/ui';
+export type { AppName };
 
 // Mirror of the server's hasAppAccess (api/src/auth/jwt.ts): supervisor → everything;
 // md → Ceres + Minerva + Juno; employee → their own per-person grant list. Mercury is owner-only

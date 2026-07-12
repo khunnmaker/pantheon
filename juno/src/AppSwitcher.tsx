@@ -8,7 +8,7 @@
 // (it is the current app OR its VITE_<APP>_URL build-time env is set). Until those envs are
 // configured on Railway, only the current app's label shows — fully inert, no visual change.
 import { useEffect, useRef, useState } from 'react';
-import { Bot, Boxes, Wallet, Coins, ShoppingCart, ChevronDown } from 'lucide-react';
+import { Bot, Boxes, Wallet, Coins, ShoppingCart, ChevronDown, Users, Globe } from 'lucide-react';
 import { hasAppAccess, type Agent, type AppName } from './lib/api';
 
 const CURRENT: AppName = 'juno';
@@ -35,12 +35,17 @@ const APPS: { app: AppName; label: string; url: string | undefined }[] = [
   { app: 'mercury', label: 'Mercury', url: APP_URL.mercury },
 ];
 
+// Canonical AppName now carries all 7 suite apps (venus, diana included); this Record must
+// enumerate every one. venus/diana have no switcher entry (not in APPS) so their icons are
+// inert placeholders — present only to keep the Record exhaustive.
 const APP_ICON: Record<AppName, typeof Bot> = {
   minerva: Bot,
   vulcan: Boxes,
   juno: Wallet,
   ceres: Coins,
   mercury: ShoppingCart,
+  venus: Users,
+  diana: Globe,
 };
 
 export default function AppSwitcher({ agent }: { agent: Agent }) {

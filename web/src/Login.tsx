@@ -1,8 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Bot, LogIn, Loader2, AlertTriangle, ArrowLeft } from 'lucide-react';
 import { login, setSession, getLogins, type Agent, type LoginCard } from './lib/api';
-import { groupLogins, type GroupMeta } from './lib/loginGroups';
-import { memberAvatar, teamAvatar } from './lib/avatar';
+import { groupLogins, type GroupMeta, memberAvatar, teamAvatar } from '@pantheon/ui';
 
 const PIN_LEN = 6;
 

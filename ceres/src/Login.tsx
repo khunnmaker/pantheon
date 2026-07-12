@@ -1,8 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Wallet, Loader2, AlertTriangle, LogIn, ArrowLeft, ShieldCheck } from 'lucide-react';
 import { login, setSession, getLogins, type Agent, type LoginName } from './lib/api';
-import { groupLogins, type GroupMeta } from './lib/loginGroups';
-import { memberAvatar, teamAvatar } from './lib/avatar';
+import { groupLogins, type GroupMeta, memberAvatar, teamAvatar } from '@pantheon/ui';
 
 const PIN_LEN = 6;
 const RAW_ROLES = new Set(['employee', 'md', 'supervisor']);
