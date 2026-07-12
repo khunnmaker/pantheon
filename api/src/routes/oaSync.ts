@@ -75,6 +75,34 @@ export async function oaSyncRoutes(app: FastifyInstance) {
       if (!customerId && oaTitle) customerId = await uniqueMatch({ nickname: oaTitle });
       if (!customerId && oaTitle) customerId = await uniqueMatch({ displayName: oaTitle });
 
+      // Customer-CODE token matching — the most reliable key in practice. Staff prefix the same
+      // Express-style code onto BOTH names (OA title "C.5 Jane🧀 อ658…" / Minerva nickname
+      // "อ658 Jane🧀", Customer.code "อ658"), while the surrounding words often differ, so exact
+      // name paths above miss (~half of real chats). Extract Thai-consonant+digits tokens from
+      // the OA names and accept a UNIQUE customer whose `code` equals the token or whose
+      // nickname contains it with digit boundaries (so อ65 never matches อ658).
+      if (!customerId && (oaTitle || oaSubName)) {
+        const tokens = Array.from(
+          new Set(`${oaTitle ?? ''} ${oaSubName ?? ''}`.match(/[ก-ฮ]\d{2,4}/g) ?? []),
+        );
+        for (const token of tokens) {
+          const candidates = await prisma.customer.findMany({
+            where: { OR: [{ code: token }, { nickname: { contains: token } }] },
+            take: 5,
+            select: { id: true, code: true, nickname: true },
+          });
+          // Digit-boundary check on nickname hits (contains "อ65" also returns "อ658" rows).
+          const boundary = new RegExp(`${token}(?!\\d)`);
+          const hits = candidates.filter(
+            (c) => c.code === token || (c.nickname !== null && boundary.test(c.nickname)),
+          );
+          if (hits.length === 1) {
+            customerId = hits[0].id;
+            break;
+          }
+        }
+      }
+
       // Emoji-insensitive fallback: the OA Manager renders emoji in names as <img>, so the
       // extension's textContent arrives emoji-less (e.g. "Fuse" for a LINE name "Fuse 🌅").
       // Compare with pictographs/variation-selectors stripped + whitespace collapsed, still
