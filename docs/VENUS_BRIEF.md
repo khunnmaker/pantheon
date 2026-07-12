@@ -1,6 +1,6 @@
 # Venus — CRM deity (build brief)
 
-> Handoff brief for a fresh session. Written 2026-07-04 from two grilled requirement sessions with the owner (Dr. M / CEO). Read this whole file before writing code. Companions: `docs/VULCAN_BRIEF.md` (the import pattern Venus copies), `docs/JUNO_BRIEF.md` + `docs/JUNO_PROCESS_BRIEF.md` (payment data Venus reads), `docs/CERES_BRIEF.md`, `docs/JUPITER_BRIEF.md` (portal that will badge Venus later).
+> Handoff brief for a fresh session. Written 2026-07-04 from two grilled requirement sessions with the owner (Dr. M / CEO). Read this whole file before writing code. Companions: `docs/VESTA_BRIEF.md` (the import pattern Venus copies), `docs/JUNO_BRIEF.md` + `docs/JUNO_PROCESS_BRIEF.md` (payment data Venus reads), `docs/CERES_BRIEF.md`, `docs/JUPITER_BRIEF.md` (portal that will badge Venus later).
 
 ## 1. What Venus is
 
@@ -16,7 +16,7 @@
 | Stage model | **One stage per customer**, mirroring Minerva's stage field — same value, not a copy |
 | Autonomy | **Track-and-tell only** — suggest to humans, never act |
 | Lenses | **Both** rep and management |
-| Purchase data (2026-07-04) | **Express sales-report import** — same preview→apply pattern as Vulcan's stock import; real line items (product, qty, price, date, customer) |
+| Purchase data (2026-07-04) | **Express sales-report import** — same preview→apply pattern as Vesta's stock import; real line items (product, qty, price, date, customer) |
 | Decline/trend logic | **RFM scores + Thai segments PLUS own-history trend** (last 90d vs previous 90d) — pure math in code, recomputed nightly, no AI |
 | Suggestions | **Rules compute, AI writes** — deterministic signals; weekly AI batch writes one short Thai card ONLY for flagged customers |
 | Precautions | **All four**: payment/credit behavior (from Juno), churn risk (RFM at-risk + evidence), complaint history (AI-tagged from LINE chats), manual pinned ข้อควรระวัง note |
@@ -25,15 +25,15 @@ Defaults accepted with the brief: shared customer pool + optional ดูแล�
 
 ## 3. Suite conventions (do not break)
 
-Monorepo `github.com/khunnmaker/minerva`; `main` auto-deploys on Railway. One Postgres, one Prisma schema, **Minerva `api/` = sole migrator, migrations ADD-only**. Venus backend = routes in the shared api (`api/src/routes/venus/*`); frontend = `venus/` static Vite+React+Tailwind (suggest port 5178, rose/pink theme — it's Venus), own Railway service via `VITE_API_URL`, origin appended to `WEB_ORIGIN`. Thai UI. Login follows the card-list layout standard (see `web/src/Login.tsx`). Role gate: **supervisor + agents** (this is the first non-Minerva deity agents can enter; `messenger`/`md` roles are Ceres-only — exclude them). SKU convention: store dashed key, display/type bare, dash-insensitive search (see the SKU convention used by Minerva/Vulcan).
+Monorepo `github.com/khunnmaker/minerva`; `main` auto-deploys on Railway. One Postgres, one Prisma schema, **Minerva `api/` = sole migrator, migrations ADD-only**. Venus backend = routes in the shared api (`api/src/routes/venus/*`); frontend = `venus/` static Vite+React+Tailwind (suggest port 5178, rose/pink theme — it's Venus), own Railway service via `VITE_API_URL`, origin appended to `WEB_ORIGIN`. Thai UI. Login follows the card-list layout standard (see `web/src/Login.tsx`). Role gate: **supervisor + agents** (this is the first non-Minerva deity agents can enter; `messenger`/`md` roles are Ceres-only — exclude them). SKU convention: store dashed key, display/type bare, dash-insensitive search (see the SKU convention used by Minerva/Vesta).
 
-Existing data Venus builds on: `Customer` (code = **Express customer code** — the join key for the import), `Product` (+ Vulcan stock), Minerva chat history + CustomerMemory + cross-sell relationships (real bought-together data), Juno `Payment` (+ RE numbers, ประเภทลูกค้า: โอนก่อนส่ง/เครดิต/เก็บปลายทาง, bank recon). **Nobody records product line items today — that's the gap the Express import fills.**
+Existing data Venus builds on: `Customer` (code = **Express customer code** — the join key for the import), `Product` (+ Vesta stock), Minerva chat history + CustomerMemory + cross-sell relationships (real bought-together data), Juno `Payment` (+ RE numbers, ประเภทลูกค้า: โอนก่อนส่ง/เครดิต/เก็บปลายทาง, bank recon). **Nobody records product line items today — that's the gap the Express import fills.**
 
 ## 4. Phase 0 — the sample file (BLOCKING)
 
-Ask the owner for **one real Express sales report export** (by invoice/receipt with line items, ideally covering a few months). Verify: encoding (Vulcan's stock .txt is the precedent — likely TIS-620/CP874 or UTF-8), columns (customer code, date, doc number, SKU, qty, unit price, amount), and whether credit notes/returns appear. Write the parser against the REAL file with self-certifying totals (Juno's bank parsers set the standard: parse → compare against the file's own declared totals). No sample, no build.
+Ask the owner for **one real Express sales report export** (by invoice/receipt with line items, ideally covering a few months). Verify: encoding (Vesta's stock .txt is the precedent — likely TIS-620/CP874 or UTF-8), columns (customer code, date, doc number, SKU, qty, unit price, amount), and whether credit notes/returns appear. Write the parser against the REAL file with self-certifying totals (Juno's bank parsers set the standard: parse → compare against the file's own declared totals). No sample, no build.
 
-## 5. Import (Phase 1) — copy Vulcan's shape
+## 5. Import (Phase 1) — copy Vesta's shape
 
 - `POST /api/venus/import` (supervisor): upload → **preview** (parsed lines, matched/unmatched customers & SKUs, totals) → **apply** in one transaction. Dedupe on document number + line so re-importing an overlapping export is safe (Juno/Ceres bank dedupe = precedent).
 - Additive tables (suggested): `SaleDoc` (docNo unique, customerId nullable until matched, date, total) + `SaleLine` (sku→Product nullable, qty, unitPrice, amount). Unmatched customer codes / SKUs land in a review list, resolvable later — imports must never silently drop lines; show excluded counts (no-silent-caps rule).

@@ -1,11 +1,11 @@
-// The ONE stock-write path. Vulcan owns Product.stock; every write (Vulcan's manual /adjust
+// The ONE stock-write path. Vesta owns Product.stock; every write (Vesta's manual /adjust
 // AND Mercury's goods-receipt) goes through here so there is a single transaction shape and a
 // single audit-row shape (StockAdjustment). Do NOT hand-roll a second stock write anywhere —
-// import from this module instead. See VULCAN_BRIEF.md + MERCURY_BRIEF.md §7.
+// import from this module instead. See VESTA_BRIEF.md + MERCURY_BRIEF.md §7.
 import { prisma } from '../db/prisma.js';
 import { toStockRow, type StockRow } from './helpers.js';
 
-// A SKU we accept for a stock write (same charset Vulcan's route validates with).
+// A SKU we accept for a stock write (same charset Vesta's route validates with).
 export const SKU_RE = /^[A-Za-z0-9_-]+$/;
 
 export type AdjustError = 'bad_sku' | 'unknown_sku' | 'bad_qty';
@@ -23,7 +23,7 @@ export type AdjustResult = AdjustOk | AdjustFail;
 
 // Core write: set a SKU's stock to an ABSOLUTE value (toQty=null clears to unknown) + stampedAt,
 // and log ONE StockAdjustment audit row — in a single $transaction. This is EXACTLY the write
-// Vulcan's POST /api/stock/adjust used before it was factored out; both callers share it verbatim.
+// Vesta's POST /api/stock/adjust used before it was factored out; both callers share it verbatim.
 // Never creates a catalog row — an unknown SKU is rejected. A no-op (stock already == toQty) skips
 // the write and the audit row (returns unchanged:true).
 export async function setStock(opts: {
@@ -64,7 +64,7 @@ export async function setStock(opts: {
 
 // RELATIVE write: bump a SKU's stock by a signed delta (goods-receipt = positive). Reads the
 // current stock, computes the new absolute value, and delegates to setStock so the write + audit
-// shape is identical to Vulcan's. A SKU with unknown stock (null) starts from 0 for the receipt
+// shape is identical to Vesta's. A SKU with unknown stock (null) starts from 0 for the receipt
 // (receiving N units into an unknown balance yields N). The resulting quantity may not go below 0.
 export async function adjustStock(opts: {
   sku: string;

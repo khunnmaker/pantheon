@@ -8,7 +8,7 @@ const PIN_LEN = 6;
 // Role-grouped, tap-to-drill-down, Metro-tile login picker — the SAME UX as the Pantheon portal
 // (pantheon/src/Login.tsx), adapted to Mercury's orange accent. People come from the server
 // (GET /api/auth/logins?app=mercury) — a rich card list carrying group + gender. Mercury is
-// per-grant (NOT supervisor-only like Vulcan): the guard admits anyone with the 'mercury' app
+// per-grant (NOT supervisor-only like Vesta): the guard admits anyone with the 'mercury' app
 // grant (hasAppAccess), mirroring the server's requireApp('mercury'). Owner-only today, so the
 // list resolves to just Dr. M. 3-level DRILL-DOWN: L1 role groups → L2 people → L3 person +
 // credential. The auth mechanism is UNCHANGED: submit() calls login() → setSession() → onLogin().

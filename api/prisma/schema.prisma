@@ -127,7 +127,7 @@ model Agent {
   passwordHash String
   role         String   @default("agent") // agent | supervisor
   createdAt    DateTime @default(now())
-  // Per-employee app grants ('minerva'|'vulcan'|'juno'|'ceres'); supervisor/md access is
+  // Per-employee app grants ('minerva'|'vesta'|'juno'|'ceres'); supervisor/md access is
   // implicit by role, this list matters only for role 'employee'. Edited later by Jupiter's
   // admin UI — boot-sync must never overwrite it (create-only default).
   apps         String[] @default([])
@@ -322,7 +322,7 @@ model Payment {
 // PHASE B. Matching is many-to-many (one credit can pay many REs; one RE can be
 // paid by two transfers), hence the join table rather than a FK on either side.
 
-// Audit row for each bank-file import (preview→apply, mirrors Vulcan's StockImport).
+// Audit row for each bank-file import (preview→apply, mirrors Vesta's StockImport).
 model BankImport {
   id           String   @id @default(cuid())
   source       String // kbiz | kshop
@@ -427,7 +427,7 @@ model Product {
   status              String    @default("active") // active | archived
   stock               Int? // remaining quantity from the latest stock snapshot (null = unknown)
   stockAt             DateTime? // the date the stock figure is as-of (snapshot date)
-  // Vulcan low-stock threshold (null = no threshold set). Low = stock != null && stock <= reorderPoint.
+  // Vesta low-stock threshold (null = no threshold set). Low = stock != null && stock <= reorderPoint.
   reorderPoint        Int?
   // Merchandising group key (see api/src/stock/catalogGroups.ts), e.g. "acrylic" | "endo".
   // null = not yet assigned. Independent of the Express category in the SKU.
@@ -435,7 +435,7 @@ model Product {
   // Sub-group 2-letter code WITHIN the group (e.g. "AL" alginate under impression). null =
   // none. The product code becomes group + subgroup + number → "IMAL01".
   catalogSubgroup     String?
-  // ── Name-normalization review (Vulcan ตรวจทาน tab) ──────────────────────
+  // ── Name-normalization review (Vesta ตรวจทาน tab) ──────────────────────
   // A STAGED normalized English name awaiting supervisor review. The live nameEn is left
   // untouched until the proposal is APPROVED in-app; approving copies proposedNameEn → nameEn.
   // Seeded from api/src/catalog/nameProposals.ts via POST /api/stock/proposals/load.
@@ -463,7 +463,7 @@ model ProductAlias {
   @@index([groupKey])
 }
 
-// User-created catalog groups + sub-groups (Vulcan จัดกลุ่ม tab). These OVERLAY the built-in
+// User-created catalog groups + sub-groups (Vesta จัดกลุ่ม tab). These OVERLAY the built-in
 // vocabulary hardcoded in api/src/stock/catalogGroups.ts — the merged view is loaded by
 // stock/taxonomy.ts. Built-ins live in code (they can never disappear); only staff-created ones
 // are stored here. A custom sub-group may attach to ANY group (built-in or custom) via groupKey.
@@ -490,11 +490,11 @@ model CatalogSubgroupDef {
   @@index([groupKey])
 }
 
-// ─── Vulcan (stock management) ───────────────────────────────────────────
-// Vulcan writes Product.stock/stockAt on each daily Express CSV import and on
+// ─── Vesta (stock management) ───────────────────────────────────────────
+// Vesta writes Product.stock/stockAt on each daily Express CSV import and on
 // manual corrections; Minerva reads those same rows. These two tables give
 // cheap accountability (who imported / who edited) without a full movements
-// ledger (deferred past v1). See docs/VULCAN_BRIEF.md.
+// ledger (deferred past v1). See docs/VESTA_BRIEF.md.
 
 // Audit of each daily Express CSV import.
 model StockImport {
@@ -524,7 +524,7 @@ model StockAdjustment {
 // ─── Diana (B2B website — prominentdental.com) ───────────────────────────
 // Diana is a 3rd reader of the shared catalog. It READS Product (name/price/
 // stock/photo) and NEVER writes it — these tables are Diana-owned and additive
-// only (guardrail: ADD only, never alter Minerva/Vulcan columns). There are
+// only (guardrail: ADD only, never alter Minerva/Vesta columns). There are
 // deliberately NO Prisma relations into Product/Customer: a relation would force
 // a back-reference field onto those Minerva-owned models. Instead Diana stores
 // `sku` and the Express customer `code` as plain strings. See docs/DIANA_BRIEF.md.
@@ -840,7 +840,7 @@ model CeresCategory {
 }
 
 // ─── Mercury (procurement / buy-side) — CLOUD node tables only ───────────
-// Cloud-Mercury is the team/phone-facing reorder board (mirror of Vulcan on the buy side).
+// Cloud-Mercury is the team/phone-facing reorder board (mirror of Vesta on the buy side).
 // SECRETS-FREE BY CONSTRUCTION: these rows carry NO vendor, cost, real name, or real SKU — a
 // full dump of this DB reveals only aliases + quantities + who-ordered, never a supplier
 // identity or a price. Vendor/SecretMap/PurchaseOrder live ONLY in the separate local-Mercury
@@ -849,7 +849,7 @@ model MercuryItem {
   id          String   @id @default(cuid())
   displayName String // ordinary item name OR an opaque alias ("วัตถุดิบ A-17"); never the real name
   isSecret    Boolean  @default(false) // secret items resolve to a real vendor ONLY in local-Mercury
-  vulcanSku   String? // dashed Product.sku for ordinary stocked items; NULL for secret items
+  vestaSku   String? // dashed Product.sku for ordinary stocked items; NULL for secret items
   active      Boolean  @default(true)
   createdAt   DateTime @default(now())
 

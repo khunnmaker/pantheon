@@ -13,7 +13,7 @@ export interface LoginCard {
 }
 
 // Shared "who can log in to app X" name-card list, used by BOTH the public
-// GET /api/auth/logins?app= (Minerva/Vulcan/Juno/general) and GET /api/ceres/logins (Ceres).
+// GET /api/auth/logins?app= (Minerva/Vesta/Juno/general) and GET /api/ceres/logins (Ceres).
 // Order: supervisor card first, then md (ceres only), then employees whose apps include the
 // requested app (EMPLOYEES declaration order). Only accounts that actually exist in the DB
 // (provisioned) are returned. Names + emails only — no roles/ids beyond `kind`.

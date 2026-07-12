@@ -1,6 +1,6 @@
 // Typed API client for the Mercury procurement UI. Talks to the SHARED Minerva Fastify
 // backend (the /api/mercury/* routes). Cloud-Mercury is the buy-side reorder board: it reads
-// Vulcan low-stock (the single source of stock truth) and creates purchase requests. All
+// Vesta low-stock (the single source of stock truth) and creates purchase requests. All
 // /api/mercury/* routes are gated by requireApp('mercury') server-side (owner-only for now).
 // SECRETS-FREE: no vendor/cost/real-name/real-SKU is ever fetched here (those live only in
 // local-Mercury, Phase 2).
@@ -46,7 +46,7 @@ export interface MercuryItem {
   id: string;
   displayName: string;
   isSecret: boolean;
-  vulcanSku: string | null;
+  vestaSku: string | null;
   active: boolean;
   createdAt: string;
 }
@@ -66,7 +66,7 @@ export interface MercuryRequest {
   item: MercuryItem | null; // joined for the board
 }
 
-// A low-stock product from Vulcan's feed (the reorder queue). mercuryItemId is set if an
+// A low-stock product from Vesta's feed (the reorder queue). mercuryItemId is set if an
 // active MercuryItem already tracks this SKU.
 export interface ReorderRow {
   sku: string;
@@ -148,7 +148,7 @@ export async function getLogins(): Promise<LoginCard[]> {
   return res.json() as Promise<LoginCard[]>;
 }
 
-// ── Reorder queue (Vulcan low-stock) ────────────────────────────────────
+// ── Reorder queue (Vesta low-stock) ────────────────────────────────────
 export const getReorderQueue = () =>
   authed<{ products: ReorderRow[] }>('/api/mercury/reorder-queue');
 
@@ -156,7 +156,7 @@ export const getReorderQueue = () =>
 export const getItems = (q = '') =>
   authed<{ items: MercuryItem[] }>(`/api/mercury/items?q=${encodeURIComponent(q)}`);
 
-export const createItem = (input: { displayName: string; vulcanSku?: string; isSecret?: boolean }) =>
+export const createItem = (input: { displayName: string; vestaSku?: string; isSecret?: boolean }) =>
   authed<{ ok: boolean; item: MercuryItem }>('/api/mercury/items', {
     method: 'POST',
     body: JSON.stringify(input),
@@ -164,7 +164,7 @@ export const createItem = (input: { displayName: string; vulcanSku?: string; isS
 
 export const patchItem = (
   id: string,
-  input: { displayName?: string; vulcanSku?: string | null; active?: boolean },
+  input: { displayName?: string; vestaSku?: string | null; active?: boolean },
 ) =>
   authed<{ ok: boolean; item: MercuryItem }>(`/api/mercury/items/${id}`, {
     method: 'PATCH',
@@ -177,10 +177,10 @@ export const getRequests = (status?: RequestStatus) =>
     `/api/mercury/requests${status ? `?status=${status}` : ''}`,
   );
 
-// Create a request from either an existing item (itemId) or a Vulcan product ref (vulcanSku).
+// Create a request from either an existing item (itemId) or a Vesta product ref (vestaSku).
 export const createRequest = (input: {
   itemId?: string;
-  vulcanSku?: string;
+  vestaSku?: string;
   displayName?: string;
   qty?: string;
   note?: string;
@@ -197,7 +197,7 @@ export const setRequestStatus = (id: string, status: RequestStatus) =>
   });
 
 // Goods-receipt (Phase 3, buy→stock loop). Marks the request 'received' and, for ORDINARY items
-// (item.vulcanSku set), bumps Vulcan stock by qty via the shared adjust path. For SECRET items the
+// (item.vestaSku set), bumps Vesta stock by qty via the shared adjust path. For SECRET items the
 // cloud records status only — receive them via local-Mercury (which alone knows the real SKU), so
 // this is only called from the UI for ordinary items.
 export const receiveRequest = (id: string, qty: number) =>

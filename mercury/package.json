@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Mercury — procurement / reorder board UI for Prominent (cloud node; reads Vulcan low-stock, creates purchase requests)",
+  "description": "Mercury — procurement / reorder board UI for Prominent (cloud node; reads Vesta low-stock, creates purchase requests)",
   "scripts": {
     "dev": "vite --host --port 5178",
     "build": "tsc -b && vite build",

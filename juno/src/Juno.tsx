@@ -44,7 +44,7 @@ const DEFAULT_WHT_RATE: WhtRate = 3; // owner spec: default to 3% once WHT is tu
 // 2dp round to the nearest satang — matches the house `amountsEqual` convention server-side.
 const round2 = (n: number): number => Math.round(n * 100) / 100;
 
-// Thai-locale date/time display for the inbox + drawer (house pattern, vulcan/src/Stock.tsx).
+// Thai-locale date/time display for the inbox + drawer (house pattern, vesta/src/Stock.tsx).
 const fmtDate = (iso: string) => new Date(iso).toLocaleDateString('th-TH', { day: '2-digit', month: 'short', year: '2-digit' });
 const fmtDateTime = (iso: string) => new Date(iso).toLocaleString('th-TH', { day: '2-digit', month: 'short', year: '2-digit', hour: '2-digit', minute: '2-digit' });
 

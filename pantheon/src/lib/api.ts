@@ -21,7 +21,7 @@ export interface LoginCard {
 export interface Badges {
   minerva?: { pending: number };
   juno?: { toVerify: number };
-  vulcan?: { lowStock: number };
+  vesta?: { lowStock: number };
   ceres?: { awaitingAction: number };
   mercury?: { pending: number };
 }

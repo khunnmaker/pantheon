@@ -2,7 +2,7 @@
 
 > Hand this file to a fresh session. It is self-contained: it assumes **no** memory of the chat
 > it was written in. Ceres is a NEW project in Prominent's "Deities" suite — **Minerva** (sales/
-> LINE AI), **Vulcan** (stock), **Diana** (B2B website), **Juno** (income/payments) — and it is
+> LINE AI), **Vesta** (stock), **Diana** (B2B website), **Juno** (income/payments) — and it is
 > the **EXPENSE** side of the money: Juno watches money IN, Ceres watches money OUT, on the same
 > shared database. Build Ceres in the **same monorepo** (`C:\Users\khunn\Project\Minerva`).
 > (Ceres: Roman goddess of the harvest — the money that feeds daily operations.)
@@ -85,7 +85,7 @@ sheet mirror this time).
 
 - **Repo:** `C:\Users\khunn\Project\Minerva` (monorepo) — github.com/khunnmaker/minerva; `main`
   auto-deploys on Railway. Siblings already in it: `/api` + `/web` (Minerva, Node+TS+Fastify+
-  Prisma+Postgres / Vite+React+Tailwind), `vulcan/` and `juno/` (separate static Vite frontends
+  Prisma+Postgres / Vite+React+Tailwind), `vesta/` and `juno/` (separate static Vite frontends
   served by `serve`, each its own Railway service, pointed at the api via `VITE_API_URL`).
 - **One Prisma schema, one DB, Minerva's api is the SOLE migrator.** Add Ceres tables to
   `api/prisma/schema.prisma`, migrations ADD-only. Ceres backend routes live IN the api (like
@@ -196,7 +196,7 @@ PINs). Ceres frontend must be genuinely mobile-first — messengers use phones.
 
 ## 11. Cautions
 
-- **Shared live DB**: ADD-only migrations; never touch Minerva/Vulcan/Juno tables; Minerva api
+- **Shared live DB**: ADD-only migrations; never touch Minerva/Vesta/Juno tables; Minerva api
   stays the sole migrator. Coordinate migration timestamps with in-flight Juno work.
 - **Money data**: append-only + revision trails everywhere; balances are queries; no code path
   may hard-delete or silently overwrite an approved record.

@@ -1,9 +1,9 @@
 {
-  "name": "minerva-vulcan",
+  "name": "minerva-vesta",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Vulcan — stock management UI for Prominent (writes Product.stock/stockAt that Minerva reads)",
+  "description": "Vesta — stock management UI for Prominent (writes Product.stock/stockAt that Minerva reads)",
   "scripts": {
     "dev": "vite --host --port 5174",
     "build": "tsc -b && vite build",

@@ -37,7 +37,7 @@ git merge juno --no-edit      # dry-run verified: no conflicts
 git push origin main
 ```
 
-What happens on push: `api`, `web`, `diana`, `vulcan` redeploy. The api boots →
+What happens on push: `api`, `web`, `diana`, `vesta` redeploy. The api boots →
 `prisma migrate deploy` creates the `Payment` table → the `/to-finance` hook starts
 writing a Payment row on every slip forward (sheet mirror unchanged). No user-visible
 change yet — Juno's own service doesn't exist until Step 4.
@@ -55,7 +55,7 @@ investigate logs before retrying.
 
 ## Step 4 — Create the Juno service on Railway (dashboard)
 
-Mirror the Vulcan/Diana setup:
+Mirror the Vesta/Diana setup:
 1. Railway project → **New → GitHub Repo** → `khunnmaker/minerva`.
 2. Service **Settings → Source → Root Directory** = `/juno` (Railway detects
    `juno/Dockerfile`).
@@ -74,7 +74,7 @@ static bundle; all data flows through the api). It must NOT run `prisma migrate 
 
 1. Railway → **api** service → Variables → `WEB_ORIGIN`.
 2. Append the Juno domain from Step 4, comma-separated, no spaces, no trailing slash:
-   `https://<console-domain>,https://<vulcan-domain>,https://<diana-domain>,https://<juno-domain>`
+   `https://<console-domain>,https://<vesta-domain>,https://<diana-domain>,https://<juno-domain>`
 3. Save → the api redeploys (brief restart).
 
 ## Step 6 — Login smoke test (browser, ~2 min)

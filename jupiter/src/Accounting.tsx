@@ -248,7 +248,7 @@ export default function Accounting({ onLogout }: { onLogout: () => void }) {
       </main>
 
       <footer className="bg-white border-t border-[#E9E4F2] text-center text-[11px] text-[#726C86] py-3 px-4">
-        Phase 1 · บัญชีรวมกลุ่ม — แทนที่ Odoo, จ่ายที่เดียว · PROM ดึงจาก Juno/Ceres/Vulcan (Phase 1b) · อีก 4 บริษัทบันทึกตรงนี้
+        Phase 1 · บัญชีรวมกลุ่ม — แทนที่ Odoo, จ่ายที่เดียว · PROM ดึงจาก Juno/Ceres/Vesta (Phase 1b) · อีก 4 บริษัทบันทึกตรงนี้
       </footer>
     </div>
   );

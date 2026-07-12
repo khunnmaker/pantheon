@@ -14,7 +14,7 @@ import { ceresRole } from '../ceres/auth.js';
 // list. hasAppAccess(agent, app) is the single gate (supervisor → everything; md → ceres
 // only; employee → their own Agent.apps). We compute+emit a badge for an app IFF
 // hasAppAccess is true for that app, so each person's badges match exactly the tiles they
-// can open. AppName values (minerva | vulcan | juno | ceres) come straight from auth/jwt.ts.
+// can open. AppName values (minerva | vesta | juno | ceres) come straight from auth/jwt.ts.
 //
 // Ceres has an extra persona layer on top of the grant: ceresRole(agent) maps a caller to
 // 'ceo' | 'md' | 'messenger' | null, and each persona has a DIFFERENT awaiting-action queue.
@@ -34,7 +34,7 @@ import { ceresRole } from '../ceres/auth.js';
 // a cache slot, which is negligible at this team size.
 const CACHE_TTL_MS = 30_000;
 
-type BadgeBucket = { minerva?: { pending: number }; juno?: { toVerify: number }; vulcan?: { lowStock: number }; ceres?: { awaitingAction: number }; mercury?: { pending: number } };
+type BadgeBucket = { minerva?: { pending: number }; juno?: { toVerify: number }; vesta?: { lowStock: number }; ceres?: { awaitingAction: number }; mercury?: { pending: number } };
 const cache = new Map<string, { at: number; value: BadgeBucket }>();
 
 // Minerva "pending" = customers whose LATEST message is a customer message that is still
@@ -59,9 +59,9 @@ async function minervaPending(): Promise<number> {
   return Number(rows[0]?.n ?? 0);
 }
 
-// Vulcan low-stock = active products at/below their reorder point. Column-vs-column
-// compare → raw SQL (same query the Vulcan summary uses in stock.ts).
-async function vulcanLowStock(): Promise<number> {
+// Vesta low-stock = active products at/below their reorder point. Column-vs-column
+// compare → raw SQL (same query the Vesta summary uses in stock.ts).
+async function vestaLowStock(): Promise<number> {
   const rows = await prisma.$queryRaw<{ n: bigint }[]>`
     SELECT count(*)::bigint AS n FROM "Product" WHERE ${LOW_STOCK_WHERE}`;
   return Number(rows[0]?.n ?? 0);
@@ -126,7 +126,7 @@ async function badgesHandler(req: FastifyRequest): Promise<BadgeBucket> {
     // Compute ONLY the badges this caller may see; an app they can't enter is never queried.
     const [pending, lowStock, toVerify, awaitingAction, mercuryPend] = await Promise.all([
       can('minerva') ? minervaPending() : Promise.resolve(null),
-      can('vulcan') ? vulcanLowStock() : Promise.resolve(null),
+      can('vesta') ? vestaLowStock() : Promise.resolve(null),
       can('juno') ? junoToVerify() : Promise.resolve(null),
       ceresAwaiting,
       can('mercury') ? mercuryPending() : Promise.resolve(null),
@@ -134,7 +134,7 @@ async function badgesHandler(req: FastifyRequest): Promise<BadgeBucket> {
 
     const value: BadgeBucket = {};
     if (pending !== null) value.minerva = { pending };
-    if (lowStock !== null) value.vulcan = { lowStock };
+    if (lowStock !== null) value.vesta = { lowStock };
     if (toVerify !== null) value.juno = { toVerify };
     if (awaitingAction !== null) value.ceres = { awaitingAction };
     if (mercuryPend !== null) value.mercury = { pending: mercuryPend };

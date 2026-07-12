@@ -15,12 +15,12 @@ add-only).
 | **Pantheon** | suite portal · staff front door | One login, app tiles, live "pending work" badges, app-switcher | Live |
 | **Jupiter** | king · accounting | The group's multi-company accounting app | Live |
 | **Minerva** | wisdom · sales | LINE AI customer-reply console (human-in-the-loop); catalog + stock quoting | Live (flagship) |
-| **Vulcan** | forge · stock | Inventory: stock import, reorder points, low-stock, dashboard | Live |
+| **Vesta** (formerly Vulcan; renamed 2026-07-12 — Vulcan is reserved for the future KPKF manufacturing app) | hearth · stock | Inventory: stock import, reorder points, low-stock, dashboard | Live |
 | **Juno** | ledger · income | Money-in: LINE payment slips, bank reconciliation, tax invoices, reports | Live |
 | **Ceres** | harvest · expenses | Money-out: petty cash + staff expenses with an approval flow | Built · awaiting deploy |
 | **Venus** | relations · CRM | 360° customer view — segments, reorder timing, churn signals | In progress |
 | **Diana** | the hunt · B2B | Public login-gated B2B catalog (prominentdental.com) | Early |
-| **Mercury** | trade · procurement | Buy-side ordering; closes the buy → stock loop into Vulcan | Planned |
+| **Mercury** | trade · procurement | Buy-side ordering; closes the buy → stock loop into Vesta | Planned |
 
 The portal is the `pantheon/` app at **pantheon.prominentdental.com**; `jupiter/` is the
 accounting app at **jupiter.prominentdental.com**. The API service name and

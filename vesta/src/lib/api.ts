@@ -1,4 +1,4 @@
-// Typed API client for the Vulcan stock UI. Talks to the SHARED Minerva Fastify
+// Typed API client for the Vesta stock UI. Talks to the SHARED Minerva Fastify
 // backend (the /api/stock/* routes), which writes Product.stock/stockAt that
 // Minerva reads. All stock routes are gated to the 'supervisor' role server-side.
 
@@ -9,7 +9,7 @@ export const API_URL: string = import.meta.env.VITE_API_URL ?? 'http://localhost
 export const flatSku = (sku: string): string => sku.replace(/-/g, '');
 
 // Live roles (mirror of api/src/auth/jwt.ts). The old 'agent' type was stale — the runtime
-// sends supervisor/md/employee. Vulcan's routes stay supervisor-gated server-side (v1).
+// sends supervisor/md/employee. Vesta's routes stay supervisor-gated server-side (v1).
 export type Role = 'supervisor' | 'md' | 'employee';
 export interface Agent {
   id: string;
@@ -115,8 +115,8 @@ export interface ImportApplyResult {
   importId: string;
 }
 
-const TOKEN_KEY = 'vulcan_token';
-const AGENT_KEY = 'vulcan_agent';
+const TOKEN_KEY = 'vesta_token';
+const AGENT_KEY = 'vesta_agent';
 
 export function getToken(): string | null {
   return localStorage.getItem(TOKEN_KEY);
@@ -219,7 +219,7 @@ export interface LoginCard {
 }
 // PUBLIC — no auth required. Ordered: supervisor first, then employees granted this app.
 export async function getLogins(): Promise<LoginCard[]> {
-  const res = await fetch(`${API_URL}/api/auth/logins?app=vulcan`);
+  const res = await fetch(`${API_URL}/api/auth/logins?app=vesta`);
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json() as Promise<LoginCard[]>;
 }
@@ -401,7 +401,7 @@ export const deleteSubgroup = (groupKey: string, code: string) =>
     body: JSON.stringify({ groupKey, code }),
   });
 
-// Archive every product in the ถังขยะ (trash) group → hidden from Vulcan + web + AI; won't
+// Archive every product in the ถังขยะ (trash) group → hidden from Vesta + web + AI; won't
 // resurrect on re-import. Reversible (status only), not a hard delete.
 export const emptyTrash = () =>
   authed<{ ok: boolean; archived: number }>('/api/stock/groups/empty-trash', { method: 'POST' });

@@ -61,7 +61,7 @@ export const CATALOG_GROUPS: CatalogGroup[] = [
   // ── Review / holding + trash ── manual buckets, NO auto-assign rule (nothing lands here
   // automatically) and NO sub-groups. review = "park it here to decide later" (distinct from
   // "ยังไม่จัด" = never looked at). trash = discontinued / junk SKUs; "ล้างถังขยะ" archives them
-  // (status 'archived' → hidden from Vulcan + everywhere, and won't resurrect on re-import).
+  // (status 'archived' → hidden from Vesta + everywhere, and won't resurrect on re-import).
   { key: 'review', code: 'RV', nameTh: 'รอตรวจสอบ', nameEn: 'To review / Undecided', pillar: 'review' },
   { key: 'trash', code: 'ZZ', nameTh: 'ถังขยะ (ไม่ใช้แล้ว)', nameEn: 'Trash / Discontinued', pillar: 'review' },
 ];

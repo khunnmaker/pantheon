@@ -24,7 +24,7 @@ export default defineConfig({
   server: {
     port: 5174,
     host: true,
-    // proxy api to the backend in dev (Vulcan only needs REST, no websocket)
+    // proxy api to the backend in dev (Vesta only needs REST, no websocket)
     proxy: {
       '/api': { target: API_URL, changeOrigin: true },
     },

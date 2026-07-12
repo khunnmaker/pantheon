@@ -22,8 +22,8 @@ by the quoted code instead.
 - The shared Postgres is LIVE production for Minerva. Migrations must be **ADD-only**.
 - Never let a Juno addition block the existing slip flow beyond what's specified here.
 - Match house patterns: `safeParse`+400 (see `api/src/routes/diana.ts`), `clearSession()` on
-  logout (see `vulcan/src/Stock.tsx:75-78`), `th-TH` locale date formatting (see
-  `vulcan/src/Stock.tsx` `fmtDate`/`fmtDateTime`).
+  logout (see `vesta/src/Stock.tsx:75-78`), `th-TH` locale date formatting (see
+  `vesta/src/Stock.tsx` `fmtDate`/`fmtDateTime`).
 - Owner-locked decisions — do NOT change: supervisor-role gating, `amount` as String, Google
   Sheet mirror stays on, lifecycle `received→verified→recorded (+void)`, tax invoice track-only.
 - After all fixes: run the verification in §9 before committing.
@@ -190,7 +190,7 @@ daily totals never reconcile with the bank.
 
 ### 3b. Frontend — `juno/src/Juno.tsx`
 
-1. Add module-level helpers (copy the Vulcan pattern, `vulcan/src/Stock.tsx` ~lines 43-49):
+1. Add module-level helpers (copy the Vesta pattern, `vesta/src/Stock.tsx` ~lines 43-49):
    ```ts
    const fmtDate = (iso: string) => new Date(iso).toLocaleDateString('th-TH', { day: '2-digit', month: 'short', year: '2-digit' });
    const fmtDateTime = (iso: string) => new Date(iso).toLocaleString('th-TH', { day: '2-digit', month: 'short', year: '2-digit', hour: '2-digit', minute: '2-digit' });
@@ -319,7 +319,7 @@ const q = parsed.data;
 
 **Why:** the ออก button only does `onLogout` → `setAgent(null)`; `juno_token`/`juno_agent`
 stay in localStorage, so F5 silently restores the full supervisor session on a shared
-computer for the rest of the 12h JWT. Vulcan calls `clearSession()`; Juno dropped it.
+computer for the rest of the 12h JWT. Vesta calls `clearSession()`; Juno dropped it.
 
 **What:** import `clearSession` from `./lib/api` and change the header button (~line 57) to
 `onClick={() => { clearSession(); onLogout(); }}`.
@@ -435,7 +435,7 @@ with `npm run dev` + a narrow viewport: tap row → overlay opens; ✕ closes it
 
 **Why:** `run()` has `catch { /* ... */ }` — a failed verify/record/void/flag/tax click shows
 a spinner flash and then nothing. In a money workflow the operator believes it registered.
-Vulcan's EditPanel shows 'บันทึกไม่สำเร็จ'.
+Vesta's EditPanel shows 'บันทึกไม่สำเร็จ'.
 
 **What:** in `Detail`, add `const [error, setError] = useState('');`. In `run()`: clear it on
 entry (`setError('')`), and in the catch:
@@ -577,7 +577,7 @@ Juno review fixes: idempotent payment write, Thai-time day math, CSV hardening, 
 ## Known non-issues (do not "fix")
 
 - `juno/` has no `.dockerignore` — reviewed and REFUTED as a build-breaker (Docker COPY merges
-  directories; the image's Linux node_modules survive). Matches diana/vulcan. Leave it.
+  directories; the image's Linux node_modules survive). Matches diana/vesta. Leave it.
 - `amount` as String, supervisor-role gating, sheet mirror on, track-only tax invoices —
   owner-locked decisions.
 - `FinanceAudit` coexisting with `Payment.flagged` — intentional; do not remove.

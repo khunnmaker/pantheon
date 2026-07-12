@@ -13,10 +13,10 @@ import { generateAllCards } from '../venus/cards.js';
 // import). See docs/VENUS_BRIEF.md. Track-and-tell only; this file has no sales data / no
 // analytics yet — just the customer dimension the rest of Venus builds on.
 //
-// Import is supervisor-only (mirrors Vulcan/Juno: imports/config = supervisor). Reading
+// Import is supervisor-only (mirrors Vesta/Juno: imports/config = supervisor). Reading
 // the customer list is per-grant: requireApp('venus') — supervisor always passes, md is
 // excluded (md → ceres only), employees need 'venus' in their Agent.apps (owner-granted via
-// Jupiter's admin UI). Suite-consistent with Vulcan/Juno/Ceres per the owner's access call.
+// Jupiter's admin UI). Suite-consistent with Vesta/Juno/Ceres per the owner's access call.
 
 const MAX_UPLOAD_BYTES = 12 * 1024 * 1024; // real ARMAST export is ~6.6MB
 const MAX_SALES_UPLOAD_BYTES = 16 * 1024 * 1024; // real OESOC export is ~13MB
@@ -305,7 +305,7 @@ export async function venusRoutes(app: FastifyInstance) {
                   sku: l.sku,
                   name: l.name || null, // product name as printed on the report
                   unit: l.unit || null,
-                  productId: null, // Product match resolved on read (Vulcan SKU convention), not stored here
+                  productId: null, // Product match resolved on read (Vesta SKU convention), not stored here
                   qty: l.qty,
                   unitPrice: l.unitPrice === null ? '' : String(l.unitPrice),
                   amount: l.amount === null ? '' : String(l.amount),

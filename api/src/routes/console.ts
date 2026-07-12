@@ -19,7 +19,7 @@ const RECENT_MESSAGES = 50;
 type ProductCard = {
   sku: string; nameEn: string; nameTh: string; price: number; photoSku: string | null;
   stock: number | null; stockAt: Date | null;
-  // Vulcan low-stock surfacing for staff (NOT shown to customers): the threshold and a
+  // Vesta low-stock surfacing for staff (NOT shown to customers): the threshold and a
   // computed flag so the console can style a near-empty SKU.
   reorderPoint: number | null; low: boolean;
 };

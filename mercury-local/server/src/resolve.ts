@@ -5,8 +5,8 @@
 // Resolution rules (from the task brief):
 //  1. SecretMap row exists for cloudItemId → REAL identity: realName, vendor, realSku, unitCost,
 //     currency, classification (normal|special), photoRef.
-//  2. Else if the cloud item is ORDINARY (isSecret=false, has vulcanSku) → fall back to the cloud
-//     displayName + vulcanSku (no secret needed). Vendor is UNKNOWN → flag "needs mapping".
+//  2. Else if the cloud item is ORDINARY (isSecret=false, has vestaSku) → fall back to the cloud
+//     displayName + vestaSku (no secret needed). Vendor is UNKNOWN → flag "needs mapping".
 //  3. Secret item (isSecret=true) with NO SecretMap → flag "unmapped secret — cannot resolve".
 //  4. Any other unresolvable case (e.g. missing item join) → flag, never silently dropped.
 import type { PendingRequest, SecretMap, Vendor } from '@prisma/client';
@@ -36,7 +36,7 @@ export interface UnresolvedLine {
   reason: UnresolvedReason;
   displayName: string; // cloud alias/display (non-secret) — safe to show the owner
   qty: string;
-  vulcanSku: string | null;
+  vestaSku: string | null;
 }
 
 export interface ResolveResult {
@@ -86,17 +86,17 @@ export function resolvePending(
         reason: 'unmapped_secret',
         displayName: pr.itemDisplayName,
         qty: pr.qty,
-        vulcanSku: pr.itemVulcanSku,
+        vestaSku: pr.itemVestaSku,
       });
-    } else if (pr.itemVulcanSku) {
-      // Rule 2 — ordinary item, fall back to cloud display + vulcanSku, but vendor unknown.
+    } else if (pr.itemVestaSku) {
+      // Rule 2 — ordinary item, fall back to cloud display + vestaSku, but vendor unknown.
       unresolved.push({
         cloudItemId: pr.itemId,
         cloudRequestId: pr.cloudRequestId,
         reason: 'needs_mapping',
         displayName: pr.itemDisplayName,
         qty: pr.qty,
-        vulcanSku: pr.itemVulcanSku,
+        vestaSku: pr.itemVestaSku,
       });
     } else {
       // Rule 4 — anything else (ordinary but no SKU, or missing join): flag, never drop.
@@ -106,7 +106,7 @@ export function resolvePending(
         reason: 'unknown',
         displayName: pr.itemDisplayName || pr.itemId,
         qty: pr.qty,
-        vulcanSku: pr.itemVulcanSku,
+        vestaSku: pr.itemVestaSku,
       });
     }
   }

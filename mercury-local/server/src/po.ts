@@ -34,7 +34,7 @@ export async function syncPending(
         status: r.status,
         itemDisplayName: item?.displayName ?? '',
         itemIsSecret: item?.isSecret ?? false,
-        itemVulcanSku: item?.vulcanSku ?? null,
+        itemVestaSku: item?.vestaSku ?? null,
         cloudCreatedAt: r.createdAt ?? '',
       },
       update: {
@@ -45,7 +45,7 @@ export async function syncPending(
         status: r.status,
         itemDisplayName: item?.displayName ?? '',
         itemIsSecret: item?.isSecret ?? false,
-        itemVulcanSku: item?.vulcanSku ?? null,
+        itemVestaSku: item?.vestaSku ?? null,
         cloudCreatedAt: r.createdAt ?? '',
       },
     });
@@ -135,10 +135,10 @@ export async function buildPosFromPending(): Promise<{
 }
 
 // ── Secret goods-receipt (Phase 3, LOCAL-side) ───────────────────────────────────────────────
-// A SECRET item's real SKU lives ONLY in the local SecretMap, so ITS Vulcan stock bump must happen
+// A SECRET item's real SKU lives ONLY in the local SecretMap, so ITS Vesta stock bump must happen
 // from here (the cloud cannot resolve it by design). Flow for one cloud MercuryRequest:
 //   1. resolve realSku from the local SecretMap (keyed by the request's cloud itemId),
-//   2. call the cloud Vulcan stock-adjust endpoint to bump Product.stock by qty (audit reason
+//   2. call the cloud Vesta stock-adjust endpoint to bump Product.stock by qty (audit reason
 //      "Mercury secret goods-receipt") — this is the ONLY moment realSku touches the cloud, as a
 //      transient adjust CALL; it is NEVER written onto a MercuryItem/MercuryRequest row,
 //   3. mark the cloud MercuryRequest 'received' (STATUS ONLY — no SKU),
@@ -148,7 +148,7 @@ export interface SecretReceiptOutcome {
   cloudRequestId: string;
   realSku: string;
   qty: number;
-  toQty: number; // resulting Vulcan stock after the bump
+  toQty: number; // resulting Vesta stock after the bump
 }
 
 export async function receiveSecret(
@@ -176,7 +176,7 @@ export async function receiveSecret(
   const adjust = deps?.adjust ?? cloudAdjustStock;
   const receive = deps?.receive ?? cloudReceiveRequest;
 
-  // 1+2. Bump Vulcan stock for the REAL sku via the cloud adjust endpoint (realSku only leaves as a
+  // 1+2. Bump Vesta stock for the REAL sku via the cloud adjust endpoint (realSku only leaves as a
   // transient call). Do this FIRST so a failure here doesn't leave the request marked received with
   // no stock movement.
   const { toQty } = await adjust(

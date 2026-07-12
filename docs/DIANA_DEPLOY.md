@@ -7,7 +7,7 @@ static service (`diana/`). Product photos are served by the existing api at
 
 > ⚠️ Deploying redeploys the live `api` service, which applies Diana's **additive**
 > migrations to the shared production database. New tables only — `ClinicAccount`,
-> `WebOrder`, `WebOrderLine`, `ProductEnrichment`. Nothing alters Minerva/Vulcan
+> `WebOrder`, `WebOrderLine`, `ProductEnrichment`. Nothing alters Minerva/Vesta
 > columns and no existing data is touched. Still, it is a production change — do it
 > deliberately.
 

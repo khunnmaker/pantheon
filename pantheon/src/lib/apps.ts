@@ -53,12 +53,12 @@ export const APPS: AppDef[] = [
     badge: (b) => b.juno?.toVerify ?? null,
   },
   {
-    key: 'vulcan',
-    name: 'Vulcan',
+    key: 'vesta',
+    name: 'Vesta',
     job: 'จัดการสต็อกสินค้า',
-    url: env.VITE_VULCAN_URL ?? 'https://vulcan.prominentdental.com',
+    url: env.VITE_VESTA_URL ?? 'https://vesta.prominentdental.com',
     accent: 'text-indigo-600',
-    badge: (b) => b.vulcan?.lowStock ?? null,
+    badge: (b) => b.vesta?.lowStock ?? null,
   },
   {
     key: 'ceres',
@@ -81,7 +81,7 @@ export const APPS: AppDef[] = [
 // Most-used-first display order. The supervisor's day starts in finance (verify slips) then
 // the console, stock, expenses; other accounts see whichever of these they're granted, in the
 // same relative order. Any app missing here sorts last (defensive; all four are listed).
-const ORDER: AppKey[] = ['juno', 'jupiter', 'minerva', 'vulcan', 'ceres', 'mercury'];
+const ORDER: AppKey[] = ['juno', 'jupiter', 'minerva', 'vesta', 'ceres', 'mercury'];
 
 // The tiles this account should see: GRANTED (hasAppAccess) AND has a configured URL, in
 // most-used order. Grant-gated so tiles match the person's badges exactly.

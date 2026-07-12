@@ -272,7 +272,7 @@ match link exists) + `@@index([reconciled])`.
 
 - Use a small robust CSV tokenizer that handles quoted fields with embedded commas AND
   newlines (write one ~30-line function; no new deps unless `iconv-lite` is needed for
-  the 874 fallback — it is already a dependency via Vulcan's Express import; reuse).
+  the 874 fallback — it is already a dependency via Vesta's Express import; reuse).
 - Auto-detect source from content: first line containing `TRANSACTION REPORT` → kshop;
   `K-DEPOSIT STATEMENT` → kbiz. Reject unknown files with a clear error.
 - Output per row: `{ txnAt: Date, amount: string, direction, channel, description,
@@ -291,7 +291,7 @@ match link exists) + `@@index([reconciled])`.
   parse, auto-detect source, compute dedupeKeys, look up existing → return
   `{ token, source, fileName, periodFrom, periodTo, rows: [{txnAt, amount, direction,
   channel, payerName, details, isNew}], counts {parsed, new, dup, excluded} }`. Stash
-  like Vulcan's stock preview (TTL + cap).
+  like Vesta's stock preview (TTL + cap).
 - `POST /api/juno/bank/import/apply` `{ token }`: insert new BankTxns + BankImport audit
   row, then RUN THE AUTO-MATCHER over the new lines; return counts + autoMatched.
 - Auto-matcher (also `POST /api/juno/bank/automatch` to re-run):

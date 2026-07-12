@@ -30,8 +30,8 @@ const fail = (msg) => {
 // 1) Files that must be BYTE-IDENTICAL across these apps (pantheon is excluded — it owns the
 //    canonical superset roster.ts and a matching avatar variant).
 const IDENTICAL = [
-  { file: 'src/lib/avatar.ts', apps: ['web', 'juno', 'vulcan', 'ceres', 'mercury'] },
-  { file: 'src/lib/loginGroups.ts', apps: ['web', 'juno', 'vulcan', 'ceres', 'mercury'] },
+  { file: 'src/lib/avatar.ts', apps: ['web', 'juno', 'vesta', 'ceres', 'mercury'] },
+  { file: 'src/lib/loginGroups.ts', apps: ['web', 'juno', 'vesta', 'ceres', 'mercury'] },
 ];
 for (const { file, apps } of IDENTICAL) {
   const present = apps.map((a) => ({ a, c: read(`${a}/${file}`) })).filter((x) => x.c !== null);
@@ -52,7 +52,7 @@ const serverApps = (() => {
   return m ? m[1].split(',').map((s) => s.trim().replace(/['"]/g, '')).filter(Boolean) : null;
 })();
 const APPNAME_RE = /export type AppName =\s*([^;]+);/;
-for (const a of ['web', 'juno', 'vulcan', 'pantheon', 'jupiter', 'mercury', 'ceres', 'diana', 'venus']) {
+for (const a of ['web', 'juno', 'vesta', 'pantheon', 'jupiter', 'mercury', 'ceres', 'diana', 'venus']) {
   const src = read(`${a}/src/lib/api.ts`);
   const m = src && src.match(APPNAME_RE);
   if (!m || !serverApps) continue; // app doesn't define AppName locally — fine

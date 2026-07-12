@@ -22,7 +22,7 @@ const CURRENT: AppName = 'mercury';
 // too; Mercury stays env-only until its service+domain exist.
 const APP_URL = {
   minerva: import.meta.env.VITE_MINERVA_URL ?? 'https://minerva.prominentdental.com',
-  vulcan: import.meta.env.VITE_VULCAN_URL ?? 'https://vulcan.prominentdental.com',
+  vesta: import.meta.env.VITE_VESTA_URL ?? 'https://vesta.prominentdental.com',
   juno: import.meta.env.VITE_JUNO_URL ?? 'https://juno.prominentdental.com',
   jupiter: import.meta.env.VITE_JUPITER_URL ?? 'https://jupiter.prominentdental.com',
   ceres: import.meta.env.VITE_CERES_URL ?? 'https://ceres.prominentdental.com',
@@ -30,7 +30,7 @@ const APP_URL = {
 };
 const APPS: { app: AppName; label: string; url: string | undefined }[] = [
   { app: 'minerva', label: 'Minerva', url: APP_URL.minerva },
-  { app: 'vulcan', label: 'Vulcan', url: APP_URL.vulcan },
+  { app: 'vesta', label: 'Vesta', url: APP_URL.vesta },
   { app: 'juno', label: 'Juno', url: APP_URL.juno },
   { app: 'jupiter', label: 'Jupiter', url: APP_URL.jupiter },
   { app: 'ceres', label: 'Ceres', url: APP_URL.ceres },
@@ -42,7 +42,7 @@ const APPS: { app: AppName; label: string; url: string | undefined }[] = [
 // inert placeholders — present only to keep the Record exhaustive.
 const APP_ICON: Record<AppName, typeof Bot> = {
   minerva: Bot,
-  vulcan: Boxes,
+  vesta: Boxes,
   juno: Wallet,
   jupiter: Scale,
   ceres: Coins,

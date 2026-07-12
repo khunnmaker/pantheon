@@ -57,12 +57,12 @@ export default function Requests({ onChanged }: { onChanged: () => void }) {
   }
 
   // Goods-receipt for an ORDINARY item: confirm the received qty (prefilled from the request),
-  // then call the receive endpoint (marks 'received' + bumps Vulcan stock via the shared path).
+  // then call the receive endpoint (marks 'received' + bumps Vesta stock via the shared path).
   async function receive(r: MercuryRequest) {
     if (busyId) return;
     const suggested = (r.qty ?? '').trim() || '1';
     const input = window.prompt(
-      `รับของ "${r.item?.displayName ?? ''}" — ใส่จำนวนที่รับเข้า (จะบวกเข้าสต็อก Vulcan)`,
+      `รับของ "${r.item?.displayName ?? ''}" — ใส่จำนวนที่รับเข้า (จะบวกเข้าสต็อก Vesta)`,
       suggested,
     );
     if (input === null) return; // cancelled the prompt
@@ -128,9 +128,9 @@ export default function Requests({ onChanged }: { onChanged: () => void }) {
               <tbody>
                 {requests.map((r) => {
                   const meta = STATUS_META[r.status];
-                  // Ordinary = has a Vulcan SKU on the cloud row and isn't flagged secret. Only
+                  // Ordinary = has a Vesta SKU on the cloud row and isn't flagged secret. Only
                   // ordinary items can be received on the cloud (the cloud can resolve their SKU).
-                  const isOrdinary = !!r.item && !r.item.isSecret && !!r.item.vulcanSku;
+                  const isOrdinary = !!r.item && !r.item.isSecret && !!r.item.vestaSku;
                   const canReceive =
                     !!r.item && r.status !== 'received' && r.status !== 'cancelled';
                   const busy = busyId === r.id;
@@ -151,7 +151,7 @@ export default function Requests({ onChanged }: { onChanged: () => void }) {
                             <button
                               onClick={() => receive(r)}
                               disabled={busy}
-                              title="รับของเข้าสต็อก Vulcan"
+                              title="รับของเข้าสต็อก Vesta"
                               className="inline-flex items-center gap-1 text-xs font-medium text-emerald-700 hover:text-emerald-800 disabled:opacity-50"
                             >
                               {busy ? <Loader2 size={13} className="animate-spin" /> : <PackageCheck size={13} />} รับของ

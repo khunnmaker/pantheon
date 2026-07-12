@@ -2,7 +2,7 @@ import type { Product } from '@prisma/client';
 
 // A SKU is "low" only when it has BOTH a known stock level and a reorder point,
 // and the stock has fallen to/below it. No reorderPoint set ⇒ no threshold ⇒ not low.
-// Stock unknown (null) ⇒ not low (we don't guess). Mirrors VULCAN_BRIEF §8.
+// Stock unknown (null) ⇒ not low (we don't guess). Mirrors VESTA_BRIEF §8.
 export function isLow(stock: number | null, reorderPoint: number | null): boolean {
   return stock != null && reorderPoint != null && stock <= reorderPoint;
 }
@@ -18,7 +18,7 @@ export interface StockRow {
   reorderPoint: number | null;
   low: boolean;
   // true = a row created from the Express import that isn't in the merchandised catalog yet
-  // (status 'stock_only'): tracked in Vulcan, hidden from Diana/AI. No price/photo/Thai name yet.
+  // (status 'stock_only'): tracked in Vesta, hidden from Diana/AI. No price/photo/Thai name yet.
   stockOnly: boolean;
   // Short human code (e.g. "TR34"); filled by the /api/stock/list route, not toStockRow.
   alias?: string | null;

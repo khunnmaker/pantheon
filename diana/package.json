@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Diana — Prominent B2B website (prominentdental.com). Public catalog + login-gated pricing/ordering. Reads the shared Minerva/Vulcan Product catalog; never forks it.",
+  "description": "Diana — Prominent B2B website (prominentdental.com). Public catalog + login-gated pricing/ordering. Reads the shared Minerva/Vesta Product catalog; never forks it.",
   "scripts": {
     "dev": "vite --host --port 5175",
     "build": "tsc -b && vite build",

@@ -75,7 +75,7 @@ export async function catalogRoutes(app: FastifyInstance) {
   });
 
   // Supervisor-only: re-import the bundled catalog (after data fixes / re-extraction).
-  // UPSERTS catalog fields per SKU — never deletes — so Vulcan-owned data
+  // UPSERTS catalog fields per SKU — never deletes — so Vesta-owned data
   // (stock/stockAt/reorderPoint) and any product absent from the bundle survive
   // a price refresh.
   app.post('/api/catalog/reimport', async (req, reply) => {

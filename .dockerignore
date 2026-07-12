@@ -1,4 +1,4 @@
-# Root-context Docker builds (currently vulcan/Dockerfile, punch #5 pilot) send the whole repo
+# Root-context Docker builds (currently vesta/Dockerfile, punch #5 pilot) send the whole repo
 # root as build context. Keep it lean. NOTE: this file only applies to builds whose context is
 # the repo root; the other apps build with context = their own subdir and ignore this file.
 **/node_modules

@@ -2,13 +2,13 @@ import { prisma } from './prisma.js';
 import { STOCK, STOCK_AT } from '../catalog/stockData.js';
 
 // Apply the embedded stock snapshot to Product.stock — once per snapshot date. This
-// seeder only bootstraps an empty/fresh database: it permanently defers to Vulcan
-// (routes/stock.ts) once a single Vulcan import has ever happened. Idempotent within
+// seeder only bootstraps an empty/fresh database: it permanently defers to Vesta
+// (routes/stock.ts) once a single Vesta import has ever happened. Idempotent within
 // that bootstrap window: if any product already carries this snapshot's date, skip.
 // Availability only — the AI states in/out qualitatively; the console shows staff the
 // exact count + date.
 export async function ensureStock(): Promise<void> {
-  // Vulcan (routes/stock.ts) owns stock now. Once ANY Vulcan import exists, this
+  // Vesta (routes/stock.ts) owns stock now. Once ANY Vesta import exists, this
   // legacy seeder must never write again — without this gate, a redeploy after an
   // import restamps every stockAt would re-apply the stale embedded snapshot.
   if ((await prisma.stockImport.count()) > 0) return;

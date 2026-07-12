@@ -4,8 +4,8 @@
 // It monkeypatches the shared prisma singleton with a tiny in-memory fake, then proves:
 //   (a) ORDINARY receive → adjustStock bumps Product.stock by the received qty AND writes ONE
 //       StockAdjustment audit row with the Mercury goods-receipt reason.
-//   (b) Vulcan's OWN /adjust path (setStock with an absolute toQty) produces the IDENTICAL write +
-//       audit shape — the refactor didn't change Vulcan's behavior.
+//   (b) Vesta's OWN /adjust path (setStock with an absolute toQty) produces the IDENTICAL write +
+//       audit shape — the refactor didn't change Vesta's behavior.
 //   (c) The two writers share ONE code path: both go through the same product.update(stock,stockAt)
 //       + stockAdjustment.create({sku,fromQty,toQty,reason,byAgentId}) transaction.
 //
@@ -100,8 +100,8 @@ async function main(): Promise<void> {
     check('unknown_sku error', res.ok === false && res.error === 'unknown_sku');
   }
 
-  // ── (b) Vulcan's OWN /adjust path (setStock absolute toQty) — identical write + audit shape ──
-  console.log("\n(b) Vulcan's own /adjust path via setStock (absolute toQty) — identical shape:");
+  // ── (b) Vesta's OWN /adjust path (setStock absolute toQty) — identical write + audit shape ──
+  console.log("\n(b) Vesta's own /adjust path via setStock (absolute toQty) — identical shape:");
   {
     const { products, audits } = installFake([{ sku: '07-10-09', stock: 10, stockAt: null }]);
     const res = await setStock({ sku: '07-10-09', toQty: 7, reason: 'manual count', agentId: 'agent_dr_m' });

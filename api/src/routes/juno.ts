@@ -182,7 +182,7 @@ function buildListWhere(q: z.infer<typeof listFilterSchema>): Record<string, unk
   return where;
 }
 
-// ── Bank import staging (preview → apply), mirrors Vulcan's stock import pattern ──
+// ── Bank import staging (preview → apply), mirrors Vesta's stock import pattern ──
 // (see stock.ts) — the manager previews a parsed file, eyeballs the diff, then applies the
 // EXACT parsed set (server-authoritative; the client can't re-send tampered rows). Lost on
 // restart (harmless: just re-upload). Small + short-lived.
@@ -1033,7 +1033,7 @@ export async function junoRoutes(app: FastifyInstance) {
   });
 
   // POST /api/juno/bank/import/apply { token } — apply a previewed import: insert the NEW
-  // BankTxns (dup rows are skipped — the same reasoning as Vulcan's apply), write a
+  // BankTxns (dup rows are skipped — the same reasoning as Vesta's apply), write a
   // BankImport audit row, then run the auto-matcher over the freshly inserted lines.
   app.post('/api/juno/bank/import/apply', { preHandler: requireRole('supervisor') }, async (req, reply) => {
     const body = z.object({ token: z.string().min(1) }).safeParse(req.body);

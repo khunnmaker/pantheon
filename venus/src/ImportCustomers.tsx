@@ -7,7 +7,7 @@ import {
 
 // Supervisor-only: upload the ARMAST customer-master export from Express → preview
 // (parsed/matched/unmatched counts + type/credit breakdown) → confirm to apply. Mirrors
-// Vulcan's stock-import preview→apply UX (see vulcan/src/Stock.tsx ImportTab).
+// Vesta's stock-import preview→apply UX (see vesta/src/Stock.tsx ImportTab).
 export default function ImportCustomers() {
   const [preview, setPreview] = useState<ImportPreview | null>(null);
   const [fileName, setFileName] = useState('');

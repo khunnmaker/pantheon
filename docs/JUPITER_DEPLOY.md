@@ -20,16 +20,16 @@ need any DNS to launch the portal. Part 2 is a later, independent step.
 
 - **API** (`api/src/routes/jupiter.ts`): `GET /api/jupiter/badges` — any authenticated account;
   returns pending-work counts ONLY for the apps the caller's role may enter (agents see Minerva;
-  the supervisor sees Minerva/Juno/Vulcan/Ceres; messenger + md see Ceres). ~30s in-process cache
+  the supervisor sees Minerva/Juno/Vesta/Ceres; messenger + md see Ceres). ~30s in-process cache
   (the Ceres messenger badge, being per-user, is cached per messenger). No schema change, no migration.
   Ceres `awaitingAction` per role: **CEO** = escalated payment requests awaiting the CEO's decision;
   **MD** = pending expenses awaiting her approve/reject; **messenger** = their own pending drafts +
   rejected expenses to fix.
 - **Portal web app** (`jupiter/`): a separate Vite/React app + Dockerfile — its own Railway web
-  service, mirroring Juno/Vulcan. Royal-purple theme. Suite-standard login (tap a name → password
+  service, mirroring Juno/Vesta. Royal-purple theme. Suite-standard login (tap a name → password
   for Dr. M and Nee/MD, 6-digit PIN for everyone else; the 13 messengers collapse under
   "ทีมแมสเซนเจอร์"). After login, a tile grid opens each app's URL in the same tab.
-- **Portal-back link** in `web/` (Minerva), `vulcan/`, `juno/`, and `ceres/`: one small header link
+- **Portal-back link** in `web/` (Minerva), `vesta/`, `juno/`, and `ceres/`: one small header link
   back to the portal, URL from `VITE_PORTAL_URL`, **hidden when that env is unset** — so it is
   completely inert until you configure it.
 
@@ -39,19 +39,19 @@ need any DNS to launch the portal. Part 2 is a later, independent step.
 
 ### 1a. New Railway service for the portal
 
-Add ONE new web service for `jupiter/` alongside the existing `api` / `web` / `vulcan` / `juno`
+Add ONE new web service for `jupiter/` alongside the existing `api` / `web` / `vesta` / `juno`
 / `ceres` / `diana` / Postgres:
 
 1. **New service → Deploy from repo → root directory `jupiter/`** (Dockerfile at `jupiter/Dockerfile`).
 2. Set these **build-time env vars / build args** (baked into the static bundle at build — same
-   model as `web` / `juno` / `vulcan`). Use each service's current public Railway URL:
+   model as `web` / `juno` / `vesta`). Use each service's current public Railway URL:
 
    | Var | Value (Phase 1) | Meaning |
    |---|---|---|
    | `VITE_API_URL`    | the **api** service's public URL | login + badges endpoint |
    | `VITE_MINERVA_URL`| the **web** (Minerva) service's URL | Minerva tile target |
    | `VITE_JUNO_URL`   | the **juno** service's URL | Juno tile target |
-   | `VITE_VULCAN_URL` | the **vulcan** service's URL | Vulcan tile target |
+   | `VITE_VESTA_URL` | the **vesta** service's URL | Vesta tile target |
    | `VITE_CERES_URL`  | the **ceres** service's URL | Ceres tile target (messenger/md/CEO) |
 
    A tile whose URL is unset is hidden even for a role that could enter it — so leaving any
@@ -59,23 +59,23 @@ Add ONE new web service for `jupiter/` alongside the existing `api` / `web` / `v
 
 3. **Allow the portal's origin on the api.** Append the new Jupiter web origin to the api's
    **`WEB_ORIGIN`** env (comma-separated, exact origins, no trailing slash), keeping the existing
-   console / Vulcan / Juno / Diana origins. Without this, the browser's login + badges calls fail CORS.
+   console / Vesta / Juno / Diana origins. Without this, the browser's login + badges calls fail CORS.
 4. Jupiter shares the same Postgres **via the api** — it does **not** need its own `DATABASE_URL`
    and must **not** run any Prisma migrate (Minerva's api remains the sole migrator).
 5. Push to `main` (once this branch is merged) → services redeploy. The badges route ships with the api.
 
 ### 1b. Configure the portal-back link in the other apps (optional, do once ready)
 
-For **each** of `web`, `juno`, `vulcan`, `ceres`, set the build-time env **`VITE_PORTAL_URL`** =
+For **each** of `web`, `juno`, `vesta`, `ceres`, set the build-time env **`VITE_PORTAL_URL`** =
 the Jupiter service's public URL, then redeploy that service. The little "พอร์ทัล" link appears
 in that app's header. Leave it unset on any app you don't want linking yet — the link stays hidden.
 
 ### 1c. Verify after deploy
 
 1. Open the Jupiter URL → the login shows the people cards (Dr. M on top; messengers collapsed).
-2. Log in as **Dr. M** → tiles for Juno / Minerva / Vulcan / Ceres appear, each with its badge count.
+2. Log in as **Dr. M** → tiles for Juno / Minerva / Vesta / Ceres appear, each with its badge count.
 3. Log in as an **agent** (their 6-digit PIN) → only the **Minerva** tile appears, with its
-   "waiting to reply" count. Confirm NO Juno/Vulcan/Ceres tile leaks for the agent.
+   "waiting to reply" count. Confirm NO Juno/Vesta/Ceres tile leaks for the agent.
 4. Log in as **Nee (MD)** (password) or a **messenger** (PIN) → only the **Ceres** tile appears,
    with its awaiting-action count; confirm no other app's tile leaks.
 5. Tap a tile → the app opens (and, in Phase 1, asks for its own login — expected until SSO/Phase 3).
@@ -97,7 +97,7 @@ In Railway, for each service, add its custom domain and copy the **CNAME target*
 |---|---|
 | jupiter | `portal.prominentdental.com` |
 | web (Minerva) | `minerva.prominentdental.com` |
-| vulcan | `vulcan.prominentdental.com` |
+| vesta | `vesta.prominentdental.com` |
 | juno | `juno.prominentdental.com` |
 | ceres *(when live)* | `ceres.prominentdental.com` |
 | api | `api.prominentdental.com` |
@@ -111,7 +111,7 @@ at the matching Railway target from 2a:
 |---|---|---|
 | `portal`  | CNAME | *(jupiter Railway target)* |
 | `minerva` | CNAME | *(web Railway target)* |
-| `vulcan`  | CNAME | *(vulcan Railway target)* |
+| `vesta`  | CNAME | *(vesta Railway target)* |
 | `juno`    | CNAME | *(juno Railway target)* |
 | `ceres`   | CNAME | *(ceres Railway target, when live)* |
 | `api`     | CNAME | *(api Railway target)* |
@@ -126,7 +126,7 @@ Railway origins yet. Keeping both means the apps work whether opened on the old 
 domain during the cutover:
 
 ```
-https://console-...up.railway.app,https://vulcan-...up.railway.app,https://juno-...up.railway.app,https://portal.prominentdental.com,https://minerva.prominentdental.com,https://vulcan.prominentdental.com,https://juno.prominentdental.com
+https://console-...up.railway.app,https://vesta-...up.railway.app,https://juno-...up.railway.app,https://portal.prominentdental.com,https://minerva.prominentdental.com,https://vesta.prominentdental.com,https://juno.prominentdental.com
 ```
 
 (Exact origins, comma-separated, no trailing slash, no wildcard.) Add `https://ceres.prominentdental.com`
@@ -135,7 +135,7 @@ old Railway origins.
 
 ### 2d. Flip each frontend's `VITE_API_URL` to the api's domain
 
-For **each** frontend service (`jupiter`, `web`, `vulcan`, `juno`, and `ceres` when live), set the
+For **each** frontend service (`jupiter`, `web`, `vesta`, `juno`, and `ceres` when live), set the
 build-time **`VITE_API_URL`** = `https://api.prominentdental.com` and redeploy that service.
 
 ### 2e. Point each app's tiles + portal-back link at the new domains
@@ -143,9 +143,9 @@ build-time **`VITE_API_URL`** = `https://api.prominentdental.com` and redeploy t
 - On the **jupiter** service, set the tile URLs to the new domains and redeploy:
   `VITE_MINERVA_URL=https://minerva.prominentdental.com`,
   `VITE_JUNO_URL=https://juno.prominentdental.com`,
-  `VITE_VULCAN_URL=https://vulcan.prominentdental.com`
+  `VITE_VESTA_URL=https://vesta.prominentdental.com`
   (and `VITE_CERES_URL=https://ceres.prominentdental.com`).
-- On **web / juno / vulcan / ceres**, set
+- On **web / juno / vesta / ceres**, set
   `VITE_PORTAL_URL=https://portal.prominentdental.com` and redeploy.
 
 ### 2f. Verify

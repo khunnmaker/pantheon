@@ -21,7 +21,7 @@ export interface CloudMercuryItem {
   id: string;
   displayName: string;
   isSecret: boolean;
-  vulcanSku: string | null;
+  vestaSku: string | null;
   active?: boolean;
   createdAt?: string;
 }
@@ -128,7 +128,7 @@ export async function cloudPatchStatus(
 
 // POST a goods-receipt for a cloud MercuryRequest (Phase 3, SECRET items) via
 // POST /api/mercury/requests/:id/receive. The cloud marks the request 'received' (STATUS ONLY for a
-// secret item — it holds no vulcanSku, so it performs no stock write). The real Vulcan stock bump
+// secret item — it holds no vestaSku, so it performs no stock write). The real Vesta stock bump
 // for a secret item is done SEPARATELY by cloudAdjustStock below, keyed on the LOCAL realSku, which
 // the cloud never sees. Best-effort: caller catches CloudError.
 export async function cloudReceiveRequest(
@@ -153,7 +153,7 @@ export async function cloudReceiveRequest(
   if (!res.ok) throw new CloudError(`Failed to mark cloud request received (HTTP ${res.status})`, 502);
 }
 
-// Bump Vulcan stock for a REAL SKU via the cloud's Vulcan stock-adjust endpoint
+// Bump Vesta stock for a REAL SKU via the cloud's Vesta stock-adjust endpoint
 // (POST /api/stock/adjust, supervisor-gated — the owner's suite JWT passes). This is the ONLY way a
 // secret item's realSku reaches the cloud: as a transient stock-adjustment CALL, never persisted on
 // any MercuryItem/MercuryRequest row. The endpoint sets an ABSOLUTE quantity, so we read the current

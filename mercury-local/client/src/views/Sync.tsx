@@ -75,13 +75,13 @@ export default function Sync() {
   }, []);
 
   // SECRET goods-receipt (local-side): the cloud can't resolve a secret item's real SKU, so we
-  // bump Vulcan stock from here (resolve realSku from the local SecretMap → cloud adjust) and mark
+  // bump Vesta stock from here (resolve realSku from the local SecretMap → cloud adjust) and mark
   // the cloud request received. Only offered for pending SECRET items.
   async function doReceiveSecret(pr: PendingRequest) {
     if (busy) return;
     const suggested = (pr.qty ?? '').trim() || '1';
     const input = window.prompt(
-      `รับของ (secret) "${pr.itemDisplayName}" — ใส่จำนวนที่รับเข้า (จะบวกเข้าสต็อก Vulcan ผ่าน SKU จริงในเครื่องนี้)`,
+      `รับของ (secret) "${pr.itemDisplayName}" — ใส่จำนวนที่รับเข้า (จะบวกเข้าสต็อก Vesta ผ่าน SKU จริงในเครื่องนี้)`,
       suggested,
     );
     if (input === null) return;
@@ -254,7 +254,7 @@ export default function Sync() {
           <PackageCheck size={15} className="text-emerald-600" /> รับของ — สินค้าลับ ({pendingSecret.length})
         </div>
         <div className="text-xs text-slate-500 mb-3">
-          รับของสินค้าลับที่เครื่องนี้เท่านั้น (แก้ SKU จริงจาก SecretMap ในเครื่อง → บวกเข้าสต็อก Vulcan บน cloud) — SKU จริงไม่ถูกส่งไปเก็บบน cloud
+          รับของสินค้าลับที่เครื่องนี้เท่านั้น (แก้ SKU จริงจาก SecretMap ในเครื่อง → บวกเข้าสต็อก Vesta บน cloud) — SKU จริงไม่ถูกส่งไปเก็บบน cloud
           · สินค้าทั่วไปให้รับของที่บอร์ด cloud
         </div>
         {pendingSecret.length === 0 ? (

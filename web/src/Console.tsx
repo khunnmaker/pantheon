@@ -240,7 +240,7 @@ function PhotoStrip({ direct, cross, selected, onToggle }: {
           <div className="text-sky-600">{p.price > 0 ? `${p.price.toLocaleString()} บาท` : '—'}</div>
           {p.stock != null ? (() => {
             const out = p.stock <= 0;
-            // Low = Vulcan reorderPoint reached (preferred); fall back to the ≤5 heuristic
+            // Low = Vesta reorderPoint reached (preferred); fall back to the ≤5 heuristic
             // when no reorder point is configured for this SKU.
             const lowFlag = !out && (p.low ?? (p.reorderPoint == null && p.stock <= 5));
             const stale = p.stockAt ? Date.now() - new Date(p.stockAt).getTime() > 3 * 86400000 : false;

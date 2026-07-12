@@ -28,7 +28,7 @@ This runbook is **no-code**. Do the steps in order.
   `20260706130000_venus_saleline_name`, `20260708000000_venus_note`, `20260709000000_venus_card`,
   `20260710000000_venus_signals`.
 - **Web app** (`venus/`): a separate Vite/React app + Dockerfile — its own Railway service, mirroring
-  Juno/Vulcan/Jupiter. Rose theme. Suite-standard card-list login (only your card shows).
+  Juno/Vesta/Jupiter. Rose theme. Suite-standard card-list login (only your card shows).
 
 ---
 
@@ -44,13 +44,13 @@ Because every migration is additive (new tables + new nullable columns), this is
 
 ## 2. New Railway service for `venus/`
 
-Add ONE new web service alongside the existing `api` / `web` / `vulcan` / `juno` / `ceres` / `jupiter`
+Add ONE new web service alongside the existing `api` / `web` / `vesta` / `juno` / `ceres` / `jupiter`
 / Postgres:
 
 1. **New service → Deploy from repo → root directory `venus/`** (Dockerfile at `venus/Dockerfile`; it
    builds the static bundle and serves it on Railway's `PORT`).
 2. Set this **build-time env var / build arg** (baked into the bundle at build — same model as
-   juno/vulcan/jupiter):
+   juno/vesta/jupiter):
 
    | Var | Value | Meaning |
    |---|---|---|
@@ -63,7 +63,7 @@ Add ONE new web service alongside the existing `api` / `web` / `vulcan` / `juno`
 ## 3. Allow Venus's origin on the api (CORS)
 
 **Append** the new Venus web origin to the api's **`WEB_ORIGIN`** env (comma-separated, exact origin,
-no trailing slash), keeping every existing origin (console / Vulcan / Juno / Ceres / Jupiter). Without
+no trailing slash), keeping every existing origin (console / Vesta / Juno / Ceres / Jupiter). Without
 this, the browser's login + data calls fail CORS.
 
 ## 4. Confirm the Anthropic key is on the api (for AI cards)

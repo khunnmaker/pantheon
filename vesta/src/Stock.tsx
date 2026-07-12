@@ -897,8 +897,8 @@ function ImportTab({ onApplied }: { onApplied: () => void }) {
                 <input type="checkbox" checked={createNew} onChange={(e) => setCreateNew(e.target.checked)}
                   className="mt-0.5 w-4 h-4 rounded border-amber-300 text-indigo-600 focus:ring-indigo-400" />
                 <span>
-                  <b>เพิ่มสินค้าใหม่เหล่านี้เข้าระบบ (นับสต็อกในVulcan)</b> — ใช้ชื่อจาก Express, ยังไม่มีราคา/รูป/หมวด
-                  <br /><span className="text-amber-600">จะแสดงเฉพาะใน Vulcan เท่านั้น · ไม่ขึ้นเว็บไซต์และ AI ไม่นำไปตอบลูกค้า จนกว่าจะจัดข้อมูลให้ครบ</span>
+                  <b>เพิ่มสินค้าใหม่เหล่านี้เข้าระบบ (นับสต็อกในVesta)</b> — ใช้ชื่อจาก Express, ยังไม่มีราคา/รูป/หมวด
+                  <br /><span className="text-amber-600">จะแสดงเฉพาะใน Vesta เท่านั้น · ไม่ขึ้นเว็บไซต์และ AI ไม่นำไปตอบลูกค้า จนกว่าจะจัดข้อมูลให้ครบ</span>
                 </span>
               </label>
             </div>

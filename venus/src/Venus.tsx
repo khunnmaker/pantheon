@@ -8,7 +8,7 @@ import ImportSales from './ImportSales';
 import Dashboard from './Dashboard';
 
 // Portal-back link (Pantheon). URL from build-time env; hidden when unset, so it stays
-// completely inert until VITE_PORTAL_URL is configured (same convention as juno/vulcan).
+// completely inert until VITE_PORTAL_URL is configured (same convention as juno/vesta).
 const PORTAL_URL: string | undefined = import.meta.env.VITE_PORTAL_URL;
 
 type View = { screen: 'dashboard' } | { screen: 'list' } | { screen: 'detail'; code: string } | { screen: 'import' } | { screen: 'import-sales' };
