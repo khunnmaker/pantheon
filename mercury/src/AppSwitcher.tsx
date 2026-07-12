@@ -26,7 +26,7 @@ const APP_URL = {
   juno: import.meta.env.VITE_JUNO_URL ?? 'https://juno.prominentdental.com',
   jupiter: import.meta.env.VITE_JUPITER_URL ?? 'https://jupiter.prominentdental.com',
   ceres: import.meta.env.VITE_CERES_URL ?? 'https://ceres.prominentdental.com',
-  mercury: import.meta.env.VITE_MERCURY_URL as string | undefined,
+  mercury: import.meta.env.VITE_MERCURY_URL ?? 'https://mercury.prominentdental.com',
 };
 const APPS: { app: AppName; label: string; url: string | undefined }[] = [
   { app: 'minerva', label: 'Minerva', url: APP_URL.minerva },

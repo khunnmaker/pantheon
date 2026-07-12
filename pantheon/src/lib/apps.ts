@@ -6,8 +6,8 @@ import { hasAppAccess, type Agent, type AppName, type Badges } from './api';
 // so it only rides the bootstrap GET /api/auth/me when the app is opened from a
 // *.prominentdental.com origin. A raw *.up.railway.app tile URL is a DIFFERENT site → the Lax
 // cookie is withheld → the opened app's /me returns 401 → it shows Login even though the user is
-// already signed in. So NEVER point these at raw Railway URLs. Mercury stays env-only (no live
-// subdomain yet) — an unset URL hides that tile.
+// already signed in. So NEVER point these at raw Railway URLs. Every deity now carries a
+// *.prominentdental.com default (mercury included since 2026-07); an unset URL hides the tile.
 //
 // Post unified-auth (PR #7): tile visibility is a PER-PERSON grant, not a role list — it must
 // match exactly what the caller can open (and what /api/pantheon/badges returns). hasAppAccess()
@@ -72,7 +72,7 @@ export const APPS: AppDef[] = [
     key: 'mercury',
     name: 'Mercury',
     job: 'จัดซื้อ · สั่งของ',
-    url: env.VITE_MERCURY_URL,
+    url: env.VITE_MERCURY_URL ?? 'https://mercury.prominentdental.com',
     accent: 'text-orange-600',
     badge: (b) => b.mercury?.pending ?? null,
   },
