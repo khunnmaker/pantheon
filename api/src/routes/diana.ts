@@ -1,6 +1,6 @@
 import { randomInt } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
-import type { Product, ProductEnrichment } from '@prisma/client';
+import type { Prisma, Product, ProductEnrichment } from '@prisma/client';
 import { z } from 'zod';
 import { prisma } from '../db/prisma.js';
 import { hashPassword, verifyPassword, DUMMY_HASH } from '../auth/password.js';
@@ -12,6 +12,7 @@ import {
 } from '../auth/clinicAuth.js';
 import { env } from '../env.js';
 import { sendLineText } from '../line/send.js';
+import { mergeProductSkus, safeSemanticProductSkus } from '../catalog/productEmbeddings.js';
 
 // Diana — the B2B website (prominentdental.com) API. A 3rd READER of the shared
 // catalog: it never writes Product/stock. The public catalog exposes names/photos
@@ -108,7 +109,7 @@ const orderBody = z.object({
 // facets. Because enrichment lives in a separate table (no FK into Product), a
 // facet filter is pre-resolved to a sku set, then intersected with the catalog query.
 async function catalogWhere(q: string | undefined, brand?: string, category?: string) {
-  const where: Record<string, unknown> = { status: 'active' };
+  const where: Prisma.ProductWhereInput = { status: 'active' };
   const raw = (q ?? '').trim();
   if (raw) {
     const nameArms = [
@@ -142,7 +143,7 @@ async function catalogWhere(q: string | undefined, brand?: string, category?: st
 }
 
 // Load one catalog page and attach enrichment by sku (left-join in app-land).
-async function loadPage(where: Record<string, unknown>, page: number, pageSize: number) {
+async function loadPage(where: Prisma.ProductWhereInput, page: number, pageSize: number) {
   const [total, rows] = await Promise.all([
     prisma.product.count({ where }),
     prisma.product.findMany({ where, orderBy: { sku: 'asc' }, skip: (page - 1) * pageSize, take: pageSize }),
@@ -150,6 +151,60 @@ async function loadPage(where: Record<string, unknown>, page: number, pageSize: 
   const enrich = await prisma.productEnrichment.findMany({ where: { sku: { in: rows.map((r) => r.sku) } } });
   const em: EnrichMap = new Map(enrich.map((e) => [e.sku, e]));
   return { total, rows, em };
+}
+
+// Add semantic-only products after every keyword/SKU match, retaining semantic order.
+// Candidate loading remains Prisma-managed; only the vector table itself uses raw SQL.
+async function appendSemanticPage(
+  q: string,
+  brand: string | undefined,
+  category: string | undefined,
+  page: number,
+  pageSize: number,
+  keywordTotal: number,
+  keywordRows: Product[],
+  em: EnrichMap,
+) {
+  const semanticOffset = Math.max(0, (page - 1) * pageSize - keywordTotal);
+  const needed = semanticOffset + pageSize - keywordRows.length;
+  if (needed <= 0) return { total: keywordTotal, rows: keywordRows, em };
+
+  // Fetch the bounded catalog candidate set once so facet/dedupe filtering can still fill
+  // the page and `total` remains stable across semantic-result pages.
+  const hits = await safeSemanticProductSkus(q, 1000);
+  let candidates = hits.map((hit) => hit.sku);
+  if (!candidates.length) return { total: keywordTotal, rows: keywordRows, em };
+
+  // A semantic hit that also matches the original keyword WHERE belongs to the keyword
+  // section (possibly on an earlier page), so never append it as a duplicate.
+  const keywordWhere = await catalogWhere(q);
+  const keywordHits = await prisma.product.findMany({
+    where: { AND: [keywordWhere, { sku: { in: candidates } }] },
+    select: { sku: true },
+  });
+  const keywordSet = new Set(keywordHits.map((row) => row.sku));
+  candidates = candidates.filter((sku) => !keywordSet.has(sku));
+
+  if (brand || category) {
+    const allowed = await prisma.productEnrichment.findMany({
+      where: { sku: { in: candidates }, ...(brand ? { brand } : {}), ...(category ? { category } : {}) },
+      select: { sku: true },
+    });
+    const allowedSet = new Set(allowed.map((row) => row.sku));
+    candidates = candidates.filter((sku) => allowedSet.has(sku));
+  }
+
+  const selected = candidates.slice(semanticOffset, semanticOffset + pageSize - keywordRows.length);
+  const products = await prisma.product.findMany({ where: { status: 'active', sku: { in: selected } } });
+  const bySku = new Map(products.map((product) => [product.sku, product]));
+  const ordered = selected.map((sku) => bySku.get(sku)).filter((product): product is Product => !!product);
+  const mergedSkus = mergeProductSkus(keywordRows.map((row) => row.sku), ordered.map((row) => row.sku), pageSize);
+  const mergedBySku = new Map([...keywordRows, ...ordered].map((product) => [product.sku, product]));
+  const rows = mergedSkus.map((sku) => mergedBySku.get(sku)).filter((product): product is Product => !!product);
+
+  const enrich = await prisma.productEnrichment.findMany({ where: { sku: { in: ordered.map((row) => row.sku) } } });
+  for (const item of enrich) em.set(item.sku, item);
+  return { total: keywordTotal + candidates.length, rows, em };
 }
 
 // Best-effort LINE alert to the CEO when a web order lands, so this low-volume,
@@ -183,7 +238,15 @@ export async function dianaRoutes(app: FastifyInstance) {
     if (!parsed.success) return reply.code(400).send({ error: 'invalid_query' });
     const { q, brand, category, page, pageSize } = parsed.data;
     const where = await catalogWhere(q, brand, category);
-    const { total, rows, em } = await loadPage(where, page, pageSize);
+    let { total, rows, em } = await loadPage(where, page, pageSize);
+    if (q && rows.length < pageSize) {
+      try {
+        ({ total, rows, em } = await appendSemanticPage(q, brand, category, page, pageSize, total, rows, em));
+      } catch {
+        // Semantic search is optional: any Voyage/vector/enrichment failure is invisible
+        // to the public storefront, which keeps the exact keyword-only result.
+      }
+    }
     return { page, pageSize, total, items: rows.map((p) => publicDto(p, em.get(p.sku))) };
   });
 

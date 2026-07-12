@@ -1169,3 +1169,11 @@ model PartyIdentity {
 //   kb        KbEntry                     @relation(fields: [kbId], references: [id], onDelete: Cascade)
 //   embedding Unsupported("vector(1024)")
 // }
+//
+// model ProductEmbedding {
+//   sku         String                      @id
+//   product     Product                     @relation(fields: [sku], references: [sku], onDelete: Cascade)
+//   embedding   Unsupported("vector(1024)")
+//   contentHash String
+//   updatedAt   DateTime                    @default(now())
+// }
