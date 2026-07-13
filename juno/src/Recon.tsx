@@ -146,7 +146,7 @@ function ImportPanel({ onImported }: { onImported: () => void }) {
       setApplyResult(
         `นำเข้า ${result.source === 'kbiz' ? 'KBIZ' : 'K SHOP'}: ใหม่ ${result.counts.new} / ซ้ำ ${result.counts.dup} / ยกเว้น ${result.counts.excluded}` +
         (result.autoMatched > 0 ? ` — จับคู่อัตโนมัติแล้ว ${result.autoMatched} รายการ` : '') +
-        (result.autoCleared > 0 ? ` · เคลียร์เช็คอัตโนมัติ ${result.autoCleared} รายการ` : ''),
+        (result.chequeMatched > 0 ? ` · จับคู่เช็คธนาคาร ${result.chequeMatched} รายการ` : ''),
       );
       onImported();
       setPreview(null);

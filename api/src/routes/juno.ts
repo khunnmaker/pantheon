@@ -119,11 +119,11 @@ function toRow(p: {
     reNumbers: p.reNumbers,
     receiptName: p.receiptName,
     customerType: p.customerType,
-    // how the row was created + cash/cheque banking state (see JUNO_MANUAL_ENTRY_BRIEF.md)
+    // how the row was created + legacy read-only cash/cheque banking state
     source: p.source,
     settleState: p.settleState,
     settledAt: p.settledAt ? p.settledAt.toISOString() : null,
-    // CEO receipt-verify gate (task 1) — SEPARATE from settleState/settledAt above. See
+    // CEO receipt-verify gate (task 1); bank matching is unrelated bookkeeping. See
     // POST /payments/:id/receive.
     receivedAt: p.receivedAt ? p.receivedAt.toISOString() : null,
     receivedBy: p.receivedBy,
@@ -366,19 +366,18 @@ function normChq(s: string): string {
 }
 
 // The auto-matcher (see spec B3): runs in TWO passes over the in-scope unmatched "in" lines.
-//   Pass 1 (cheque): a KBiz "Cheque Deposit … Cheque No. N" line is matched to its hand-added
-//     cheque Payment by cheque number + amount, and that payment is auto-set settleState
-//     'cleared' (เคลียร์แล้ว) — the settling FIN used to do by hand.
+//   Pass 1 (cheque): a KBiz "Cheque Deposit … Cheque No. N" line is linked to its hand-added
+//     cheque Payment by cheque number + amount. This is bank-side bookkeeping only.
 //   Pass 2 (generic): the amount + day-window match for every OTHER credit line ↔ Payment
 //     status='verified', not void, reconciled=false (cheque-deposit lines and source='cheque'
-//     payments are excluded here — a cheque can ONLY clear via its number, never by amount).
+//     payments are excluded here — a cheque can ONLY link via its number, never by amount).
 // Both passes link ONLY when the pairing is unambiguous in BOTH directions (exactly one
 // candidate each way) — everything else is left for the UI's ranked suggestions. Runs over a
 // specific set of new txn ids (import apply) or ALL unmatched in-txns (manual re-run via
 // /bank/automatch). createdById is left null on every link this function creates — a
 // deliberate marker distinguishing "the system auto-matched this" from a FIN-driven manual
 // match (POST /match, which stamps req.agent.id). Returns both link counts.
-async function runAutoMatcher(txnIds?: string[]): Promise<{ matched: number; chequesCleared: number }> {
+async function runAutoMatcher(txnIds?: string[]): Promise<{ matched: number; chequeMatched: number }> {
   // Ambiguity is judged against ALL unmatched in-lines, not just the ones this run may link:
   // an import-scoped run would otherwise miss that an OLDER unmatched line is an equally
   // plausible home for the payment, and link the new line with false confidence.
@@ -397,17 +396,17 @@ async function runAutoMatcher(txnIds?: string[]): Promise<{ matched: number; che
   ]);
   const linkTargets = txnIds ? new Set(txnIds) : null;
   const linkable = linkTargets ? allTxns.filter((t) => linkTargets.has(t.id)) : allTxns;
-  if (!linkable.length) return { matched: 0, chequesCleared: 0 };
+  if (!linkable.length) return { matched: 0, chequeMatched: 0 };
 
   // ── Pass 1: cheques ──────────────────────────────────────────────────────
   // Match cheque-deposit lines to cheque payments by cheque number + amount, unambiguous
   // BOTH ways (exactly one candidate txn ↔ one candidate payment), computed over ALL
   // unmatched cheque-deposit lines so an older line is seen as an equally plausible home.
-  // Linking auto-clears the payment (settleState 'cleared'). Track the linked txn ids so the
-  // generic pass skips them (its own filter also drops every cheque-deposit line regardless).
+  // Track the linked txn ids so the generic pass skips them (its own filter also drops every
+  // cheque-deposit line regardless).
   const chequeMatchedTxnIds = new Set<string>();
   const chequeMatchedPaymentIds = new Set<string>();
-  let chequesCleared = 0;
+  let chequeMatched = 0;
   if (chequePayments.length) {
     const chequeTxnCandidates = new Map<string, string[]>();
     const chequePaymentCandidates = new Map<string, string[]>();
@@ -433,12 +432,11 @@ async function runAutoMatcher(txnIds?: string[]): Promise<{ matched: number; che
       await prisma.$transaction([
         prisma.paymentBankMatch.create({ data: { paymentId: pid, bankTxnId: t.id, createdById: null } }),
         prisma.bankTxn.update({ where: { id: t.id }, data: { matchStatus: 'matched' } }),
-        // the auto-clear: link + reconcile + settleState 'cleared' (เคลียร์แล้ว)
-        prisma.payment.update({ where: { id: pid }, data: { reconciled: true, settleState: 'cleared', settledAt: new Date(), settledById: null } }),
+        prisma.payment.update({ where: { id: pid }, data: { reconciled: true } }),
       ]);
       chequeMatchedTxnIds.add(t.id);
       chequeMatchedPaymentIds.add(pid);
-      chequesCleared++;
+      chequeMatched++;
     }
   }
 
@@ -482,7 +480,7 @@ async function runAutoMatcher(txnIds?: string[]): Promise<{ matched: number; che
     }
   }
 
-  return { matched: autoMatched, chequesCleared };
+  return { matched: autoMatched, chequeMatched };
 }
 
 export async function junoRoutes(app: FastifyInstance) {
@@ -491,23 +489,20 @@ export async function junoRoutes(app: FastifyInstance) {
 
   // GET /api/juno/summary — headline counts for the Juno dashboard / login landing.
   app.get('/api/juno/summary', async () => {
-    const [total, received, verified, recorded, flagged, taxRequested, cashChequePending, awaitingReceive, discrepancy] = await Promise.all([
+    const [total, received, verified, recorded, flagged, taxRequested, awaitingReceive, discrepancy] = await Promise.all([
       prisma.payment.count(),
       prisma.payment.count({ where: { status: 'received' } }),
       prisma.payment.count({ where: { status: 'verified' } }),
       prisma.payment.count({ where: { status: 'recorded' } }),
       prisma.payment.count({ where: { flagged: true, status: { not: 'void' } } }),
       prisma.payment.count({ where: { taxInvoiceStatus: 'requested', status: { not: 'void' } } }),
-      // เงินสด/เช็ค tab badge: hand-added cash/cheque rows not yet deposited/cleared.
-      prisma.payment.count({ where: { source: { in: ['cash', 'cheque'] }, settleState: '', status: { not: 'void' } } }),
       // รอยืนยันรับเงิน tab badge (task 1): cash/cheque the CEO hasn't yet confirmed he
-      // physically received — SEPARATE from cashChequePending above (that's the banking
-      // deposit/clear state; this is the receipt-verify gate).
+      // physically received.
       prisma.payment.count({ where: { source: { in: ['cash', 'cheque'] }, receivedAt: null, status: { not: 'void' } } }),
       getDiscrepancySnapshot(),
     ]);
     return {
-      total, received, verified, recorded, flagged, taxRequested, cashChequePending, awaitingReceive,
+      total, received, verified, recorded, flagged, taxRequested, awaitingReceive,
       discrepancyOpen: discrepancy.openCount,
     };
   });
@@ -679,7 +674,7 @@ export async function junoRoutes(app: FastifyInstance) {
   // Deliberately EXCLUDED (not editable here — each has its own route/owner):
   //   id/source/slipUrl (identity + provenance), status/flagged (lifecycle, see /status /flag),
   //   reNumber(s)/receiptName/customerType/whtRate/whtAmount (FIN's check data, see /verify),
-  //   settleState/receivedAt (banking/receipt gates, see /settle /receive), verifiedById/At
+  //   legacy banking fields/receivedAt (read-only history/receipt gate), verifiedById/At
   //   (stamped by /status /verify only), and every disc* field (see the dedicated discrepancy,
   //   disc-resolve, and disc-confirm routes). No disc* key exists in this schema by design.
   const editPaymentBodySchema = z.object({
@@ -850,36 +845,12 @@ export async function junoRoutes(app: FastifyInstance) {
     };
   });
 
-  // POST /api/juno/payments/:id/settle { state } — cash/cheque banking state: cash goes
-  // '' -> 'deposited' (ฝากธนาคารแล้ว), cheque goes '' -> 'cleared' (เคลียร์แล้ว). Only valid
-  // for hand-added cash/cheque rows — transfers reconcile in กระทบยอด instead (decision 4).
-  // future: a cheque could also auto-clear when a matching KBiz "Cheque Deposit … Cheque No. …"
-  // line imports — not built now, left as a note for a later reconciliation pass.
-  app.post<{ Params: { id: string } }>('/api/juno/payments/:id/settle', async (req, reply) => {
-    const body = z.object({ state: z.enum(['deposited', 'cleared', '']) }).safeParse(req.body);
-    if (!body.success) return reply.code(400).send({ error: 'invalid_body' });
-    const cur = await prisma.payment.findUnique({ where: { id: req.params.id }, select: { id: true, source: true } });
-    if (!cur) return reply.code(404).send({ error: 'not_found' });
-    if (cur.source !== 'cash' && cur.source !== 'cheque') return reply.code(409).send({ error: 'not_cash_cheque' });
-
-    const settling = body.data.state !== '';
-    const p = await prisma.payment.update({
-      where: { id: req.params.id },
-      data: {
-        settleState: body.data.state,
-        settledAt: settling ? new Date() : null,
-        settledById: settling ? (req.agent?.id ?? null) : null,
-      },
-    });
-    return { ok: true, payment: toRow(p) };
-  });
-
   // POST /api/juno/payments/:id/receive { received } — CEO-ONLY receipt-verify gate (task 1):
-  // the CEO confirms he PHYSICALLY received the cash/cheque. SEPARATE from /settle above (the
-  // banking deposit/clear state) — a cheque's KBiz auto-clear does NOT satisfy this; only this
-  // route does. This is a hard prerequisite for ยืนยันใน Express (see POST /status below, which
+  // the CEO confirms he PHYSICALLY received the cash/cheque. This is the only cash/cheque payment
+  // state; bank matching is unrelated bookkeeping. It is a hard prerequisite for ยืนยันใน Express
+  // (see POST /status below, which
   // 409s status->'recorded' for cash/cheque while receivedAt is null). received=false is the
-  // undo path (ยกเลิกการยืนยัน), clearing the stamp — mirrors /settle's '' revert.
+  // undo path (ยกเลิกการยืนยัน), clearing the stamp.
   app.post<{ Params: { id: string } }>('/api/juno/payments/:id/receive', async (req, reply) => {
     if (req.agent?.role !== 'supervisor') return reply.code(403).send({ error: 'forbidden' });
 
@@ -1273,7 +1244,7 @@ export async function junoRoutes(app: FastifyInstance) {
       insertedIds.push(...created.filter((c) => c.direction === 'in').map((c) => c.id));
     }
 
-    const { matched, chequesCleared } = await runAutoMatcher(insertedIds);
+    const { matched, chequeMatched } = await runAutoMatcher(insertedIds);
 
     return {
       ok: true,
@@ -1281,15 +1252,15 @@ export async function junoRoutes(app: FastifyInstance) {
       source: staged.source,
       counts: { parsed: staged.parsed, new: newIdx.length, dup: staged.rows.length - newIdx.length, excluded: staged.excluded },
       autoMatched: matched,
-      autoCleared: chequesCleared,
+      chequeMatched,
     };
   });
 
   // POST /api/juno/bank/automatch — re-run the auto-matcher over ALL currently-unmatched
   // "in" bank txns (e.g. after FIN checks a backlog of payments post-import).
   app.post('/api/juno/bank/automatch', async () => {
-    const { matched, chequesCleared } = await runAutoMatcher();
-    return { ok: true, autoMatched: matched, autoCleared: chequesCleared };
+    const { matched, chequeMatched } = await runAutoMatcher();
+    return { ok: true, autoMatched: matched, chequeMatched };
   });
 
   // GET /api/juno/bank/txns?status=&dir=&from=&to=&q= — the เงินเข้า/เงินออก list, with

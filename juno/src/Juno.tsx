@@ -10,10 +10,10 @@ import {
 const PORTAL_URL: string = import.meta.env.VITE_PORTAL_URL ?? 'https://pantheon.prominentdental.com';
 import {
   getSummary, getPayments, setStatus, setFlag, verifyPayment, getReport, downloadCsv, baht,
-  logout, getBankSummary, createPayment, settlePayment, uploadSlip, fileToBase64, readManualSlip, readManualCheque,
+  logout, getBankSummary, createPayment, uploadSlip, fileToBase64, readManualSlip, readManualCheque,
   deletePayment, confirmReceived, getWhtSummary, updatePayment, getFinanceAudits,
   type Agent, type Payment, type PaymentStatus, type Summary,
-  type Report, type PaymentFilter, type CustomerType, type PaymentSource, type SettleState,
+  type Report, type PaymentFilter, type CustomerType, type PaymentSource,
   type WhtRate, type WhtSummary, type EditPaymentBody,
 } from './lib/api';
 import PrintCovers from './PrintCovers';
@@ -27,7 +27,7 @@ import AppSwitcher from './AppSwitcher';
 // recording), so a "requested" queue would contain everything and filter nothing. The invoice
 // details captured off the slip flow (name/address/tax-ID) still show in the drawer.
 // 'receive' = CEO-only "รอยืนยันรับเงิน" (task 1): unconfirmed cash/cheque awaiting the CEO's
-// physical receipt confirmation — separate from เงินสด/เช็ค settle state, folded into inbox/flags.
+// physical receipt confirmation, folded into inbox/flags.
 // 'wht' = หัก ณ ที่จ่าย (WHT, task 2): every withheld payment — visible to ALL Juno users
 // (not CEO-only, unlike 'reports'/'receive').
 // 'reRecon' = กระทบยอด RE: the Express ARRCPDAT.TXT (AR-receipt) import + live RE-vs-Payment
@@ -64,9 +64,7 @@ function Badge({ children, cls }: { children: React.ReactNode; cls: string }) {
 
 // ช่องทาง (payment-method) list cell — transfer shows the bank name (unchanged from before);
 // cash/cheque show their method label plus, until the CEO confirms receipt, a รอยืนยัน badge.
-// The badge tracks the RECEIPT gate (task 1), not the ฝาก/เคลียร์ deposit state — under owner
-// decision A (2026-07-06) the deposit is optional and lives in the drawer, so the list surfaces
-// the one thing that actually blocks "done": the CEO's ได้รับแล้ว confirm.
+// The badge tracks the only cash/cheque payment state: the CEO's ได้รับแล้ว confirmation.
 function MethodCell({ p }: { p: Payment }) {
   const awaitingReceive = !p.receivedAt && p.status !== 'void';
   if (p.source === 'cash') {
@@ -1048,7 +1046,7 @@ function AddPaymentModal({ onClose, onSaved }: { onClose: () => void; onSaved: (
 // ── Edit-payment modal (แก้ไขรายละเอียด) ──────────────────────────────────────
 // Fixes a typo'd DESCRIPTIVE field on an existing payment — same field set + styling as
 // AddPaymentModal above, pre-filled from `payment` and PATCHing instead of POSTing. Deliberately
-// excludes source/RE(check-data)/customerType/WHT/status/settle — those stay in their own
+// excludes source/RE(check-data)/customerType/WHT/status/receipt confirmation — those stay in their own
 // dialogs/routes (CheckDialog, the rail buttons, CashChequeSection). Available to every Juno
 // user (no isCeo/canDelete gate — see the rail button in Detail).
 function EditPaymentModal({ payment, onClose, onSaved }: {
@@ -1521,8 +1519,7 @@ function Detail({ payment, onClose, onUpdate, onDelete, onPrint, canDelete, isCe
               </div>
             )}
 
-            {/* cash/cheque: not a bank transfer, so it's verified HERE via a settle control
-                instead of reconciling in กระทบยอด (decision 4). */}
+            {/* Cash/cheque method details and the CEO physical-receipt confirmation. */}
             {(p.source === 'cash' || p.source === 'cheque') && (
               <CashChequeSection payment={p} busy={busy} run={run} isCeo={isCeo} />
             )}
@@ -1555,16 +1552,9 @@ function Detail({ payment, onClose, onUpdate, onDelete, onPrint, canDelete, isCe
   );
 }
 
-// ── Cash/cheque settle section (Detail drawer, decision 2/4) ───────────────────────────────
-// Cash and cheque don't arrive as a bank transfer line, so they're never auto-matched in
-// กระทบยอด — instead this section shows the method + (for cheque) its details, plus a settle
-// control that toggles cash '' <-> 'deposited' or cheque '' <-> 'cleared'.
-// future: a cheque could also auto-clear when a matching KBiz "Cheque Deposit … Cheque No. …"
-// line imports — not built now (see JUNO_MANUAL_ENTRY_BRIEF.md decision 4).
-const SETTLE_META: Record<'cash' | 'cheque', { pending: string; done: string; action: string; state: SettleState }> = {
-  cash: { pending: 'รอฝาก', done: 'ฝากธนาคารแล้ว', action: 'ฝากธนาคารแล้ว', state: 'deposited' },
-  cheque: { pending: 'รอเคลียร์', done: 'เคลียร์แล้ว', action: 'เคลียร์แล้ว', state: 'cleared' },
-};
+// ── Cash/cheque receipt section (Detail drawer) ────────────────────────────────────────────
+// Shows the payment method, cheque details when applicable, and the CEO physical-receipt gate.
+// Bank matching is separate bookkeeping and does not change payment state.
 function CashChequeSection({ payment: p, busy, run, isCeo }: {
   payment: Payment;
   busy: string;
@@ -1572,8 +1562,6 @@ function CashChequeSection({ payment: p, busy, run, isCeo }: {
   isCeo: boolean;
 }) {
   const kind = p.source as 'cash' | 'cheque';
-  const meta = SETTLE_META[kind];
-  const settled = p.settleState !== '';
   const received = !!p.receivedAt;
   const field = (lbl: string, value: React.ReactNode) => (
     <div>
@@ -1593,37 +1581,8 @@ function CashChequeSection({ payment: p, busy, run, isCeo }: {
         {kind === 'cheque' && field('ธนาคาร', p.chequeBank)}
         {kind === 'cheque' && field('วันที่บนเช็ค', p.chequeDueDate)}
       </div>
-      {/* Deposit/clear (settle) — CHEQUE ONLY. Cash is handed straight to the CEO, so there's no
-          bank-deposit step for it (owner decision B for cash, 2026-07-06) — the ได้รับแล้ว confirm
-          below is the whole story. Cheques still clear at the bank (auto from the KBiz import). */}
-      {kind === 'cheque' && (
-        <div className="flex items-center gap-2">
-          <Badge cls={settled ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}>
-            {settled ? meta.done : meta.pending}
-          </Badge>
-          {!settled ? (
-            <button
-              disabled={busy !== ''}
-              onClick={() => void run('settle', () => settlePayment(p.id, meta.state))}
-              className="px-2.5 py-1 rounded-lg text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 disabled:opacity-40 flex items-center gap-1"
-            >
-              {busy === 'settle' ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} {meta.action}
-            </button>
-          ) : (
-            <button
-              disabled={busy !== ''}
-              onClick={() => void run('settle', () => settlePayment(p.id, ''))}
-              className="px-2.5 py-1 rounded-lg text-xs font-medium bg-slate-100 text-slate-600 border border-slate-200 hover:bg-slate-200 disabled:opacity-40 flex items-center gap-1"
-            >
-              {busy === 'settle' ? <Loader2 size={12} className="animate-spin" /> : <Undo2 size={12} />} ยกเลิก
-            </button>
-          )}
-        </div>
-      )}
-
-      {/* CEO receipt-verify gate (task 1) — SEPARATE from the settle control above (that's the
-          banking deposit/clear state; a cheque's KBiz auto-clear does NOT satisfy this gate).
-          This is a hard prerequisite for the ✓✓ ยืนยันใน Express rail action (see its disabled
+      {/* CEO receipt-verify gate (task 1), identical for cash and cheque. Bank matching is
+          unrelated bookkeeping. This is a hard prerequisite for the ✓✓ ยืนยันใน Express rail action (see its disabled
           condition above). Non-CEO sees the status read-only — the confirm action is
           supervisor-only server-side, mirroring ลบถาวร's gate. */}
       <div className="mt-3 pt-3 border-t border-dashed border-slate-200">

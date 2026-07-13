@@ -81,13 +81,12 @@ export interface Payment {
   reNumbers: string[];
   receiptName: string;
   customerType: CustomerType;
-  // how this row was created + cash/cheque banking state (see settlePayment)
+  // how this row was created + legacy read-only cash/cheque banking state
   source: PaymentSource;
   settleState: SettleState;
   settledAt: string | null;
-  // CEO receipt-verify gate (task 1) — SEPARATE from settleState/settledAt above (that's the
-  // banking deposit/clear state). null = the CEO hasn't yet confirmed physical receipt. See
-  // confirmReceived. A cheque's KBiz auto-clear does NOT set these.
+  // CEO receipt-verify gate (task 1). null = the CEO hasn't yet confirmed physical receipt.
+  // See confirmReceived; bank matching does not set these.
   receivedAt: string | null;
   receivedBy: string | null;
   chequeNo: string;
@@ -109,7 +108,6 @@ export interface Summary {
   recorded: number;
   flagged: number;
   taxRequested: number;
-  cashChequePending: number;
   // รอยืนยันรับเงิน tab badge (task 1): cash/cheque awaiting the CEO's receipt confirmation.
   awaitingReceive: number;
   discrepancyOpen: number;
@@ -301,7 +299,7 @@ export const createPayment = (body: CreatePaymentBody) =>
 // invoice, and (cheque only) the cheque fields. Every field optional — send only what changed.
 // Available to any Juno user (server gates this the same as the rest of the file, NOT
 // supervisor-only — contrast with deletePayment below). Deliberately excludes source/status/
-// flagged/RE-check/WHT/settle fields — those have their own dedicated routes.
+// flagged/RE-check/WHT/legacy banking fields — those have their own dedicated routes.
 export interface EditPaymentBody {
   customerCode?: string;
   customerName?: string;
@@ -334,13 +332,6 @@ export const setStatus = (id: string, status: PaymentStatus) =>
 // deletable; there is no "too far along" guard here, matching the server.
 export const deletePayment = (id: string) =>
   authed<{ ok: boolean }>(`/api/juno/payments/${id}`, { method: 'DELETE' });
-
-// cash/cheque settle control (the เงินสด/เช็ค tab's drawer section) — '' reverts (ยกเลิก).
-export const settlePayment = (id: string, state: SettleState) =>
-  authed<{ ok: boolean; payment: Payment }>(`/api/juno/payments/${id}/settle`, {
-    method: 'POST',
-    body: JSON.stringify({ state }),
-  });
 
 // CEO-only receipt-verify gate (task 1): confirms physical receipt of cash/cheque — a hard
 // prerequisite for ยืนยันใน Express (see STATUS_META.recorded's rail gate in Juno.tsx). Server
@@ -590,7 +581,7 @@ export interface BankImportApplyResult {
   source: BankSource;
   counts: { parsed: number; new: number; dup: number; excluded: number };
   autoMatched: number;
-  autoCleared: number; // cheque payments auto-set settleState='cleared' by the cheque pass
+  chequeMatched: number; // cheque number + amount links created by the cheque pass
 }
 
 export interface BankSuggestion {
@@ -642,7 +633,7 @@ export const applyBankImport = (token: string) =>
   });
 
 export const runBankAutomatch = () =>
-  authed<{ ok: boolean; autoMatched: number; autoCleared: number }>('/api/juno/bank/automatch', { method: 'POST' });
+  authed<{ ok: boolean; autoMatched: number; chequeMatched: number }>('/api/juno/bank/automatch', { method: 'POST' });
 
 export interface BankTxnFilter {
   status?: BankTxnStatusFilter;
