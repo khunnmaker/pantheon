@@ -128,9 +128,32 @@ export async function login(email: string, password: string): Promise<{ token: s
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ email, password }),
+    credentials: 'include',
   });
   if (!res.ok) throw new Error('invalid_credentials');
   return res.json() as Promise<{ token: string; agent: Agent }>;
+}
+
+export async function bootstrap(): Promise<Agent | null> {
+  try {
+    const res = await fetch(`${API_URL}/api/auth/me`, { credentials: 'include' });
+    if (!res.ok) return null;
+    const { agent, token } = await res.json() as { agent: Agent; token: string };
+    setSession(token, agent);
+    return agent;
+  } catch {
+    return null;
+  }
+}
+
+export async function logout(): Promise<void> {
+  try {
+    await fetch(`${API_URL}/api/auth/logout`, { method: 'POST', credentials: 'include' });
+  } catch {
+    // Best-effort server logout; local cleanup must always happen.
+  } finally {
+    clearSession();
+  }
 }
 
 export interface LoginCard {

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Heart, LogOut, Crown, Users, Upload, LayoutDashboard, ShoppingBag } from 'lucide-react';
-import { canImport, clearSession, type Agent } from './lib/api';
+import { canImport, logout, type Agent } from './lib/api';
 import CustomerList from './CustomerList';
 import CustomerDetail from './CustomerDetail';
 import ImportCustomers from './ImportCustomers';
@@ -36,7 +36,7 @@ export default function Venus({ agent, onLogout }: { agent: Agent; onLogout: () 
               </a>
             )}
             <span className="text-slate-500 hidden sm:inline">{agent.name}</span>
-            <button onClick={() => { clearSession(); onLogout(); }} className="flex items-center gap-1 text-slate-500 hover:text-rose-600">
+            <button onClick={() => { void logout(); onLogout(); }} className="flex items-center gap-1 text-slate-500 hover:text-rose-600">
               <LogOut size={15} /> ออก
             </button>
           </div>

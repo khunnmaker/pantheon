@@ -4,7 +4,7 @@ import AppSwitcher from './AppSwitcher';
 import ReorderQueue from './views/ReorderQueue';
 import Items from './views/Items';
 import Requests from './views/Requests';
-import { clearSession, getRequests, type Agent } from './lib/api';
+import { getRequests, logout as logoutSuite, type Agent } from './lib/api';
 
 type Tab = 'reorder' | 'items' | 'requests';
 
@@ -34,7 +34,7 @@ export default function Board({ agent, onLogout }: { agent: Agent; onLogout: () 
   useEffect(() => { void refreshPending(); }, [refreshPending]);
 
   function logout() {
-    clearSession();
+    void logoutSuite();
     onLogout();
   }
 
