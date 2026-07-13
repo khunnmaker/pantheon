@@ -114,7 +114,7 @@ export async function authRoutes(app: FastifyInstance) {
   });
 
   // PUBLIC GET /api/auth/logins?app=minerva|vesta|juno|ceres — the name-card list for that
-  // app's login screen (supervisor, then md for ceres, then employees granted that app).
+  // app's login screen (supervisor, then md for MD_APPS, then employees granted that app).
   // Names + emails only — no roles/ids beyond `kind`.
   app.get('/api/auth/logins', async (req, reply) => {
     const app_ = (req.query as { app?: string })?.app;

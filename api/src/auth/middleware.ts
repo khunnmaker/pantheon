@@ -92,7 +92,7 @@ export function requireRole(role: Role): preHandlerHookHandler {
 }
 
 // preHandler factory: require access to a specific app (implies requireAuth ran first).
-// supervisor always passes; md passes only for 'ceres'; employee passes per their Agent.apps.
+// supervisor always passes; md passes its implicit MD_APPS set; employee passes per Agent.apps.
 export function requireApp(app: AppName): preHandlerHookHandler {
   return async (req: FastifyRequest, reply: FastifyReply) => {
     if (!req.agent) return reply.code(401).send({ error: 'unauthorized' });

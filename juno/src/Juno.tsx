@@ -91,19 +91,19 @@ function MethodCell({ p }: { p: Payment }) {
 }
 
 export default function Juno({ agent, onLogout }: { agent: Agent; onLogout: () => void }) {
-  const [view, setView] = useState<View>('inbox');
+  const scope = agent.role === 'supervisor' ? 'full' : agent.role === 'md' ? 'billsOnly' : 'noBills';
+  const [view, setView] = useState<View>(scope === 'billsOnly' ? 'bills' : 'inbox');
   const [summary, setSummary] = useState<Summary | null>(null);
   // CEO-only actions (mirrors the server's supervisor gate in api/src/routes/juno.ts): reports,
-  // CSV export, bank-file import, clearing a flag, and hard delete. Finance (employee) + MD get
-  // everything else — slip work, reconciliation, void, raising a flag. Hidden here so those
-  // controls never appear rather than 403ing on click.
+  // CSV export, bank-file import, clearing a flag, and hard delete. md never reaches these
+  // views because its scope is billsOnly; employees retain the non-CEO finance controls.
   const isCeo = agent.role === 'supervisor';
   // ลบถาวร (permanent delete) is the CEO-only override — even md, who can now open Juno,
   // cannot delete. Mirrors the server's `req.agent?.role !== 'supervisor'` gate exactly.
   const canDelete = isCeo;
   // unmatched-in bank txn count — the badge on the กระทบยอด tab (phase B)
   const [bankUnmatched, setBankUnmatched] = useState<number | undefined>(undefined);
-  // open FinanceAudit (ตรวจสอบยอด) count — badge on the audit tab. Readable by every Juno user.
+  // open FinanceAudit (ตรวจสอบยอด) count — employee/supervisor badge; md skips this request.
   const [auditOpen, setAuditOpen] = useState<number | undefined>(undefined);
   const [billAlerts, setBillAlerts] = useState<number | undefined>(undefined);
   const handleBillCounts = useCallback((counts: { unpaid: number; mismatch: number }) => {
@@ -111,37 +111,38 @@ export default function Juno({ agent, onLogout }: { agent: Agent; onLogout: () =
   }, []);
 
   const refreshSummary = useCallback(() => {
+    if (scope === 'billsOnly') {
+      getManualBills().then((r) => handleBillCounts(r.counts)).catch(() => setBillAlerts(undefined));
+      return;
+    }
     getSummary().then(setSummary).catch(() => setSummary(null));
     getBankSummary().then((s) => setBankUnmatched(s.unmatchedIn.count)).catch(() => setBankUnmatched(undefined));
     getFinanceAudits('open').then((r) => setAuditOpen(r.audits.length)).catch(() => setAuditOpen(undefined));
-    getManualBills().then((r) => handleBillCounts(r.counts)).catch(() => setBillAlerts(undefined));
-  }, [handleBillCounts]);
+    if (scope === 'full') {
+      getManualBills().then((r) => handleBillCounts(r.counts)).catch(() => setBillAlerts(undefined));
+    }
+  }, [handleBillCounts, scope]);
   useEffect(() => { refreshSummary(); }, [refreshSummary]);
 
-  const tabs: { key: View; label: string; icon: React.ReactNode; count?: number }[] = [
-    { key: 'inbox', label: 'รายการรับเงิน', icon: <Inbox size={16} />, count: summary?.total },
-    // หัก ณ ที่จ่าย (WHT, task 2) — visible to EVERY Juno user (not CEO-gated, unlike รอยืนยัน
-    // รับเงิน/รายงาน below): list + period totals only, no certificate tracking. Its own totals
-    // bar (fetched inside PaymentsView) covers the count, so no badge here.
-    { key: 'wht', label: 'หัก ณ ที่จ่าย', icon: <Percent size={16} /> },
-    { key: 'disc', label: 'ยอดเกิน/ขาด', icon: <Scale size={16} />, count: summary?.discrepancyOpen },
-    // รอยืนยันรับเงิน is CEO-only (server 403s POST /receive for non-supervisor; the confirm
-    // action itself mirrors the delete gate) — omit the tab for finance/MD so it's never shown.
-    ...(isCeo ? [{ key: 'receive' as const, label: 'รอยืนยันรับเงิน', icon: <HandCoins size={16} />, count: summary?.awaitingReceive }] : []),
-    { key: 'flags', label: 'ปักธง', icon: <Flag size={16} />, count: summary?.flagged },
-    { key: 'recon', label: 'กระทบยอด', icon: <Scale size={16} />, count: bankUnmatched },
-    // กระทบยอด RE — visible to EVERY Juno user (only the นำเข้าไฟล์ RE upload inside it is
-    // CEO-only, same as 'recon's ImportPanel). Match status is computed live, so no badge
-    // count here (its own totals bar inside ReRecon covers the summary).
-    { key: 'reRecon', label: 'กระทบยอด RE', icon: <FileCheck size={16} /> },
-    { key: 'bills', label: 'บิลมือ', icon: <ReceiptText size={16} />, count: billAlerts },
-    // ตรวจสอบยอด — the FinanceAudit mis-read trail, visible to EVERY Juno user (finance sees the
-    // flags on payments they verify); only the CEO can resolve, gated inside the tab itself.
-    { key: 'audit', label: 'ตรวจสอบยอด', icon: <Banknote size={16} />, count: auditOpen },
-    // รายงาน is CEO-only (server 403s /reports + /export.csv for non-supervisor) — omit the tab
-    // for finance/MD so it's never shown. Their default tab (inbox) is one they can use.
-    ...(isCeo ? [{ key: 'reports' as const, label: 'รายงาน', icon: <BarChart3 size={16} /> }] : []),
-  ];
+  const billTab = { key: 'bills' as const, label: 'บิลมือ', icon: <ReceiptText size={16} />, count: billAlerts };
+  const tabs: { key: View; label: string; icon: React.ReactNode; count?: number }[] = scope === 'billsOnly'
+    ? [billTab]
+    : [
+        { key: 'inbox', label: 'รายการรับเงิน', icon: <Inbox size={16} />, count: summary?.total },
+        // หัก ณ ที่จ่าย (WHT, task 2) — visible to every non-md Juno user (not CEO-gated,
+        // unlike รอยืนยันรับเงิน/รายงาน below). Its own totals bar covers the count.
+        { key: 'wht', label: 'หัก ณ ที่จ่าย', icon: <Percent size={16} /> },
+        { key: 'disc', label: 'ยอดเกิน/ขาด', icon: <Scale size={16} />, count: summary?.discrepancyOpen },
+        // รอยืนยันรับเงิน is CEO-only (server 403s POST /receive for non-supervisor).
+        ...(isCeo ? [{ key: 'receive' as const, label: 'รอยืนยันรับเงิน', icon: <HandCoins size={16} />, count: summary?.awaitingReceive }] : []),
+        { key: 'flags', label: 'ปักธง', icon: <Flag size={16} />, count: summary?.flagged },
+        { key: 'recon', label: 'กระทบยอด', icon: <Scale size={16} />, count: bankUnmatched },
+        { key: 'reRecon', label: 'กระทบยอด RE', icon: <FileCheck size={16} /> },
+        ...(scope === 'full' ? [billTab] : []),
+        // ตรวจสอบยอด stays employee/supervisor-visible; only the CEO can resolve.
+        { key: 'audit', label: 'ตรวจสอบยอด', icon: <Banknote size={16} />, count: auditOpen },
+        ...(isCeo ? [{ key: 'reports' as const, label: 'รายงาน', icon: <BarChart3 size={16} /> }] : []),
+      ];
 
   return (
     <div className="min-h-screen bg-slate-100 font-sans text-slate-800">

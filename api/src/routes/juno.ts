@@ -24,10 +24,28 @@ import {
   satangToBaht,
 } from '../finance/discrepancy.js';
 
+// Owner decision 2026-07-13: Nee's md tier is default-deny inside Juno and may use only
+// the manual-bill lane plus its read-only product picker. Employees keep the existing Juno
+// surface except that issuing/editing/voiding manual bills belongs to md/supervisor only.
+// Keys deliberately use Fastify's route pattern (req.routeOptions.url), never the raw URL.
+const MD_JUNO_ALLOWED_ROUTES = new Set([
+  'GET /api/juno/bills',
+  'POST /api/juno/bills',
+  'PATCH /api/juno/bills/:id',
+  'POST /api/juno/bills/:id/void',
+  'GET /api/juno/products',
+]);
+const EMPLOYEE_JUNO_DENIED_ROUTES = new Set([
+  'POST /api/juno/bills',
+  'PATCH /api/juno/bills/:id',
+  'POST /api/juno/bills/:id/void',
+]);
+
 // Juno finance API. Reads the Payment table (written by Minerva's /to-finance hook) and
 // owns the finance lifecycle: verify → record, flag-queue triage, tax-invoice tracking,
-// and reporting/export. INCOME / LINE-slip only for the MVP. Access = requireApp('juno'):
-// supervisor (Dr. M) + any employee granted 'juno' (the Finance team — Benz/Meow). See JUNO_BRIEF.md.
+// and reporting/export. INCOME / LINE-slip only for the MVP. Access starts with requireApp('juno'):
+// supervisor + granted employees keep the finance surface, while md is narrowed by the hook
+// below to manual bills/products only (owner decision 2026-07-13). See JUNO_BRIEF.md.
 //
 // PHASE B (see JUNO_PROCESS_BRIEF.md): bank import (KBIZ + K SHOP) + reconciliation
 // against checked (RE-carrying) Payments. Owner downloads both files every Wed/Sat;
@@ -512,6 +530,22 @@ async function runAutoMatcher(txnIds?: string[]): Promise<{ matched: number; che
 export async function junoRoutes(app: FastifyInstance) {
   app.addHook('preHandler', requireAuth);
   app.addHook('preHandler', requireApp('juno'));
+  app.addHook('preHandler', async (req, reply) => {
+    const role = req.agent?.role;
+    if (role === 'supervisor') return;
+
+    const routeKey = `${req.method} ${req.routeOptions.url}`;
+    if (role === 'md') {
+      if (!MD_JUNO_ALLOWED_ROUTES.has(routeKey)) {
+        return reply.code(403).send({ error: 'forbidden' });
+      }
+      return;
+    }
+
+    if (role === 'employee' && EMPLOYEE_JUNO_DENIED_ROUTES.has(routeKey)) {
+      return reply.code(403).send({ error: 'forbidden' });
+    }
+  });
 
   // GET /api/juno/summary — headline counts for the Juno dashboard / login landing.
   app.get('/api/juno/summary', async () => {
@@ -826,7 +860,7 @@ export async function junoRoutes(app: FastifyInstance) {
 
   // GET /api/juno/wht/summary?from=&to= — period totals for the หัก ณ ที่จ่าย (WHT, task 2)
   // tab: count + net(received)/wht/gross(full-price) over non-void payments with a withheld amount,
-  // in the given Thai-day range. Visible to every Juno user (list + totals only — no
+  // in the given Thai-day range. Visible to employee/supervisor users (list + totals only — no
   // certificate tracking) — same requireApp('juno') gate as the rest of this file, no extra
   // supervisor check (contrast with the CEO-only /reports below).
   const whtSummaryQuerySchema = z.object({
@@ -879,8 +913,8 @@ export async function junoRoutes(app: FastifyInstance) {
   // DELETE /api/juno/payments/:id — CEO-ONLY permanent hard delete. Contrast with
   // POST /status {status:'void'}, which only soft-deletes (the row stays, filterable back
   // in). This is the true "gone forever" override — supervisor only, not even md, so it is
-  // gated EXPLICITLY here rather than relying on the plugin's requireApp('juno') hook (which
-  // now also admits md since Juno access was widened). Any status is deletable; there is no
+  // gated EXPLICITLY here in addition to the plugin's md bills-only hook. Any status is
+  // deletable; there is no
   // such thing as "too far along to delete" for the CEO override.
   app.delete<{ Params: { id: string } }>('/api/juno/payments/:id', async (req, reply) => {
     if (req.agent?.role !== 'supervisor') return reply.code(403).send({ error: 'forbidden' });
@@ -909,8 +943,7 @@ export async function junoRoutes(app: FastifyInstance) {
 
   // PATCH /api/juno/payments/:id { customerCode?, customerName?, senderName?, amount?, bank?,
   // transferAt?, ref?, salesName?, note?, taxInvoice?, chequeNo?, chequeBank?, chequeDueDate? } —
-  // แก้ไขรายละเอียด: let any Juno user (FIN/MD/CEO — same requireApp('juno') gate as the rest of
-  // this file, NOT supervisor-only) fix typos on an existing payment — wrong customer code/name,
+  // แก้ไขรายละเอียด: let FIN/CEO users fix typos on an existing payment — wrong customer code/name,
   // a mis-typed sender/bank/ref, etc. This is routine data-entry correction, unlike the CEO-only
   // ลบถาวร above. Every field is OPTIONAL (partial update) — the client sends only what changed.
   //
@@ -1887,7 +1920,7 @@ export async function junoRoutes(app: FastifyInstance) {
 
   // GET /api/juno/re?status=&q=&from=&to= — the กระทบยอด RE tab: every imported RE, each
   // cross-checked LIVE against current Payments (never stored — always up to date). Visible
-  // to every Juno user (no supervisor gate, unlike the import above). Built in ≤2 queries
+  // to employee/supervisor users (no supervisor gate, unlike the import above). Built in ≤2 queries
   // total (ReReceipt list + one Payment scan), never one query per RE.
   const reQuerySchema = z.object({
     status: z.enum(['all', 'matched', 'mismatch', 'unpaid']).optional(),

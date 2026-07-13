@@ -11,8 +11,8 @@ import { ceresRole } from '../ceres/auth.js';
 // See docs/JUPITER_BRIEF.md §5.
 //
 // Post unified-auth (PR #7): "who may enter an app" is a PER-PERSON grant, not a role
-// list. hasAppAccess(agent, app) is the single gate (supervisor → everything; md → ceres
-// only; employee → their own Agent.apps). We compute+emit a badge for an app IFF
+// list. hasAppAccess(agent, app) is the single gate (supervisor → everything; md → its
+// implicit MD_APPS; employee → their own Agent.apps). We compute+emit a badge for an app IFF
 // hasAppAccess is true for that app, so each person's badges match exactly the tiles they
 // can open. AppName values (minerva | vesta | juno | ceres) come straight from auth/jwt.ts.
 //

@@ -13,7 +13,7 @@ import { backfillProductEmbeddings } from '../catalog/productEmbeddings.js';
 //
 // Three tiers (unified auth):
 //   supervisor — Dr. M, implicit access to everything.
-//   md         — Nee, implicit access to Ceres (management side) only.
+//   md         — Nee, implicit access via MD_APPS in auth/jwt.ts (including scoped Juno).
 //   employee   — all staff; per-person app access via Agent.apps (owner-edited, Pantheon's
 //                admin UI — boot-sync never overwrites it on an existing row).
 // `group` + `gender` are DISPLAY metadata for the suite login screens (role-grouped tiles +

@@ -107,8 +107,9 @@ export function verifyToken(
   }
 }
 
-// supervisor → everything; md → Ceres + Minerva + Juno (the MD runs expenses, the sales
-// console, and finance); employee → their own per-person Agent.apps grant list.
+// supervisor → everything; md → Ceres + Minerva + Juno. The Juno grant admits Nee to the app,
+// while routes/juno.ts narrows her to bills/products only (owner decision 2026-07-13).
+// employee → their own per-person Agent.apps grant list.
 export const MD_APPS: readonly AppName[] = ['ceres', 'minerva', 'juno'];
 export function hasAppAccess(agent: AuthedAgent, app: AppName): boolean {
   if (agent.role === 'supervisor') return true;

@@ -9,14 +9,19 @@ import { buildSlipUrl } from '../finance/slipLink.js';
 // 'juno' grant, not 'minerva'). Supervisors pass every requireApp, so the Minerva console
 // (web/, supervisor-only) keeps working unchanged.
 //
-// READ (list) is open to any Juno user so finance can SEE the flags on payments they process;
-// RESOLVE (marking a discrepancy verified) stays supervisor-only via a per-route requireRole.
+// READ (list) is open to employees/supervisor so finance can SEE the flags on payments they
+// process; md is denied at the router hook. RESOLVE stays supervisor-only via requireRole.
 export async function financeRoutes(app: FastifyInstance) {
   app.addHook('preHandler', requireAuth);
   app.addHook('preHandler', requireApp('juno'));
+  // Owner decision 2026-07-13: md is bills-only in Juno; the separate FinanceAudit router
+  // is entirely outside that lane. Employees and supervisors retain their existing access.
+  app.addHook('preHandler', async (req, reply) => {
+    if (req.agent?.role === 'md') return reply.code(403).send({ error: 'forbidden' });
+  });
 
-  // GET /api/finance/audits?status=open|resolved|all — readable by any Juno user (finance
-  // employees included), so no supervisor sub-check here; requireApp('juno') is the only gate.
+  // GET /api/finance/audits?status=open|resolved|all — readable by finance employees and the
+  // supervisor; the router hook above denies md.
   app.get('/api/finance/audits', async (req) => {
     const status = (req.query as { status?: string })?.status ?? 'open';
     const where = status === 'all' ? {} : status === 'resolved' ? { resolvedAt: { not: null } } : { resolvedAt: null };
