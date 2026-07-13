@@ -13,6 +13,10 @@ import { hasAppAccess, type Agent, type AppName, type Badges } from './api';
 // match exactly what the caller can open (and what /api/pantheon/badges returns). hasAppAccess()
 // below mirrors the server's gate (api/src/auth/jwt.ts) so tiles == badges == openable apps.
 // `order` is most-used-first and resolved in tilesFor().
+//
+// URLs use || (not ??) deliberately: the Dockerfile ENV-copies unset build ARGs, which makes
+// absent VITE_*_URL vars arrive as DEFINED-BUT-EMPTY strings — ?? would keep "" and hide
+// every tile (live incident 2026-07-12). || treats empty as unset so the defaults apply.
 
 export type AppKey = AppName;
 
@@ -32,7 +36,7 @@ export const APPS: AppDef[] = [
     key: 'jupiter',
     name: 'Jupiter',
     job: 'บัญชี · งบการเงิน',
-    url: env.VITE_JUPITER_URL ?? 'https://jupiter.prominentdental.com',
+    url: env.VITE_JUPITER_URL || 'https://jupiter.prominentdental.com',
     accent: 'text-violet-600',
     badge: () => null,
   },
@@ -40,7 +44,7 @@ export const APPS: AppDef[] = [
     key: 'minerva',
     name: 'Minerva',
     job: 'ตอบแชทลูกค้า LINE',
-    url: env.VITE_MINERVA_URL ?? 'https://minerva.prominentdental.com',
+    url: env.VITE_MINERVA_URL || 'https://minerva.prominentdental.com',
     accent: 'text-sky-600',
     badge: (b) => b.minerva?.pending ?? null,
   },
@@ -48,7 +52,7 @@ export const APPS: AppDef[] = [
     key: 'juno',
     name: 'Juno',
     job: 'การเงิน · ตรวจสลิป',
-    url: env.VITE_JUNO_URL ?? 'https://juno.prominentdental.com',
+    url: env.VITE_JUNO_URL || 'https://juno.prominentdental.com',
     accent: 'text-emerald-600',
     badge: (b) => b.juno?.toVerify ?? null,
   },
@@ -56,7 +60,7 @@ export const APPS: AppDef[] = [
     key: 'vesta',
     name: 'Vesta',
     job: 'จัดการสต็อกสินค้า',
-    url: env.VITE_VESTA_URL ?? 'https://vesta.prominentdental.com',
+    url: env.VITE_VESTA_URL || 'https://vesta.prominentdental.com',
     accent: 'text-indigo-600',
     badge: (b) => b.vesta?.lowStock ?? null,
   },
@@ -64,7 +68,7 @@ export const APPS: AppDef[] = [
     key: 'ceres',
     name: 'Ceres',
     job: 'ค่าใช้จ่าย · เงินสดย่อย',
-    url: env.VITE_CERES_URL ?? 'https://ceres.prominentdental.com',
+    url: env.VITE_CERES_URL || 'https://ceres.prominentdental.com',
     accent: 'text-amber-600',
     badge: (b) => b.ceres?.awaitingAction ?? null,
   },
@@ -72,7 +76,7 @@ export const APPS: AppDef[] = [
     key: 'mercury',
     name: 'Mercury',
     job: 'จัดซื้อ · สั่งของ',
-    url: env.VITE_MERCURY_URL ?? 'https://mercury.prominentdental.com',
+    url: env.VITE_MERCURY_URL || 'https://mercury.prominentdental.com',
     accent: 'text-orange-600',
     badge: (b) => b.mercury?.pending ?? null,
   },
