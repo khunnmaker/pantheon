@@ -25,6 +25,8 @@ const schema = z.object({
   RETRIEVE_K: z.coerce.number().int().positive().default(3),
   SESSION_IDLE_MINUTES: z.coerce.number().int().positive().default(30),
   DRAFT_DEBOUNCE_MS: z.coerce.number().int().min(0).default(15000), // burst debounce: wait this long after the LAST message before drafting (0 = draft immediately)
+  DRAFT_IMAGE_MAX: z.coerce.number().int().positive().default(3),
+  DRAFT_IMAGE_MAX_BYTES: z.coerce.number().int().positive().default(3750000), // raw bytes; ×4/3 base64 ≈ Anthropic's 5MB/image wire limit
   KB_INJECT_ALL_MAX: z.coerce.number().int().positive().default(120),
   PICTURE_REFRESH_DAYS: z.coerce.number().int().positive().default(7), // staleness window: re-fetch a customer's LINE picture at most once per this many days
 

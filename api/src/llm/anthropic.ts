@@ -103,12 +103,19 @@ export async function callClaudeWithImage(
   image: { base64: string; mediaType: string },
   maxTokens = MAX_TOKENS,
 ): Promise<string> {
+  return callClaudeWithImages(userText, system, [image], maxTokens);
+}
+
+// Vision completion with multiple images. Images stay in caller-provided order
+// (the draft pipeline supplies them oldest-first), followed by the text block.
+export async function callClaudeWithImages(
+  userText: string,
+  system: SystemPrompt,
+  images: { base64: string; mediaType: string }[],
+  maxTokens = MAX_TOKENS,
+): Promise<string> {
   const c = getClient();
   if (!c) throw new Error('ANTHROPIC_API_KEY not configured');
-
-  const mediaType = SUPPORTED_IMAGE_TYPES.includes(image.mediaType)
-    ? (image.mediaType as 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp')
-    : 'image/jpeg';
 
   const res = await c.messages.create({
     model: MODEL,
@@ -118,7 +125,16 @@ export async function callClaudeWithImage(
       {
         role: 'user',
         content: [
-          { type: 'image', source: { type: 'base64', media_type: mediaType, data: image.base64 } },
+          ...images.map((image) => ({
+            type: 'image' as const,
+            source: {
+              type: 'base64' as const,
+              media_type: (SUPPORTED_IMAGE_TYPES.includes(image.mediaType)
+                ? image.mediaType
+                : 'image/jpeg') as 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp',
+              data: image.base64,
+            },
+          })),
           { type: 'text', text: userText },
         ],
       },

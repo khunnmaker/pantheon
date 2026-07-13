@@ -1,6 +1,6 @@
 import { env } from '../env.js';
 import { prisma } from '../db/prisma.js';
-import { generateDraftForMessage, generateImageDraft, generateStickerDraft } from './draft.js';
+import { generateDraftForMessage } from './draft.js';
 import { pushToConsole } from '../ws/io.js';
 
 type Kind = 'text' | 'image' | 'sticker';
@@ -32,8 +32,8 @@ export async function nonTextNeedsHuman(messageId: string, kind: string): Promis
 // the LATEST message's draft already covers every unanswered message in the burst (draft.ts
 // gathers them), so the earlier calls it replaces would have been thrown away anyway.
 // In-process state: a restart drops pending timers (those messages simply get no auto-draft;
-// staff can ร่างใหม่). Trade-off documented: in a mixed burst the LAST message's kind wins
-// (e.g. a burst ending with an image/sticker generates that kind's draft).
+// staff can ร่างใหม่). The latest message chooses the Draft row, while draft.ts gathers the
+// entire unanswered burst and decides whether it needs text, sticker, or vision handling.
 const pending = new Map<string, { timer: ReturnType<typeof setTimeout>; messageId: string; kind: Kind }>();
 
 export function scheduleDraft(customerId: string, messageId: string, kind: Kind): void {
@@ -52,10 +52,7 @@ export function scheduleDraft(customerId: string, messageId: string, kind: Kind)
 
 async function runDraft(customerId: string, messageId: string, kind: Kind): Promise<void> {
   try {
-    const out =
-      kind === 'image' ? await generateImageDraft(messageId)
-      : kind === 'sticker' ? await generateStickerDraft(messageId)
-      : await generateDraftForMessage(messageId);
+    const out = await generateDraftForMessage(messageId);
     pushToConsole('draft:new', { messageId, customerId, draft: out.draft, guardrailReason: out.guardrailReason });
   } catch (err) {
     // eslint-disable-next-line no-console

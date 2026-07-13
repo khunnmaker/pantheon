@@ -77,6 +77,8 @@ model Message {
   attachmentRef    String?
   // original filename for received "file" messages (for download).
   attachmentName   String?
+  // Short AI-generated description used to make customer images meaningful in later history.
+  aiCaption        String?
   // LINE quote-reply support. quoteToken = LINE's token to quote THIS message in a later
   // send (issued only for inbound text/sticker; never exposed to the client). quotedMessageId
   // = OUR internal Message.id this message is a reply to (resolved at write time), for both an
