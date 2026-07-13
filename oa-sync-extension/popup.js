@@ -119,11 +119,57 @@ async function onAutoOpenToggle() {
   setMsg($('sessionMsg'), $('autoOpenToggle').checked ? 'เปิดใช้งานอัตโนมัติแล้ว' : 'ปิดการเปิดอัตโนมัติแล้ว', 'ok');
 }
 
+// --- one-click sweep: start/stop the chat-list walk in the chat.line.biz tab ---------------
+// The sweep itself runs in the content script (content.js runSweep); the popup only sends
+// start/stop and mirrors progress from chrome.storage.local.sweep (updated per chat opened).
+
+async function oaTab() {
+  const tabs = await chrome.tabs.query({ url: 'https://chat.line.biz/*' });
+  return tabs[0] || null;
+}
+
+async function sweepIsRunning() {
+  const { sweep } = await chrome.storage.local.get({ sweep: null });
+  // Consider it running only if the content script reported within the last 30s — a closed
+  // tab mid-sweep would otherwise leave the popup stuck on "กำลังกวาด" forever.
+  return !!(sweep && sweep.running && Date.now() - (sweep.at || 0) < 30_000);
+}
+
+async function renderSweep() {
+  const btn = $('sweepBtn');
+  if (!btn) return;
+  const { sweep } = await chrome.storage.local.get({ sweep: null });
+  const running = await sweepIsRunning();
+  btn.textContent = running ? '⏹ หยุดกวาด (เปิดแล้ว ' + ((sweep && sweep.opened) || 0) + ' แชท)' : '🧹 เปิดแชททั้งหมดอัตโนมัติ (sweep)';
+  if (!running && sweep && sweep.done) {
+    setMsg($('sweepMsg'), 'รอบล่าสุด: เปิดไป ' + (sweep.opened || 0) + ' แชท', 'ok');
+  }
+}
+
+async function onSweepClick() {
+  const tab = await oaTab();
+  if (!tab) {
+    setMsg($('sweepMsg'), 'ไม่พบแท็บ chat.line.biz — เปิดและล็อกอินก่อนค่ะ', 'err');
+    return;
+  }
+  const running = await sweepIsRunning();
+  try {
+    await chrome.tabs.sendMessage(tab.id, { type: running ? 'sweep-stop' : 'sweep-start' });
+    setMsg($('sweepMsg'), running ? 'สั่งหยุดแล้ว — จะหยุดหลังแชทปัจจุบัน' : 'เริ่มกวาดแล้ว — ปิด popup ได้ ทำงานต่อเอง', 'ok');
+  } catch (_e) {
+    setMsg($('sweepMsg'), 'แท็บ chat.line.biz ยังไม่พร้อม — กด F5 ที่แท็บนั้นแล้วลองใหม่', 'err');
+  }
+  setTimeout(renderSweep, 500);
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   $('loginBtn').addEventListener('click', doLogin);
   $('password').addEventListener('keydown', (e) => { if (e.key === 'Enter') doLogin(); });
   $('logoutBtn').addEventListener('click', doLogout);
   $('enabledToggle').addEventListener('change', onToggle);
   $('autoOpenToggle').addEventListener('change', onAutoOpenToggle);
+  $('sweepBtn').addEventListener('click', onSweepClick);
   render();
+  renderSweep();
+  setInterval(renderSweep, 1000); // live progress while the popup stays open
 });

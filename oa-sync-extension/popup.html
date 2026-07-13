@@ -45,7 +45,7 @@
   <!-- Logged-out view -->
   <div id="loginView">
     <label for="apiUrl">เซิร์ฟเวอร์ Minerva</label>
-    <input type="text" id="apiUrl" value="https://minerva-production-9309.up.railway.app" />
+    <input type="text" id="apiUrl" value="https://api.prominentdental.com" />
     <label for="email">อีเมล</label>
     <input type="email" id="email" placeholder="you@prominent.co.th" autocomplete="username" />
     <label for="password">รหัสผ่าน</label>
@@ -70,6 +70,10 @@
     </label>
     <p class="hint">ต้องมีแท็บ chat.line.biz เปิดค้างไว้ (แท็บพื้นหลัง) และลูกค้าเคยซิงก์แล้วอย่างน้อย 1 ครั้ง</p>
     <div class="msg" id="sessionMsg"></div>
+    <hr />
+    <button class="primary" id="sweepBtn">🧹 เปิดแชททั้งหมดอัตโนมัติ (sweep)</button>
+    <div class="msg" id="sweepMsg"></div>
+    <p class="hint">เดินเปิดแชทจากบนลงล่างทีละแชท (~5–7 วิ/แชท) เพื่อซิงก์ลูกค้าทุกคน — ใช้เมื่อมีแชทใหม่สะสม กดปุ่มซ้ำเพื่อหยุด ต้องมีแท็บ chat.line.biz เปิดอยู่</p>
     <hr />
     <p class="hint">เปิดแชทลูกค้าใน chat.line.biz ตามปกติ — สถานะอ่านจะซิงก์เข้า Minerva เอง ส่วนขยายนี้อ่านเฉพาะชื่อ/รหัสแชท/ป้าย “อ่านแล้ว” เท่านั้น ไม่อ่านเนื้อหาข้อความ และไม่เก็บรหัสผ่าน LINE</p>
   </div>

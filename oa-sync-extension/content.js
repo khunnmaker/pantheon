@@ -180,6 +180,88 @@
     }
   }, 1000);
 
+  // --- one-click SWEEP (started/stopped from the popup) -------------------------------------
+  // Walks the chat list top→bottom, opening each chat once at a human pace (~5–7s) so the
+  // passive sync above captures every customer. Same logic as the proven console script:
+  // rows are <a href="#"> found by their <h6> title; progress tracked by URL after each click.
+  // Progress is mirrored to chrome.storage.local.sweep so the popup can display it live.
+  let sweepRunning = false;
+  let sweepStopFlag = false;
+
+  const sweepReport = (patch) => {
+    try { chrome.storage.local.set({ sweep: { running: sweepRunning, at: Date.now(), ...patch } }); } catch (_e) { /* ignore */ }
+  };
+
+  async function runSweep() {
+    if (sweepRunning) return;
+    sweepRunning = true;
+    sweepStopFlag = false;
+
+    const WAIT_MS = 5500;
+    const JITTER_MS = 1500;
+    const MAX_CHATS = 1000;
+    const MAX_IDLE_SCROLLS = 8;
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const clickedKeys = new Set();
+    const visitedPaths = new Set();
+    let idleScrolls = 0;
+
+    const rows = () =>
+      Array.from(document.querySelectorAll('a'))
+        .filter((a) => a.querySelector('h6') && a.offsetParent !== null)
+        .sort((x, y) => x.getBoundingClientRect().top - y.getBoundingClientRect().top);
+    const keyOf = (a) => (a.textContent || '').replace(/\s+/g, ' ').trim();
+    const scroller = () => {
+      let el = (rows()[0] || {}).parentElement;
+      while (el && el.scrollHeight <= el.clientHeight + 10) el = el.parentElement;
+      return el;
+    };
+
+    sweepReport({ opened: 0, done: false });
+    try {
+      while (!sweepStopFlag && visitedPaths.size < MAX_CHATS) {
+        const next = rows().find((a) => !clickedKeys.has(keyOf(a)));
+        if (next) {
+          idleScrolls = 0;
+          clickedKeys.add(keyOf(next));
+          next.click();
+          await sleep(1200);
+          if (location.pathname.includes('/chat/')) visitedPaths.add(location.pathname);
+          sweepReport({ opened: visitedPaths.size, done: false });
+          await sleep(WAIT_MS - 1200 + Math.random() * JITTER_MS);
+        } else {
+          const sc = scroller();
+          if (!sc || idleScrolls >= MAX_IDLE_SCROLLS) break;
+          sc.scrollTop += sc.clientHeight * 0.8;
+          idleScrolls++;
+          await sleep(1500);
+        }
+      }
+    } catch (_e) {
+      // a redesign mid-run degrades to "sweep ends early" — never breaks the page
+    }
+    sweepRunning = false;
+    sweepReport({ opened: visitedPaths.size, done: true });
+  }
+
+  try {
+    chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+      if (msg && msg.type === 'sweep-start') {
+        void runSweep();
+        try { sendResponse({ ok: true, running: true }); } catch (_e) { /* ignore */ }
+        return false;
+      }
+      if (msg && msg.type === 'sweep-stop') {
+        sweepStopFlag = true;
+        try { sendResponse({ ok: true, running: false }); } catch (_e) { /* ignore */ }
+        return false;
+      }
+      return false;
+    });
+  } catch (_e) {
+    // messaging unavailable — sweep just won't be startable from the popup
+  }
+
   // First pass shortly after load.
   schedule();
 })();
