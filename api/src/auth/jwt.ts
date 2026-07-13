@@ -59,6 +59,25 @@ export function signOaSyncToken(agent: Pick<AuthedAgent, 'id' | 'email' | 'name'
   );
 }
 
+// The scope carried by the suite SSO *device-session* cookie ("remember this computer").
+// Same isolation story as the OA-sync token: a session-scoped token verifies ONLY where the
+// caller passes { scope: SESSION_SCOPE } — that's GET /api/auth/me and nothing else — and the
+// default verifyToken() every API route uses REJECTS it, so the long-lived cookie can never be
+// replayed as an Authorization bearer. Long TTL so staff log in once per device instead of
+// every 12 hours; /me re-issues the cookie on each bootstrap (rolling window), and access is
+// still re-read from the live Agent row per request, so removing/demoting an account revokes
+// a remembered device immediately despite the TTL. The bearer tokens apps hold stay 12h.
+export const SESSION_SCOPE = 'session';
+const SESSION_EXPIRES = '30d';
+
+export function signSessionToken(agent: Pick<AuthedAgent, 'id' | 'email' | 'name' | 'role'>): string {
+  return jwt.sign(
+    { email: agent.email, name: agent.name, role: agent.role, scope: SESSION_SCOPE },
+    env.JWT_SECRET,
+    { subject: agent.id, expiresIn: SESSION_EXPIRES, algorithm: 'HS256' },
+  );
+}
+
 // Returns the CLAIMED identity from the token, or null if missing/invalid/expired. The role
 // here is only a signed claim — every consumer re-reads the live Agent row (see
 // authedAgentFromToken) to get the real, current role + apps before trusting anything.
