@@ -4,3 +4,4 @@
 export * from './avatar';
 export * from './loginGroups';
 export * from './appName';
+export * from './sso';

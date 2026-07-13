@@ -3,6 +3,7 @@ import { Crown, LogIn, Loader2, AlertTriangle, ShieldCheck, ArrowLeft } from 'lu
 import { login, setSession, type Agent } from './lib/api';
 import { ROLE_GROUPS, SUPERVISOR_EMAIL, type Person, type RoleGroup } from './lib/roster';
 import { memberAvatar, teamAvatar } from '@pantheon/ui';
+import type { AppDef } from './lib/apps';
 
 const PIN_LEN = 6;
 
@@ -21,7 +22,7 @@ const isSupervisor = (p: Person) => p.email === SUPERVISOR_EMAIL;
 // VISUAL: a flat Windows-Phone / Metro-style TILE GRID. Solid-color squared tiles, bold white
 // text, tight uniform gaps, no shadows/gradients. Department accent color lives on each group in
 // roster.ts (RoleGroup.color, a Tailwind bg-* class) and threads down to the L2/L3 banners.
-export default function Login({ onLogin }: { onLogin: (agent: Agent) => void }) {
+export default function Login({ onLogin, target }: { onLogin: (agent: Agent) => void; target?: AppDef | null }) {
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
   const [selectedEmail, setSelectedEmail] = useState<string | null>(null);
   const [secret, setSecret] = useState('');
@@ -90,6 +91,16 @@ export default function Login({ onLogin }: { onLogin: (agent: Agent) => void }) 
           <h1 className="text-2xl font-bold tracking-tight text-violet-800">The Pantheon</h1>
           <p className="text-sm text-slate-500 mt-1">พอร์ทัลทีมงาน · เลือกชื่อเพื่อเข้าสู่ระบบ</p>
         </div>
+
+        {target && (
+          <div className="flex justify-center mb-5">
+            {/* border-current/<alpha> doesn't compile on Tailwind v3 (currentColor takes no
+                alpha modifier) — keep the neutral card border; the deity accent is the text. */}
+            <div className={`inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold ${target.accent}`}>
+              เข้าสู่ระบบเพื่อไป {target.name} · {target.job}
+            </div>
+          </div>
+        )}
 
         {!group ? (
           // ── Level 1: departments (root, no back button) ──

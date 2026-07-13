@@ -6,8 +6,13 @@ import { tilesFor, type AppDef } from './lib/apps';
 // The portal home: a tile grid, one tile per app this account is GRANTED (with a configured
 // URL), each showing the deity name + Thai job label + a live pending-work badge. A tile opens
 // the app's URL in the same tab. Tiles are grant-gated (tilesFor) so they match the caller's
-// badges exactly. Phase 1: apps still ask for their own login when opened (SSO is Phase 3).
-export default function Portal({ agent, onLogout }: { agent: Agent; onLogout: () => void }) {
+// badges exactly. Apps share the SSO cookie and route logged-out visitors back here to sign in.
+export default function Portal({ agent, onLogout, denied, onDismissDenied }: {
+  agent: Agent;
+  onLogout: () => void;
+  denied?: AppDef | null;
+  onDismissDenied?: () => void;
+}) {
   const [badges, setBadges] = useState<Badges | null>(null);
   const [loading, setLoading] = useState(true);
   const tiles = tilesFor(agent);
@@ -48,6 +53,15 @@ export default function Portal({ agent, onLogout }: { agent: Agent; onLogout: ()
       </header>
 
       <main className="max-w-3xl mx-auto p-4 sm:p-6">
+        {denied && (
+          <div className="mb-4 flex items-start justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-amber-800">
+            <div>
+              <div className="text-sm font-semibold">บัญชีนี้ไม่มีสิทธิ์เข้า {denied.name}</div>
+              <div className="mt-0.5 text-xs text-amber-700">เลือกแอปที่เปิดได้จากด้านล่าง หรือติดต่อหัวหน้าเพื่อขอสิทธิ์</div>
+            </div>
+            <button type="button" onClick={onDismissDenied} aria-label="ปิด" className="shrink-0 text-amber-600 hover:text-amber-900">×</button>
+          </div>
+        )}
         <p className="text-sm text-slate-500 mb-4">เลือกแอปที่ต้องการเปิด</p>
         {loading && !badges && (
           <div className="flex items-center gap-2 text-slate-400 text-sm mb-4">
