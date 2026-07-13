@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Crown, LogIn, Loader2, AlertTriangle, ShieldCheck, ArrowLeft } from 'lucide-react';
 import { login, setSession, type Agent } from './lib/api';
 import { ROLE_GROUPS, SUPERVISOR_EMAIL, type Person, type RoleGroup } from './lib/roster';
+import { forgetLogin, pruneRemembered, rememberLogin } from './lib/remembered';
 import { memberAvatar, teamAvatar } from '@pantheon/ui';
 import type { AppDef } from './lib/apps';
 
@@ -11,20 +12,42 @@ const PIN_LEN = 6;
 // password". Nee (MD) also logs in with a password now, so key the tag on identity, not cred.
 const isSupervisor = (p: Person) => p.email === SUPERVISOR_EMAIL;
 
+interface ResolvedLogin {
+  person: Person;
+  group: RoleGroup;
+}
+
+// Stored records contain identity only; display details always come from today's roster.
+const resolveLogin = (email: string): ResolvedLogin | null =>
+  ROLE_GROUPS.flatMap((group) =>
+    group.members.map((person) => ({ person, group })),
+  ).find(({ person }) => !person.comingSoon && !!person.email && person.email === email) ?? null;
+
 // Suite login standard: no credential box until a name is tapped; then Dr. M & Nee (MD) type a
 // password, everyone else a masked auto-submit 6-digit PIN. The picker is a 3-level DRILL-DOWN:
 //   L1 departments (the 6 ROLE_GROUPS) → tap one hides its siblings and shows
 //   L2 that group's name cards → tap one hides its siblings and shows
 //   L3 the person + credential input.
 // Each deeper level has a back button that pops exactly ONE level (clears the deeper selection
-// first). State is minimal: selectedGroupId + selectedEmail, both nullable.
+// first); recent-user shortcuts return to their panel instead of stepping through Level 2.
 //
 // VISUAL: a flat Windows-Phone / Metro-style TILE GRID. Solid-color squared tiles, bold white
 // text, tight uniform gaps, no shadows/gradients. Department accent color lives on each group in
 // roster.ts (RoleGroup.color, a Tailwind bg-* class) and threads down to the L2/L3 banners.
 export default function Login({ onLogin, target }: { onLogin: (agent: Agent) => void; target?: AppDef | null }) {
-  const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
-  const [selectedEmail, setSelectedEmail] = useState<string | null>(null);
+  const [remembered, setRemembered] = useState<ResolvedLogin[]>(() =>
+    pruneRemembered((email) => resolveLogin(email) !== null)
+      .map(({ email }) => resolveLogin(email))
+      .filter((entry): entry is ResolvedLogin => entry !== null),
+  );
+  const [showAll, setShowAll] = useState(false);
+  const [selectedGroupId, setSelectedGroupId] = useState<string | null>(
+    remembered[0]?.group.id ?? null,
+  );
+  const [selectedEmail, setSelectedEmail] = useState<string | null>(
+    remembered[0]?.person.email ?? null,
+  );
+  const [fromRecent, setFromRecent] = useState(remembered.length > 0);
   const [secret, setSecret] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -41,6 +64,7 @@ export default function Login({ onLogin, target }: { onLogin: (agent: Agent) => 
     try {
       const { token, agent } = await login(person.email, value);
       setSession(token, agent);
+      rememberLogin(person.email);
       onLogin(agent);
     } catch {
       // Never echo the PIN/password back; a generic message avoids account enumeration too.
@@ -55,6 +79,7 @@ export default function Login({ onLogin, target }: { onLogin: (agent: Agent) => 
   function pickGroup(g: RoleGroup) {
     setSelectedGroupId(g.id);
     setSelectedEmail(null);
+    setFromRecent(false);
     setSecret('');
     setError('');
   }
@@ -62,13 +87,34 @@ export default function Login({ onLogin, target }: { onLogin: (agent: Agent) => 
   function pickPerson(p: Person) {
     if (p.comingSoon || !p.email) return; // disabled card — never selectable/submittable.
     setSelectedEmail(p.email);
+    setFromRecent(false);
     setSecret('');
     setError('');
   }
+  // Recent shortcut → L3 directly, with a distinct back destination from normal drill-down.
+  function pickRecent({ person, group: recentGroup }: ResolvedLogin) {
+    setSelectedGroupId(recentGroup.id);
+    setSelectedEmail(person.email);
+    setFromRecent(true);
+    setSecret('');
+    setError('');
+  }
+  function forgetRecent(email: string) {
+    forgetLogin(email);
+    setRemembered((current) => current.filter(({ person }) => person.email !== email));
+  }
   // Back pops exactly one level, clearing the deeper selection first, and resets typed secret/error.
   function back() {
-    if (selectedEmail) setSelectedEmail(null);
-    else setSelectedGroupId(null);
+    if (selectedEmail && fromRecent) {
+      setSelectedEmail(null);
+      setSelectedGroupId(null);
+      setFromRecent(false);
+      setShowAll(false);
+    } else if (selectedEmail) {
+      setSelectedEmail(null);
+    } else {
+      setSelectedGroupId(null);
+    }
     setSecret('');
     setError('');
   }
@@ -103,8 +149,21 @@ export default function Login({ onLogin, target }: { onLogin: (agent: Agent) => 
         )}
 
         {!group ? (
-          // ── Level 1: departments (root, no back button) ──
-          <DepartmentGrid onPick={pickGroup} />
+          remembered.length > 0 && !showAll ? (
+            // ── Recent users: the shared-device shortcut shown before Level 1 ──
+            <RecentUsers
+              remembered={remembered}
+              onPick={pickRecent}
+              onForget={forgetRecent}
+              onShowAll={() => setShowAll(true)}
+            />
+          ) : (
+            // ── Level 1: departments (root; back returns to recent users when available) ──
+            <div>
+              {remembered.length > 0 && <BackButton onClick={() => setShowAll(false)} />}
+              <DepartmentGrid onPick={pickGroup} />
+            </div>
+          )
         ) : !selected ? (
           // ── Level 2: names within the selected department ──
           <div>
@@ -196,6 +255,68 @@ function BackButton({ onClick }: { onClick: () => void }) {
     >
       <ArrowLeft size={16} /> กลับ
     </button>
+  );
+}
+
+// Device-local shortcuts use the same neutral Metro tile as Level 2, with an independent forget
+// control. The control removes identity only; credentials are never persisted in the first place.
+function RecentUsers({
+  remembered,
+  onPick,
+  onForget,
+  onShowAll,
+}: {
+  remembered: ResolvedLogin[];
+  onPick: (entry: ResolvedLogin) => void;
+  onForget: (email: string) => void;
+  onShowAll: () => void;
+}) {
+  return (
+    <div>
+      <div className="text-xs font-semibold text-slate-500 mb-2">ล่าสุดบนเครื่องนี้</div>
+      <div className="grid grid-cols-2 gap-2">
+        {remembered.map((entry) => {
+          const p = entry.person;
+          return (
+            <div
+              key={p.email}
+              className="relative aspect-square rounded-md bg-slate-700 hover:bg-slate-800 transition-colors"
+            >
+              <button
+                onClick={() => onPick(entry)}
+                className="w-full h-full flex flex-col items-center justify-center gap-2 p-2 rounded-md text-white"
+              >
+                {isSupervisor(p) && (
+                  <ShieldCheck size={16} className="absolute top-2 right-2 text-white/90" />
+                )}
+                <img
+                  src={memberAvatar(p.email, p.gender)}
+                  alt=""
+                  className="w-24 h-24 rounded-full object-cover bg-white/15"
+                />
+                <span className="text-sm font-bold leading-tight text-center">{p.label}</span>
+              </button>
+              <button
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onForget(p.email);
+                }}
+                aria-label="ลบออกจากเครื่องนี้"
+                className="absolute top-1 left-1 z-10 p-1.5 text-sm leading-none text-white/60 hover:text-white"
+              >
+                ✕
+              </button>
+            </div>
+          );
+        })}
+      </div>
+      <button
+        onClick={onShowAll}
+        className="w-full mt-3 px-2 py-2 text-xs text-slate-400 hover:text-slate-600"
+      >
+        เลือกจากรายชื่อทั้งหมด
+      </button>
+    </div>
   );
 }
 
