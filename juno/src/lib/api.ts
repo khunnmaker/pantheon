@@ -79,6 +79,7 @@ export interface Payment {
   // DEPRECATED join mirror (reNumbers.join('/')); reNumbers is the real (list) source of truth.
   reNumber: string;
   reNumbers: string[];
+  billNos: string[];
   receiptName: string;
   customerType: CustomerType;
   // how this row was created + legacy read-only cash/cheque banking state
@@ -391,6 +392,7 @@ export const verifyPayment = (
   id: string,
   data: {
     reNumbers: string[];
+    billNos?: string[];
     receiptName?: string;
     customerType?: CustomerType;
     whtRate?: WhtRate;
@@ -767,6 +769,99 @@ export const getReReconciliation = (f: ReReconFilter) =>
 // LINE display name. Returns {} when nothing's imported yet → the cover falls back to receiptName.
 export const getReNames = (reNumbers: string[]) =>
   authed<Record<string, string>>(`/api/juno/re/names?res=${encodeURIComponent([...new Set(reNumbers)].join(','))}`);
+
+// ── บิลมือ (manual bills) ──────────────────────────────────────────────────
+export type ManualBillStatus = 'paid' | 'mismatch' | 'unpaid' | 'void';
+export type ManualBillStatusFilter = 'all' | ManualBillStatus;
+
+export interface ManualBillItem {
+  productId?: string;
+  sku?: string;
+  name: string;
+  qty: number;
+  unitPrice: string;
+  amount: string;
+}
+
+export interface ManualBillLinkedPayment {
+  id: string;
+  amount: string;
+  whtAmount: string;
+  status: PaymentStatus;
+  source: PaymentSource;
+  createdAt: string;
+  customerName: string;
+}
+
+export interface ManualBill {
+  id: string;
+  billNo: string;
+  billedAt: string;
+  buyerName: string;
+  buyerPhone: string;
+  buyerAddress: string;
+  items: ManualBillItem[];
+  amount: string;
+  note: string;
+  status: 'open' | 'void';
+  voidedAt: string | null;
+  voidedById: string | null;
+  createdAt: string;
+  createdById: string | null;
+  createdByName: string;
+  updatedAt: string;
+  linkedPayments: ManualBillLinkedPayment[];
+  billStatus: ManualBillStatus;
+  paidGross: number;
+}
+
+export interface ManualBillBody {
+  billNo?: string;
+  billedAt: string;
+  buyerName: string;
+  buyerPhone: string;
+  buyerAddress: string;
+  items: ManualBillItem[];
+  amount: string;
+  note: string;
+}
+
+export interface ManualBillCounts { unpaid: number; mismatch: number }
+
+export const getManualBills = (f: { q?: string; status?: ManualBillStatusFilter } = {}) => {
+  const p = new URLSearchParams();
+  if (f.q) p.set('q', f.q);
+  if (f.status && f.status !== 'all') p.set('status', f.status);
+  const query = p.toString();
+  return authed<{ bills: ManualBill[]; counts: ManualBillCounts }>(`/api/juno/bills${query ? `?${query}` : ''}`);
+};
+
+export const createManualBill = (body: ManualBillBody) =>
+  authed<{ ok: boolean; bill: ManualBill }>('/api/juno/bills', {
+    method: 'POST', body: JSON.stringify(body),
+  });
+
+export const updateManualBill = (id: string, body: Omit<ManualBillBody, 'billNo'>) =>
+  authed<{ ok: boolean; bill: ManualBill }>(`/api/juno/bills/${id}`, {
+    method: 'PATCH', body: JSON.stringify(body),
+  });
+
+export const setManualBillVoid = (id: string, value: boolean) =>
+  authed<{ ok: boolean; bill: ManualBill }>(`/api/juno/bills/${id}/void`, {
+    method: 'POST', body: JSON.stringify({ void: value }),
+  });
+
+export interface ManualBillProduct {
+  id: string;
+  sku: string;
+  name: string;
+  price: number;
+  stock: number | null;
+  stockAt: string | null;
+}
+
+export const getManualBillProducts = (q: string) =>
+  authed<{ products: ManualBillProduct[] }>(`/api/juno/products?q=${encodeURIComponent(q)}`);
 
 // ── ตรวจสอบยอด (FinanceAudit mis-read trail) ─────────────────────────────────
 // Every time staff submit a slip amount that differs from what the AI read (OCR), Minerva logs

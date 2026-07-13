@@ -39,6 +39,31 @@ const STATUSES = ['received', 'verified', 'recorded', 'void'] as const;
 const TAX_STATUSES = ['none', 'requested', 'issued'] as const;
 const DISC_RESOLUTIONS = ['', 'refund', 'credit', 'chase', 'writeoff'] as const;
 const moneyStringSchema = z.string().max(40).refine((value) => isMoneyString(value), 'invalid_money');
+const manualBillNoSchema = z.string()
+  .trim()
+  .min(1)
+  .max(80)
+  .regex(/^[^/,\s]+$/, 'เลขบิลห้ามมี / , หรือช่องว่าง')
+  .transform((value) => value.toUpperCase());
+const manualBillItemSchema = z.object({
+  productId: z.string().max(120).optional(),
+  sku: z.string().max(120).optional(),
+  name: z.string().trim().min(1).max(300),
+  qty: z.number().positive().finite(),
+  unitPrice: moneyStringSchema,
+  amount: moneyStringSchema,
+});
+const manualBillFieldsSchema = z.object({
+  billedAt: z.string().max(40),
+  buyerName: z.string().max(300),
+  buyerPhone: z.string().max(100),
+  buyerAddress: z.string().max(1000),
+  items: z.array(manualBillItemSchema).max(40),
+  amount: moneyStringSchema.refine((value) => value.trim() !== '', 'amount_required'),
+  note: z.string().max(1000),
+});
+const createManualBillSchema = manualBillFieldsSchema.extend({ billNo: manualBillNoSchema.optional() });
+const patchManualBillSchema = manualBillFieldsSchema.partial();
 
 // All finance day-math is Thai business time (UTC+7) regardless of server TZ.
 const TH_OFFSET_MS = 7 * 3600 * 1000;
@@ -73,7 +98,7 @@ function toRow(p: {
   ref: string; slipMessageId: string | null; slipUrl: string; taxInvoice: string;
   taxInvoiceStatus: string; salesAgentId: string | null; salesName: string; note: string;
   status: string; flagged: boolean; verifiedById: string | null; verifiedAt: Date | null;
-  createdAt: Date; reNumber: string; reNumbers: string[]; receiptName: string; customerType: string;
+  createdAt: Date; reNumber: string; reNumbers: string[]; billNos: string[]; receiptName: string; customerType: string;
   source: string; settleState: string; settledAt: Date | null;
   receivedAt: Date | null; receivedBy: string | null;
   chequeNo: string; chequeBank: string; chequeDueDate: string;
@@ -117,6 +142,7 @@ function toRow(p: {
     // reNumber is the DEPRECATED join mirror; reNumbers is the real (list) source of truth.
     reNumber: p.reNumber,
     reNumbers: p.reNumbers,
+    billNos: p.billNos,
     receiptName: p.receiptName,
     customerType: p.customerType,
     // how the row was created + legacy read-only cash/cheque banking state
@@ -504,6 +530,223 @@ export async function junoRoutes(app: FastifyInstance) {
     return {
       total, received, verified, recorded, flagged, taxRequested, awaitingReceive,
       discrepancyOpen: discrepancy.openCount,
+    };
+  });
+
+  // ── Manual bills (บิลมือ) ──────────────────────────────────────────────
+  // A bill is a document, not an income row. Paid-ness is computed live from non-void
+  // Payments carrying its billNo, exactly like the RE reconciliation lane.
+  const billsQuerySchema = z.object({
+    q: z.string().max(120).optional(),
+    status: z.enum(['all', 'paid', 'unpaid', 'mismatch', 'void']).optional(),
+  });
+  app.get('/api/juno/bills', async (req, reply) => {
+    const parsed = billsQuerySchema.safeParse(req.query ?? {});
+    if (!parsed.success) return reply.code(400).send({ error: 'invalid_query' });
+    const q = parsed.data;
+    // Query 1: every bill. Text/status filtering stays in JS so `counts` remains the global
+    // unpaid+mismatch badge even while the open tab has a search/filter applied.
+    const bills = await prisma.manualBill.findMany({ orderBy: { createdAt: 'desc' } });
+    const candidatePayments = await prisma.payment.findMany({
+      where: { status: { not: 'void' }, billNos: { isEmpty: false } },
+      select: {
+        id: true, billNos: true, amount: true, whtAmount: true, status: true, source: true,
+        createdAt: true, customerName: true,
+      },
+    });
+    const byBill = new Map<string, typeof candidatePayments>();
+    for (const payment of candidatePayments) {
+      for (const billNo of payment.billNos) {
+        const linked = byBill.get(billNo);
+        if (linked) linked.push(payment);
+        else byBill.set(billNo, [payment]);
+      }
+    }
+
+    const allRows = bills.map((bill) => {
+      const payments = byBill.get(bill.billNo) ?? [];
+      const paidGross = payments.reduce((sum, payment) => sum + grossOf(payment), 0);
+      const billStatus = bill.status === 'void'
+        ? 'void'
+        : payments.length === 0
+          ? 'unpaid'
+          : amountsEqual(String(paidGross), bill.amount.replace(/,/g, '')) ? 'paid' : 'mismatch';
+      return {
+        ...bill,
+        createdAt: bill.createdAt.toISOString(),
+        updatedAt: bill.updatedAt.toISOString(),
+        voidedAt: bill.voidedAt?.toISOString() ?? null,
+        items: (bill.items as unknown as z.infer<typeof manualBillItemSchema>[] | null) ?? [],
+        linkedPayments: payments.map((payment) => ({
+          id: payment.id,
+          amount: payment.amount,
+          whtAmount: payment.whtAmount,
+          status: payment.status,
+          source: payment.source,
+          createdAt: payment.createdAt.toISOString(),
+          customerName: payment.customerName,
+        })),
+        billStatus,
+        paidGross,
+      };
+    });
+    const counts = {
+      unpaid: allRows.filter((bill) => bill.billStatus === 'unpaid').length,
+      mismatch: allRows.filter((bill) => bill.billStatus === 'mismatch').length,
+    };
+    const needle = q.q?.trim().toLocaleLowerCase();
+    const searchedRows = needle
+      ? allRows.filter((bill) => bill.billNo.toLocaleLowerCase().includes(needle) || bill.buyerName.toLocaleLowerCase().includes(needle))
+      : allRows;
+    const rows = !q.status || q.status === 'all'
+      ? searchedRows
+      : searchedRows.filter((bill) => bill.billStatus === q.status);
+    return { bills: rows, counts };
+  });
+
+  const normalizedBillItems = (items: z.infer<typeof manualBillItemSchema>[]) => items.map((item) => ({
+    ...(item.productId?.trim() ? { productId: item.productId.trim() } : {}),
+    ...(item.sku?.trim() ? { sku: item.sku.trim() } : {}),
+    name: item.name.trim(),
+    qty: item.qty,
+    unitPrice: item.unitPrice.trim(),
+    amount: item.amount.trim(),
+  }));
+  const billTotalMatches = (items: z.infer<typeof manualBillItemSchema>[], amount: string): boolean =>
+    amountsEqual(String(items.reduce((sum, item) => sum + num(item.amount), 0)), amount.replace(/,/g, ''));
+
+  app.post('/api/juno/bills', async (req, reply) => {
+    const parsed = createManualBillSchema.safeParse(req.body);
+    if (!parsed.success) {
+      const issue = parsed.error.issues.find((entry) => entry.path[0] === 'billNo');
+      return reply.code(400).send({ error: issue ? 'invalid_bill_no' : 'invalid_body', message: issue?.message });
+    }
+    const items = normalizedBillItems(parsed.data.items);
+    const amount = parsed.data.amount.trim();
+    if (!billTotalMatches(items, amount)) {
+      return reply.code(400).send({ error: 'amount_mismatch', message: 'ยอดรวมต้องตรงกับผลรวมของรายการ' });
+    }
+    const base = {
+      billedAt: parsed.data.billedAt.trim(),
+      buyerName: parsed.data.buyerName.trim(),
+      buyerPhone: parsed.data.buyerPhone.trim(),
+      buyerAddress: parsed.data.buyerAddress.trim(),
+      items,
+      amount,
+      note: parsed.data.note.trim(),
+      createdById: req.agent?.id ?? null,
+      createdByName: req.agent?.name ?? '',
+    };
+    const isUniqueError = (error: unknown): boolean => (error as { code?: string })?.code === 'P2002';
+
+    if (parsed.data.billNo) {
+      try {
+        const bill = await prisma.manualBill.create({ data: { ...base, billNo: parsed.data.billNo } });
+        return { ok: true, bill };
+      } catch (error) {
+        if (isUniqueError(error)) {
+          return reply.code(409).send({ error: 'duplicate_bill_no', message: 'เลขบิลนี้มีอยู่แล้ว' });
+        }
+        throw error;
+      }
+    }
+
+    // Bangkok year, not server/UTC year. Buddhist year 2569 -> two-digit 69.
+    const gregorianYear = Number(thaiDayKey(new Date()).slice(0, 4));
+    const year2 = String((gregorianYear + 543) % 100).padStart(2, '0');
+    const prefix = `MB${year2}-`;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const bill = await prisma.$transaction(async (tx) => {
+          const existing = await tx.manualBill.findMany({
+            where: { billNo: { startsWith: prefix } },
+            select: { billNo: true },
+          });
+          const max = existing.reduce((current, row) => {
+            const match = row.billNo.match(new RegExp(`^${prefix}(\\d{4})$`));
+            return match ? Math.max(current, Number(match[1])) : current;
+          }, 0);
+          const billNo = `${prefix}${String(max + 1).padStart(4, '0')}`;
+          return tx.manualBill.create({ data: { ...base, billNo } });
+        });
+        return { ok: true, bill };
+      } catch (error) {
+        if (isUniqueError(error) && attempt === 0) continue;
+        if (isUniqueError(error)) {
+          return reply.code(409).send({ error: 'duplicate_bill_no', message: 'เลขบิลนี้มีอยู่แล้ว' });
+        }
+        throw error;
+      }
+    }
+    return reply.code(409).send({ error: 'duplicate_bill_no', message: 'เลขบิลนี้มีอยู่แล้ว' });
+  });
+
+  app.patch<{ Params: { id: string } }>('/api/juno/bills/:id', async (req, reply) => {
+    const parsed = patchManualBillSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'invalid_body' });
+    const existing = await prisma.manualBill.findUnique({ where: { id: req.params.id } });
+    if (!existing) return reply.code(404).send({ error: 'not_found' });
+    const currentItems = (existing.items as unknown as z.infer<typeof manualBillItemSchema>[] | null) ?? [];
+    const items = parsed.data.items ? normalizedBillItems(parsed.data.items) : currentItems;
+    const amount = parsed.data.amount?.trim() ?? existing.amount;
+    if (!billTotalMatches(items, amount)) {
+      return reply.code(400).send({ error: 'amount_mismatch', message: 'ยอดรวมต้องตรงกับผลรวมของรายการ' });
+    }
+    const bill = await prisma.manualBill.update({
+      where: { id: req.params.id },
+      data: {
+        ...(parsed.data.billedAt === undefined ? {} : { billedAt: parsed.data.billedAt.trim() }),
+        ...(parsed.data.buyerName === undefined ? {} : { buyerName: parsed.data.buyerName.trim() }),
+        ...(parsed.data.buyerPhone === undefined ? {} : { buyerPhone: parsed.data.buyerPhone.trim() }),
+        ...(parsed.data.buyerAddress === undefined ? {} : { buyerAddress: parsed.data.buyerAddress.trim() }),
+        ...(parsed.data.items === undefined ? {} : { items }),
+        ...(parsed.data.amount === undefined ? {} : { amount }),
+        ...(parsed.data.note === undefined ? {} : { note: parsed.data.note.trim() }),
+      },
+    });
+    return { ok: true, bill };
+  });
+
+  app.post<{ Params: { id: string } }>('/api/juno/bills/:id/void', async (req, reply) => {
+    const parsed = z.object({ void: z.boolean() }).safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'invalid_body' });
+    const existing = await prisma.manualBill.findUnique({ where: { id: req.params.id }, select: { id: true } });
+    if (!existing) return reply.code(404).send({ error: 'not_found' });
+    const bill = await prisma.manualBill.update({
+      where: { id: req.params.id },
+      data: parsed.data.void
+        ? { status: 'void', voidedAt: new Date(), voidedById: req.agent?.id ?? null }
+        : { status: 'open', voidedAt: null, voidedById: null },
+    });
+    return { ok: true, bill };
+  });
+
+  // Read-only shared Product picker. The normalized comparison makes 071009 find 07-10-09.
+  app.get('/api/juno/products', async (req, reply) => {
+    const parsed = z.object({ q: z.string().max(120).optional() }).safeParse(req.query ?? {});
+    if (!parsed.success) return reply.code(400).send({ error: 'invalid_query' });
+    const needle = (parsed.data.q ?? '').trim().replace(/[-\s]/g, '').toLowerCase();
+    const products = await prisma.product.findMany({
+      where: { status: 'active' },
+      select: { sku: true, nameTh: true, nameEn: true, price: true, stock: true, stockAt: true },
+      orderBy: { sku: 'asc' },
+    });
+    const matches = needle
+      ? products.filter((product) => {
+          const sku = product.sku.replace(/[-\s]/g, '').toLowerCase();
+          const name = `${product.nameTh} ${product.nameEn}`.replace(/[-\s]/g, '').toLowerCase();
+          return sku.includes(needle) || name.includes(needle);
+        })
+      : products;
+    return {
+      products: matches.slice(0, 20).map((product) => ({
+        id: product.sku,
+        sku: product.sku.replace(/-/g, ''),
+        name: product.nameTh || product.nameEn || product.sku,
+        price: product.price,
+        stock: product.stock,
+        stockAt: product.stockAt?.toISOString() ?? null,
+      })),
     };
   });
 
@@ -914,18 +1157,17 @@ export async function junoRoutes(app: FastifyInstance) {
     return { ok: true, payment: toRow(p) };
   });
 
-  // POST /api/juno/payments/:id/verify { reNumbers, receiptName?, customerType?, whtRate?,
-  // whtAmount? } — the ONLY way to reach status 'verified'. FIN types the RE number(s) issued
-  // in Express here (one transfer can pay several receipts, and one RE can be split across
-  // several payments — so this is a list); re-opening the dialog on an already-verified payment
-  // is fine (re-verify just updates fields + re-stamps).
+  // POST /api/juno/payments/:id/verify { reNumbers, billNos?, receiptName?, customerType?, ... }
+  // — the ONLY way to reach status 'verified'. A payment may carry Express REs, manual bills,
+  // or both. Both lists are replaced in full on every save.
   // WHT (task 2): whtRate/whtAmount are entered in this SAME dialog (owner-approved design —
   // one WHT figure per payment, not tracked per-RE). whtRate 0 (default) = no WHT; whtAmount is
   // the editable withheld baht (may not be an exact rate×gross calc — matches the 50-ทวิ cert).
   const customerTypeSchema = z.enum(['โอนก่อนส่ง', 'เครดิต', 'เก็บปลายทาง', '']).default('');
   const WHT_RATES = [0, 1, 2, 3, 5] as const;
   const verifyBodySchema = z.object({
-    reNumbers: z.array(z.string()).min(1).max(50),
+    reNumbers: z.array(z.string()).max(50),
+    billNos: z.array(z.string()).max(20).optional(),
     receiptName: z.string().max(200).optional(),
     customerType: customerTypeSchema.optional(),
     whtRate: z.union([z.literal(0), z.literal(1), z.literal(2), z.literal(3), z.literal(5)]).optional(),
@@ -946,7 +1188,18 @@ export async function junoRoutes(app: FastifyInstance) {
       if (!/^\d{7}$/.test(stripped)) return reply.code(400).send({ error: 'invalid_re' });
       if (!seen.has(stripped)) { seen.add(stripped); normalized.push(stripped); }
     }
-    if (normalized.length === 0) return reply.code(400).send({ error: 'invalid_re' });
+    const seenBills = new Set<string>();
+    const normalizedBills: string[] = [];
+    for (const raw of body.data.billNos ?? []) {
+      const checked = manualBillNoSchema.safeParse(raw);
+      if (!checked.success) {
+        return reply.code(400).send({ error: 'invalid_bill_no', message: 'เลขบิลห้ามมี / , หรือช่องว่าง' });
+      }
+      if (!seenBills.has(checked.data)) { seenBills.add(checked.data); normalizedBills.push(checked.data); }
+    }
+    if (normalized.length === 0 && normalizedBills.length === 0) {
+      return reply.code(400).send({ error: 'receipt_required' });
+    }
 
     // whtRate defaults to 0 (no WHT) when omitted; whtAmount only makes sense alongside a
     // nonzero rate, so a rate of 0 always clears whtAmount too regardless of what was sent —
@@ -968,6 +1221,7 @@ export async function junoRoutes(app: FastifyInstance) {
         status: keepRecorded ? 'recorded' : 'verified',
         reNumbers: normalized,
         reNumber: normalized.join('/'), // deprecated join mirror — see schema comment
+        billNos: normalizedBills,
         receiptName: body.data.receiptName?.trim() ?? '',
         customerType: body.data.customerType ?? '',
         whtRate,
@@ -1087,7 +1341,7 @@ export async function junoRoutes(app: FastifyInstance) {
 
     const headers = [
       'createdAt (UTC+7)', 'code', 'customer', 'sender', 'amount', 'ocrAmount', 'bank',
-      'transferAt', 'ref', 'sales', 'status', 'reNumber', 'receiptName', 'customerType',
+      'transferAt', 'ref', 'sales', 'status', 'reNumber', 'บิลมือ', 'receiptName', 'customerType',
       'flagged', 'taxInvoiceStatus', 'taxInvoice', 'note',
       'source', 'settleState', 'chequeNo', 'chequeBank', 'chequeDueDate',
     ];
@@ -1103,7 +1357,7 @@ export async function junoRoutes(app: FastifyInstance) {
       lines.push([
         new Date(p.createdAt.getTime() + TH_OFFSET_MS).toISOString().slice(0, 16).replace('T', ' '),
         p.customerCode, p.customerName, p.senderName, p.amount, p.ocrAmount,
-        p.bank, p.transferAt, p.ref, p.salesName, p.status, p.reNumber, p.receiptName, p.customerType,
+        p.bank, p.transferAt, p.ref, p.salesName, p.status, p.reNumber, p.billNos.join('/'), p.receiptName, p.customerType,
         p.flagged ? 'yes' : '', p.taxInvoiceStatus, p.taxInvoice, p.note,
         p.source, p.settleState, p.chequeNo, p.chequeBank, p.chequeDueDate,
       ].map(esc).join(','));

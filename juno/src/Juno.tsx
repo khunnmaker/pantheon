@@ -3,7 +3,7 @@ import {
   LogOut, Search, Download, Flag, FileText, Inbox, BarChart3, Scale,
   Loader2, AlertTriangle, CheckCircle2, X, RefreshCw, ExternalLink, Ban, Crown, Printer,
   Undo2, ClipboardCheck, CheckCheck, Banknote, Plus, Paperclip, Check, Trash2, HandCoins, Percent,
-  PenLine, FileCheck,
+  PenLine, FileCheck, ReceiptText,
 } from 'lucide-react';
 
 // Portal-back link uses the canonical Pantheon domain unless build-time env overrides it.
@@ -11,7 +11,7 @@ const PORTAL_URL: string = import.meta.env.VITE_PORTAL_URL ?? 'https://pantheon.
 import {
   getSummary, getPayments, setStatus, setFlag, verifyPayment, getReport, downloadCsv, baht,
   logout, getBankSummary, createPayment, uploadSlip, fileToBase64, readManualSlip, readManualCheque,
-  deletePayment, confirmReceived, getWhtSummary, updatePayment, getFinanceAudits,
+  deletePayment, confirmReceived, getWhtSummary, updatePayment, getFinanceAudits, getManualBills,
   type Agent, type Payment, type PaymentStatus, type Summary,
   type Report, type PaymentFilter, type CustomerType, type PaymentSource,
   type WhtRate, type WhtSummary, type EditPaymentBody,
@@ -21,6 +21,7 @@ import Recon from './Recon';
 import ReRecon from './ReRecon';
 import Discrepancies, { PaymentDiscrepancyBlock } from './Discrepancies';
 import Audit from './Audit';
+import Bills from './Bills';
 import AppSwitcher from './AppSwitcher';
 
 // No ใบกำกับภาษี tab: Prominent issues a tax invoice on EVERY sale (in Express, as part of
@@ -36,7 +37,7 @@ import AppSwitcher from './AppSwitcher';
 // 'audit' = ตรวจสอบยอด: the FinanceAudit mis-read trail (slip amount ≠ OCR) — visible to ALL
 // Juno users (finance sees the flags on payments they process), but only the CEO can mark one
 // ตรวจแล้ว (resolve is supervisor-only server-side; the button is hidden otherwise).
-type View = 'inbox' | 'flags' | 'reports' | 'recon' | 'receive' | 'wht' | 'reRecon' | 'audit' | 'disc';
+type View = 'inbox' | 'flags' | 'reports' | 'recon' | 'receive' | 'wht' | 'reRecon' | 'bills' | 'audit' | 'disc';
 
 // Withholding tax (task 2) rate options — 0 (ไม่มี) plus the Thai statutory rates FIN picks
 // from in the ตรวจแล้ว dialog. Mirrors the server's WHT_RATES (api/src/routes/juno.ts).
@@ -104,12 +105,17 @@ export default function Juno({ agent, onLogout }: { agent: Agent; onLogout: () =
   const [bankUnmatched, setBankUnmatched] = useState<number | undefined>(undefined);
   // open FinanceAudit (ตรวจสอบยอด) count — badge on the audit tab. Readable by every Juno user.
   const [auditOpen, setAuditOpen] = useState<number | undefined>(undefined);
+  const [billAlerts, setBillAlerts] = useState<number | undefined>(undefined);
+  const handleBillCounts = useCallback((counts: { unpaid: number; mismatch: number }) => {
+    setBillAlerts(counts.unpaid + counts.mismatch);
+  }, []);
 
   const refreshSummary = useCallback(() => {
     getSummary().then(setSummary).catch(() => setSummary(null));
     getBankSummary().then((s) => setBankUnmatched(s.unmatchedIn.count)).catch(() => setBankUnmatched(undefined));
     getFinanceAudits('open').then((r) => setAuditOpen(r.audits.length)).catch(() => setAuditOpen(undefined));
-  }, []);
+    getManualBills().then((r) => handleBillCounts(r.counts)).catch(() => setBillAlerts(undefined));
+  }, [handleBillCounts]);
   useEffect(() => { refreshSummary(); }, [refreshSummary]);
 
   const tabs: { key: View; label: string; icon: React.ReactNode; count?: number }[] = [
@@ -128,6 +134,7 @@ export default function Juno({ agent, onLogout }: { agent: Agent; onLogout: () =
     // CEO-only, same as 'recon's ImportPanel). Match status is computed live, so no badge
     // count here (its own totals bar inside ReRecon covers the summary).
     { key: 'reRecon', label: 'กระทบยอด RE', icon: <FileCheck size={16} /> },
+    { key: 'bills', label: 'บิลมือ', icon: <ReceiptText size={16} />, count: billAlerts },
     // ตรวจสอบยอด — the FinanceAudit mis-read trail, visible to EVERY Juno user (finance sees the
     // flags on payments they verify); only the CEO can resolve, gated inside the tab itself.
     { key: 'audit', label: 'ตรวจสอบยอด', icon: <Banknote size={16} />, count: auditOpen },
@@ -167,7 +174,7 @@ export default function Juno({ agent, onLogout }: { agent: Agent; onLogout: () =
             >
               {t.icon} {t.label}
               {typeof t.count === 'number' && t.count > 0 && (
-                <span className={`ml-1 px-1.5 rounded-full text-xs ${t.key === 'flags' || t.key === 'recon' || t.key === 'receive' || t.key === 'audit' || t.key === 'disc' ? 'bg-rose-100 text-rose-700' : 'bg-slate-100 text-slate-600'}`}>
+                <span className={`ml-1 px-1.5 rounded-full text-xs ${t.key === 'flags' || t.key === 'recon' || t.key === 'receive' || t.key === 'audit' || t.key === 'disc' || t.key === 'bills' ? 'bg-rose-100 text-rose-700' : 'bg-slate-100 text-slate-600'}`}>
                   {t.count}
                 </span>
               )}
@@ -183,6 +190,8 @@ export default function Juno({ agent, onLogout }: { agent: Agent; onLogout: () =
           <Recon isCeo={isCeo} />
         ) : view === 'reRecon' ? (
           <ReRecon isCeo={isCeo} />
+        ) : view === 'bills' ? (
+          <Bills onCountsChanged={handleBillCounts} />
         ) : view === 'disc' ? (
           <Discrepancies isCeo={isCeo} onChanged={refreshSummary} />
         ) : view === 'audit' ? (
@@ -196,7 +205,7 @@ export default function Juno({ agent, onLogout }: { agent: Agent; onLogout: () =
 }
 
 // ── Payments list + detail (inbox / flags share this) ──────────────────────
-function PaymentsView({ view, onChanged, canDelete, isCeo }: { view: Exclude<View, 'reports' | 'recon' | 'reRecon' | 'audit' | 'disc'>; onChanged: () => void; canDelete: boolean; isCeo: boolean }) {
+function PaymentsView({ view, onChanged, canDelete, isCeo }: { view: Exclude<View, 'reports' | 'recon' | 'reRecon' | 'bills' | 'audit' | 'disc'>; onChanged: () => void; canDelete: boolean; isCeo: boolean }) {
   const [q, setQ] = useState('');
   const [status, setStatusFilter] = useState<'all' | PaymentStatus>('all');
   // วิธีรับเงิน (payment-method) filter — inbox only, folds the old separate เงินสด/เช็ค tab
@@ -641,7 +650,7 @@ function PaymentsView({ view, onChanged, canDelete, isCeo }: { view: Exclude<Vie
                   <th className="text-left font-medium px-3 py-2">ลูกค้า</th>
                   <th className="text-right font-medium px-3 py-2">ยอด</th>
                   <th className="text-left font-medium px-3 py-2 hidden md:table-cell w-[120px]">ช่องทาง</th>
-                  <th className="text-left font-medium px-3 py-2 hidden md:table-cell">RE</th>
+                  <th className="text-left font-medium px-3 py-2 hidden md:table-cell">RE / บิลมือ</th>
                   <th className="text-left font-medium px-3 py-2">สถานะ</th>
                 </tr>
               </thead>
@@ -672,10 +681,11 @@ function PaymentsView({ view, onChanged, canDelete, isCeo }: { view: Exclude<Vie
                     </td>
                     <td className="px-3 py-2 text-slate-500 hidden md:table-cell"><MethodCell p={p} /></td>
                     <td className="px-3 py-2 text-slate-500 hidden md:table-cell whitespace-nowrap">
-                      {p.reNumbers.length > 0 ? (
-                        <span className="max-w-[130px] truncate inline-block align-bottom" title={p.reNumbers.join(' / ')}>
-                          {p.reNumbers.join(' / ')}
-                        </span>
+                      {p.reNumbers.length > 0 || p.billNos.length > 0 ? (
+                        <div className="flex flex-wrap gap-1 max-w-[180px]">
+                          {p.reNumbers.map((re) => <span key={`re-${re}`} className="px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 text-[11px]">RE {re}</span>)}
+                          {p.billNos.map((billNo) => <span key={`bill-${billNo}`} className="px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 text-[11px]">{billNo}</span>)}
+                        </div>
                       ) : (
                         <span className="text-slate-300">—</span>
                       )}
@@ -1335,6 +1345,14 @@ function Detail({ payment, onClose, onUpdate, onDelete, onPrint, canDelete, isCe
                   )}
                 </div>
               )}
+              {p.billNos.length > 0 && (
+                <div className="flex items-center gap-1 min-w-0 overflow-hidden">
+                  {p.billNos.slice(0, 2).map((billNo) => (
+                    <span key={billNo} className="text-xs font-bold text-amber-700 whitespace-nowrap px-1.5 py-0.5 rounded bg-amber-50 shrink-0">{billNo}</span>
+                  ))}
+                  {p.billNos.length > 2 && <span className="text-xs text-amber-700">+{p.billNos.length - 2}</span>}
+                </div>
+              )}
               {p.flagged && <Flag size={13} className="text-rose-500 shrink-0" />}
             </div>
             <div className="flex items-center gap-1 shrink-0">
@@ -1342,7 +1360,7 @@ function Detail({ payment, onClose, onUpdate, onDelete, onPrint, canDelete, isCe
                 disabled: p.status === 'received',
               })}
               {/* 'verified' only via the check dialog — the one path that supplies the RE(s) */}
-              {rail('check', p.reNumbers.length > 0 ? 'แก้ไขข้อมูลใบเสร็จ' : STATUS_META.verified.label, <ClipboardCheck size={16} />, () => setCheckOpen(true), {
+              {rail('check', p.reNumbers.length > 0 || p.billNos.length > 0 ? 'แก้ไขข้อมูลเอกสาร' : STATUS_META.verified.label, <ClipboardCheck size={16} />, () => setCheckOpen(true), {
                 disabled: p.status === 'void',
                 active: p.status === 'verified',
               })}
@@ -1477,6 +1495,7 @@ function Detail({ payment, onClose, onUpdate, onDelete, onPrint, canDelete, isCe
               {field('วันที่ส่งเข้า', fmtDateTime(p.createdAt))}
               {p.reNumbers.length > 0 && field('ชื่อบนใบเสร็จ', p.receiptName)}
               {p.reNumbers.length > 0 && field('ประเภทลูกค้า', p.customerType)}
+              {p.billNos.length > 0 && field('บิลมือ', p.billNos.join(' / '))}
             </div>
 
             {p.mismatch && (
@@ -1614,44 +1633,45 @@ function CashChequeSection({ payment: p, busy, run, isCeo }: {
   );
 }
 
-// Splits on '/', ',', or any whitespace — FIN pastes/types REs separated by any of these
-// (the owner's own example is "6900025/6900026/…").
+// Splits on '/', ',', or whitespace. Seven bare digits are an Express RE; every other token
+// that obeys the manual-bill charset is a บิลมือ number.
 const RE_SEPARATOR = /[/,\s]+/;
-// Strip a leading "RE"/"re" and check the bare-digit shape (mirrors the server's normalization).
-function normalizeReToken(raw: string): string {
-  return raw.trim().replace(/^re/i, '');
-}
-function isValidRe(token: string): boolean {
-  return /^\d{7}$/.test(token);
+type ReceiptToken = { kind: 're' | 'bill'; value: string };
+function normalizeReceiptToken(raw: string): ReceiptToken | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const withoutPrefix = trimmed.replace(/^re/i, '');
+  if (/^\d{7}$/.test(withoutPrefix)) return { kind: 're', value: withoutPrefix };
+  const billNo = trimmed.toUpperCase();
+  return /^[^/,\s]+$/.test(billNo) ? { kind: 'bill', value: billNo } : null;
 }
 
-// Shared RE-chips input logic (used by both CheckDialog and BatchCheckDialog) — FIN can
-// type/paste SEVERAL RE numbers as one text stream separated by '/', ',', or space, and each
-// completes into a removable chip once it's a valid 7-digit token. Extracted as a hook (rather
-// than duplicated per-dialog state) so both dialogs share exactly one parsing implementation.
-function useReChipsInput(initial: string[]) {
-  const [reNumbers, setReNumbers] = useState<string[]>(initial);
+function useReceiptChipsInput(initialRe: string[], initialBills: string[]) {
+  const [reNumbers, setReNumbers] = useState<string[]>(initialRe);
+  const [billNos, setBillNos] = useState<string[]>(initialBills);
   const [reInput, setReInput] = useState('');
+  const [unknownBills, setUnknownBills] = useState<Set<string>>(new Set());
+  const [checkingBills, setCheckingBills] = useState(false);
 
-  function addChip(token: string) {
-    if (!token) return;
-    setReNumbers((prev) => (prev.includes(token) ? prev : [...prev, token]));
+  function addToken(token: ReceiptToken) {
+    if (token.kind === 're') {
+      setReNumbers((prev) => prev.includes(token.value) || prev.length >= 50 ? prev : [...prev, token.value]);
+    } else {
+      setBillNos((prev) => prev.includes(token.value) || prev.length >= 20 ? prev : [...prev, token.value]);
+    }
   }
-  function removeChip(token: string) {
-    setReNumbers((prev) => prev.filter((r) => r !== token));
+  function removeToken(token: ReceiptToken) {
+    if (token.kind === 're') setReNumbers((prev) => prev.filter((value) => value !== token.value));
+    else setBillNos((prev) => prev.filter((value) => value !== token.value));
   }
 
-  // As FIN types, a separator (/, comma, or space) completes whatever came before it: strip a
-  // leading RE/re, and if it's a valid 7-digit token, commit it as a chip. An invalid completed
-  // token is DROPPED silently on the separator (the inline hint below covers the still-typing
-  // case) rather than left stuck in the box, so the box stays ready for the next token.
   function onReInputChange(v: string) {
     if (RE_SEPARATOR.test(v.slice(-1)) && v.trim()) {
       const parts = v.split(RE_SEPARATOR);
-      const remainder = parts.pop() ?? ''; // text after the last separator (should be '')
+      const remainder = parts.pop() ?? '';
       for (const part of parts) {
-        const token = normalizeReToken(part);
-        if (isValidRe(token)) addChip(token);
+        const token = normalizeReceiptToken(part);
+        if (token) addToken(token);
       }
       setReInput(remainder);
     } else {
@@ -1659,46 +1679,64 @@ function useReChipsInput(initial: string[]) {
     }
   }
 
-  const pendingToken = normalizeReToken(reInput);
-  const pendingValid = pendingToken !== '' && isValidRe(pendingToken);
-  const pendingInvalid = pendingToken !== '' && !isValidRe(pendingToken);
-  // at least one committed chip, OR exactly one valid not-yet-committed token in the box
-  const valid = reNumbers.length > 0 || pendingValid;
+  const pendingToken = normalizeReceiptToken(reInput);
+  const pendingValid = pendingToken !== null;
+  const pendingInvalid = reInput.trim() !== '' && !pendingToken;
+  const valid = reNumbers.length > 0 || billNos.length > 0 || pendingValid;
 
-  // The final RE list to submit: flushes a valid pending token so the user doesn't have to
-  // press Enter/type a separator before clicking บันทึก.
-  function finalize(): string[] {
-    return pendingValid && !reNumbers.includes(pendingToken) ? [...reNumbers, pendingToken] : reNumbers;
+  function finalize(): { reNumbers: string[]; billNos: string[] } {
+    if (!pendingToken) return { reNumbers, billNos };
+    return pendingToken.kind === 're'
+      ? { reNumbers: reNumbers.includes(pendingToken.value) ? reNumbers : [...reNumbers, pendingToken.value], billNos }
+      : { reNumbers, billNos: billNos.includes(pendingToken.value) ? billNos : [...billNos, pendingToken.value] };
   }
 
-  function reset(next: string[]) {
-    setReNumbers(next);
+  function reset(nextRe: string[], nextBills: string[]) {
+    setReNumbers(nextRe);
+    setBillNos(nextBills);
     setReInput('');
   }
 
+  // Soft validation only: missing bills are warned but remain saveable because paper bills may
+  // be back-entered after the payment is checked.
+  useEffect(() => {
+    if (billNos.length === 0) { setUnknownBills(new Set()); setCheckingBills(false); return; }
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      setCheckingBills(true);
+      Promise.all(billNos.map(async (billNo) => {
+        try {
+          const result = await getManualBills({ q: billNo });
+          return result.bills.some((bill) => bill.billNo.toUpperCase() === billNo) ? null : billNo;
+        } catch {
+          return null; // network/auth failures are handled by save; don't mark false negatives
+        }
+      })).then((missing) => {
+        if (!cancelled) setUnknownBills(new Set(missing.filter((value): value is string => !!value)));
+      }).finally(() => { if (!cancelled) setCheckingBills(false); });
+    }, 250);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [billNos]);
+
   return {
-    reNumbers, reInput, addChip, removeChip, onReInputChange,
-    pendingToken, pendingValid, pendingInvalid, valid, finalize, reset,
+    reNumbers, billNos, reInput, addToken, removeToken, onReInputChange,
+    pendingToken, pendingValid, pendingInvalid, valid, finalize, reset, unknownBills, checkingBills,
   };
 }
 
-// The chips + input box UI (no label/hint — callers wrap those since the label text differs
-// slightly between the single-row and batch dialogs).
-function ReChipsBox({ state, onEnter, autoFocus }: {
-  state: ReturnType<typeof useReChipsInput>;
+function ReceiptChipsBox({ state, onEnter, autoFocus }: {
+  state: ReturnType<typeof useReceiptChipsInput>;
   onEnter: () => void;
   autoFocus?: boolean;
 }) {
   const reRef = useRef<HTMLInputElement>(null);
   useEffect(() => { if (autoFocus) reRef.current?.focus(); }, [autoFocus]);
 
-  // Enter flushes the current pending token (if valid) into a chip; if there's no pending
-  // token but the dialog is already valid (≥1 chip committed), Enter submits instead.
   function onKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
     if (e.key !== 'Enter') return;
-    const token = normalizeReToken(state.reInput);
-    if (isValidRe(token)) {
-      state.addChip(token);
+    const token = normalizeReceiptToken(state.reInput);
+    if (token) {
+      state.addToken(token);
       state.onReInputChange('');
     } else if (state.valid) {
       onEnter();
@@ -1706,24 +1744,28 @@ function ReChipsBox({ state, onEnter, autoFocus }: {
   }
 
   return (
-    <div className="mt-0.5 flex flex-wrap gap-1.5 px-2 py-1.5 rounded-lg border border-slate-300 focus-within:ring-2 focus-within:ring-emerald-400">
-      {state.reNumbers.map((re) => (
-        <span key={re} className="flex items-center gap-1 pl-2 pr-1 py-0.5 rounded-full bg-emerald-50 text-emerald-700 text-xs font-semibold">
-          {re}
-          <button type="button" onClick={() => state.removeChip(re)} className="p-0.5 rounded-full hover:bg-emerald-100 text-emerald-600" title="เอาออก">
-            <X size={11} />
-          </button>
-        </span>
-      ))}
-      <input
-        ref={reRef}
-        value={state.reInput}
-        onChange={(e) => state.onReInputChange(e.target.value)}
-        onKeyDown={onKeyDown}
-        placeholder={state.reNumbers.length ? 'เพิ่มอีก…' : 'เช่น 6900025/6900026'}
-        className="flex-1 min-w-[100px] text-sm focus:outline-none"
-      />
-    </div>
+    <>
+      <div className="mt-0.5 flex flex-wrap gap-1.5 px-2 py-1.5 rounded-lg border border-slate-300 focus-within:ring-2 focus-within:ring-emerald-400">
+        {state.reNumbers.map((re) => (
+          <span key={`re-${re}`} className="flex items-center gap-1 pl-2 pr-1 py-0.5 rounded-full bg-emerald-50 text-emerald-700 text-xs font-semibold">
+            RE {re}<button type="button" onClick={() => state.removeToken({ kind: 're', value: re })} className="p-0.5 rounded-full hover:bg-emerald-100" title="เอาออก"><X size={11} /></button>
+          </span>
+        ))}
+        {state.billNos.map((billNo) => {
+          const unknown = state.unknownBills.has(billNo);
+          return (
+            <span key={`bill-${billNo}`} title={unknown ? 'ไม่พบบิลนี้ในระบบ' : 'บิลมือ'} className={`flex items-center gap-1 pl-2 pr-1 py-0.5 rounded-full bg-amber-50 text-amber-700 text-xs font-semibold ${unknown ? 'ring-1 ring-rose-400' : ''}`}>
+              {billNo}{unknown && <AlertTriangle size={10} className="text-rose-500" />}
+              <button type="button" onClick={() => state.removeToken({ kind: 'bill', value: billNo })} className="p-0.5 rounded-full hover:bg-amber-100" title="เอาออก"><X size={11} /></button>
+            </span>
+          );
+        })}
+        <input ref={reRef} value={state.reInput} onChange={(e) => state.onReInputChange(e.target.value)} onKeyDown={onKeyDown}
+          placeholder={state.reNumbers.length || state.billNos.length ? 'เพิ่มอีก…' : 'เช่น 6900025 หรือ MB69-0001'} className="flex-1 min-w-[120px] text-sm focus:outline-none" />
+      </div>
+      {state.checkingBills && <span className="text-[11px] text-slate-400">กำลังตรวจเลขบิล…</span>}
+      {!state.checkingBills && state.unknownBills.size > 0 && <span className="text-[11px] text-amber-700">ไม่พบบิลนี้ในระบบ (ยังบันทึกได้)</span>}
+    </>
   );
 }
 
@@ -1837,7 +1879,7 @@ function CheckDialog({ payment, onClose, onSaved }: {
   onClose: () => void;
   onSaved: (p: Payment) => void;
 }) {
-  const re = useReChipsInput(payment.reNumbers);
+  const re = useReceiptChipsInput(payment.reNumbers, payment.billNos);
   const [receiptName, setReceiptName] = useState(
     payment.receiptName || payment.taxInvoice.split('\n')[0]?.trim() || payment.customerName,
   );
@@ -1852,13 +1894,13 @@ function CheckDialog({ payment, onClose, onSaved }: {
 
   async function save() {
     if (!re.valid || saving) return;
-    const finalRe = re.finalize();
-    if (finalRe.length === 0) return;
+    const documents = re.finalize();
+    if (documents.reNumbers.length === 0 && documents.billNos.length === 0) return;
     setSaving(true);
     setErr('');
     try {
       const res = await verifyPayment(payment.id, {
-        reNumbers: finalRe,
+        ...documents,
         receiptName: receiptName.trim(),
         customerType,
         ...wht.toBody(),
@@ -1876,15 +1918,15 @@ function CheckDialog({ payment, onClose, onSaved }: {
     <div className="fixed inset-0 z-40 bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
       <div className="bg-white rounded-2xl p-4 w-full max-w-sm space-y-3" onClick={(e) => e.stopPropagation()}>
         <div className="font-semibold text-slate-800 flex items-center gap-1.5">
-          <FileText size={16} className="text-emerald-700" /> ตรวจแล้ว — ออก RE ใน Express
+          <FileText size={16} className="text-emerald-700" /> ตรวจแล้ว — ผูก RE / บิลมือ
         </div>
 
         <label className="block">
-          <span className="text-xs text-slate-500">เลขที่ใบเสร็จ (RE) — พิมพ์ได้หลายเลข คั่นด้วย / , หรือเว้นวรรค</span>
-          <ReChipsBox state={re} onEnter={save} autoFocus />
-          {re.pendingInvalid && <span className="text-[11px] text-rose-600">ต้องเป็นตัวเลข 7 หลัก</span>}
-          {!re.pendingInvalid && re.reNumbers.length === 0 && !re.pendingValid && (
-            <span className="text-[11px] text-slate-400">ต้องมีอย่างน้อย 1 เลข RE</span>
+          <span className="text-xs text-slate-500">เลข RE หรือบิลมือ — พิมพ์ได้หลายเลข คั่นด้วย / , หรือเว้นวรรค</span>
+          <ReceiptChipsBox state={re} onEnter={save} autoFocus />
+          {re.pendingInvalid && <span className="text-[11px] text-rose-600">เลขบิลห้ามมี / , หรือช่องว่าง</span>}
+          {!re.pendingInvalid && re.reNumbers.length === 0 && re.billNos.length === 0 && !re.pendingValid && (
+            <span className="text-[11px] text-slate-400">ต้องมีอย่างน้อย 1 เลข RE หรือบิลมือ</span>
           )}
         </label>
 
@@ -1917,7 +1959,7 @@ function CheckDialog({ payment, onClose, onSaved }: {
         <WhtSection wht={wht} />
 
         <label className="block rounded-lg border border-slate-200 p-2.5">
-          <span className="text-xs text-slate-500">ยอดตาม RE (ก่อนหัก) <span className="font-normal text-slate-400">— ไม่บังคับ</span></span>
+          <span className="text-xs text-slate-500">ยอดตามเอกสาร (ก่อนหัก) <span className="font-normal text-slate-400">— ไม่บังคับ</span></span>
           <input
             value={discExpected}
             onChange={(e) => setDiscExpected(e.target.value)}
@@ -1971,7 +2013,7 @@ function BatchCheckDialog({ payments, onDone }: {
 }) {
   const [index, setIndex] = useState(0);
   const current = payments[index];
-  const re = useReChipsInput(current.reNumbers);
+  const re = useReceiptChipsInput(current.reNumbers, current.billNos);
   const [receiptName, setReceiptName] = useState(
     current.receiptName || current.taxInvoice.split('\n')[0]?.trim() || current.customerName,
   );
@@ -1983,7 +2025,7 @@ function BatchCheckDialog({ payments, onDone }: {
   // each payment starts with its own (usually empty) RE, never leaking the previous row's input.
   function goTo(nextIndex: number, nextPayment: Payment) {
     setIndex(nextIndex);
-    re.reset(nextPayment.reNumbers);
+    re.reset(nextPayment.reNumbers, nextPayment.billNos);
     setReceiptName(nextPayment.receiptName || nextPayment.taxInvoice.split('\n')[0]?.trim() || nextPayment.customerName);
     setCustomerType(nextPayment.customerType);
     setErr('');
@@ -1991,12 +2033,12 @@ function BatchCheckDialog({ payments, onDone }: {
 
   async function saveAndNext() {
     if (!re.valid || saving) return;
-    const finalRe = re.finalize();
-    if (finalRe.length === 0) return;
+    const documents = re.finalize();
+    if (documents.reNumbers.length === 0 && documents.billNos.length === 0) return;
     setSaving(true);
     setErr('');
     try {
-      await verifyPayment(current.id, { reNumbers: finalRe, receiptName: receiptName.trim(), customerType });
+      await verifyPayment(current.id, { ...documents, receiptName: receiptName.trim(), customerType });
       if (index + 1 < payments.length) {
         goTo(index + 1, payments[index + 1]);
       } else {
@@ -2013,13 +2055,13 @@ function BatchCheckDialog({ payments, onDone }: {
   // remaining row in the queue (one shared receipt across several payments).
   async function applyToRest() {
     if (!re.valid || saving) return;
-    const finalRe = re.finalize();
-    if (finalRe.length === 0) return;
+    const documents = re.finalize();
+    if (documents.reNumbers.length === 0 && documents.billNos.length === 0) return;
     setSaving(true);
     setErr('');
     const remaining = payments.slice(index);
     const results = await Promise.allSettled(
-      remaining.map((p) => verifyPayment(p.id, { reNumbers: finalRe, receiptName: receiptName.trim(), customerType })),
+      remaining.map((p) => verifyPayment(p.id, { ...documents, receiptName: receiptName.trim(), customerType })),
     );
     const failed = results.filter((r) => r.status === 'rejected').length;
     setSaving(false);
@@ -2035,7 +2077,7 @@ function BatchCheckDialog({ payments, onDone }: {
       <div className="bg-white rounded-2xl p-4 w-full max-w-sm space-y-3">
         <div className="flex items-center justify-between gap-2">
           <div className="font-semibold text-slate-800 flex items-center gap-1.5">
-            <FileText size={16} className="text-emerald-700" /> ตรวจแล้ว — รายการที่ {index + 1} / {payments.length}
+            <FileText size={16} className="text-emerald-700" /> ตรวจแล้ว (RE / บิลมือ) — รายการที่ {index + 1} / {payments.length}
           </div>
           <button onClick={onDone} title="ปิด" className="p-1 text-slate-400 hover:text-slate-600"><X size={18} /></button>
         </div>
@@ -2050,11 +2092,11 @@ function BatchCheckDialog({ payments, onDone }: {
         </div>
 
         <label className="block">
-          <span className="text-xs text-slate-500">เลขที่ใบเสร็จ (RE) — พิมพ์ได้หลายเลข คั่นด้วย / , หรือเว้นวรรค</span>
-          <ReChipsBox state={re} onEnter={saveAndNext} autoFocus />
-          {re.pendingInvalid && <span className="text-[11px] text-rose-600">ต้องเป็นตัวเลข 7 หลัก</span>}
-          {!re.pendingInvalid && re.reNumbers.length === 0 && !re.pendingValid && (
-            <span className="text-[11px] text-slate-400">ต้องมีอย่างน้อย 1 เลข RE</span>
+          <span className="text-xs text-slate-500">เลข RE หรือบิลมือ — พิมพ์ได้หลายเลข คั่นด้วย / , หรือเว้นวรรค</span>
+          <ReceiptChipsBox state={re} onEnter={saveAndNext} autoFocus />
+          {re.pendingInvalid && <span className="text-[11px] text-rose-600">เลขบิลห้ามมี / , หรือช่องว่าง</span>}
+          {!re.pendingInvalid && re.reNumbers.length === 0 && re.billNos.length === 0 && !re.pendingValid && (
+            <span className="text-[11px] text-slate-400">ต้องมีอย่างน้อย 1 เลข RE หรือบิลมือ</span>
           )}
         </label>
 

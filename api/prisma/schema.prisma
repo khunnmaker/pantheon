@@ -282,6 +282,7 @@ model Payment {
   // also be split across several payments — so this is a plain list, not a relation. Each entry
   // is bare 7 digits (see POST /verify's normalization).
   reNumbers        String[]           @default([])
+  billNos          String[]           @default([])
   receiptName      String             @default("") // official name on the RE (may differ from customerName)
   customerType     String             @default("") // โอนก่อนส่ง | เครดิต | เก็บปลายทาง | "" (unset)
   // bank reconciliation (phase B): denormalized true while >=1 PaymentBankMatch link exists
@@ -410,6 +411,30 @@ model ReReceipt {
   updatedAt    DateTime @updatedAt
 
   @@index([notPosted])
+}
+
+// Juno manual-bill lane. These documents cover non-Express sales and are linked to incoming
+// Payment rows live through Payment.billNos (the same denormalized-list pattern as REs).
+model ManualBill {
+  id            String    @id @default(cuid())
+  billNo        String    @unique
+  billedAt      String    @default("")
+  buyerName     String    @default("")
+  buyerPhone    String    @default("")
+  buyerAddress  String    @default("")
+  items         Json?
+  amount        String    @default("")
+  note          String    @default("")
+  status        String    @default("open")
+  voidedAt      DateTime?
+  voidedById    String?
+  createdAt     DateTime  @default(now())
+  createdById   String?
+  createdByName String    @default("")
+  updatedAt     DateTime  @updatedAt
+
+  @@index([status])
+  @@index([createdAt])
 }
 
 // Staff quick-reply templates — canned messages (address, hours, payment, catalog,
