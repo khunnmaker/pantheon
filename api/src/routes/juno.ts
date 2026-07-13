@@ -308,7 +308,7 @@ function toBankTxnRow(
     description: string; details: string; payerName: string; payerBank: string; matchStatus: string;
     refText: string; expressConfirmedAt: Date | null; expressConfirmedById: string | null;
   },
-  links: { paymentId: string; reNumber: string; receiptName: string; customerName: string; amount: string }[] = [],
+  links: { paymentId: string; reNumber: string; chequeNo: string; receiptName: string; customerName: string; amount: string }[] = [],
 ) {
   const linkedSum = links.reduce((s, l) => s + txnAmountNum(l.amount), 0);
   return {
@@ -327,7 +327,7 @@ function toBankTxnRow(
     refText: t.refText,
     expressConfirmedAt: t.expressConfirmedAt ? t.expressConfirmedAt.toISOString() : null,
     expressConfirmedById: t.expressConfirmedById,
-    links: links.map((l) => ({ paymentId: l.paymentId, reNumber: l.reNumber, receiptName: l.receiptName, customerName: l.customerName, amount: l.amount })),
+    links: links.map((l) => ({ paymentId: l.paymentId, reNumber: l.reNumber, chequeNo: l.chequeNo, receiptName: l.receiptName, customerName: l.customerName, amount: l.amount })),
     linkedSum,
     sumDelta: links.length ? Number((linkedSum - txnAmountNum(t.amount)).toFixed(2)) : null,
   };
@@ -1308,7 +1308,7 @@ export async function junoRoutes(app: FastifyInstance) {
     const txns = await prisma.bankTxn.findMany({ where, orderBy: { txnAt: 'desc' }, take: q.limit ?? 200 });
     const links = await prisma.paymentBankMatch.findMany({
       where: { bankTxnId: { in: txns.map((t) => t.id) } },
-      select: { bankTxnId: true, payment: { select: { id: true, reNumber: true, receiptName: true, customerName: true, amount: true } } },
+      select: { bankTxnId: true, payment: { select: { id: true, reNumber: true, chequeNo: true, receiptName: true, customerName: true, amount: true } } },
     });
     const byTxn = new Map<string, typeof links>();
     for (const l of links) byTxn.set(l.bankTxnId, [...(byTxn.get(l.bankTxnId) ?? []), l]);
@@ -1318,7 +1318,7 @@ export async function junoRoutes(app: FastifyInstance) {
         toBankTxnRow(
           t,
           (byTxn.get(t.id) ?? []).map((l) => ({
-            paymentId: l.payment.id, reNumber: l.payment.reNumber, receiptName: l.payment.receiptName,
+            paymentId: l.payment.id, reNumber: l.payment.reNumber, chequeNo: l.payment.chequeNo, receiptName: l.payment.receiptName,
             customerName: l.payment.customerName, amount: l.payment.amount,
           })),
         ),
@@ -1337,7 +1337,7 @@ export async function junoRoutes(app: FastifyInstance) {
 
     const candidates = await prisma.payment.findMany({
       where: { status: 'verified', id: { notIn: [...excludeIds] } },
-      select: { id: true, reNumber: true, receiptName: true, customerName: true, senderName: true, amount: true, transferAt: true, createdAt: true },
+      select: { id: true, reNumber: true, chequeNo: true, receiptName: true, customerName: true, senderName: true, amount: true, transferAt: true, createdAt: true },
       take: 500, // ranked below; a bound keeps this cheap even on a large backlog
     });
 
@@ -1368,6 +1368,7 @@ export async function junoRoutes(app: FastifyInstance) {
       suggestions: top.map((s) => ({
         paymentId: s.p.id,
         reNumber: s.p.reNumber,
+        chequeNo: s.p.chequeNo,
         receiptName: s.p.receiptName,
         customerName: s.p.customerName,
         senderName: s.p.senderName,

@@ -526,6 +526,10 @@ function TxnDetail({ txn, onChanged }: { txn: BankTxn; onChanged: (updated?: Ban
                 <span className="font-semibold text-emerald-700">RE {l.reNumber || '—'}</span>
                 <span className="text-slate-400">·</span>
                 <span>{baht(parseFloat(l.amount || '0'))}</span>
+                {l.chequeNo && <>
+                  <span className="text-slate-400">·</span>
+                  <span className="text-slate-500 shrink-0">เช็ค {l.chequeNo}</span>
+                </>}
                 <span className="text-slate-400">·</span>
                 <span className="text-slate-500 max-w-[120px] truncate">{l.receiptName || l.customerName}</span>
                 <button onClick={() => unlink(l.paymentId)} disabled={busy} className="text-slate-300 hover:text-rose-600 ml-0.5" title="ยกเลิกจับคู่">
@@ -561,6 +565,7 @@ function TxnDetail({ txn, onChanged }: { txn: BankTxn; onChanged: (updated?: Ban
                 <span className="font-semibold text-emerald-700 shrink-0">RE {s.reNumber || '—'}</span>
                 <span className="shrink-0">{baht(parseFloat(s.amount || '0'))}</span>
                 {s.exactAmount && <span className="px-1 py-0.5 rounded bg-emerald-50 text-emerald-600 shrink-0">ยอดตรง</span>}
+                {s.chequeNo && <span className="text-slate-400 shrink-0">เช็ค {s.chequeNo}</span>}
                 <span className="text-slate-500 truncate flex-1">{s.receiptName || s.customerName}</span>
                 <span className="text-slate-400 shrink-0">±{s.dayDistance.toFixed(1)}ว</span>
               </label>

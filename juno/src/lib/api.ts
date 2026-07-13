@@ -525,6 +525,7 @@ export type BankTxnStatusFilter = 'all' | 'unmatched' | 'matched' | 'confirmed';
 export interface BankTxnLink {
   paymentId: string;
   reNumber: string;
+  chequeNo: string;
   receiptName: string;
   customerName: string;
   amount: string;
@@ -583,6 +584,7 @@ export interface BankImportApplyResult {
 export interface BankSuggestion {
   paymentId: string;
   reNumber: string;
+  chequeNo: string;
   receiptName: string;
   customerName: string;
   senderName: string;
