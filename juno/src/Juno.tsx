@@ -27,8 +27,10 @@ import AppSwitcher from './AppSwitcher';
 // No ใบกำกับภาษี tab: Prominent issues a tax invoice on EVERY sale (in Express, as part of
 // recording), so a "requested" queue would contain everything and filter nothing. The invoice
 // details captured off the slip flow (name/address/tax-ID) still show in the drawer.
-// 'receive' = CEO-only "รอยืนยันรับเงิน" (task 1): unconfirmed cash/cheque awaiting the CEO's
-// physical receipt confirmation, folded into inbox/flags.
+// 'receive' = CEO-only "เงินสด/เช็ค" tab: all non-void cash+cheque rows with their stage badge.
+// This is where the CEO marks ได้รับเงินแล้ว (stage 3) daily once FIN physically hands over the
+// money — that receivedAt confirm is cash/cheque's stage-3 signal (the transfer analog is a bank
+// match/จับคู่แล้ว). The tab badge counts those still awaiting the confirm (summary.awaitingReceive).
 // 'wht' = หัก ณ ที่จ่าย (WHT, task 2): every withheld payment — visible to ALL Juno users
 // (not CEO-only, unlike 'reports'/'receive').
 // 'reRecon' = กระทบยอด RE: the Express ARRCPDAT.TXT (AR-receipt) import + live RE-vs-Payment
@@ -59,31 +61,46 @@ const STATUS_META: Record<PaymentStatus, { label: string; cls: string }> = {
   void: { label: 'ยกเลิก', cls: 'bg-slate-200 text-slate-500 line-through' },
 };
 const CUSTOMER_TYPES: CustomerType[] = ['โอนก่อนส่ง', 'เครดิต', 'เก็บปลายทาง'];
+
+// The payment's position in the 4-stage lifecycle (owner model 2026-07-14). DERIVED — no DB
+// column: the badge is a function of status + how "money confirmed" is proven, which differs by
+// channel. STATUS_META above is still the raw-status vocabulary (filter dropdown + rail-action
+// button labels); stageOf is the DISPLAY badge that adds the missing 3rd stage.
+//   1 รอตรวจ (received) → 2 ตรวจแล้ว (verified: RE/MB) → 3 money-confirmed → 4 ยืนยันใน Express (recorded)
+//   Stage-3 signal + label by source:
+//     · transfer/slip (line, manual_transfer): reconciled === true → 'จับคู่แล้ว' (bank line linked, Wed/Sat import)
+//     · cash / cheque:                          receivedAt is set   → 'ได้รับเงินแล้ว' (CEO physically got it, marked daily)
+//   void short-circuits to ยกเลิก. Stage 3 lights only once the row is BOTH verified AND the
+//   channel's money-confirmed signal holds — mirroring the server's recorded-gate order, so a
+//   receive marked before the RE still reads at its status-spine stage.
+type Stage = { n: number; label: string; cls: string };
+function stageOf(p: Payment): Stage {
+  if (p.status === 'void') return { n: 0, label: 'ยกเลิก', cls: 'bg-slate-200 text-slate-500 line-through' };
+  if (p.status === 'recorded') return { n: 4, label: 'ยืนยันใน Express', cls: 'bg-emerald-100 text-emerald-700' };
+  if (p.status === 'received') return { n: 1, label: 'รอตรวจ', cls: 'bg-slate-100 text-slate-600' };
+  // status === 'verified' → stage 2, or stage 3 once the channel's money-confirmed signal holds.
+  const isCashCheque = p.source === 'cash' || p.source === 'cheque';
+  const moneyConfirmed = isCashCheque ? !!p.receivedAt : p.reconciled;
+  if (moneyConfirmed) {
+    return { n: 3, label: isCashCheque ? 'ได้รับเงินแล้ว' : 'จับคู่แล้ว', cls: 'bg-teal-100 text-teal-700' };
+  }
+  return { n: 2, label: 'ตรวจแล้ว', cls: 'bg-sky-100 text-sky-700' };
+}
+
 function Badge({ children, cls }: { children: React.ReactNode; cls: string }) {
   return <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-semibold ${cls}`}>{children}</span>;
 }
 
-// ช่องทาง (payment-method) list cell — transfer shows the bank name (unchanged from before);
-// cash/cheque show their method label plus, until the CEO confirms receipt, a รอยืนยัน badge.
-// The badge tracks the only cash/cheque payment state: the CEO's ได้รับแล้ว confirmation.
+// ช่องทาง (payment-method) list cell — transfer shows the bank name; cash/cheque show their
+// method label. The receipt/reconciliation stage now lives in the status badge (stageOf →
+// ได้รับเงินแล้ว / จับคู่แล้ว), so this cell no longer carries a separate รอยืนยัน chip.
 function MethodCell({ p }: { p: Payment }) {
-  const awaitingReceive = !p.receivedAt && p.status !== 'void';
-  if (p.source === 'cash') {
-    return (
-      <div className="flex items-center gap-1 max-w-[120px]">
-        <span className="truncate">เงินสด</span>
-        {awaitingReceive && <Badge cls="bg-amber-100 text-amber-700">รอยืนยัน</Badge>}
-      </div>
-    );
-  }
+  if (p.source === 'cash') return <span className="truncate">เงินสด</span>;
   if (p.source === 'cheque') {
     return (
-      <div className="flex items-center gap-1 max-w-[120px]">
-        <span className="truncate" title={p.chequeBank ? `เช็ค · ${p.chequeBank}` : 'เช็ค'}>
-          {p.chequeBank ? `เช็ค · ${p.chequeBank}` : 'เช็ค'}
-        </span>
-        {awaitingReceive && <Badge cls="bg-amber-100 text-amber-700">รอยืนยัน</Badge>}
-      </div>
+      <span className="truncate max-w-[120px] inline-block align-bottom" title={p.chequeBank ? `เช็ค · ${p.chequeBank}` : 'เช็ค'}>
+        {p.chequeBank ? `เช็ค · ${p.chequeBank}` : 'เช็ค'}
+      </span>
     );
   }
   // line / manual_transfer — unchanged bank-name treatment
@@ -133,8 +150,9 @@ export default function Juno({ agent, onLogout }: { agent: Agent; onLogout: () =
         // unlike รอยืนยันรับเงิน/รายงาน below). Its own totals bar covers the count.
         { key: 'wht', label: 'หัก ณ ที่จ่าย', icon: <Percent size={16} /> },
         { key: 'disc', label: 'ยอดเกิน/ขาด', icon: <Scale size={16} />, count: summary?.discrepancyOpen },
-        // รอยืนยันรับเงิน is CEO-only (server 403s POST /receive for non-supervisor).
-        ...(isCeo ? [{ key: 'receive' as const, label: 'รอยืนยันรับเงิน', icon: <HandCoins size={16} />, count: summary?.awaitingReceive }] : []),
+        // เงินสด/เช็ค tab is CEO-only: it's where the CEO marks ได้รับเงินแล้ว (server 403s
+        // POST /receive for non-supervisor). Badge = cash/cheque still awaiting that confirm.
+        ...(isCeo ? [{ key: 'receive' as const, label: 'เงินสด/เช็ค', icon: <HandCoins size={16} />, count: summary?.awaitingReceive }] : []),
         { key: 'flags', label: 'ปักธง', icon: <Flag size={16} />, count: summary?.flagged },
         { key: 'recon', label: 'กระทบยอด', icon: <Scale size={16} />, count: bankUnmatched },
         { key: 'reRecon', label: 'กระทบยอด RE', icon: <FileCheck size={16} /> },
@@ -244,8 +262,9 @@ function PaymentsView({ view, onChanged, canDelete, isCeo }: { view: Exclude<Vie
     ...(view === 'flags' ? { flagged: true } : {}),
     ...(view === 'inbox' ? { status } : {}),
     ...(view === 'inbox' && method !== 'all' ? { source: method } : {}),
-    // รอยืนยันรับเงิน tab (task 1): a fixed queue — no extra filters, just the pending list.
-    ...(view === 'receive' ? { pendingReceive: true } : {}),
+    // เงินสด/เช็ค tab: all non-void cash+cheque, so the CEO sees every row's stage and marks
+    // ได้รับเงินแล้ว (stage 3) at end of day. The awaitingReceive summary still badges the tab.
+    ...(view === 'receive' ? { source: 'cashcheque', excludeVoid: true } : {}),
     // หัก ณ ที่จ่าย tab (task 2): every withheld payment, still honouring the from/to date pickers.
     ...(view === 'wht' ? { wht: true } : {}),
   };
@@ -293,9 +312,10 @@ function PaymentsView({ view, onChanged, canDelete, isCeo }: { view: Exclude<Vie
   // Reflect a drawer action back into the list + selected row without a full reload.
   function applyUpdate(p: Payment) {
     setSelected(p);
-    // a row may drop out of the pre-filtered flag queue (unflagged) or the รอยืนยันรับเงิน
-    // queue (just confirmed received) → refetch it rather than leave a stale row showing
-    if ((view === 'flags' && !p.flagged) || (view === 'receive' && !!p.receivedAt)) {
+    // a row may drop out of the pre-filtered flag queue (unflagged) → refetch it rather than
+    // leave a stale row showing. The เงินสด/เช็ค tab keeps received rows (they advance to the
+    // ได้รับเงินแล้ว badge in place), so only the flag queue needs the refetch.
+    if (view === 'flags' && !p.flagged) {
       load();
     } else {
       setRows((prev) => prev.map((r) => (r.id === p.id ? p : r)));
@@ -693,7 +713,7 @@ function PaymentsView({ view, onChanged, canDelete, isCeo }: { view: Exclude<Vie
                     </td>
                     <td className="px-3 py-2">
                       <div className="flex items-center gap-1">
-                        <Badge cls={STATUS_META[p.status].cls}>{STATUS_META[p.status].label}</Badge>
+                        <Badge cls={stageOf(p).cls}>{stageOf(p).label}</Badge>
                         {p.flagged && <Flag size={13} className="text-rose-500" />}
                       </div>
                     </td>
@@ -1327,7 +1347,7 @@ function Detail({ payment, onClose, onUpdate, onDelete, onPrint, canDelete, isCe
         <div className="sticky top-0 z-10 bg-white px-3 py-2 border-b border-slate-100 rounded-t-2xl md:rounded-t-xl">
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-1.5 min-w-0">
-              <Badge cls={STATUS_META[p.status].cls}>{STATUS_META[p.status].label}</Badge>
+              <Badge cls={stageOf(p).cls}>{stageOf(p).label}</Badge>
               {p.reNumbers.length > 0 && (
                 <div className="flex items-center gap-1 min-w-0 overflow-hidden">
                   {p.reNumbers.length <= 2 ? (
@@ -1606,10 +1626,10 @@ function CashChequeSection({ payment: p, busy, run, isCeo }: {
           condition above). Non-CEO sees the status read-only — the confirm action is
           supervisor-only server-side, mirroring ลบถาวร's gate. */}
       <div className="mt-3 pt-3 border-t border-dashed border-slate-200">
-        <div className="text-xs text-slate-400 mb-1.5">การรับเงินจริง (ยืนยันโดย CEO)</div>
+        <div className="text-xs text-slate-400 mb-1.5">ได้รับเงินแล้ว — ขั้นที่ 3 (ยืนยันโดย CEO)</div>
         <div className="flex items-center gap-2 flex-wrap">
-          <Badge cls={received ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}>
-            {received ? `ได้รับแล้ว · ${fmtDate(p.receivedAt!)}` : 'รอ CEO ยืนยัน'}
+          <Badge cls={received ? 'bg-teal-100 text-teal-700' : 'bg-amber-100 text-amber-700'}>
+            {received ? `ได้รับเงินแล้ว · ${fmtDate(p.receivedAt!)}` : 'รอ CEO ยืนยันรับเงิน'}
           </Badge>
           {isCeo && (received ? (
             <button
@@ -1625,7 +1645,7 @@ function CashChequeSection({ payment: p, busy, run, isCeo }: {
               onClick={() => void run('receive', () => confirmReceived(p.id, true))}
               className="px-2.5 py-1 rounded-lg text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 disabled:opacity-40 flex items-center gap-1"
             >
-              {busy === 'receive' ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} ยืนยันรับเงินแล้ว
+              {busy === 'receive' ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} ได้รับเงินแล้ว
             </button>
           ))}
         </div>

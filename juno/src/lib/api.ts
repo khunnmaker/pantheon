@@ -71,6 +71,9 @@ export interface Payment {
   note: string;
   status: PaymentStatus;
   flagged: boolean;
+  // stage-3 signal for TRANSFERS (จับคู่แล้ว): true once a bank line is linked in กระทบยอด.
+  // Cash/cheque ignore this and use receivedAt (ได้รับเงินแล้ว) instead — see stageOf().
+  reconciled: boolean;
   verifiedById: string | null;
   verifiedAt: string | null;
   createdAt: string;

@@ -115,7 +115,7 @@ function toRow(p: {
   senderName: string; amount: string; ocrAmount: string; bank: string; transferAt: string;
   ref: string; slipMessageId: string | null; slipUrl: string; taxInvoice: string;
   taxInvoiceStatus: string; salesAgentId: string | null; salesName: string; note: string;
-  status: string; flagged: boolean; verifiedById: string | null; verifiedAt: Date | null;
+  status: string; flagged: boolean; reconciled: boolean; verifiedById: string | null; verifiedAt: Date | null;
   createdAt: Date; reNumber: string; reNumbers: string[]; billNos: string[]; receiptName: string; customerType: string;
   source: string; settleState: string; settledAt: Date | null;
   receivedAt: Date | null; receivedBy: string | null;
@@ -151,6 +151,9 @@ function toRow(p: {
     note: p.note,
     status: p.status,
     flagged: p.flagged,
+    // stage-3 signal for TRANSFERS: a bank line is linked (จับคู่แล้ว). Cash/cheque use
+    // receivedAt instead (ได้รับเงินแล้ว) — see stageOf() in juno/src/Juno.tsx.
+    reconciled: p.reconciled,
     verifiedById: p.verifiedById,
     verifiedAt: p.verifiedAt ? p.verifiedAt.toISOString() : null,
     createdAt: p.createdAt.toISOString(),

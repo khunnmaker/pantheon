@@ -410,9 +410,19 @@ function TxnList({ onChanged, refreshKey }: { onChanged: () => void; refreshKey:
   );
 }
 
+// Pull "Cheque No. N" out of a bank line's Details text ('' if none). The cheque number is the
+// transaction number the CEO eyeballs when reconciling a cheque deposit — and it's exactly what
+// the server's cheque auto-matcher keys on (extractChequeNo in api/src/routes/juno.ts). It lives
+// inside `details`, so a line with a payerName used to hide it in the collapsed row; this surfaces
+// it as its own chip.
+function chequeNoOf(txn: BankTxn): string {
+  return txn.details.match(/Cheque No\.?\s*(\S+)/i)?.[1] ?? '';
+}
+
 function TxnRow({ txn, expanded, onToggle, onChanged }: {
   txn: BankTxn; expanded: boolean; onToggle: () => void; onChanged: (updated?: BankTxn) => void;
 }) {
+  const chequeNo = chequeNoOf(txn);
   return (
     <div>
       <div onClick={onToggle} className="px-3 py-2.5 flex items-center gap-2 cursor-pointer hover:bg-emerald-50/40 text-sm">
@@ -420,6 +430,9 @@ function TxnRow({ txn, expanded, onToggle, onChanged }: {
         <div className="w-32 shrink-0 text-slate-500 whitespace-nowrap">{fmtDateTime(txn.txnAt)}</div>
         <div className="w-28 shrink-0 text-right font-semibold whitespace-nowrap">{baht(txn.amountNum)}</div>
         <span className="shrink-0 px-1.5 py-0.5 rounded-full text-[11px] bg-slate-100 text-slate-600">{channelChip(txn.channel)}</span>
+        {chequeNo && (
+          <span className="shrink-0 px-1.5 py-0.5 rounded text-[11px] font-mono bg-violet-50 text-violet-700 whitespace-nowrap" title="เลขที่เช็ค (เลขอ้างอิงรายการที่ใช้จับคู่)">เช็ค #{chequeNo}</span>
+        )}
         <div className="flex-1 min-w-0 truncate text-slate-500">{txn.payerName || txn.details}</div>
         <div className="shrink-0 flex items-center gap-1 flex-wrap justify-end max-w-[45%]">
           {txn.links.slice(0, 3).map((l) => (
