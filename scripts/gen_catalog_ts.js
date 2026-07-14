@@ -5,7 +5,7 @@ const CATALOG = 'C:\\Users\\khunn\\AppData\\Local\\Temp\\minerva-catalog\\catalo
 const BASE = 'G:\\My Drive\\Shared\\Minerva\\product-photos';
 const PRODUCTS_DIR = path.join(BASE, 'products');
 const INDEX_CSV = path.join(BASE, 'INDEX.csv');
-const OUT_TS = 'C:\\Users\\khunn\\Project\\Minerva\\api\\src\\catalog\\catalogData.ts';
+const OUT_TS = path.join(__dirname, '..', 'api', 'src', 'catalog', 'catalogData.ts');
 
 const norm = (s) => String(s).trim().toUpperCase();
 const catalog = JSON.parse(fs.readFileSync(CATALOG, 'utf8'));

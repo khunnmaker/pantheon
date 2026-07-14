@@ -1,6 +1,7 @@
 // Generate api/src/catalog/stockData.ts from the parsed stock.json, filtered to
 // catalog SKUs (others have no Product row). Run after parse_stock.js.
 const fs = require('fs');
+const path = require('path');
 const TMP = 'C:\\Users\\khunn\\AppData\\Local\\Temp\\minerva-catalog';
 const stock = JSON.parse(fs.readFileSync(`${TMP}\\stock.json`, 'utf8'));
 const catalog = JSON.parse(fs.readFileSync(`${TMP}\\catalog.json`, 'utf8'));
@@ -19,6 +20,6 @@ out += 'export const STOCK: Record<string, number> = {\n';
 for (const [sku, qty] of Object.entries(filtered)) out += `  '${sku}': ${qty},\n`;
 out += '};\n';
 
-fs.writeFileSync('C:\\Users\\khunn\\Project\\Minerva\\api\\src\\catalog\\stockData.ts', out, 'utf8');
+fs.writeFileSync(path.join(__dirname, '..', 'api', 'src', 'catalog', 'stockData.ts'), out, 'utf8');
 const inStock = Object.values(filtered).filter((q) => q > 0).length;
 console.log('wrote stockData.ts:', Object.keys(filtered).length, 'catalog SKUs |', inStock, 'in stock |', Object.keys(filtered).length - inStock, 'out');
