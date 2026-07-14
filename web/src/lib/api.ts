@@ -46,6 +46,7 @@ export interface Message {
   attachmentType: string | null; // image | sticker | video | audio | file | location | product
   attachmentRef: string | null;
   attachmentName: string | null; // original filename for received files
+  aiCaption?: string | null; // AI-generated caption for an image attachment (names it in a quote snippet)
   financeSentAt: string | null; // when a slip was forwarded to finance
   quotedMessageId?: string | null; // our Message.id this bubble quote-replies to (both directions)
   quotable?: boolean; // customer text/sticker bubble carrying a quoteToken → tap to LINE-quote it

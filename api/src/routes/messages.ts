@@ -296,16 +296,16 @@ export async function messageRoutes(app: FastifyInstance) {
 
     const draft = await prisma.draft.findUnique({ where: { messageId: customerMsg.id } });
 
-    // Optional LINE quote-reply: only honour replyToMessageId if it's a message of THIS customer
-    // that carries a quoteToken (inbound text/sticker). Otherwise send normally (no error) — the
-    // token rides the TEXT part of the reply, and quotedMessageId records what we replied to.
+    // Reply linkage: any message of THIS customer records quotedMessageId (console-side linkage,
+    // incl. pictures with no quoteToken). The real LINE quote-reply only rides the TEXT part when
+    // the quoted message itself carries a quoteToken (inbound text/sticker).
     let quoteToken: string | undefined;
     let quotedMessageId: string | undefined;
     if (parsed.data.replyToMessageId) {
       const quoted = await prisma.message.findUnique({ where: { id: parsed.data.replyToMessageId } });
-      if (quoted && quoted.customerId === customer.id && quoted.quoteToken) {
-        quoteToken = quoted.quoteToken;
+      if (quoted && quoted.customerId === customer.id) {
         quotedMessageId = quoted.id;
+        if (quoted.quoteToken) quoteToken = quoted.quoteToken;
       }
     }
 

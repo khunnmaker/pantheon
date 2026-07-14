@@ -89,10 +89,24 @@ function fmtTime(t?: string) {
 }
 
 // Compact author + truncated text of a message, for a quoted-reply snippet / the "reply-to" bar.
+// Attachment-aware: a picture (or other non-text attachment) has no useful m.text, so name the
+// attachment instead — an image uses its AI caption when available. Sticker (already readable as
+// "[สติกเกอร์] …") and plain text fall through to the existing m.text behavior.
 function quoteSnippet(m: Message | undefined): { author: string; text: string } {
   if (!m) return { author: '', text: 'ข้อความที่ตอบกลับ' };
   const author = m.role === 'customer' ? 'ลูกค้า' : m.agentName ? m.agentName : 'ทีมงาน';
-  const raw = (m.text ?? '').replace(/\s+/g, ' ').trim();
+  const attachmentLabel = (() => {
+    switch (m.attachmentType) {
+      case 'image': return m.aiCaption ? `รูปภาพ: ${m.aiCaption}` : 'รูปภาพ';
+      case 'product': return 'รูปสินค้า';
+      case 'file': return m.attachmentName ? `ไฟล์: ${m.attachmentName}` : 'ไฟล์';
+      case 'video': return 'วิดีโอ';
+      case 'audio': return 'เสียง';
+      case 'location': return 'ตำแหน่งที่ตั้ง';
+      default: return null;
+    }
+  })();
+  const raw = (attachmentLabel ?? m.text ?? '').replace(/\s+/g, ' ').trim();
   const text = raw.length > 60 ? raw.slice(0, 60) + '…' : raw || 'ข้อความ';
   return { author, text };
 }
@@ -1690,8 +1704,10 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                         ? detail.messages.find((q) => q.id === m.quotedMessageId)
                         : undefined;
                       const quotedSnip = m.quotedMessageId ? quoteSnippet(quoted) : null;
-                      // Tap a quotable customer text/sticker bubble to LINE-quote-reply it.
-                      const canReply = !!m.quotable;
+                      // Tap to reply: a quotable text/sticker bubble gets a real LINE quote; any
+                      // bubble with an attachment (incl. pictures, ours or the customer's) is also
+                      // tappable for a console-side reply linkage (no LINE quoteToken for those).
+                      const canReply = !!m.quotable || !!m.attachmentType;
                       const isReplying = replyingTo === m.id;
                       return (
                       <div key={m.id} className={m.role === 'customer' ? 'flex justify-start' : 'flex justify-end'}>

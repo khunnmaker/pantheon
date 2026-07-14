@@ -438,15 +438,16 @@ export async function consoleRoutes(app: FastifyInstance) {
     const qr = await prisma.quickReply.findUnique({ where: { id: parsed.data.quickReplyId } });
     if (!qr) return reply.code(404).send({ error: 'quick_reply_not_found' });
 
-    // Optional LINE quote-reply (same rule as /message and /reply): honour only a same-customer
-    // message carrying a quoteToken; else send the template normally.
+    // Reply linkage (same rule as /message and /reply): any same-customer message records
+    // quotedMessageId (console-side linkage, incl. pictures); the real LINE quote-reply only
+    // rides when the quoted message itself carries a quoteToken.
     let quoteToken: string | undefined;
     let quotedMessageId: string | undefined;
     if (parsed.data.replyToMessageId) {
       const quoted = await prisma.message.findUnique({ where: { id: parsed.data.replyToMessageId } });
-      if (quoted && quoted.customerId === customer.id && quoted.quoteToken) {
-        quoteToken = quoted.quoteToken;
+      if (quoted && quoted.customerId === customer.id) {
         quotedMessageId = quoted.id;
+        if (quoted.quoteToken) quoteToken = quoted.quoteToken;
       }
     }
 
@@ -498,16 +499,17 @@ export async function consoleRoutes(app: FastifyInstance) {
     const customer = await prisma.customer.findUnique({ where: { id: req.params.id } });
     if (!customer) return reply.code(404).send({ error: 'not_found' });
 
-    // Optional LINE quote-reply — only if replyToMessageId belongs to THIS customer and has a
-    // quoteToken (inbound text/sticker). The quote rides the TEXT part, so a photo-only send can't
-    // carry it; send normally (no error) when unmet. quotedMessageId records what we replied to.
+    // Reply linkage — any replyToMessageId belonging to THIS customer records quotedMessageId
+    // (console-side linkage, incl. pictures). The real LINE quote rides the TEXT part only when
+    // the quoted message itself carries a quoteToken (inbound text/sticker); send normally
+    // (no error) when unmet.
     let quoteToken: string | undefined;
     let quotedMessageId: string | undefined;
     if (parsed.data.replyToMessageId) {
       const quoted = await prisma.message.findUnique({ where: { id: parsed.data.replyToMessageId } });
-      if (quoted && quoted.customerId === customer.id && quoted.quoteToken) {
-        quoteToken = quoted.quoteToken;
+      if (quoted && quoted.customerId === customer.id) {
         quotedMessageId = quoted.id;
+        if (quoted.quoteToken) quoteToken = quoted.quoteToken;
       }
     }
 
@@ -574,8 +576,9 @@ export async function consoleRoutes(app: FastifyInstance) {
         text,
         agentId: req.agent!.id,
         kbIds: [],
-        // Only record the quote when a TEXT bubble actually carried it (a photo-only send can't).
-        ...(quotedMessageId && sendText ? { quotedMessageId } : {}),
+        // quotedMessageId is internal linkage (any message type, incl. photo-only); only the real
+        // LINE quoteToken needs the text part.
+        ...(quotedMessageId ? { quotedMessageId } : {}),
         ...(attach ?? {}),
         ...(sendResult.channelMsgId ? { channelMsgId: sendResult.channelMsgId } : {}),
         ...(sendResult.quoteToken ? { quoteToken: sendResult.quoteToken } : {}),
