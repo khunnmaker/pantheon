@@ -4,6 +4,7 @@ import {
   Send, Check, CheckCircle2, RefreshCw, Brain, GraduationCap, Wand2, Pencil, AlertTriangle, Search,
   Download, Paperclip, Camera, Banknote, X, ChevronDown, ChevronUp, Crown, Pin, CornerUpLeft, Volume2, VolumeX,
   ExternalLink, Eye, ArrowLeft, Sparkles,
+  Eraser,
 } from 'lucide-react';
 import {
   getQueue, getCustomers, getCustomer, searchCustomers, logout as logoutSuite, regenerateDraft, rewriteText, sendReply, setNickname, setCategory, setStage, STAGES,
@@ -11,6 +12,7 @@ import {
   uploadAttachment, getLearned, getLearnedMetrics, promoteLearned, rejectLearned, endSession, API_URL, flatSku, getToken,
   getFinanceAudits, resolveFinanceAudit, type FinanceAudit,
   getQuickReplies, addQuickReply, deleteQuickReply, sendQuickReply, sendMessage, sendPhotoNow, searchCatalog, addProductToDraft, readSlip, sendToFinance,
+  draftNow, clearDrafts,
   type Agent, type CustomerLite, type CustomerDetail, type Message, type LearnedAnswer, type LearnedMetrics, type PendingProduct, type QuickReply,
 } from './lib/api';
 import { getSocket, disconnectSocket } from './lib/socket';
@@ -628,6 +630,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
   const [freeText, setFreeText] = useState('');
   const [freeNeedsConfirm, setFreeNeedsConfirm] = useState(false);
   const [freeSending, setFreeSending] = useState(false);
+  const [forceDrafting, setForceDrafting] = useState(false);
   const [replyingTo, setReplyingTo] = useState<string | null>(null); // Message.id being LINE-quote-replied
   const [freeProducts, setFreeProducts] = useState<PendingProduct[]>([]); // catalog photos picked in the answered-state composer (no draft to attach to)
   const [freeRewriting, setFreeRewriting] = useState(false);
@@ -661,7 +664,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
     setWaitingIds(new Set(queue.map((q) => q.customer.id)));
   }, []);
 
-  const loadDetail = useCallback(async (id: string) => {
+  const loadDetail = useCallback(async (id: string, preserveStaffInput = false) => {
     setLoadingDetail(true);
     try {
       const d = await getCustomer(id);
@@ -690,9 +693,11 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
         return kept.length ? kept : defaultSel;
       });
       setSelectionDirty(false); // a freshly loaded draft already reflects the current selection
-      setUpload(null);
-      setFreeText('');
-      setFreeProducts([]);
+      if (!preserveStaffInput) {
+        setUpload(null);
+        setFreeText('');
+        setFreeProducts([]);
+      }
     } finally {
       setLoadingDetail(false);
     }
@@ -764,8 +769,23 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
     const onDraft = (payload: { customerId?: string; messageId: string }) => {
       // Refresh the open conversation when its draft arrives/updates.
       if (selectedRef.current && (payload.customerId === selectedRef.current || !payload.customerId)) {
+        setForceDrafting(false);
         loadDetail(selectedRef.current).catch(() => undefined);
       }
+    };
+    const onDraftQueued = (payload: { customerId: string; fireAt: number }) => {
+      if (selectedRef.current !== payload.customerId) return;
+      setDetail((d) => (d ? { ...d, draftQueued: { fireAt: payload.fireAt } } : d));
+    };
+    const onDraftCleared = (payload: { customerId: string }) => {
+      if (selectedRef.current !== payload.customerId) return;
+      setForceDrafting(false);
+      loadDetail(payload.customerId, true).catch(() => undefined);
+    };
+    const onDraftFailed = (payload: { customerId: string }) => {
+      if (selectedRef.current !== payload.customerId) return;
+      setForceDrafting(false);
+      flashToast('ร่างคำตอบไม่สำเร็จ');
     };
     // The 👁 read chip updates live when the extension (or another staff's console) syncs a new
     // OA read marker for the currently-open customer, without needing a manual refresh.
@@ -798,12 +818,18 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
     socket.on('connect_error', onConnectError);
     socket.on('message:new', onMessage);
     socket.on('draft:new', onDraft);
+    socket.on('draft:queued', onDraftQueued);
+    socket.on('draft:cleared', onDraftCleared);
+    socket.on('draft:failed', onDraftFailed);
     socket.on('conversation:update', onConversation);
     socket.on('oa:read', onOaRead);
     return () => {
       socket.off('connect_error', onConnectError);
       socket.off('message:new', onMessage);
       socket.off('draft:new', onDraft);
+      socket.off('draft:queued', onDraftQueued);
+      socket.off('draft:cleared', onDraftCleared);
+      socket.off('draft:failed', onDraftFailed);
       socket.off('conversation:update', onConversation);
       socket.off('oa:read', onOaRead);
     };
@@ -812,6 +838,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
 
   useEffect(() => {
     selectedRef.current = selectedId;
+    setForceDrafting(false);
     if (selectedId) loadDetail(selectedId).catch(() => undefined);
   }, [selectedId, loadDetail]);
 
@@ -853,6 +880,33 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
     if (toastTimer.current) clearTimeout(toastTimer.current);
     setToast(msg);
     toastTimer.current = setTimeout(() => setToast(''), 2600);
+  }
+
+  async function clearMinervaDrafts() {
+    if (!selectedId) return;
+    try {
+      await clearDrafts(selectedId);
+      setForceDrafting(false);
+      await loadDetail(selectedId, true);
+      flashToast('ล้างร่าง Minerva แล้ว');
+    } catch {
+      flashToast('ล้างร่าง Minerva ไม่สำเร็จ');
+    }
+  }
+
+  async function forceDraftNow() {
+    if (!selectedId || forceDrafting) return;
+    setForceDrafting(true);
+    try {
+      const result = await draftNow(selectedId);
+      if ('noPending' in result) {
+        setForceDrafting(false);
+        flashToast('ยังไม่มีข้อความใหม่จากลูกค้า');
+      }
+    } catch {
+      setForceDrafting(false);
+      flashToast('ร่างคำตอบไม่สำเร็จ');
+    }
   }
 
   // Pin/unpin a customer chat for THIS agent (private). Optimistically flip local state,
@@ -1817,7 +1871,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                           <button type="button" onClick={() => setUpload(null)} className="text-slate-400 hover:text-rose-500"><X size={14} /></button>
                         </div>
                       )}
-                      <div className="grid grid-cols-[auto_auto_auto_1fr_1fr_1fr] gap-2">
+                      <div className="grid grid-cols-[auto_auto_auto_auto_1fr_1fr_1fr] gap-2">
                         <button type="button" disabled={uploading || sending || rewriting} onClick={openCamera}
                           title="ถ่ายรูปแล้วส่ง" aria-label="ถ่ายรูปแล้วส่ง"
                           className="px-2.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 flex items-center justify-center disabled:opacity-50">
@@ -1833,6 +1887,11 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                           qrManage={qrManage} setQrManage={setQrManage} qrLabel={qrLabel} setQrLabel={setQrLabel} qrBody={qrBody} setQrBody={setQrBody}
                           qrSaving={qrSaving} saveQuickReply={saveQuickReply} removeQuickReply={removeQuickReply}
                         />
+                        <button type="button" onClick={clearMinervaDrafts}
+                          title="ล้างร่างของ Minerva ทั้งหมด" aria-label="ล้างร่างของ Minerva ทั้งหมด"
+                          className="px-2 py-2 rounded-xl bg-slate-100 hover:bg-rose-100 text-slate-600 hover:text-rose-600 flex items-center justify-center">
+                          <Eraser size={16} />
+                        </button>
                         <button onClick={() => regenerate()} disabled={sending || rewriting}
                           title="ร่างคำตอบใหม่จากบทสนทนา + สินค้าที่เลือก (ไม่ใช้ข้อความที่พิมพ์ในกล่อง)"
                           className="min-w-0 px-2 py-2 rounded-xl bg-slate-200 hover:bg-slate-300 text-slate-700 text-sm font-semibold flex items-center justify-center gap-1 disabled:opacity-50">
@@ -1853,7 +1912,15 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                   ) : detail && detail.messages.length > 0 ? (
                     <div className="border-t border-slate-200 p-3 space-y-2 bg-white flex flex-col flex-1 min-h-0">
                       <div className="flex items-start gap-2">
-                        <div className="text-[11px] text-slate-400">ลูกค้าได้รับคำตอบล่าสุดแล้ว — ส่งข้อความเพิ่มเติม แนบรูปสินค้า หรือใช้ ✨ ช่วยเรียบเรียงได้</div>
+                        <div className={'text-[11px] ' + ((detail.generating || forceDrafting)
+                          ? 'text-indigo-600'
+                          : detail.draftQueued ? 'text-amber-600' : 'text-slate-400')}>
+                          {(detail.generating || forceDrafting)
+                            ? '✨ Minerva กำลังร่างคำตอบ…'
+                            : detail.draftQueued
+                              ? '⏳ ลูกค้าส่งข้อความใหม่มา — ระบบรอข้อความเพิ่มเติมสักครู่ก่อนร่าง (กด ↻ เพื่อร่างทันที)'
+                              : 'ลูกค้าได้รับคำตอบล่าสุดแล้ว — ส่งข้อความเพิ่มเติม แนบรูปสินค้า หรือใช้ ✨ ช่วยเรียบเรียงได้'}
+                        </div>
                         <button type="button" onClick={() => setProdSearchOpen((v) => !v)}
                           title="ค้นหา / แนบรูปสินค้า" aria-label="ค้นหา / แนบรูปสินค้า"
                           className={'ml-auto shrink-0 p-1 rounded-lg hover:bg-slate-100 ' + (prodSearchOpen ? 'text-sky-600 bg-sky-50' : 'text-slate-400 hover:text-slate-600')}>
@@ -1935,9 +2002,9 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                           <span><span className="font-semibold">หมายเหตุจาก AI</span> (ไม่ส่งให้ลูกค้า): {rewriteNote}</span>
                         </div>
                       )}
-                      {/* Same column template + button classes as the pending composer's row (minus
-                          the regenerate column) so the two states look identical in size. */}
-                      <div className="grid grid-cols-[auto_auto_auto_1fr_1fr] gap-2">
+                      {/* Same column template + button classes as the pending composer's row so the
+                          two states look identical in size. */}
+                      <div className="grid grid-cols-[auto_auto_auto_auto_1fr_1fr_1fr] gap-2">
                         <button type="button" disabled={uploading || freeSending} onClick={openCamera}
                           title="ถ่ายรูปแล้วส่งทันที" aria-label="ถ่ายรูปแล้วส่งทันที"
                           className="px-2.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 flex items-center justify-center disabled:opacity-50">
@@ -1953,6 +2020,17 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                           qrManage={qrManage} setQrManage={setQrManage} qrLabel={qrLabel} setQrLabel={setQrLabel} qrBody={qrBody} setQrBody={setQrBody}
                           qrSaving={qrSaving} saveQuickReply={saveQuickReply} removeQuickReply={removeQuickReply}
                         />
+                        <button type="button" onClick={clearMinervaDrafts}
+                          title="ล้างร่างของ Minerva ทั้งหมด" aria-label="ล้างร่างของ Minerva ทั้งหมด"
+                          className="px-2 py-2 rounded-xl bg-slate-100 hover:bg-rose-100 text-slate-600 hover:text-rose-600 flex items-center justify-center">
+                          <Eraser size={16} />
+                        </button>
+                        <button type="button" onClick={forceDraftNow}
+                          disabled={freeSending || uploading || forceDrafting || detail.generating}
+                          title="ร่างคำตอบใหม่ทันที — ไม่ต้องรอระบบ"
+                          className="min-w-0 px-2 py-2 rounded-xl bg-slate-200 hover:bg-slate-300 text-slate-700 text-sm font-semibold flex items-center justify-center gap-1 disabled:opacity-50">
+                          {(forceDrafting || detail.generating) ? <Loader2 size={17} className="animate-spin" /> : <RefreshCw size={17} />}
+                        </button>
                         <button onClick={freeRewrite} disabled={freeRewriting || freeSending || !freeText.trim()}
                           title="ให้ AI ช่วยแก้ไวยากรณ์/เรียบเรียงข้อความนี้"
                           className="min-w-0 px-2 py-2 rounded-xl bg-indigo-100 hover:bg-indigo-200 text-indigo-700 text-sm font-semibold flex items-center justify-center gap-1 disabled:opacity-50">

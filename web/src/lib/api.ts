@@ -101,6 +101,8 @@ export interface CustomerDetail {
   productCandidates: PendingProduct[];
   crossSellCandidates: PendingProduct[]; // AI cross-sell suggestions
   pendingMessageId: string | null;
+  draftQueued: { fireAt: number } | null;
+  generating: boolean;
   memory: { summary: string; updatedAt: string } | null;
   // Latest LINE OA Manager "Read" status synced by the Chrome extension (null = none/unmatched).
   oaRead?: { readLabel: string | null; readSeenAt: string | null; oaChatId: string } | null;
@@ -223,6 +225,26 @@ export const getQueue = () => authed<{ queue: QueueItem[] }>('/api/queue');
 export const getCustomers = () =>
   authed<{ customers: CustomerLite[]; pinnedIds: string[] }>('/api/customers');
 export const getCustomer = (id: string) => authed<CustomerDetail>(`/api/customers/${id}`);
+
+export async function draftNow(customerId: string): Promise<
+  { queued: true } | { generating: true } | { noPending: true }
+> {
+  const token = getToken();
+  const res = await fetch(`${API_URL}/api/customers/${customerId}/draft-now`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
+  });
+  if (res.status === 401) {
+    clearSession();
+    throw new Error('unauthorized');
+  }
+  if (res.status === 409) return { noPending: true };
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json() as Promise<{ queued: true } | { generating: true }>;
+}
+
+export const clearDrafts = (customerId: string) =>
+  authed<{ cleared: true }>(`/api/customers/${customerId}/drafts/clear`, { method: 'POST' });
 
 // Per-agent private pin chats — pin/unpin a customer for the logged-in agent (manual unpin only).
 export const pinCustomer = (id: string) =>
