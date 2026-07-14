@@ -166,15 +166,23 @@ export default function Juno({ agent, onLogout }: { agent: Agent; onLogout: () =
           ],
         },
         {
-          // The caption carries "กระทบยอด", so the two recon tabs keep SHORT names — the
-          // long กระทบยอดธนาคาร/กระทบยอด RE labels overflowed the bar into a horizontal
-          // scrollbar the owner disliked (2026-07-14).
-          caption: 'ขั้น 3–4 · จับคู่+ยืนยัน (กระทบยอด)',
+          // The caption carries "จับคู่", so the recon tabs keep SHORT names — long labels
+          // overflowed the bar into a horizontal scrollbar the owner disliked (2026-07-14).
+          // ขั้น 3 = money-confirmed: CEO's daily เงินสด/เช็ค receive + the Wed/Sat bank match.
+          caption: 'ขั้น 3 · จับคู่',
           tabs: [
             // เงินสด/เช็ค is CEO-only: it's where the CEO marks ได้รับเงินแล้ว (server 403s
             // POST /receive for non-supervisor). Badge = still awaiting that confirm.
             ...(isCeo ? [{ key: 'receive' as const, label: 'เงินสด/เช็ค', icon: <HandCoins size={16} />, count: summary?.awaitingReceive }] : []),
             { key: 'recon' as const, label: 'ธนาคาร', icon: <Scale size={16} />, count: bankUnmatched },
+          ],
+        },
+        {
+          // ขั้น 4 = ยืนยันใน Express: the ARRCPDAT cross-check ties Juno's REs to Express.
+          // (The per-row ✓✓ and the bulk confirm live inside รายการ/ธนาคาร; this group is
+          // the Express-side view of stage 4 — owner asked for 3 and 4 as separate sections.)
+          caption: 'ขั้น 4 · ยืนยัน Express',
+          tabs: [
             { key: 'reRecon' as const, label: 'RE', icon: <FileCheck size={16} /> },
           ],
         },
