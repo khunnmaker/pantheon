@@ -1,7 +1,6 @@
-// Typed API client for the Jupiter portal. Talks to the shared Minerva Fastify backend:
+// Typed API client for the Jupiter accounting app. Talks to the shared Minerva backend.
 //   POST /api/auth/login       — the suite's single login (Phase 1: localStorage-JWT, no SSO)
-//   GET  /api/jupiter/badges   — pending-work counts, gated to the apps this role can enter
-// Phase 1 reuses today's auth exactly; SSO (cookies, /api/auth/me bootstrap) is Phase 3.
+//   GET  /api/jupiter/acct/*   — the accounting cockpit's supervisor-only endpoints
 
 export const API_URL: string = import.meta.env.VITE_API_URL ?? 'http://localhost:3000';
 
@@ -10,7 +9,8 @@ export const API_URL: string = import.meta.env.VITE_API_URL ?? 'http://localhost
 // grant (`apps`), exactly as the server gates it (see hasAppAccess in apps.ts). supervisor →
 // everything; md → ceres only; employee → their own `apps` list.
 export type Role = 'supervisor' | 'md' | 'employee';
-export type AppName = 'minerva' | 'vulcan' | 'juno' | 'ceres' | 'mercury';
+import type { AppName } from '@pantheon/ui';
+export type { AppName };
 export interface Agent {
   id: string;
   email: string;
@@ -21,12 +21,18 @@ export interface Agent {
 
 // The badges payload: a key per app the CALLER may enter (the server never returns a key
 // for an app this role can't open). Each value is optional so a missing app is just absent.
-export interface Badges {
-  minerva?: { pending: number };
-  juno?: { toVerify: number };
-  vulcan?: { lowStock: number };
-  ceres?: { awaitingAction: number };
-  mercury?: { pending: number };
+export interface LoginCard {
+  email: string;
+  name: string;
+  kind: 'password' | 'pin';
+  group: string;
+  gender: 'male' | 'female';
+}
+
+export function hasAppAccess(agent: Agent, app: AppName): boolean {
+  if (agent.role === 'supervisor') return true;
+  if (agent.role === 'md') return app === 'ceres' || app === 'minerva' || app === 'juno' || app === 'apollo';
+  return (agent.apps ?? []).includes(app);
 }
 
 const TOKEN_KEY = 'jupiter_token';
@@ -99,18 +105,10 @@ export async function logout(): Promise<void> {
   clearSession();
 }
 
-export async function getBadges(): Promise<Badges> {
-  const token = getToken();
-  const res = await fetch(`${API_URL}/api/jupiter/badges`, {
-    headers: token ? { authorization: `Bearer ${token}` } : {},
-  });
-  if (res.status === 401) {
-    clearSession();
-    onUnauthorized?.();
-    throw new Error('unauthorized');
-  }
+export async function getLogins(): Promise<LoginCard[]> {
+  const res = await fetch(`${API_URL}/api/auth/logins?app=jupiter`);
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return res.json() as Promise<Badges>;
+  return res.json() as Promise<LoginCard[]>;
 }
 
 // ─── Jupiter accounting (Phase 1 cockpit) — supervisor-only endpoints under /api/jupiter/acct ──
@@ -248,4 +246,35 @@ export function acctParse(text: string): Promise<{ ok: boolean; via?: 'ai' | 'he
 // Phase-1b: pull every recorded Juno payment into the books as PROM income (idempotent).
 export function acctSyncJuno(): Promise<{ ok: boolean; synced: number; removed: number }> {
   return acctFetch('/api/jupiter/acct/sync/juno', { method: 'POST' });
+}
+
+// ─── Punch #9: Party identity backfill (supervisor-only) ─────────────────────────────
+// Populate the canonical Party + PartyIdentity spine from the deity source tables, runnable
+// from the cockpit. Dry-run computes the plan (writes nothing); apply kicks off the writes in
+// the background; status polls the live counts + whether an apply is still running.
+
+// Mirror of the api Summary (api/src/scripts/backfillParties.ts).
+export interface BackfillSummary {
+  parties: number; // parties to create (dry) / created (apply)
+  identities: Record<string, number>; // by channel
+  conflicts: number;
+  sampleConflicts: string[]; // ≤20 "channel key → partyA vs partyB"
+}
+export interface BackfillStatus {
+  parties: number;
+  identities: number;
+  running: boolean;
+}
+
+// Dry-run: synchronous, returns the full Summary (writes nothing).
+export function acctPartyBackfillDry(): Promise<BackfillSummary> {
+  return acctFetch<BackfillSummary>('/api/jupiter/acct/parties/backfill/dry', { method: 'POST' });
+}
+// Apply: fire-and-forget on the server; returns immediately. busy:true ⇒ a run is already going.
+export function acctPartyBackfillApply(): Promise<{ started: boolean; busy?: boolean }> {
+  return acctFetch('/api/jupiter/acct/parties/backfill/apply', { method: 'POST' });
+}
+// Status: live spine counts + whether an apply is in flight (poll while running).
+export function acctPartyStatus(): Promise<BackfillStatus> {
+  return acctFetch<BackfillStatus>('/api/jupiter/acct/parties/status');
 }

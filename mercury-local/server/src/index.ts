@@ -297,7 +297,7 @@ app.get(
 );
 
 // POST /api/pending/:cloudRequestId/receive-secret { qty } — SECRET goods-receipt (Phase 3).
-// Resolves the real SKU from the LOCAL SecretMap → bumps Vulcan stock on the cloud (realSku only
+// Resolves the real SKU from the LOCAL SecretMap → bumps Vesta stock on the cloud (realSku only
 // as a transient adjust call) → marks the cloud MercuryRequest 'received' (STATUS ONLY). The real
 // SKU is NEVER written onto any cloud row. Ordinary items are received on the CLOUD side instead.
 app.post(

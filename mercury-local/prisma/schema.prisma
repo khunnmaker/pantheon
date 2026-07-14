@@ -57,7 +57,7 @@ model SecretMap {
 
 // A local shadow of a pending cloud MercuryRequest, refreshed on Sync. LOCAL-ONLY. Stores only
 // the non-secret cloud fields (id, itemId, qty, note, requestedById, status, timestamps) PLUS a
-// denormalised copy of the cloud MercuryItem it points at (displayName/isSecret/vulcanSku) so PO
+// denormalised copy of the cloud MercuryItem it points at (displayName/isSecret/vestaSku) so PO
 // drafts can be seeded and resolved offline. The alias→real-item resolution happens against the
 // local SecretMap at build time — never stored here. Sync upserts by cloudRequestId.
 model PendingRequest {
@@ -71,7 +71,7 @@ model PendingRequest {
   // Denormalised, NON-SECRET copy of the cloud MercuryItem (safe to hold locally).
   itemDisplayName String  @default("")
   itemIsSecret    Boolean @default(false)
-  itemVulcanSku   String? // null for secret items on the cloud row
+  itemVestaSku   String? // null for secret items on the cloud row
   cloudCreatedAt  String  @default("") // ISO string from the cloud (kept as text)
   syncedAt        DateTime @default(now()) @updatedAt
 

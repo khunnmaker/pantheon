@@ -58,10 +58,12 @@ export const CATALOG_GROUPS: CatalogGroup[] = [
   { key: 'clinical_equipment', code: 'CE', nameTh: 'เครื่องมือคลินิก', nameEn: 'Clinical Small Equipment', pillar: 'equipment' },
   { key: 'dental_unit', code: 'UN', nameTh: 'ยูนิตและเก้าอี้ทำฟัน', nameEn: 'Chairs & Dental Units', pillar: 'equipment' },
   { key: 'sterilizer', code: 'ST', nameTh: 'เครื่องนึ่งฆ่าเชื้อ', nameEn: 'Sterilization Equipment', pillar: 'equipment' },
-  // ── Review / holding ── a manual "park it here to decide later" bucket. It has NO auto-assign
-  // rule (nothing lands here automatically) and NO sub-groups; the team dumps unsure items in and
-  // revisits them. Distinct from "ยังไม่จัด" (catalogGroup = null = never looked at).
+  // ── Review / holding + trash ── manual buckets, NO auto-assign rule (nothing lands here
+  // automatically) and NO sub-groups. review = "park it here to decide later" (distinct from
+  // "ยังไม่จัด" = never looked at). trash = discontinued / junk SKUs; "ล้างถังขยะ" archives them
+  // (status 'archived' → hidden from Vesta + everywhere, and won't resurrect on re-import).
   { key: 'review', code: 'RV', nameTh: 'รอตรวจสอบ', nameEn: 'To review / Undecided', pillar: 'review' },
+  { key: 'trash', code: 'ZZ', nameTh: 'ถังขยะ (ไม่ใช้แล้ว)', nameEn: 'Trash / Discontinued', pillar: 'review' },
 ];
 
 export const GROUP_KEYS = new Set(CATALOG_GROUPS.map((g) => g.key));

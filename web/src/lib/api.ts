@@ -18,15 +18,19 @@ export interface Agent {
   apps: string[];
 }
 
-// Suite apps the switcher can link to. Keep in sync with AppName in api/src/auth/jwt.ts.
-export type AppName = 'minerva' | 'vulcan' | 'juno' | 'ceres' | 'mercury';
+// Suite apps the switcher can link to. The canonical list now lives in the shared package
+// (@pantheon/ui, mirroring the server SSOT api/src/auth/jwt.ts APP_NAMES). Imported for local
+// use below AND re-exported so existing consumers that import AppName from './lib/api' keep
+// working unchanged.
+import type { AppName } from '@pantheon/ui';
+export type { AppName };
 
 // Mirror of the server's hasAppAccess (api/src/auth/jwt.ts): supervisor → everything;
 // md → Ceres only; employee → their own per-person grant list. A stored agent from before
 // this field existed has no apps → treated as no grants (empty list), which is safe.
 export function hasAppAccess(agent: Agent, app: AppName): boolean {
   if (agent.role === 'supervisor') return true;
-  if (agent.role === 'md') return app === 'ceres';
+  if (agent.role === 'md') return app === 'ceres' || app === 'minerva' || app === 'juno' || app === 'apollo';
   return (agent.apps ?? []).includes(app);
 }
 export interface Message {
@@ -86,7 +90,7 @@ export interface PendingProduct {
   photoSku: string | null;
   stock: number | null; // remaining qty from the latest snapshot (null = unknown)
   stockAt: string | null; // ISO date the stock figure is as-of
-  reorderPoint?: number | null; // Vulcan low-stock threshold (staff-only)
+  reorderPoint?: number | null; // Vesta low-stock threshold (staff-only)
   low?: boolean; // stock <= reorderPoint (staff-only; never shown to customers)
 }
 export interface CustomerDetail {
@@ -97,6 +101,8 @@ export interface CustomerDetail {
   productCandidates: PendingProduct[];
   crossSellCandidates: PendingProduct[]; // AI cross-sell suggestions
   pendingMessageId: string | null;
+  draftQueued: { fireAt: number } | null;
+  generating: boolean;
   memory: { summary: string; updatedAt: string } | null;
   // Latest LINE OA Manager "Read" status synced by the Chrome extension (null = none/unmatched).
   oaRead?: { readLabel: string | null; readSeenAt: string | null; oaChatId: string } | null;
@@ -219,6 +225,26 @@ export const getQueue = () => authed<{ queue: QueueItem[] }>('/api/queue');
 export const getCustomers = () =>
   authed<{ customers: CustomerLite[]; pinnedIds: string[] }>('/api/customers');
 export const getCustomer = (id: string) => authed<CustomerDetail>(`/api/customers/${id}`);
+
+export async function draftNow(customerId: string): Promise<
+  { queued: true } | { generating: true } | { noPending: true }
+> {
+  const token = getToken();
+  const res = await fetch(`${API_URL}/api/customers/${customerId}/draft-now`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
+  });
+  if (res.status === 401) {
+    clearSession();
+    throw new Error('unauthorized');
+  }
+  if (res.status === 409) return { noPending: true };
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json() as Promise<{ queued: true } | { generating: true }>;
+}
+
+export const clearDrafts = (customerId: string) =>
+  authed<{ cleared: true }>(`/api/customers/${customerId}/drafts/clear`, { method: 'POST' });
 
 // Per-agent private pin chats — pin/unpin a customer for the logged-in agent (manual unpin only).
 export const pinCustomer = (id: string) =>

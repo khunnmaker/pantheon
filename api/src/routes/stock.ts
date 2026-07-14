@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { randomUUID } from 'node:crypto';
+import { Prisma } from '@prisma/client';
 import { prisma } from '../db/prisma.js';
 import { LOW_STOCK_WHERE, LOW_STOCK_ORDER } from '../db/lowStock.js';
 import { requireAuth, requireRole } from '../auth/middleware.js';
@@ -35,9 +36,9 @@ async function withAliases<T extends { sku: string; alias?: string | null }>(row
   return rows;
 }
 
-// Vulcan stock-management API. Writes Product.stock/stockAt (which Minerva reads)
+// Vesta stock-management API. Writes Product.stock/stockAt (which Minerva reads)
 // plus a reorderPoint per SKU, and logs StockImport / StockAdjustment audit rows.
-// Gated to supervisor for v1 (the stock manager logs in as Dr. M). See VULCAN_BRIEF.md.
+// Gated to supervisor for v1 (the stock manager logs in as Dr. M). See VESTA_BRIEF.md.
 
 const SKU_RE = /^[A-Za-z0-9_-]+$/;
 const MAX_UPLOAD_BYTES = 12 * 1024 * 1024; // Express reports are ~1.5 MB; cap generously.
@@ -58,11 +59,11 @@ function stash(s: StagedImport): string {
   return token;
 }
 
-// Vulcan manages catalog products ('active') PLUS 'stock_only' rows created from the Express stock
+// Vesta manages catalog products ('active') PLUS 'stock_only' rows created from the Express stock
 // import — tracked here but HIDDEN from Diana + the AI, which whitelist 'active'. Use this in
-// Vulcan's own product queries so those rows show up; never widen a Diana/Minerva query with it.
-const VULCAN_STATUS = { in: ['active', 'stock_only'] };
-const VULCAN_STATUSES = ['active', 'stock_only'];
+// Vesta's own product queries so those rows show up; never widen a Diana/Minerva query with it.
+const VESTA_STATUS = { in: ['active', 'stock_only'] };
+const VESTA_STATUSES = ['active', 'stock_only'];
 
 export async function stockRoutes(app: FastifyInstance) {
   // Auth runs at onRequest (BEFORE body parsing) so unauthenticated bodies are never
@@ -71,13 +72,13 @@ export async function stockRoutes(app: FastifyInstance) {
   app.addHook('onRequest', requireAuth);
   app.addHook('onRequest', requireRole('supervisor'));
 
-  // GET /api/stock/summary — headline counts for the Vulcan dashboard / login landing.
+  // GET /api/stock/summary — headline counts for the Vesta dashboard / login landing.
   app.get('/api/stock/summary', async () => {
     const [total, withStock, outOfStock, unknown, lastImport] = await Promise.all([
-      prisma.product.count({ where: { status: VULCAN_STATUS } }),
-      prisma.product.count({ where: { status: VULCAN_STATUS, stock: { not: null } } }),
-      prisma.product.count({ where: { status: VULCAN_STATUS, stock: 0 } }),
-      prisma.product.count({ where: { status: VULCAN_STATUS, stock: null } }),
+      prisma.product.count({ where: { status: VESTA_STATUS } }),
+      prisma.product.count({ where: { status: VESTA_STATUS, stock: { not: null } } }),
+      prisma.product.count({ where: { status: VESTA_STATUS, stock: 0 } }),
+      prisma.product.count({ where: { status: VESTA_STATUS, stock: null } }),
       prisma.stockImport.findFirst({ orderBy: { importedAt: 'desc' } }),
     ]);
     // Low count needs a column-vs-column compare (stock <= reorderPoint) → raw SQL.
@@ -100,7 +101,7 @@ export async function stockRoutes(app: FastifyInstance) {
     let products;
     if (query) {
       // Reuse Minerva's name/SKU search, then re-fetch full rows (search returns a lite shape).
-      const matches = await searchProducts(query, take, VULCAN_STATUSES);
+      const matches = await searchProducts(query, take, VESTA_STATUSES);
       const skus = matches.map((m) => m.sku);
       products = skus.length
         ? await prisma.product.findMany({ where: { sku: { in: skus } } })
@@ -125,25 +126,25 @@ export async function stockRoutes(app: FastifyInstance) {
       products.sort((a, b) => (ord.get(a.sku) ?? 0) - (ord.get(b.sku) ?? 0));
     } else if (filter === 'out') {
       products = await prisma.product.findMany({
-        where: { status: VULCAN_STATUS, stock: 0 },
+        where: { status: VESTA_STATUS, stock: 0 },
         orderBy: { sku: 'asc' },
         take,
       });
     } else if (filter === 'unknown') {
       products = await prisma.product.findMany({
-        where: { status: VULCAN_STATUS, stock: null },
+        where: { status: VESTA_STATUS, stock: null },
         orderBy: { sku: 'asc' },
         take,
       });
     } else if (filter === 'noname') {
       products = await prisma.product.findMany({
-        where: { status: VULCAN_STATUS, nameTh: '' },
+        where: { status: VESTA_STATUS, nameTh: '' },
         orderBy: { sku: 'asc' },
         take,
       });
     } else {
       products = await prisma.product.findMany({
-        where: { status: VULCAN_STATUS },
+        where: { status: VESTA_STATUS },
         orderBy: [{ stockAt: 'desc' }, { updatedAt: 'desc' }],
         take,
       });
@@ -343,26 +344,31 @@ export async function stockRoutes(app: FastifyInstance) {
     });
     const known = new Set(existing.map((p) => p.sku));
 
-    // Apply only matched SKUs, chunked so a 1000+ row import doesn't serialize forever.
+    // Apply matched SKUs in BULK — one UPDATE ... FROM (VALUES …) per chunk rather than 1000+
+    // single-row updates, which on a small connection pool exhaust it / time out (that was the
+    // "นำเข้าไม่สำเร็จ" on a full ~5k-row report). Each chunk sets every row's new qty in one query;
+    // stockAt is the same date for all rows.
     const toApply = staged.rows.filter((r) => known.has(r.sku));
     let skusUpdated = 0;
     let failNote = '';
-    const CHUNK = 50;
+    const CHUNK = 500;
     try {
       for (let i = 0; i < toApply.length; i += CHUNK) {
         const slice = toApply.slice(i, i + CHUNK);
-        const results = await Promise.all(
-          slice.map((r) =>
-            prisma.product.updateMany({ where: { sku: r.sku }, data: { stock: r.qty, stockAt } }),
-          ),
-        );
-        skusUpdated += results.reduce((n, x) => n + x.count, 0);
+        // Explicit per-param casts so Postgres never fails to infer the VALUES column types.
+        const tuples = Prisma.join(slice.map((r) => Prisma.sql`(${r.sku}::text, ${r.qty}::int)`));
+        const n = await prisma.$executeRaw`
+          UPDATE "Product" AS p
+          SET stock = v.qty, "stockAt" = ${stockAt}
+          FROM (VALUES ${tuples}) AS v(sku, qty)
+          WHERE p.sku = v.sku`;
+        skusUpdated += Number(n);
       }
     } catch (err) {
-      failNote = `partial_failure: ${err instanceof Error ? err.message : String(err)}`.slice(0, 300);
+      failNote = `update_failure: ${err instanceof Error ? err.message : String(err)}`.slice(0, 300);
     }
 
-    // Optionally CREATE the SKUs not yet in the catalog as 'stock_only' rows — tracked in Vulcan
+    // Optionally CREATE the SKUs not yet in the catalog as 'stock_only' rows — tracked in Vesta
     // (stock + grouping) but hidden from Diana + the AI (they whitelist 'active') until someone
     // enriches them (price/photo/proper name) and promotes them to 'active'. Name = the raw Express
     // text; price 0 = unknown. skipDuplicates guards a concurrent create. Only when the stock
@@ -370,7 +376,7 @@ export async function stockRoutes(app: FastifyInstance) {
     let created = 0;
     if (createNew && !failNote) {
       const toCreate = staged.rows.filter((r) => !known.has(r.sku) && r.name.trim());
-      const CREATE_CHUNK = 100;
+      const CREATE_CHUNK = 500;
       try {
         for (let i = 0; i < toCreate.length; i += CREATE_CHUNK) {
           const data = toCreate.slice(i, i + CREATE_CHUNK).map((r) => ({
@@ -412,12 +418,15 @@ export async function stockRoutes(app: FastifyInstance) {
     });
 
     if (failNote) {
+      // The real cause is saved to StockImport.note (visible in ประวัติ) AND logged here for the
+      // Railway logs. detail carries a trimmed reason so the supervisor sees WHY, not just "failed".
+      req.log.error({ failNote, fileName: staged.fileName }, 'stock import apply failed');
       return reply.code(500).send({
         error: 'apply_partial',
         skusUpdated,
         created,
         importId: imp.id,
-        detail: 'นำเข้าไม่สมบูรณ์ — บางรายการอาจอัปเดตแล้ว กรุณาอัปโหลดและนำเข้าใหม่',
+        detail: `นำเข้าไม่สมบูรณ์ — ${failNote.slice(0, 160)}`,
       });
     }
     return { ok: true, skusUpdated, skusUnmatched, created, importId: imp.id };
@@ -428,7 +437,7 @@ export async function stockRoutes(app: FastifyInstance) {
   app.get('/api/stock/aliases', async () => {
     const [products, aliases] = await Promise.all([
       prisma.product.findMany({
-        where: { status: VULCAN_STATUS },
+        where: { status: VESTA_STATUS },
         select: { sku: true, nameEn: true, nameTh: true },
         orderBy: { sku: 'asc' },
       }),
@@ -457,7 +466,7 @@ export async function stockRoutes(app: FastifyInstance) {
   app.post('/api/stock/aliases/generate', async (req) => {
     const regenerate = (req.body as { regenerate?: boolean }).regenerate === true;
     const products = await prisma.product.findMany({
-      where: { status: VULCAN_STATUS, catalogGroup: { not: null } },
+      where: { status: VESTA_STATUS, catalogGroup: { not: null } },
       select: { sku: true, catalogGroup: true, catalogSubgroup: true },
     });
     const existing = await prisma.productAlias.findMany();
@@ -489,7 +498,7 @@ export async function stockRoutes(app: FastifyInstance) {
         written++;
       }
     }
-    const ungrouped = await prisma.product.count({ where: { status: VULCAN_STATUS, catalogGroup: null } });
+    const ungrouped = await prisma.product.count({ where: { status: VESTA_STATUS, catalogGroup: null } });
     return { ok: true, mode: regenerate ? 'regenerate' : 'fill', coded: assignments.length, written, ungrouped };
   });
 
@@ -505,7 +514,7 @@ export async function stockRoutes(app: FastifyInstance) {
     if (clash) return reply.code(409).send({ error: 'prefix_taken' });
 
     const products = await prisma.product.findMany({
-      where: { status: VULCAN_STATUS, sku: { startsWith: `${g}-` } },
+      where: { status: VESTA_STATUS, sku: { startsWith: `${g}-` } },
       select: { sku: true },
     });
     if (!products.length) return reply.code(404).send({ error: 'empty_group' });
@@ -560,7 +569,7 @@ export async function stockRoutes(app: FastifyInstance) {
   app.get('/api/stock/groups', async () => {
     const counts = await prisma.product.groupBy({
       by: ['catalogGroup'],
-      where: { status: VULCAN_STATUS },
+      where: { status: VESTA_STATUS },
       _count: { _all: true },
     });
     const byKey = new Map(counts.map((c) => [c.catalogGroup ?? '', c._count._all]));
@@ -573,20 +582,20 @@ export async function stockRoutes(app: FastifyInstance) {
   // GET /api/stock/groups/products?group=&filter=all|unassigned&q=&limit= — products for the
   // review list, each with its current group + alias. group=<key> filters to that group.
   app.get('/api/stock/groups/products', async (req) => {
-    const { group, filter, q, limit } = req.query as { group?: string; filter?: string; q?: string; limit?: string };
+    const { group, filter, q, limit, sort } = req.query as { group?: string; filter?: string; q?: string; limit?: string; sort?: string };
     // Load the whole bucket by default so "select all" in the batch UI really covers everything —
     // the cap sits above the full active catalog (~1187) so even the all-unassigned bucket (before
     // auto-assign) loads completely. The UI still shows a "loaded N of M" warning if it ever caps.
     const take = Math.min(Math.max(Number(limit) || 2000, 1), 2000);
     const query = String(q ?? '').trim();
 
-    const where: Record<string, unknown> = { status: VULCAN_STATUS };
+    const where: Record<string, unknown> = { status: VESTA_STATUS };
     if (group) where.catalogGroup = group;
     else if (filter === 'unassigned') where.catalogGroup = null;
 
     let products;
     if (query) {
-      const matches = await searchProducts(query, take, VULCAN_STATUSES);
+      const matches = await searchProducts(query, take, VESTA_STATUSES);
       const skus = matches.map((m) => m.sku);
       products = skus.length
         ? await prisma.product.findMany({ where: { ...where, sku: { in: skus } } })
@@ -594,7 +603,14 @@ export async function stockRoutes(app: FastifyInstance) {
       const order = new Map(skus.map((s, i) => [s, i]));
       products.sort((a, b) => (order.get(a.sku) ?? 0) - (order.get(b.sku) ?? 0));
     } else {
-      products = await prisma.product.findMany({ where, orderBy: { sku: 'asc' }, take });
+      // sort=sub clusters same-subgroup (ชนิด) rows; sort=name clusters similar names together
+      // (great for the ยังไม่จัด pile — pick a range, batch-group). default is SKU order. Only the
+      // browse path sorts — a search keeps its relevance rank.
+      const orderBy =
+        sort === 'sub' ? [{ catalogSubgroup: { sort: 'asc' as const, nulls: 'last' as const } }, { sku: 'asc' as const }]
+        : sort === 'name' ? [{ nameTh: 'asc' as const }, { nameEn: 'asc' as const }, { sku: 'asc' as const }]
+        : { sku: 'asc' as const };
+      products = await prisma.product.findMany({ where, orderBy, take });
     }
 
     const aliases = products.length
@@ -634,7 +650,7 @@ export async function stockRoutes(app: FastifyInstance) {
 
     // ── GROUP pass ──
     const groupScope = await prisma.product.findMany({
-      where: onlyUnassigned ? { status: VULCAN_STATUS, catalogGroup: null } : { status: VULCAN_STATUS },
+      where: onlyUnassigned ? { status: VESTA_STATUS, catalogGroup: null } : { status: VESTA_STATUS },
       select: { sku: true, nameEn: true, nameTh: true, keywords: true },
     });
     const groupBySku = new Map<string, string>();
@@ -643,14 +659,14 @@ export async function stockRoutes(app: FastifyInstance) {
 
     // ── SUBGROUP pass ── (after groups are written, so newly-grouped items are included)
     const subScope = await prisma.product.findMany({
-      where: { status: VULCAN_STATUS, catalogGroup: { not: null }, ...(onlyUnassigned ? { catalogSubgroup: null } : {}) },
+      where: { status: VESTA_STATUS, catalogGroup: { not: null }, ...(onlyUnassigned ? { catalogSubgroup: null } : {}) },
       select: { sku: true, nameEn: true, nameTh: true, keywords: true, catalogGroup: true },
     });
     const subBySku = new Map<string, string>();
     for (const p of subScope) { const s = autoAssignSubgroup(p.catalogGroup!, p); if (s) subBySku.set(p.sku, s); }
     const subAssigned = await writeBucketed(subBySku, 'catalogSubgroup');
 
-    const stillNull = await prisma.product.count({ where: { status: VULCAN_STATUS, catalogGroup: null } });
+    const stillNull = await prisma.product.count({ where: { status: VESTA_STATUS, catalogGroup: null } });
     return { ok: true, assigned, subAssigned, unassigned: stillNull, scanned: groupScope.length };
   });
 
@@ -696,7 +712,7 @@ export async function stockRoutes(app: FastifyInstance) {
     const group = body.group === null || body.group === '' || body.group === undefined ? null : String(body.group);
     if (group !== null && !(await loadTaxonomy()).groupKeys.has(group)) return reply.code(400).send({ error: 'bad_group' });
     const res = await prisma.product.updateMany({
-      where: { status: VULCAN_STATUS, sku: { startsWith: `${family}-` }, catalogGroup: group === null ? { not: null } : undefined },
+      where: { status: VESTA_STATUS, sku: { startsWith: `${family}-` }, catalogGroup: group === null ? { not: null } : undefined },
       data: { catalogGroup: group },
     });
     return { ok: true, family, group, updated: res.count };
@@ -722,11 +738,11 @@ export async function stockRoutes(app: FastifyInstance) {
       const slice = skus.slice(i, i + CHUNK);
       // clear the sub-group only where the group is actually changing
       await prisma.product.updateMany({
-        where: { sku: { in: slice }, status: VULCAN_STATUS, NOT: { catalogGroup: group } },
+        where: { sku: { in: slice }, status: VESTA_STATUS, NOT: { catalogGroup: group } },
         data: { catalogSubgroup: null },
       });
       const res = await prisma.product.updateMany({
-        where: { sku: { in: slice }, status: VULCAN_STATUS },
+        where: { sku: { in: slice }, status: VESTA_STATUS },
         data: { catalogGroup: group },
       });
       updated += res.count;
@@ -751,7 +767,7 @@ export async function stockRoutes(app: FastifyInstance) {
       let updated = 0;
       for (let i = 0; i < skus.length; i += CHUNK) {
         const res = await prisma.product.updateMany({
-          where: { sku: { in: skus.slice(i, i + CHUNK) }, status: VULCAN_STATUS },
+          where: { sku: { in: skus.slice(i, i + CHUNK) }, status: VESTA_STATUS },
           data: { catalogSubgroup: null },
         });
         updated += res.count;
@@ -760,7 +776,7 @@ export async function stockRoutes(app: FastifyInstance) {
     }
     // set: keep only the SKUs whose current group defines this sub-code
     const prods = await prisma.product.findMany({
-      where: { sku: { in: skus }, status: VULCAN_STATUS },
+      where: { sku: { in: skus }, status: VESTA_STATUS },
       select: { sku: true, catalogGroup: true },
     });
     const tax = await loadTaxonomy();
@@ -768,7 +784,7 @@ export async function stockRoutes(app: FastifyInstance) {
     let updated = 0;
     for (let i = 0; i < valid.length; i += CHUNK) {
       const res = await prisma.product.updateMany({
-        where: { sku: { in: valid.slice(i, i + CHUNK) }, status: VULCAN_STATUS },
+        where: { sku: { in: valid.slice(i, i + CHUNK) }, status: VESTA_STATUS },
         data: { catalogSubgroup: sub },
       });
       updated += res.count;
@@ -841,6 +857,18 @@ export async function stockRoutes(app: FastifyInstance) {
     await prisma.product.updateMany({ where: { catalogGroup: groupKey, catalogSubgroup: code }, data: { catalogSubgroup: null } });
     await prisma.catalogSubgroupDef.delete({ where: { groupKey_code: { groupKey, code } } });
     return { ok: true, groupKey, code };
+  });
+
+  // POST /api/stock/groups/empty-trash — archive every product currently in the ถังขยะ (trash)
+  // group: status -> 'archived'. Archived rows are hidden from Vesta (VESTA_STATUS) AND from
+  // Diana + the AI (they whitelist 'active'), and a re-import updates their stock but leaves them
+  // archived — so trashed items don't resurrect. Reversible (status only), not a hard delete.
+  app.post('/api/stock/groups/empty-trash', async () => {
+    const res = await prisma.product.updateMany({
+      where: { catalogGroup: 'trash', status: { in: VESTA_STATUSES } },
+      data: { status: 'archived' },
+    });
+    return { ok: true, archived: res.count };
   });
 
   // ─── Name-normalization review (ตรวจทาน) ───────────────────────────────

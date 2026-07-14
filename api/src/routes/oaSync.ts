@@ -1,7 +1,9 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { prisma } from '../db/prisma.js';
-import { requireAuth, requireApp } from '../auth/middleware.js';
+import { requireAuth, requireApp, requireAuthScoped } from '../auth/middleware.js';
+import { signOaSyncToken, OA_SYNC_SCOPE } from '../auth/jwt.js';
+import { pushToConsole } from '../ws/io.js';
 
 // Body posted by the passive Chrome MV3 extension's service worker. The extension only ever
 // sends ids + names + the raw "Read" marker text — NEVER message bodies (see oa-sync-extension/).
@@ -18,21 +20,30 @@ const syncSchema = z.object({
 // (a) records it and (b) conservatively maps it to one of our Customers by UNIQUE exact name.
 //
 // Auth is the sole gate: requests come from the extension's service worker (no browser Origin),
-// so Bearer auth (requireAuth) + Minerva app access (requireApp) is what protects it — no CORS
-// change needed. We never log tokens or message content (none is ever received).
+// so Bearer auth + Minerva app access is what protects it — no CORS change needed. We never log
+// tokens or message content (none is ever received). Per-route preHandlers (not a plugin-wide
+// hook) so the two routes can differ: the sync POST accepts the long-lived OA-sync-scoped token
+// (requireAuthScoped), while the token-mint route requires a FULL console token so a scoped
+// token can't renew itself. Both still re-check live Minerva access via requireApp.
 export async function oaSyncRoutes(app: FastifyInstance) {
-  app.addHook('preHandler', requireAuth);
-  app.addHook('preHandler', requireApp('minerva'));
+  // Exchange a fresh full console login for a long-lived, sync-scoped token. The extension's
+  // popup calls this once right after /api/auth/login, then stores ONLY this token — so the
+  // background sync survives ~180d instead of dying with the 12h console token.
+  app.post('/api/oa-sync/token', { preHandler: [requireAuth, requireApp('minerva')] }, async (req) => {
+    return { token: signOaSyncToken(req.agent!) };
+  });
 
-  app.post('/api/oa-sync', async (req, reply) => {
+  app.post('/api/oa-sync', { preHandler: [requireAuthScoped(OA_SYNC_SCOPE), requireApp('minerva')] }, async (req, reply) => {
     const p = syncSchema.safeParse(req.body);
     if (!p.success) return reply.code(400).send({ error: 'invalid_body' });
     const { oaChatId, oaTitle, oaSubName, readLabel } = p.data;
 
     // 1) Upsert by oaChatId. Only touch read* / reportedBy when a marker was actually observed,
-    //    so a plain chat-open (names only) never blanks a previously synced read status.
+    //    so a plain chat-open (names only) never blanks a previously synced read status. Hoisted
+    //    so the live socket push below shares the EXACT same timestamp as the DB write.
+    const now = new Date();
     const readFields = readLabel
-      ? { readLabel, readSeenAt: new Date(), reportedById: req.agent!.id }
+      ? { readLabel, readSeenAt: now, reportedById: req.agent!.id }
       : {};
     const row = await prisma.oaReadSync.upsert({
       where: { oaChatId },
@@ -63,6 +74,34 @@ export async function oaSyncRoutes(app: FastifyInstance) {
       if (oaSubName) customerId = await uniqueMatch({ displayName: oaSubName });
       if (!customerId && oaTitle) customerId = await uniqueMatch({ nickname: oaTitle });
       if (!customerId && oaTitle) customerId = await uniqueMatch({ displayName: oaTitle });
+
+      // Customer-CODE token matching — the most reliable key in practice. Staff prefix the same
+      // Express-style code onto BOTH names (OA title "C.5 Jane🧀 อ658…" / Minerva nickname
+      // "อ658 Jane🧀", Customer.code "อ658"), while the surrounding words often differ, so exact
+      // name paths above miss (~half of real chats). Extract Thai-consonant+digits tokens from
+      // the OA names and accept a UNIQUE customer whose `code` equals the token or whose
+      // nickname contains it with digit boundaries (so อ65 never matches อ658).
+      if (!customerId && (oaTitle || oaSubName)) {
+        const tokens = Array.from(
+          new Set(`${oaTitle ?? ''} ${oaSubName ?? ''}`.match(/[ก-ฮ]\d{2,4}/g) ?? []),
+        );
+        for (const token of tokens) {
+          const candidates = await prisma.customer.findMany({
+            where: { OR: [{ code: token }, { nickname: { contains: token } }] },
+            take: 5,
+            select: { id: true, code: true, nickname: true },
+          });
+          // Digit-boundary check on nickname hits (contains "อ65" also returns "อ658" rows).
+          const boundary = new RegExp(`${token}(?!\\d)`);
+          const hits = candidates.filter(
+            (c) => c.code === token || (c.nickname !== null && boundary.test(c.nickname)),
+          );
+          if (hits.length === 1) {
+            customerId = hits[0].id;
+            break;
+          }
+        }
+      }
 
       // Emoji-insensitive fallback: the OA Manager renders emoji in names as <img>, so the
       // extension's textContent arrives emoji-less (e.g. "Fuse" for a LINE name "Fuse 🌅").
@@ -98,6 +137,21 @@ export async function oaSyncRoutes(app: FastifyInstance) {
       if (customerId) {
         await prisma.oaReadSync.update({ where: { oaChatId }, data: { customerId } });
       }
+    }
+
+    // 3) Broadcast to open consoles so the 👁 read chip updates live, without a manual refresh —
+    //    only once a customer is actually linked (pre-existing or freshly matched above). Emits
+    //    the FINAL persisted values: this request's own marker when it sent one (sharing `now`
+    //    with the DB write above), otherwise whatever was already stored. Never emits names.
+    if (customerId) {
+      pushToConsole('oa:read', {
+        customerId,
+        oaRead: {
+          oaChatId,
+          readLabel: readLabel ? readLabel : row.readLabel,
+          readSeenAt: readLabel ? now : row.readSeenAt,
+        },
+      });
     }
 
     return { ok: true, matched: !!customerId };

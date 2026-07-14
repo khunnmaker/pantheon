@@ -2,8 +2,8 @@ import { useEffect, useState } from 'react';
 import { Loader2, ShoppingCart, Check, AlertTriangle, PackageX } from 'lucide-react';
 import { getReorderQueue, createRequest, flatSku, type ReorderRow } from '../lib/api';
 
-// The reorder queue = Vulcan's low-stock feed (stock <= reorderPoint). One-click "ขอสั่ง" per
-// row creates a MercuryRequest (resolving/creating the ordinary MercuryItem from the Vulcan SKU).
+// The reorder queue = Vesta's low-stock feed (stock <= reorderPoint). One-click "ขอสั่ง" per
+// row creates a MercuryRequest (resolving/creating the ordinary MercuryItem from the Vesta SKU).
 export default function ReorderQueue({ onRequested }: { onRequested: () => void }) {
   const [rows, setRows] = useState<ReorderRow[] | null>(null);
   const [error, setError] = useState('');
@@ -27,7 +27,7 @@ export default function ReorderQueue({ onRequested }: { onRequested: () => void 
     setBusySku(row.sku);
     setError('');
     try {
-      await createRequest({ vulcanSku: row.sku, displayName: row.nameTh || row.nameEn || undefined });
+      await createRequest({ vestaSku: row.sku, displayName: row.nameTh || row.nameEn || undefined });
       setDoneSkus((s) => new Set(s).add(row.sku));
       onRequested();
     } catch {

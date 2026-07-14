@@ -18,7 +18,7 @@ import { financeRoutes } from './routes/finance.js';
 import { stockRoutes } from './routes/stock.js';
 import { dianaRoutes } from './routes/diana.js';
 import { junoRoutes } from './routes/juno.js';
-import { jupiterRoutes } from './routes/jupiter.js';
+import { pantheonRoutes } from './routes/pantheon.js';
 import { jupiterAccountingRoutes } from './routes/jupiterAccounting.js';
 import { venusRoutes } from './routes/venus.js';
 import { initIo } from './ws/io.js';
@@ -33,6 +33,8 @@ import { ceresRoutes } from './routes/ceres/index.js';
 import { startCeresDigestScheduler } from './ceres/nightlyDigest.js';
 import { mercuryRoutes } from './routes/mercury/index.js';
 import { oaSyncRoutes } from './routes/oaSync.js';
+import { apolloRoutes } from './routes/apollo.js';
+import { startApolloSchedulers } from './apollo/scheduler.js';
 
 // Raw body is needed to verify the LINE webhook signature.
 declare module 'fastify' {
@@ -92,7 +94,7 @@ async function buildServer() {
   await app.register(stockRoutes);
   await app.register(dianaRoutes);
   await app.register(junoRoutes);
-  await app.register(jupiterRoutes);
+  await app.register(pantheonRoutes);
   await app.register(jupiterAccountingRoutes);
   await app.register(ceresRoutes);
   // Nightly CEO digest scheduler (fire-and-forget; self-rechaining + .unref()'d — see
@@ -101,6 +103,8 @@ async function buildServer() {
   await app.register(venusRoutes);
   await app.register(mercuryRoutes);
   await app.register(oaSyncRoutes);
+  await app.register(apolloRoutes);
+  startApolloSchedulers(app.log);
 
   return app;
 }

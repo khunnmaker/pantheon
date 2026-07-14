@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { prisma } from '../db/prisma.js';
 import { verifyPassword, DUMMY_HASH } from '../auth/password.js';
-import { signToken, APP_NAMES, type Role, type AppName } from '../auth/jwt.js';
+import { signToken, signSessionToken, SESSION_SCOPE, APP_NAMES, type Role, type AppName } from '../auth/jwt.js';
 import { authedAgentFromToken } from '../auth/middleware.js';
 import { buildLoginCards } from '../auth/loginCards.js';
 import { sessionSetCookie, sessionClearCookie, readSessionToken } from '../auth/cookies.js';
@@ -75,8 +75,9 @@ export async function authRoutes(app: FastifyInstance) {
       const token = signToken(identity);
       // Also drop the suite SSO cookie (parent-domain, httpOnly) so opening any OTHER
       // *.prominentdental.com app recognises this login without re-entering credentials. The
-      // cookie only ever authenticates GET /api/auth/me (below) — never a state change.
-      reply.header('set-cookie', sessionSetCookie(token));
+      // cookie only ever authenticates GET /api/auth/me (below) — never a state change — and
+      // carries the 30d session-SCOPED token ("remember this computer"), not the 12h bearer.
+      reply.header('set-cookie', sessionSetCookie(signSessionToken(identity)));
       return { token, agent: identity };
     },
   );
@@ -90,8 +91,17 @@ export async function authRoutes(app: FastifyInstance) {
   app.get('/api/auth/me', async (req, reply) => {
     const header = req.headers.authorization;
     const bearer = header?.startsWith('Bearer ') ? header.slice('Bearer '.length).trim() : '';
-    const agent = await authedAgentFromToken(bearer || readSessionToken(req));
+    // A bearer verifies as a normal (unscoped) token; the cookie path passes SESSION_SCOPE so
+    // the 30d device-session token verifies HERE and nowhere else. A pre-rollout cookie (which
+    // carried an unscoped 12h bearer) still passes — unscoped tokens verify on any path — so
+    // nobody is force-logged-out by this deploy; those cookies simply age out within 12h.
+    const agent = bearer
+      ? await authedAgentFromToken(bearer)
+      : await authedAgentFromToken(readSessionToken(req), undefined, { scope: SESSION_SCOPE });
     if (!agent) return reply.code(401).send({ error: 'unauthorized' });
+    // Rolling renewal: every successful bootstrap re-issues the device-session cookie, so a
+    // computer in active use stays remembered indefinitely; only ~30d of idleness lapses it.
+    reply.header('set-cookie', sessionSetCookie(signSessionToken(agent)));
     return { agent, token: signToken(agent) };
   });
 
@@ -103,8 +113,8 @@ export async function authRoutes(app: FastifyInstance) {
     return { ok: true };
   });
 
-  // PUBLIC GET /api/auth/logins?app=minerva|vulcan|juno|ceres — the name-card list for that
-  // app's login screen (supervisor, then md for ceres, then employees granted that app).
+  // PUBLIC GET /api/auth/logins?app=minerva|vesta|juno|ceres — the name-card list for that
+  // app's login screen (supervisor, then md for MD_APPS, then employees granted that app).
   // Names + emails only — no roles/ids beyond `kind`.
   app.get('/api/auth/logins', async (req, reply) => {
     const app_ = (req.query as { app?: string })?.app;

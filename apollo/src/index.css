@@ -1,0 +1,14 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body { margin: 0; min-width: 320px; background: #f8fafc; color: #1e293b; font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+button, input, textarea, select { font: inherit; }
+button { touch-action: manipulation; }
+
+@layer components {
+  .label { @apply mt-4 mb-1 block text-xs font-semibold text-slate-600; }
+  .input { @apply w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100; }
+  .btn { @apply inline-flex items-center justify-center gap-1.5 rounded-xl px-3 py-2 text-sm font-semibold disabled:opacity-50; }
+  .btn-primary { @apply btn bg-blue-600 text-white hover:bg-blue-700; }
+}

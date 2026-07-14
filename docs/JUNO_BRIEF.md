@@ -4,7 +4,7 @@
 > Minerva chat it was written in. Juno is a NEW project that plugs into the existing **Minerva**
 > system (a LINE customer-reply assistant for **Prominent**, a Thai dental-equipment distributor).
 > Build Juno in the **same monorepo** as Minerva, on the **same shared Postgres**. It joins the
-> "Deities" suite: **Minerva** (sales), **Vulcan** (stock), **Diana** (website), **Juno** (finance).
+> "Deities" suite: **Minerva** (sales), **Vesta** (stock), **Diana** (website), **Juno** (finance).
 
 ---
 
@@ -31,7 +31,7 @@ them, manages **tax-invoice** requests, and produces **reports**.
    Built so it can expand later — but do NOT build the expansions now.
 3. **INCOME only.** Expenses / outgoing / supplier payments are a **separate future project** — out
    of scope entirely.
-4. **Standalone app on the shared DB.** Juno is its own frontend + backend (like Vulcan/Diana),
+4. **Standalone app on the shared DB.** Juno is its own frontend + backend (like Vesta/Diana),
    talking to the same Postgres. **No accounting-system integration yet** — the owner runs "Express"
    (Thai accounting software) and may later move to Odoo; how Juno feeds that is deferred. Design the
    `Payment` table so an export/sync is a clean future add-on, but don't build it.
@@ -43,7 +43,7 @@ them, manages **tax-invoice** requests, and produces **reports**.
 ## 3. Minerva context you need
 
 - **Repo:** `C:\Users\khunn\Project\Minerva` (monorepo) — `github.com/khunnmaker/minerva`. Juno lives
-  in THIS repo. Default branch `main` auto-deploys to Railway on push. Vulcan + Diana already share it.
+  in THIS repo. Default branch `main` auto-deploys to Railway on push. Vesta + Diana already share it.
 - **Stack:** `/api` = Node + TS + Fastify + Prisma + PostgreSQL. `/web` = Vite + React + Tailwind +
   Socket.IO. The Dockerfile runs `prisma migrate deploy` on boot. Live in production.
 - **The current finance flow (this is what Juno consumes):**
@@ -70,7 +70,7 @@ them, manages **tax-invoice** requests, and produces **reports**.
   boot from env passwords (`SEED_PASSWORD` = admin "Dr. M" / supervisor; `STAFF_PASSWORD` = shared
   team). See `api/src/db/ensureSeeded.ts`. `requireAuth` re-validates the token against the live DB
   row each request (`api/src/auth/middleware.ts`).
-- **Railway:** services for `api`, `web`, Postgres (+ Vulcan's service). Secrets (`DATABASE_URL`,
+- **Railway:** services for `api`, `web`, Postgres (+ Vesta's service). Secrets (`DATABASE_URL`,
   `JWT_SECRET`, the finance sheet webhook + secret) live ONLY in Railway env — never commit them.
 
 ---
@@ -85,7 +85,7 @@ them, manages **tax-invoice** requests, and produces **reports**.
   mirror (leave it on for now; it can be retired later).
 - **Juno = its own frontend + backend service** in the monorepo, pointed at the **same**
   `DATABASE_URL`. It reads `Payment` (joined to `Customer`), and serves the finance UI. It does NOT
-  depend on Minerva being up (reads the shared DB directly), same as Vulcan/Diana.
+  depend on Minerva being up (reads the shared DB directly), same as Vesta/Diana.
 - **Migrations caution:** a Juno migration touches Minerva's live DB. **ADD only** — never drop/rename
   Minerva columns. `Payment` is a new table + a couple of nullable relations; safe.
 

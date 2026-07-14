@@ -3,7 +3,7 @@
 // Run: npm run verify:loop  (tsx server/src/verify-loop.ts)
 //
 // Proves:
-//   (c) SECRET goods-receipt from local: resolveSecret bumps Vulcan stock via the cloud adjust
+//   (c) SECRET goods-receipt from local: resolveSecret bumps Vesta stock via the cloud adjust
 //       endpoint keyed on the LOCAL realSku, then marks the cloud request 'received' (STATUS ONLY).
 //       The captured cloud calls show realSku ONLY on the adjust call (a transient stock bump) and
 //       NEVER on the receive/status call — the invariant "secret realSku never lands on a cloud
@@ -53,7 +53,7 @@ async function main(): Promise<void> {
       status: 'pending',
       itemDisplayName: 'วัตถุดิบ A-17', // the alias the cloud sees — NOT the real name
       itemIsSecret: true,
-      itemVulcanSku: null, // secret items carry no SKU on the cloud row
+      itemVestaSku: null, // secret items carry no SKU on the cloud row
     },
   });
 

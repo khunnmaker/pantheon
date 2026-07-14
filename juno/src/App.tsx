@@ -3,6 +3,9 @@ import { Loader2 } from 'lucide-react';
 import Login from './Login';
 import Juno from './Juno';
 import { getStoredAgent, getToken, setOnUnauthorized, bootstrap, hasAppAccess, type Agent } from './lib/api';
+import { PORTAL_URL_DEFAULT, clearSsoBounce, redirectToPortalLogin } from '@pantheon/ui';
+
+const PORTAL_URL: string = import.meta.env.VITE_PORTAL_URL ?? PORTAL_URL_DEFAULT;
 
 export default function App() {
   const [agent, setAgent] = useState<Agent | null>(() =>
@@ -26,8 +29,14 @@ export default function App() {
     if (!booting) return;
     let alive = true;
     bootstrap()
-      .then((a) => { if (alive && a) setAgent(a); })
-      .finally(() => { if (alive) setBooting(false); });
+      .then((a) => {
+        if (!alive) return;
+        if (a) { clearSsoBounce(); setAgent(a); setBooting(false); return; }
+        // No suite session. Bounce to the central Pantheon login unless a guard says local.
+        if (redirectToPortalLogin(PORTAL_URL)) return;
+        setBooting(false);
+      })
+      .catch(() => { if (alive) setBooting(false); });
     return () => { alive = false; };
   }, [booting]);
 

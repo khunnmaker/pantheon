@@ -22,6 +22,7 @@ import { sendToFinance } from '../finance/sendToFinance.js';
 import { buildSlipUrl } from '../finance/slipLink.js';
 import { normalizeSlipDate, normalizeAmount } from '../finance/normalize.js';
 import { pushToConsole } from '../ws/io.js';
+import { captionStaffUpload } from '../llm/captionImage.js';
 
 // The customer's name for finance/display: assigned nickname if set, else the LINE app name.
 // If NEITHER is stored (e.g. a customer imported with only a code, or a failed profile lookup
@@ -398,6 +399,9 @@ export async function messageRoutes(app: FastifyInstance) {
           ...(sendResult.quoteToken ? { quoteToken: sendResult.quoteToken } : {}),
         },
       });
+    }
+    if (attach?.attachmentType === 'image' && parsed.data.uploadId) {
+      void captionStaffUpload(agentMessage.id, parsed.data.uploadId);
     }
 
     // Embed the sent reply so it's retrievable in future drafts (best-effort).

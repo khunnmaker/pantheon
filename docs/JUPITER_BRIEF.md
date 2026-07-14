@@ -1,13 +1,15 @@
+> ⚠️ 2026-07 UPDATE: the portal this document describes was split out to the `pantheon/` app (pantheon.prominentdental.com). `jupiter/` is now the ACCOUNTING app (jupiter.prominentdental.com); portal.prominentdental.com no longer exists. Kept for history.
+
 # Jupiter — staff portal + SSO + suite connectivity (build brief)
 
-> Handoff brief for a fresh session. Written 2026-07-04 after a grilled requirements session with the owner (Dr. M / CEO). Read this whole file before writing code. Companion docs: `docs/VULCAN_BRIEF.md`, `docs/JUNO_BRIEF.md`, `docs/CERES_BRIEF.md` (same suite, same conventions).
+> Handoff brief for a fresh session. Written 2026-07-04 after a grilled requirements session with the owner (Dr. M / CEO). Read this whole file before writing code. Companion docs: `docs/VESTA_BRIEF.md`, `docs/JUNO_BRIEF.md`, `docs/CERES_BRIEF.md` (same suite, same conventions).
 
 ## 1. What Jupiter is
 
 **Jupiter is the king of the deities: the internal landing page the whole team opens first, and the owner of everything that connects the apps to each other.** Concretely, three jobs:
 
 1. **Portal (landing page)** — one page at `portal.prominentdental.com`: log in once, see only the apps your role allows, each app button shows a live pending-work badge.
-2. **SSO** — that one login works across every deity (Minerva, Vulcan, Juno, Ceres). No re-typing PINs per app.
+2. **SSO** — that one login works across every deity (Minerva, Vesta, Juno, Ceres). No re-typing PINs per app.
 3. **Connectivity steward** — Jupiter's docs own the suite map (which service lives at which domain, which envs bind them together: `WEB_ORIGIN`, `VITE_API_URL`, cookie domain). Cross-app navigation (a small "Jupiter" home link in every deity's header) also lands here.
 
 **Explicitly NOT Jupiter:** public marketing content (that is Diana, the future B2B site on the bare `prominentdental.com`), KPI dashboards duplicating deity screens, notifications.
@@ -21,7 +23,7 @@
 | Audience | **Internal staff portal only** — no public content |
 | Connectivity | **Full SSO via Jupiter** — one login, every allowed app opens without asking again; ALL account types included (supervisor, 3 agents, md, 13 Ceres messengers — they already share one `Agent` table + one JWT system) |
 | Portal depth | **Launcher + live badges** — pending counts per app; no KPIs |
-| Domains | **Subdomains of `prominentdental.com`** (portal. / minerva. / vulcan. / juno. / ceres. / api.) via GoDaddy CNAME → Railway custom domains. The bare domain keeps serving the old GoDaddy site until Diana replaces it. |
+| Domains | **Subdomains of `prominentdental.com`** (portal. / minerva. / vesta. / juno. / ceres. / api.) via GoDaddy CNAME → Railway custom domains. The bare domain keeps serving the old GoDaddy site until Diana replaces it. |
 
 Defaults accepted with the brief: cookie-based SSO with a CSRF header guard; each deity's own login screen stays as a fallback; brief-then-build (this doc) matches the Juno/Ceres pattern.
 
@@ -32,7 +34,7 @@ Monorepo `github.com/khunnmaker/minerva`, `main` auto-deploys on Railway. One Po
 | Deity | Job | Frontend | Who may enter (today's route gates) |
 |---|---|---|---|
 | Minerva | LINE sales console (LIVE, real customers) | `web/` | agents + supervisor |
-| Vulcan | stock management | `vulcan/` | supervisor only |
+| Vesta | stock management | `vesta/` | supervisor only |
 | Juno | income/finance (slips, RE, bank recon) | `juno/` | supervisor only |
 | Ceres | expenses/petty cash (merged PR #5, inert until envs) | `ceres/` | messengers + md (+ CEO = supervisor) |
 | Diana | public B2B site (planned) | — | public |
@@ -46,10 +48,10 @@ The per-app credential sprawl is gone. Three tiers, three env credentials, per-p
 |---|---|---|---|
 | `supervisor` | Dr. M | `SEED_PASSWORD` (password) | everything, implicit |
 | `md` | Nee (`md@prominent.local`) | `MD_PASSWORD` (password; `CERES_MD_PASSWORD` accepted as deprecated fallback) | Ceres management, implicit |
-| `employee` | all 15 staff — sales (nadeer/anny/noey) + couriers (ta/arm/man/boonson/kaew/lungko/wong/paeng/nun/pin/da) + housekeeper (lekmaeban); emails `<slug>@prominent.local` | ONE var `EMPLOYEE_PINS` = `slug:6digitpin,…` (parsed by `parseAgentPins`; `AGENT_PINS`/`STAFF_PASSWORD` are deprecated fallbacks during transition) | per-person `Agent.apps String[]` grants ⊆ {minerva, vulcan, juno, ceres} |
+| `employee` | all 15 staff — sales (nadeer/anny/noey) + couriers (ta/arm/man/boonson/kaew/lungko/wong/paeng/nun/pin/da) + housekeeper (lekmaeban); emails `<slug>@prominent.local` | ONE var `EMPLOYEE_PINS` = `slug:6digitpin,…` (parsed by `parseAgentPins`; `AGENT_PINS`/`STAFF_PASSWORD` are deprecated fallbacks during transition) | per-person `Agent.apps String[]` grants ⊆ {minerva, vesta, juno, ceres} |
 
 - Legacy roles `agent`/`messenger` are retired (tokens carrying them are still verified; the live row decides). **นี in the old messenger list IS Nee the MD** — she has no employee row.
-- `hasAppAccess(agent, app)` + `requireApp(app)` in `api/src/auth/middleware.ts` are the gate: Minerva console routes require the `minerva` grant; Ceres self-entry requires `ceres`; Vulcan/Juno remain `requireRole('supervisor')`.
+- `hasAppAccess(agent, app)` + `requireApp(app)` in `api/src/auth/middleware.ts` are the gate: Minerva console routes require the `minerva` grant; Ceres self-entry requires `ceres`; Vesta/Juno remain `requireRole('supervisor')`.
 - **Boot-sync seeds `apps` only on CREATE and never overwrites it** — `Agent.apps` is Jupiter's admin surface: the CEO-only staff-admin screen (job 4, §1) edits it live. Default grants: everyone → `ceres`; sales → `+minerva`.
 - PUBLIC `GET /api/auth/logins?app=minerva|ceres` returns the ordered login-card list `[{email, name, kind: 'password'|'pin'}]` for that app's login screen (`GET /api/ceres/logins` is an alias for app=ceres). Jupiter's own login page should extend this endpoint with an all-accounts variant (supervisor + md + every employee) — a ~5-line addition to `api/src/auth/loginCards.ts`, part of the Jupiter build.
 - Everything else stands: JWT ~12h in localStorage as `Authorization: Bearer`, `requireAuth` + the Socket.IO handshake **re-validate the Agent row (existence + role, now + apps) on every request** — keep that property. Login rate limit 10/5min/IP; Fastify `trustProxy: true`.
@@ -72,20 +74,20 @@ Transport changes; **authorization does not**. Every existing per-route role gat
 `GET /api/jupiter/badges` (any authenticated account) → counts ONLY for the apps the caller's role can enter, e.g.:
 
 ```json
-{ "minerva": { "pending": 3 }, "juno": { "toVerify": 5 }, "vulcan": { "lowStock": 2 }, "ceres": { "awaitingApproval": 1 } }
+{ "minerva": { "pending": 3 }, "juno": { "toVerify": 5 }, "vesta": { "lowStock": 2 }, "ceres": { "awaitingApproval": 1 } }
 ```
 
 Suggested definitions — **verify each against the actual Prisma schema before implementing; do not trust this doc's field names**:
 - **Minerva**: conversations awaiting a reply (customers whose latest message is unanswered / has an unsent draft).
 - **Juno**: `Payment` rows in status `received` (not yet verified).
-- **Vulcan**: products at/below their reorder point.
+- **Vesta**: products at/below their reorder point.
 - **Ceres**: for CEO → expenses awaiting CEO approval; for md → her pending queue; for a messenger → their own drafts/rejections.
 
 One endpoint, a handful of indexed `count()` queries; an in-process cache of ~30s is fine. Never leak a count for an app the caller cannot open.
 
 ## 6. Portal frontend (`jupiter/`)
 
-- Vite+React+Tailwind, Thai UI, **mobile-first** (messengers are on phones). Own Railway service (root `jupiter/`, `VITE_API_URL`). Suggested theme: royal purple/violet — distinct from sky (Minerva), indigo (Vulcan), emerald (Juno), and Ceres' theme.
+- Vite+React+Tailwind, Thai UI, **mobile-first** (messengers are on phones). Own Railway service (root `jupiter/`, `VITE_API_URL`). Suggested theme: royal purple/violet — distinct from sky (Minerva), indigo (Vesta), emerald (Juno), and Ceres' theme.
 - After login: a tile grid — one tile per allowed app, deity name + Thai job label + badge count, opening the app's URL (same tab). Tile order: most-used first for that role.
 - App URLs come from build-time env (e.g. `VITE_APP_URLS` JSON or individual vars) so the Railway→custom-domain cutover is an env edit, not a code change.
 - Every other deity adds one small header link back to the portal (env-driven URL, hidden when unset). Keep it to a line or two per app.
@@ -93,7 +95,7 @@ One endpoint, a handful of indexed `count()` queries; an in-process cache of ~30
 ## 7. Phasing (build in this order — each phase ships alone)
 
 1. **Phase 1 — portal + badges, no SSO**: `jupiter/` frontend with its own login (existing auth), `/api/jupiter/badges`, tile grid. Works on today's Railway URLs immediately. Apps still ask for their own login when opened.
-2. **Phase 2 — domains (OWNER runbook, no code)**: Railway custom domains per service; GoDaddy CNAMEs `portal`/`minerva`/`vulcan`/`juno`/`ceres`/`api` → the Railway targets; append the new origins to `WEB_ORIGIN` (keep the old Railway origins during transition); flip each frontend's `VITE_API_URL` to `https://api.prominentdental.com`. Bare domain untouched.
+2. **Phase 2 — domains (OWNER runbook, no code)**: Railway custom domains per service; GoDaddy CNAMEs `portal`/`minerva`/`vesta`/`juno`/`ceres`/`api` → the Railway targets; append the new origins to `WEB_ORIGIN` (keep the old Railway origins during transition); flip each frontend's `VITE_API_URL` to `https://api.prominentdental.com`. Bare domain untouched.
 3. **Phase 3 — SSO**: `COOKIE_DOMAIN` env + cookie issue/accept/logout + CSRF header + `GET /api/auth/me` bootstrap in all four apps + portal becomes the single door. Smoke: log in at portal as an agent → open Minerva → no login prompt; messenger sees only Ceres; logout at portal kills every app.
 
 ## 8. Security constraints (carry-overs, non-negotiable)

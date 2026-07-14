@@ -13,7 +13,7 @@ export interface ProductMatch {
   photoSku: string | null;
   stock: number | null; // remaining qty from the snapshot (null = unknown)
   stockAt: Date | null;
-  reorderPoint?: number | null; // Vulcan low-stock threshold (staff-only)
+  reorderPoint?: number | null; // Vesta low-stock threshold (staff-only)
   low?: boolean; // stock <= reorderPoint (staff-only; never surfaced to customers)
   alias?: string | null; // short human code (e.g. "TR34"); attached by searchProducts
 }
@@ -111,7 +111,7 @@ export async function findProducts(query: string, limit = 5): Promise<ProductMat
 // stored "07-10-09" (codes are entered/shown bare for easy typing; the stored key keeps
 // its dashes). SKU matches rank first; returns more results than findProducts.
 // statuses: which Product.status values are searchable. Default ['active'] (console + AI never
-// see stock-only rows); Vulcan passes ['active','stock_only'] so its own search finds the
+// see stock-only rows); Vesta passes ['active','stock_only'] so its own search finds the
 // Express-imported stubs it manages.
 export async function searchProducts(query: string, limit = 12, statuses: string[] = ['active']): Promise<ProductMatch[]> {
   const raw = (query || '').trim();

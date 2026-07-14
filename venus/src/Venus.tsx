@@ -1,14 +1,14 @@
 import { useState } from 'react';
 import { Heart, LogOut, Crown, Users, Upload, LayoutDashboard, ShoppingBag } from 'lucide-react';
-import { canImport, clearSession, type Agent } from './lib/api';
+import { canImport, logout, type Agent } from './lib/api';
 import CustomerList from './CustomerList';
 import CustomerDetail from './CustomerDetail';
 import ImportCustomers from './ImportCustomers';
 import ImportSales from './ImportSales';
 import Dashboard from './Dashboard';
 
-// Portal-back link (Jupiter). URL from build-time env; hidden when unset, so it stays
-// completely inert until VITE_PORTAL_URL is configured (same convention as juno/vulcan).
+// Portal-back link (Pantheon). URL from build-time env; hidden when unset, so it stays
+// completely inert until VITE_PORTAL_URL is configured (same convention as juno/vesta).
 const PORTAL_URL: string | undefined = import.meta.env.VITE_PORTAL_URL;
 
 type View = { screen: 'dashboard' } | { screen: 'list' } | { screen: 'detail'; code: string } | { screen: 'import' } | { screen: 'import-sales' };
@@ -31,12 +31,12 @@ export default function Venus({ agent, onLogout }: { agent: Agent; onLogout: () 
           </button>
           <div className="flex items-center gap-3 text-sm">
             {PORTAL_URL && (
-              <a href={PORTAL_URL} title="กลับพอร์ทัล Jupiter" className="flex items-center gap-1 text-slate-500 hover:text-violet-600">
+              <a href={PORTAL_URL} title="กลับพอร์ทัล Pantheon" className="flex items-center gap-1 text-slate-500 hover:text-violet-600">
                 <Crown size={15} /> <span className="hidden sm:inline">พอร์ทัล</span>
               </a>
             )}
             <span className="text-slate-500 hidden sm:inline">{agent.name}</span>
-            <button onClick={() => { clearSession(); onLogout(); }} className="flex items-center gap-1 text-slate-500 hover:text-rose-600">
+            <button onClick={() => { void logout(); onLogout(); }} className="flex items-center gap-1 text-slate-500 hover:text-rose-600">
               <LogOut size={15} /> ออก
             </button>
           </div>

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Loader2, Plus, Search, AlertTriangle, Check, X, Pencil } from 'lucide-react';
 import { getItems, createItem, patchItem, flatSku, type MercuryItem } from '../lib/api';
 
-// Items = the ordinary reorderable items master (list + CRUD). displayName + optional Vulcan SKU.
+// Items = the ordinary reorderable items master (list + CRUD). displayName + optional Vesta SKU.
 // Secret items are a later phase; this view manages ordinary (non-secret) items.
 export default function Items() {
   const [items, setItems] = useState<MercuryItem[] | null>(null);
@@ -66,7 +66,7 @@ export default function Items() {
               <thead className="bg-slate-50 text-slate-500 text-xs">
                 <tr>
                   <th className="text-left font-medium px-3 py-2">ชื่อ</th>
-                  <th className="text-left font-medium px-3 py-2">รหัส Vulcan</th>
+                  <th className="text-left font-medium px-3 py-2">รหัส Vesta</th>
                   <th className="text-left font-medium px-3 py-2">ประเภท</th>
                   <th className="text-right font-medium px-3 py-2"></th>
                 </tr>
@@ -87,7 +87,7 @@ export default function Items() {
                     <tr key={it.id} className="border-t border-slate-100">
                       <td className="px-3 py-2">{it.displayName}</td>
                       <td className="px-3 py-2 font-mono text-xs text-slate-500">
-                        {it.vulcanSku ? flatSku(it.vulcanSku) : <span className="text-slate-300">—</span>}
+                        {it.vestaSku ? flatSku(it.vestaSku) : <span className="text-slate-300">—</span>}
                       </td>
                       <td className="px-3 py-2">
                         {it.isSecret ? (
@@ -126,7 +126,7 @@ function ItemForm({
   onSaved: () => void;
 }) {
   const [displayName, setDisplayName] = useState(item?.displayName ?? '');
-  const [vulcanSku, setVulcanSku] = useState(item?.vulcanSku ?? '');
+  const [vestaSku, setVestaSku] = useState(item?.vestaSku ?? '');
   const [active, setActive] = useState(item?.active ?? true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -139,13 +139,13 @@ function ItemForm({
       if (item) {
         await patchItem(item.id, {
           displayName: displayName.trim(),
-          vulcanSku: vulcanSku.trim() || null,
+          vestaSku: vestaSku.trim() || null,
           active,
         });
       } else {
         await createItem({
           displayName: displayName.trim(),
-          vulcanSku: vulcanSku.trim() || undefined,
+          vestaSku: vestaSku.trim() || undefined,
         });
       }
       onSaved();
@@ -168,10 +168,10 @@ function ItemForm({
           />
         </div>
         <div>
-          <label className="block text-xs font-semibold text-slate-500 mb-1">รหัส Vulcan (ถ้ามี)</label>
+          <label className="block text-xs font-semibold text-slate-500 mb-1">รหัส Vesta (ถ้ามี)</label>
           <input
-            value={vulcanSku}
-            onChange={(e) => setVulcanSku(e.target.value)}
+            value={vestaSku}
+            onChange={(e) => setVestaSku(e.target.value)}
             placeholder="07-10-09"
             className="w-full px-3 py-2 rounded-md border border-slate-300 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-orange-400"
           />

@@ -1,13 +1,12 @@
 import { useEffect, useState } from 'react';
 import { Bot, LogIn, Loader2, AlertTriangle, ArrowLeft } from 'lucide-react';
 import { login, setSession, getLogins, type Agent, type LoginCard } from './lib/api';
-import { groupLogins, type GroupMeta } from './lib/loginGroups';
-import { memberAvatar, teamAvatar } from './lib/avatar';
+import { groupLogins, type GroupMeta, memberAvatar, teamAvatar } from '@pantheon/ui';
 
 const PIN_LEN = 6;
 
-// Role-grouped, tap-to-drill-down, Metro-tile login picker — the SAME UX as the Jupiter portal
-// (jupiter/src/Login.tsx), adapted to Minerva's sky accent. The people come from the server
+// Role-grouped, tap-to-drill-down, Metro-tile login picker — the SAME UX as the Pantheon portal
+// (pantheon/src/Login.tsx), adapted to Minerva's sky accent. The people come from the server
 // (GET /api/auth/logins?app=minerva) — a rich card list carrying group + gender. The picker is a
 // 3-level DRILL-DOWN:
 //   L1 role groups (2-col Metro grid, solid group color + funEmoji mascot + member count) → tap →

@@ -1,8 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Wallet, Loader2, AlertTriangle, LogIn, ArrowLeft, ShieldCheck } from 'lucide-react';
 import { login, setSession, getLogins, type Agent, type LoginName } from './lib/api';
-import { groupLogins, type GroupMeta } from './lib/loginGroups';
-import { memberAvatar, teamAvatar } from './lib/avatar';
+import { groupLogins, type GroupMeta, memberAvatar, teamAvatar } from '@pantheon/ui';
 
 const PIN_LEN = 6;
 const RAW_ROLES = new Set(['employee', 'md', 'supervisor']);
@@ -29,8 +28,8 @@ export default function Login({ onLogin }: { onLogin: (agent: Agent) => void }) 
   );
 }
 
-// ── Card flow: role-grouped, tap-to-drill-down, Metro-tile picker — the SAME UX as the Jupiter
-// portal (jupiter/src/Login.tsx), adapted to Ceres's amber accent. People come from the server
+// ── Card flow: role-grouped, tap-to-drill-down, Metro-tile picker — the SAME UX as the Pantheon
+// portal (pantheon/src/Login.tsx), adapted to Ceres's amber accent. People come from the server
 // (GET /api/ceres/logins) — a rich card list carrying group + gender. 3-level DRILL-DOWN:
 //   L1 role groups (2-col Metro grid) → L2 that group's people (avatar tiles) → L3 person + cred
 //   (password field for supervisor/MD, masked auto-submit 6-digit PIN for everyone else).

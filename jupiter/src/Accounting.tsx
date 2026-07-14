@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Crown, ArrowLeft, Loader2, Sparkles, Plus, X, Trash2 } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Scale, ArrowLeft, LogOut, Loader2, Sparkles, Plus, X, Trash2, Users, AlertTriangle, ChevronDown, ChevronUp } from 'lucide-react';
 import {
   acctCompanies,
   acctSummary,
@@ -9,13 +9,21 @@ import {
   acctRegisters,
   acctParse,
   acctSyncJuno,
+  acctPartyBackfillDry,
+  acctPartyBackfillApply,
+  acctPartyStatus,
   type AcctCompany,
   type AcctSummary,
   type AcctTxn,
   type AcctRegisters,
   type ProposedTxn,
   type Direction,
+  type BackfillSummary,
+  type BackfillStatus,
+  logout,
 } from './lib/api';
+
+const PORTAL_URL = import.meta.env.VITE_PORTAL_URL ?? 'https://pantheon.prominentdental.com';
 
 // Jupiter accounting cockpit (Phase 1) — the owner's consolidated income/expense view over the
 // 5 group companies + a monthly close pack. Supervisor-only; gated by the caller in App.tsx.
@@ -55,7 +63,7 @@ const toNum = (s: string) => {
 
 type Tab = 'overview' | 'ledger' | 'close';
 
-export default function Accounting({ onBack }: { onBack: () => void }) {
+export default function Accounting({ onLogout }: { onLogout: () => void }) {
   const month = currentMonth();
   const [tab, setTab] = useState<Tab>('overview');
   const [company, setCompany] = useState<string>(ALL); // ALL or a company code
@@ -144,12 +152,12 @@ export default function Accounting({ onBack }: { onBack: () => void }) {
       {/* top bar */}
       <header className="bg-gradient-to-r from-[#4C1D95] to-[#6D28D9] text-white">
         <div className="max-w-4xl mx-auto px-4 sm:px-5 py-3 flex items-center gap-3 flex-wrap">
-          <button onClick={onBack} className="flex items-center gap-1 text-white/85 hover:text-white text-sm">
+          <a href={PORTAL_URL} className="flex items-center gap-1 text-white/85 hover:text-white text-sm">
             <ArrowLeft size={16} /> พอร์ทัล
-          </button>
+          </a>
           <div className="flex items-center gap-2 font-extrabold text-base">
             <span className="w-8 h-8 rounded-lg bg-white/15 flex items-center justify-center">
-              <Crown size={17} />
+              <Scale size={17} />
             </span>
             <div className="leading-tight">
               Jupiter
@@ -160,6 +168,9 @@ export default function Accounting({ onBack }: { onBack: () => void }) {
           <div className="text-xs sm:text-[12.5px] bg-white/15 rounded-lg px-3 py-1.5 font-semibold">
             รอบเดือน · {thMonthLabel(summary?.month ?? month)}
           </div>
+          <button onClick={() => { void logout(); onLogout(); }} className="flex items-center gap-1 text-white/85 hover:text-white text-sm">
+            <LogOut size={15} /> ออก
+          </button>
         </div>
       </header>
 
@@ -231,10 +242,13 @@ export default function Accounting({ onBack }: { onBack: () => void }) {
             {tab === 'close' && <Close registers={registers} company={company} colorOf={colorOf} />}
           </>
         )}
+
+        {/* Supervisor tool: canonical customer identity backfill (Punch #9). */}
+        <PartyBackfill />
       </main>
 
       <footer className="bg-white border-t border-[#E9E4F2] text-center text-[11px] text-[#726C86] py-3 px-4">
-        Phase 1 · บัญชีรวมกลุ่ม — แทนที่ Odoo, จ่ายที่เดียว · PROM ดึงจาก Juno/Ceres/Vulcan (Phase 1b) · อีก 4 บริษัทบันทึกตรงนี้
+        Phase 1 · บัญชีรวมกลุ่ม — แทนที่ Odoo, จ่ายที่เดียว · PROM ดึงจาก Juno/Ceres/Vesta (Phase 1b) · อีก 4 บริษัทบันทึกตรงนี้
       </footer>
     </div>
   );
@@ -774,6 +788,257 @@ function Close({ registers, company, colorOf }: { registers: AcctRegisters | nul
         ))}
       </div>
     </section>
+  );
+}
+
+/* ─────────────────── PARTY BACKFILL (supervisor tool · Punch #9) ─────────────────── */
+
+// Human labels for the identity channels the backfill populates.
+const CHANNEL_LABELS: Record<string, string> = {
+  line_user: 'LINE',
+  oa_chat: 'OA chat',
+  express_code: 'รหัส Express',
+  diana_email: 'อีเมล Diana',
+  agent_email: 'อีเมลตัวแทน',
+  ceres_name: 'ชื่อ (Ceres)',
+  phone: 'เบอร์โทร',
+  vendor_local: 'ผู้ขาย',
+};
+const channelLabel = (ch: string) => CHANNEL_LABELS[ch] ?? ch;
+
+// Collapsible admin panel: dry-run (preview) → confirm → apply (background) → poll to done.
+// The whole Accounting page is already supervisor-gated, and the routes re-check the role.
+function PartyBackfill() {
+  const [open, setOpen] = useState(false);
+  const [status, setStatus] = useState<BackfillStatus | null>(null);
+  const [dry, setDry] = useState<BackfillSummary | null>(null);
+  const [dryLoading, setDryLoading] = useState(false);
+  const [applying, setApplying] = useState(false); // an apply is in flight (server running)
+  const [confirming, setConfirming] = useState(false); // showing the "รันจริง?" confirm step
+  const [err, setErr] = useState<string | null>(null);
+  const [doneMsg, setDoneMsg] = useState<string | null>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const refreshStatus = () =>
+    acctPartyStatus()
+      .then((s) => {
+        setStatus(s);
+        return s;
+      })
+      .catch((e) => {
+        setErr(String((e as Error)?.message ?? e));
+        return null;
+      });
+
+  // Load current spine counts when the panel is first opened; adopt a run already in flight.
+  useEffect(() => {
+    if (!open || status) return;
+    refreshStatus().then((s) => {
+      if (s?.running) setApplying(true);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  // While an apply is running, poll status every 3s until running=false, then show final counts.
+  useEffect(() => {
+    if (!applying) return;
+    pollRef.current = setInterval(async () => {
+      const s = await refreshStatus();
+      if (s && !s.running) {
+        setApplying(false);
+        setDry(null);
+        setDoneMsg(`รวมข้อมูลเสร็จ · ${s.parties.toLocaleString()} ราย · ${s.identities.toLocaleString()} identity`);
+      }
+    }, 3000);
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+      pollRef.current = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [applying]);
+
+  async function runDry() {
+    setDryLoading(true);
+    setErr(null);
+    setDoneMsg(null);
+    setConfirming(false);
+    setDry(null);
+    try {
+      setDry(await acctPartyBackfillDry());
+    } catch (e) {
+      setErr(String((e as Error)?.message ?? e));
+    } finally {
+      setDryLoading(false);
+    }
+  }
+
+  async function runApply() {
+    setErr(null);
+    setConfirming(false);
+    try {
+      const r = await acctPartyBackfillApply();
+      if (r.started) {
+        setApplying(true);
+        setDoneMsg(null);
+      } else if (r.busy) {
+        setApplying(true); // a run is already going — just poll it
+      }
+    } catch (e) {
+      setErr(String((e as Error)?.message ?? e));
+    }
+  }
+
+  const dryTotalIdentities = dry ? Object.values(dry.identities).reduce((a, b) => a + b, 0) : 0;
+
+  return (
+    <section className="mt-6">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="flex items-center gap-2 text-[12px] font-bold text-[#726C86] hover:text-[#4C1D95]"
+      >
+        <Users size={14} /> รวมข้อมูลลูกค้า (Party backfill)
+        {open ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+      </button>
+
+      {open && (
+        <div className="mt-2.5 bg-white border border-[#E9E4F2] rounded-xl p-4">
+          <div className="text-[12px] text-[#726C86] mb-3 leading-relaxed">
+            รวมลูกค้าที่กระจายอยู่หลายระบบ (LINE · Express · Diana · OA · Ceres) ให้เป็นตัวตนเดียว
+            (Party) — ทำครั้งเดียว, รันซ้ำได้ปลอดภัย (idempotent). แนะนำให้กด{' '}
+            <b>ตรวจก่อน</b> เพื่อดูผลก่อนรันจริง
+          </div>
+
+          {/* live spine counts */}
+          <div className="flex gap-2.5 flex-wrap mb-3">
+            <CountPill label="Party ปัจจุบัน" value={status ? status.parties.toLocaleString() : '…'} />
+            <CountPill label="Identity ปัจจุบัน" value={status ? status.identities.toLocaleString() : '…'} />
+            {status?.running && (
+              <span className="inline-flex items-center gap-1.5 text-[11.5px] font-bold text-[#B45309] bg-[#FEF3E2] rounded-lg px-3 py-1.5">
+                <Loader2 size={13} className="animate-spin" /> กำลังรวมข้อมูล…
+              </span>
+            )}
+          </div>
+
+          {/* actions */}
+          <div className="flex gap-2 flex-wrap items-center">
+            <button
+              onClick={runDry}
+              disabled={dryLoading || applying}
+              className="inline-flex items-center gap-1.5 text-[12.5px] font-bold px-3.5 py-1.5 rounded-lg border border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100 disabled:opacity-50"
+            >
+              {dryLoading ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
+              ตรวจก่อน (dry-run)
+            </button>
+            {dry && !applying && !confirming && (
+              <button
+                onClick={() => setConfirming(true)}
+                className="inline-flex items-center gap-1.5 text-[12.5px] font-bold px-3.5 py-1.5 rounded-lg bg-[#6D28D9] text-white hover:bg-[#5B21B6]"
+              >
+                รันจริง (apply)
+              </button>
+            )}
+            {doneMsg && <span className="text-[12px] text-[#0F9D58] font-semibold">{doneMsg}</span>}
+          </div>
+
+          {err && <div className="mt-2.5 text-[12px] text-rose-600">ผิดพลาด: {err}</div>}
+
+          {/* confirm step */}
+          {confirming && dry && (
+            <div className="mt-3 border border-dashed border-[#6D28D9] rounded-[10px] p-3 bg-[#F3EEFE]">
+              <div className="text-[12.5px] text-[#4C1D95] font-bold mb-2">
+                ยืนยันรันจริง? จะสร้าง Party ~{dry.parties.toLocaleString()} ราย และ{' '}
+                {dryTotalIdentities.toLocaleString()} identity (รันซ้ำได้ ไม่สร้างซ้ำ)
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={runApply}
+                  className="bg-[#0F9D58] text-white rounded-lg px-3.5 py-1.5 font-bold text-[12.5px]"
+                >
+                  ✓ ยืนยันรันจริง
+                </button>
+                <button
+                  onClick={() => setConfirming(false)}
+                  className="bg-white border border-[#E9E4F2] text-[#403A54] rounded-lg px-3.5 py-1.5 font-bold text-[12.5px]"
+                >
+                  ยกเลิก
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* dry-run result */}
+          {dry && (
+            <div className="mt-3 border border-[#E9E4F2] rounded-xl overflow-hidden">
+              <div className="px-3.5 py-2.5 border-b border-[#F2EEF9] font-bold text-[13px] text-[#1E1A2B] bg-[#FAF8FE]">
+                ผลการตรวจ (dry-run) · ยังไม่เขียนข้อมูล
+              </div>
+              <div className="p-3.5 grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                <MiniStat label="Party ที่จะสร้าง" value={dry.parties.toLocaleString()} />
+                <MiniStat label="Identity ที่จะสร้าง" value={dryTotalIdentities.toLocaleString()} />
+                <MiniStat
+                  label="ชนกัน (ต้องตรวจ)"
+                  value={dry.conflicts.toLocaleString()}
+                  tone={dry.conflicts > 0 ? 'warn' : undefined}
+                />
+              </div>
+
+              {/* identities per channel */}
+              <div className="px-3.5 pb-3.5 flex flex-wrap gap-1.5">
+                {Object.keys(dry.identities).length === 0 && (
+                  <span className="text-[12px] text-[#726C86]">ไม่มี identity ใหม่ (ข้อมูลรวมแล้ว)</span>
+                )}
+                {Object.entries(dry.identities)
+                  .sort((a, b) => b[1] - a[1])
+                  .map(([ch, n]) => (
+                    <span
+                      key={ch}
+                      className="text-[11px] font-semibold bg-[#F3EEFE] text-[#4C1D95] border border-[#E3D8FB] rounded-full px-2.5 py-1"
+                    >
+                      {channelLabel(ch)} · {n.toLocaleString()}
+                    </span>
+                  ))}
+              </div>
+
+              {/* conflict sample */}
+              {dry.sampleConflicts.length > 0 && (
+                <div className="px-3.5 pb-3.5">
+                  <div className="flex items-center gap-1.5 text-[11.5px] font-bold text-[#B45309] mb-1.5">
+                    <AlertTriangle size={13} /> ตัวอย่างที่ชนกัน (ไม่รวมอัตโนมัติ — ต้องตรวจเอง)
+                  </div>
+                  <div className="bg-[#FEF9F0] border border-[#F5E6CC] rounded-lg p-2.5 max-h-40 overflow-y-auto">
+                    {dry.sampleConflicts.map((c, i) => (
+                      <div key={i} className="text-[11px] text-[#8A5A12] font-mono tabular-nums leading-relaxed break-all">
+                        {c}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function CountPill({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="bg-[#F7F5FC] border border-[#E9E4F2] rounded-lg px-3 py-1.5">
+      <span className="text-[10.5px] text-[#726C86] font-semibold">{label} </span>
+      <span className="text-[12.5px] font-extrabold text-[#1E1A2B] tabular-nums">{value}</span>
+    </div>
+  );
+}
+
+function MiniStat({ label, value, tone }: { label: string; value: string; tone?: 'warn' }) {
+  return (
+    <div>
+      <div className="text-[10.5px] text-[#726C86] font-semibold mb-0.5">{label}</div>
+      <div className={`text-[18px] font-extrabold tabular-nums ${tone === 'warn' ? 'text-[#B45309]' : 'text-[#1E1A2B]'}`}>
+        {value}
+      </div>
+    </div>
   );
 }
 

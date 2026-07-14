@@ -25,19 +25,24 @@ const schema = z.object({
   RETRIEVE_K: z.coerce.number().int().positive().default(3),
   SESSION_IDLE_MINUTES: z.coerce.number().int().positive().default(30),
   DRAFT_DEBOUNCE_MS: z.coerce.number().int().min(0).default(15000), // burst debounce: wait this long after the LAST message before drafting (0 = draft immediately)
+  DRAFT_IMAGE_MAX: z.coerce.number().int().positive().default(3),
+  DRAFT_IMAGE_MAX_BYTES: z.coerce.number().int().positive().default(3750000), // raw bytes; ×4/3 base64 ≈ Anthropic's 5MB/image wire limit
   KB_INJECT_ALL_MAX: z.coerce.number().int().positive().default(120),
   PICTURE_REFRESH_DAYS: z.coerce.number().int().positive().default(7), // staleness window: re-fetch a customer's LINE picture at most once per this many days
 
   WEB_ORIGIN: z.string().default('http://localhost:5173'),
 
-  // Suite-wide SSO (Jupiter Phase 3): parent domain for the shared session cookie, e.g.
+  // Suite-wide SSO (Pantheon Phase 3): parent domain for the shared session cookie, e.g.
   // ".prominentdental.com" (leading dot = all subdomains). Set on the PRODUCTION api so the
   // login cookie is shared across every *.prominentdental.com app. Unset (local/dev) →
   // host-only cookie, no cross-subdomain SSO. See api/src/auth/cookies.ts.
   COOKIE_DOMAIN: z.string().default(''),
 
-  // Unified auth: all 15 employees' 6-digit PINs, "slug:pin,slug:pin" (slug = EMPLOYEES entry).
+  // Unified auth: every employee's 6-digit PIN, "slug:pin,slug:pin" (slug = EMPLOYEES entry).
   EMPLOYEE_PINS: z.string().default(''),
+  // Legacy name for the same map — some deployments still maintain the var under AGENT_PINS.
+  // Read as an equal source and merged with EMPLOYEE_PINS (EMPLOYEE_PINS wins on any slug clash).
+  AGENT_PINS: z.string().default(''),
   // Unified auth: Nee's (MD) password.
   MD_PASSWORD: z.string().default(''),
 

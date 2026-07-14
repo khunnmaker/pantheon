@@ -1,6 +1,6 @@
 /** @type {import('tailwindcss').Config} */
 export default {
-  content: ['./index.html', './src/**/*.{ts,tsx}'],
+  content: ['./index.html', './src/**/*.{ts,tsx}', '../packages/pantheon-ui/src/**/*.{ts,tsx}'],
   theme: {
     extend: {
       // Apple-inspired type + palette. Inter (Latin) + Noto Sans Thai cover both scripts;

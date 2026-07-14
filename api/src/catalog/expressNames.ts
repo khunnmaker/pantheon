@@ -1,6 +1,6 @@
 // AUTO-GENERATED Express product names — do not edit by hand.
 // Source: Express stock report 260625.txt (Windows-874) → scratchpad gen-expressnames.ts, using
-// api/src/stock/parseExpressReport.ts (the same parser the Vulcan import uses).
+// api/src/stock/parseExpressReport.ts (the same parser the Vesta import uses).
 // The RAW name of each SKU as printed by the Express accounting system — shown in the ตรวจทาน
 // (name review) tab next to the catalog names so both can be compared. Express names are the
 // accounting master's descriptions and rarely change; regenerate from a newer report if needed.

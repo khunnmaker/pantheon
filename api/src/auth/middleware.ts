@@ -32,8 +32,9 @@ const LIVE_ROLES: readonly Role[] = ['supervisor', 'md', 'employee'];
 export async function authedAgentFromToken(
   token: string | null,
   allowed: readonly Role[] = LIVE_ROLES,
+  opts?: { scope?: string },
 ): Promise<AuthedAgent | null> {
-  const claims = token ? verifyToken(token) : null;
+  const claims = token ? verifyToken(token, opts) : null;
   if (!claims) return null;
   const live = await prisma.agent.findUnique({
     where: { id: claims.id },
@@ -52,11 +53,25 @@ export const requireAuth: preHandlerHookHandler = async (req: FastifyRequest, re
   req.agent = agent;
 };
 
+// preHandler factory: like requireAuth but ALSO admits a token carrying the given `scope`
+// (e.g. the long-lived OA-sync token) — while a normal, unscoped console token still passes.
+// Use only on the endpoint that owns that scope; every other route keeps plain requireAuth,
+// which rejects scoped tokens. Live role/app are still re-read + gated as usual.
+export function requireAuthScoped(scope: string): preHandlerHookHandler {
+  return async (req: FastifyRequest, reply: FastifyReply) => {
+    const agent = await authedAgentFromToken(bearer(req), LIVE_ROLES, { scope });
+    if (!agent) {
+      return reply.code(401).send({ error: 'unauthorized' });
+    }
+    req.agent = agent;
+  };
+}
+
 // preHandler: like requireAuth but explicitly admits EVERY live authenticated role
 // (supervisor, md, employee — see ALL_ROLES in auth/jwt.ts). Functionally the same as
 // requireAuth today (whose default `allowed` is already all live roles), but named for
 // intent: use for endpoints that are open to every account and then gate per-app INSIDE
-// the handler with hasAppAccess (e.g. the Jupiter portal badges route). Deriving from
+// the handler with hasAppAccess (e.g. the Pantheon portal badges route). Deriving from
 // ALL_ROLES avoids silently omitting a future role.
 export const requireAnyAuth: preHandlerHookHandler = async (req: FastifyRequest, reply: FastifyReply) => {
   const agent = await authedAgentFromToken(bearer(req), ALL_ROLES);
@@ -77,7 +92,7 @@ export function requireRole(role: Role): preHandlerHookHandler {
 }
 
 // preHandler factory: require access to a specific app (implies requireAuth ran first).
-// supervisor always passes; md passes only for 'ceres'; employee passes per their Agent.apps.
+// supervisor always passes; md passes its implicit MD_APPS set; employee passes per Agent.apps.
 export function requireApp(app: AppName): preHandlerHookHandler {
   return async (req: FastifyRequest, reply: FastifyReply) => {
     if (!req.agent) return reply.code(401).send({ error: 'unauthorized' });

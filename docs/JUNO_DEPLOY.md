@@ -7,7 +7,7 @@ deliberately-out-of-scope list). No accounting-system sync yet.
 
 ## Decisions locked with the owner (2026-07-01)
 
-- **Finance login = reuse the `supervisor` role** (like Vulcan). Finance logs in as Dr. M.
+- **Finance login = reuse the `supervisor` role** (like Vesta). Finance logs in as Dr. M.
   No new `finance` role was added — Juno's routes are simply gated to `supervisor`.
 - **`amount` stored as free-text `String`** (matches the current OCR/entry flow). Reports
   parse it to a number on read.
@@ -32,9 +32,9 @@ deliberately-out-of-scope list). No accounting-system sync yet.
   `/payments/:id/flag`, `/payments/:id/tax-invoice`, `/reports` (by day/rep/bank/customer),
   and `/export.csv` (UTF-8 BOM, Excel-friendly).
 - **Juno web app** (`juno/`): a separate Vite/React app + Dockerfile — its own Railway web
-  service, mirroring Vulcan. Login gated to Dr. M (`supervisor`). Tabs: **รายการรับเงิน**
+  service, mirroring Vesta. Login gated to Dr. M (`supervisor`). Tabs: **รายการรับเงิน**
   (inbox + slip verifier drawer + verify workflow), **ตรวจสอบยอด** (flag queue),
-  **ใบกำกับภาษี** (tax-invoice queue), **รายงาน** (reports + CSV). Emerald theme (vs Vulcan
+  **ใบกำกับภาษี** (tax-invoice queue), **รายงาน** (reports + CSV). Emerald theme (vs Vesta
   indigo). The slip image loads from the public tokenized `slipUrl` (no login needed for the
   image itself — same link the sheet uses).
 
@@ -44,9 +44,9 @@ Add ONE new web service for `juno/` alongside the existing `api` / `web` / `dian
 
 1. **New service → Dockerfile** at `juno/Dockerfile`.
 2. Build arg / env **`VITE_API_URL`** = the public URL of the Minerva **api** service (baked
-   at build time, same as `web` / `diana` / `vulcan`).
+   at build time, same as `web` / `diana` / `vesta`).
 3. The api's **`WEB_ORIGIN`** env must include the Juno web origin (comma-separated with the
-   existing console / Vulcan / Diana origins) so CORS allows the browser calls. For local
+   existing console / Vesta / Diana origins) so CORS allows the browser calls. For local
    docker-compose the api's WEB_ORIGIN must likewise include http://localhost:5176 (the compose
    default now does).
 4. Juno shares the same Postgres via the api — it does **not** need its own `DATABASE_URL`

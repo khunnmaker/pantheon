@@ -6,8 +6,10 @@ import {
 import {
   baht, fileToBase64, previewBankImport, applyBankImport, getBankTxns, getBankSuggestions,
   matchBankTxn, unmatchBankTxn, setBankTxnRef, confirmBankTxn, confirmAllMatched, getBankSummary,
-  getBankWatchlist, type BankTxn, type BankTxnStatusFilter, type BankImportPreview,
-  type BankSuggestion, type BankSummary, type Payment,
+  getPaymentsRecon, getPaymentTxnSuggestions, matchPaymentTxns,
+  type BankTxn, type BankTxnStatusFilter, type BankImportPreview,
+  type BankSuggestion, type BankSummary, type PaymentReconRow, type PaymentReconState,
+  type TxnSuggestion,
 } from './lib/api';
 
 // กระทบยอด (bank reconciliation) tab. See JUNO_PROCESS_BRIEF.md PHASE B / B4. The owner
@@ -41,6 +43,7 @@ function channelChip(channel: string): string {
 export default function Recon({ isCeo }: { isCeo: boolean }) {
   const [summary, setSummary] = useState<BankSummary | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [view, setView] = useState<'receipt' | 'txn'>('receipt');
   const bump = useCallback(() => setRefreshKey((k) => k + 1), []);
 
   useEffect(() => {
@@ -55,12 +58,29 @@ export default function Recon({ isCeo }: { isCeo: boolean }) {
       </div>
 
       <SummaryCards summary={summary} />
+      <div className="flex justify-center">
+        <div className="flex rounded-lg border border-slate-300 overflow-hidden bg-white">
+          <button
+            onClick={() => setView('receipt')}
+            className={`px-4 py-1.5 text-sm ${view === 'receipt' ? 'bg-emerald-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}
+          >
+            ตามใบเสร็จ
+          </button>
+          <button
+            onClick={() => setView('txn')}
+            className={`px-4 py-1.5 text-sm ${view === 'txn' ? 'bg-emerald-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}
+          >
+            ตามเงินเข้า
+          </button>
+        </div>
+      </div>
       {/* The bank-file IMPORT (uploading KBIZ / K SHOP) is CEO-only — server 403s the preview/apply
           endpoints for non-supervisor. The rest of reconciliation below (viewing txns, matching,
-          confirming, watchlist) stays visible to finance. */}
+          confirming, receipt list) stays visible to finance. */}
       {isCeo && <ImportPanel onImported={bump} />}
-      <TxnList onChanged={bump} refreshKey={refreshKey} />
-      <Watchlist refreshKey={refreshKey} />
+      {view === 'receipt'
+        ? <ReceiptList onChanged={bump} refreshKey={refreshKey} />
+        : <TxnList onChanged={bump} refreshKey={refreshKey} />}
     </div>
   );
 }
@@ -146,7 +166,7 @@ function ImportPanel({ onImported }: { onImported: () => void }) {
       setApplyResult(
         `นำเข้า ${result.source === 'kbiz' ? 'KBIZ' : 'K SHOP'}: ใหม่ ${result.counts.new} / ซ้ำ ${result.counts.dup} / ยกเว้น ${result.counts.excluded}` +
         (result.autoMatched > 0 ? ` — จับคู่อัตโนมัติแล้ว ${result.autoMatched} รายการ` : '') +
-        (result.autoCleared > 0 ? ` · เคลียร์เช็คอัตโนมัติ ${result.autoCleared} รายการ` : ''),
+        (result.chequeMatched > 0 ? ` · จับคู่เช็คธนาคาร ${result.chequeMatched} รายการ` : ''),
       );
       onImported();
       setPreview(null);
@@ -526,6 +546,10 @@ function TxnDetail({ txn, onChanged }: { txn: BankTxn; onChanged: (updated?: Ban
                 <span className="font-semibold text-emerald-700">RE {l.reNumber || '—'}</span>
                 <span className="text-slate-400">·</span>
                 <span>{baht(parseFloat(l.amount || '0'))}</span>
+                {l.chequeNo && <>
+                  <span className="text-slate-400">·</span>
+                  <span className="text-slate-500 shrink-0">เช็ค {l.chequeNo}</span>
+                </>}
                 <span className="text-slate-400">·</span>
                 <span className="text-slate-500 max-w-[120px] truncate">{l.receiptName || l.customerName}</span>
                 <button onClick={() => unlink(l.paymentId)} disabled={busy} className="text-slate-300 hover:text-rose-600 ml-0.5" title="ยกเลิกจับคู่">
@@ -561,6 +585,7 @@ function TxnDetail({ txn, onChanged }: { txn: BankTxn; onChanged: (updated?: Ban
                 <span className="font-semibold text-emerald-700 shrink-0">RE {s.reNumber || '—'}</span>
                 <span className="shrink-0">{baht(parseFloat(s.amount || '0'))}</span>
                 {s.exactAmount && <span className="px-1 py-0.5 rounded bg-emerald-50 text-emerald-600 shrink-0">ยอดตรง</span>}
+                {s.chequeNo && <span className="text-slate-400 shrink-0">เช็ค {s.chequeNo}</span>}
                 <span className="text-slate-500 truncate flex-1">{s.receiptName || s.customerName}</span>
                 <span className="text-slate-400 shrink-0">±{s.dayDistance.toFixed(1)}ว</span>
               </label>
@@ -608,64 +633,248 @@ function TxnDetail({ txn, onChanged }: { txn: BankTxn; onChanged: (updated?: Ban
   );
 }
 
-// ── Watchlist: ใบเสร็จที่ยังไม่พบเงินเข้า ──────────────────────────────────────
-function Watchlist({ refreshKey }: { refreshKey: number }) {
-  const [payments, setPayments] = useState<Payment[]>([]);
+// ── ใบเสร็จ list ────────────────────────────────────────────────────────────
+function ReceiptList({ onChanged, refreshKey }: { onChanged: () => void; refreshKey: number }) {
+  const [state, setState] = useState<PaymentReconState>('pending');
+  const [q, setQ] = useState('');
+  const [payments, setPayments] = useState<PaymentReconRow[]>([]);
   const [loading, setLoading] = useState(true);
-  const [open, setOpen] = useState(true);
+  const [error, setError] = useState('');
+  const [expanded, setExpanded] = useState<string | null>(null);
+
+  const load = useCallback(() => {
+    setLoading(true);
+    setError('');
+    getPaymentsRecon(state, q.trim() || undefined, 100)
+      .then((result) => setPayments(result.payments))
+      .catch(() => setError('โหลดข้อมูลไม่สำเร็จ'))
+      .finally(() => setLoading(false));
+  }, [state, q, refreshKey]);
 
   useEffect(() => {
-    setLoading(true);
-    getBankWatchlist(100)
-      .then((r) => setPayments(r.payments))
-      .catch(() => setPayments([]))
-      .finally(() => setLoading(false));
-  }, [refreshKey]);
+    const t = setTimeout(load, 250);
+    return () => clearTimeout(t);
+  }, [load]);
 
-  const ageDays = (p: Payment) => Math.floor((Date.now() - new Date(p.createdAt).getTime()) / (24 * 3600 * 1000));
+  function handleChanged() {
+    setExpanded(null);
+    load();
+    onChanged();
+  }
 
   return (
     <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
-      <div onClick={() => setOpen((o) => !o)} className="px-4 py-3 flex items-center justify-between cursor-pointer">
-        <div className="font-semibold text-slate-800 flex items-center gap-1.5">
-          <AlertTriangle size={15} className="text-amber-500" /> ใบเสร็จที่ยังไม่พบเงินเข้า
-          {payments.length > 0 && <span className="px-1.5 py-0.5 rounded-full text-xs bg-rose-100 text-rose-700">{payments.length}</span>}
+      <div className="p-3 border-b border-slate-100 flex flex-wrap items-center gap-2">
+        <div className="flex rounded-lg border border-slate-300 overflow-hidden">
+          {([
+            { key: 'pending', label: 'รอจับคู่' },
+            { key: 'matched', label: 'จับคู่แล้ว' },
+          ] as { key: PaymentReconState; label: string }[]).map((filter) => (
+            <button
+              key={filter.key}
+              onClick={() => { setState(filter.key); setExpanded(null); }}
+              className={`px-3 py-1.5 text-xs ${state === filter.key ? 'bg-emerald-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}
+            >
+              {filter.label}
+            </button>
+          ))}
         </div>
-        {open ? <ChevronDown size={16} className="text-slate-400" /> : <ChevronRight size={16} className="text-slate-400" />}
+        <div className="relative flex-1 min-w-[180px]">
+          <Search size={14} className="absolute left-2.5 top-2 text-slate-400" />
+          <input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="ค้นหา RE / ชื่อ / จำนวน"
+            className="w-full pl-7 pr-2 py-1.5 rounded-lg border border-slate-300 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-400"
+          />
+        </div>
+        <button onClick={load} className="p-1.5 rounded-lg border border-slate-300 text-slate-500 hover:bg-slate-50" title="รีเฟรช">
+          <RefreshCw size={14} />
+        </button>
       </div>
-      {open && (
-        loading ? (
-          <div className="p-6 text-center text-slate-400"><Loader2 className="animate-spin inline" size={18} /></div>
-        ) : payments.length === 0 ? (
-          <div className="p-6 text-center text-slate-400 text-sm border-t border-slate-100">ไม่มีรายการค้าง — ใบเสร็จตรวจแล้วทุกใบพบเงินเข้าตรงกัน</div>
+
+      {loading ? (
+        <div className="p-8 text-center text-slate-400"><Loader2 className="animate-spin inline" size={20} /></div>
+      ) : error ? (
+        <div className="p-6 text-center text-rose-600 text-sm flex items-center justify-center gap-1"><AlertTriangle size={15} /> {error}</div>
+      ) : payments.length === 0 ? (
+        <div className="p-8 text-center text-slate-400 text-sm">ไม่มีรายการ</div>
+      ) : (
+        <div className="divide-y divide-slate-100">
+          {payments.map((payment) => (
+            <ReceiptRow
+              key={payment.id}
+              payment={payment}
+              state={state}
+              expanded={expanded === payment.id}
+              onToggle={() => setExpanded((id) => id === payment.id ? null : payment.id)}
+              onChanged={handleChanged}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ReceiptRow({ payment, state, expanded, onToggle, onChanged }: {
+  payment: PaymentReconRow;
+  state: PaymentReconState;
+  expanded: boolean;
+  onToggle: () => void;
+  onChanged: () => void;
+}) {
+  const ageDays = Math.floor((Date.now() - new Date(payment.createdAt).getTime()) / (24 * 3600 * 1000));
+  const allConfirmed = payment.linkedTxns.length > 0 && payment.linkedTxns.every((txn) => !!txn.expressConfirmedAt);
+
+  return (
+    <div>
+      <div onClick={onToggle} className="px-3 py-2.5 flex items-center gap-2 cursor-pointer hover:bg-emerald-50/40 text-sm">
+        {expanded ? <ChevronDown size={15} className="text-slate-400 shrink-0" /> : <ChevronRight size={15} className="text-slate-400 shrink-0" />}
+        <div className="w-24 shrink-0 text-slate-500 whitespace-nowrap">{fmtDate(payment.createdAt)}</div>
+        <div className="w-28 shrink-0 font-semibold text-emerald-700 truncate">RE {payment.reNumber || '—'}</div>
+        {payment.chequeNo && <span className="shrink-0 px-1.5 py-0.5 rounded-full text-[11px] bg-slate-100 text-slate-600">เช็ค {payment.chequeNo}</span>}
+        <div className="flex-1 min-w-0 truncate text-slate-500">{payment.receiptName || payment.customerName}</div>
+        <div className="w-28 shrink-0 text-right font-semibold whitespace-nowrap">{baht(payment.amountNum)}</div>
+        {state === 'pending' ? (
+          <span className={`shrink-0 px-1.5 py-0.5 rounded-full text-[11px] ${ageDays >= 7 ? 'bg-rose-100 text-rose-700 font-semibold' : 'bg-slate-100 text-slate-500'}`}>
+            {ageDays} วัน
+          </span>
         ) : (
-          <table className="w-full text-sm border-t border-slate-100">
-            <thead className="bg-slate-50 text-slate-500 text-xs">
-              <tr>
-                <th className="text-left font-medium px-4 py-2">วันที่</th>
-                <th className="text-left font-medium px-4 py-2">RE</th>
-                <th className="text-left font-medium px-4 py-2">ลูกค้า</th>
-                <th className="text-right font-medium px-4 py-2">ยอด</th>
-                <th className="text-right font-medium px-4 py-2">ค้างมา</th>
-              </tr>
-            </thead>
-            <tbody>
-              {payments.map((p) => (
-                <tr key={p.id} className="border-t border-slate-100">
-                  <td className="px-4 py-2 text-slate-500 whitespace-nowrap">{fmtDate(p.createdAt)}</td>
-                  <td className="px-4 py-2 font-medium">{p.reNumber || '—'}</td>
-                  <td className="px-4 py-2">{p.receiptName || p.customerName}</td>
-                  <td className="px-4 py-2 text-right font-semibold">{baht(p.amountNum)}</td>
-                  <td className="px-4 py-2 text-right">
-                    <span className={`px-1.5 py-0.5 rounded-full text-xs ${ageDays(p) >= 7 ? 'bg-rose-100 text-rose-700 font-semibold' : 'text-slate-400'}`}>
-                      {ageDays(p)} วัน
-                    </span>
-                  </td>
-                </tr>
+          <div className="shrink-0 flex items-center gap-1">
+            <span className="px-1.5 py-0.5 rounded-full text-[11px] bg-sky-100 text-sky-700 whitespace-nowrap">เชื่อม {payment.linkedTxns.length} รายการ</span>
+            {allConfirmed && <span className="px-1.5 py-0.5 rounded-full text-[11px] bg-emerald-100 text-emerald-700 whitespace-nowrap">ยืนยันแล้ว</span>}
+          </div>
+        )}
+      </div>
+      {expanded && <ReceiptMatchDetail payment={payment} state={state} onChanged={onChanged} />}
+    </div>
+  );
+}
+
+function ReceiptMatchDetail({ payment, state, onChanged }: {
+  payment: PaymentReconRow;
+  state: PaymentReconState;
+  onChanged: () => void;
+}) {
+  const [suggestions, setSuggestions] = useState<TxnSuggestion[]>([]);
+  const [loadingSug, setLoadingSug] = useState(state === 'pending');
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    if (state !== 'pending') return;
+    setLoadingSug(true);
+    getPaymentTxnSuggestions(payment.id)
+      .then((result) => setSuggestions(result.suggestions))
+      .catch(() => setSuggestions([]))
+      .finally(() => setLoadingSug(false));
+  }, [payment.id, state]);
+
+  function toggle(id: string) {
+    setSelected((previous) => {
+      const next = new Set(previous);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
+  async function addSelected() {
+    if (!selected.size) return;
+    setBusy(true);
+    setError('');
+    try {
+      await matchPaymentTxns(payment.id, [...selected]);
+      onChanged();
+    } catch {
+      setError('จับคู่ไม่สำเร็จ — ลองใหม่อีกครั้ง');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function unlink(bankTxnId: string) {
+    setBusy(true);
+    setError('');
+    try {
+      await unmatchBankTxn(bankTxnId, payment.id);
+      onChanged();
+    } catch {
+      setError('ยกเลิกจับคู่ไม่สำเร็จ');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const selectedSum = [...selected].reduce((sum, id) => {
+    const suggestion = suggestions.find((item) => item.bankTxnId === id);
+    return sum + (suggestion ? parseFloat(suggestion.amount || '0') : 0);
+  }, 0);
+  const linkedSum = payment.linkedTxns.reduce((sum, txn) => sum + parseFloat(txn.amount || '0'), 0);
+  const sumDelta = Number((linkedSum - payment.amountNum).toFixed(2));
+
+  return (
+    <div className="px-4 pb-4 pt-2 bg-slate-50 border-t border-slate-100 text-sm">
+      {error && <div className="mb-2 p-2 rounded-lg bg-rose-50 text-rose-700 text-xs flex items-center gap-1"><AlertTriangle size={13} /> {error}</div>}
+
+      {state === 'matched' ? (
+        <div>
+          <div className="text-xs text-slate-400 mb-1">เงินเข้าที่เชื่อมไว้</div>
+          <div className="flex flex-wrap gap-1.5 items-center">
+            {payment.linkedTxns.map((txn) => (
+              <span key={txn.bankTxnId} className="flex items-center gap-1 px-2 py-1 rounded-lg bg-white border border-slate-200 text-xs">
+                <span>{fmtDateTime(txn.txnAt)}</span>
+                <span className="text-slate-400">·</span>
+                <span className="font-semibold">{baht(parseFloat(txn.amount || '0'))}</span>
+                <span className="px-1 py-0.5 rounded bg-slate-100 text-slate-600">{channelChip(txn.channel)}</span>
+                <span className="text-slate-500 max-w-[140px] truncate">{txn.payerName || '—'}</span>
+                <button onClick={() => unlink(txn.bankTxnId)} disabled={busy} className="text-slate-300 hover:text-rose-600 ml-0.5" title="ยกเลิกจับคู่">
+                  <Unlink size={12} />
+                </button>
+              </span>
+            ))}
+            <span className={`px-2 py-1 rounded-lg text-xs font-medium ${Math.abs(sumDelta) < 0.01 ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
+              รวม {baht(linkedSum)} {Math.abs(sumDelta) >= 0.01 && `(ต่าง ${sumDelta > 0 ? '+' : ''}${sumDelta.toFixed(2)})`}
+            </span>
+          </div>
+        </div>
+      ) : (
+        <div>
+          <div className="text-xs text-slate-400 mb-1 flex items-center justify-between">
+            <span>จับคู่ — คำแนะนำ</span>
+            {selected.size > 0 && <span className="text-slate-500">รวมที่เลือก {baht(selectedSum)} (ยอดใบเสร็จ {baht(payment.amountNum)})</span>}
+          </div>
+          {loadingSug ? (
+            <div className="text-xs text-slate-400 py-2"><Loader2 className="animate-spin inline" size={14} /> กำลังค้นหา…</div>
+          ) : suggestions.length === 0 ? (
+            <div className="text-xs text-slate-400 py-1">ไม่พบเงินเข้าที่ใกล้เคียง — รอไฟล์ธนาคารรอบถัดไป หรือค้นหาในมุมมองเงินเข้า</div>
+          ) : (
+            <div className="space-y-1 max-h-52 overflow-y-auto">
+              {suggestions.map((suggestion) => (
+                <label key={suggestion.bankTxnId} className="flex items-center gap-2 px-2 py-1.5 rounded-lg bg-white border border-slate-200 hover:border-emerald-300 cursor-pointer text-xs">
+                  <input type="checkbox" checked={selected.has(suggestion.bankTxnId)} onChange={() => toggle(suggestion.bankTxnId)} className="accent-emerald-600" />
+                  <span className="text-slate-500 whitespace-nowrap">{fmtDateTime(suggestion.txnAt)}</span>
+                  <span className="font-semibold shrink-0">{baht(parseFloat(suggestion.amount || '0'))}</span>
+                  {suggestion.exactAmount && <span className="px-1 py-0.5 rounded bg-emerald-50 text-emerald-600 shrink-0">ยอดตรง</span>}
+                  <span className="px-1 py-0.5 rounded bg-slate-100 text-slate-600 shrink-0">{channelChip(suggestion.channel)}</span>
+                  <span className="text-slate-500 truncate flex-1">{suggestion.payerName || suggestion.details}</span>
+                  <span className="text-slate-400 shrink-0">±{suggestion.dayDistance.toFixed(1)}ว</span>
+                  {suggestion.linkedCount > 0 && <span className="px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-600 shrink-0">จับคู่แล้ว {suggestion.linkedCount} ใบ</span>}
+                </label>
               ))}
-            </tbody>
-          </table>
-        )
+            </div>
+          )}
+          {selected.size > 0 && (
+            <button
+              onClick={addSelected}
+              disabled={busy}
+              className="mt-2 flex items-center gap-1 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium disabled:opacity-50"
+            >
+              {busy ? <Loader2 size={13} className="animate-spin" /> : <Link2 size={13} />} จับคู่ {selected.size} รายการที่เลือก
+            </button>
+          )}
+        </div>
       )}
     </div>
   );

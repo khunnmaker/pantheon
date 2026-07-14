@@ -17,15 +17,19 @@ export interface Agent {
   apps: string[];
 }
 
-// Suite apps the switcher can link to. Keep in sync with AppName in api/src/auth/jwt.ts.
-export type AppName = 'minerva' | 'vulcan' | 'juno' | 'ceres' | 'mercury';
+// Suite apps the switcher can link to. The canonical list now lives in the shared package
+// (@pantheon/ui, mirroring the server SSOT api/src/auth/jwt.ts APP_NAMES). Imported for local
+// use below AND re-exported so existing consumers that import AppName from './lib/api' keep
+// working unchanged.
+import type { AppName } from '@pantheon/ui';
+export type { AppName };
 
 // Mirror of the server's hasAppAccess (api/src/auth/jwt.ts): supervisor → everything;
 // md → Ceres + Minerva + Juno; employee → their own per-person grant list. A stored agent from
 // before this field existed has no apps → treated as no grants (empty list), which is safe.
 export function hasAppAccess(agent: Agent, app: AppName): boolean {
   if (agent.role === 'supervisor') return true;
-  if (agent.role === 'md') return app === 'ceres' || app === 'minerva' || app === 'juno';
+  if (agent.role === 'md') return app === 'ceres' || app === 'minerva' || app === 'juno' || app === 'apollo';
   return (agent.apps ?? []).includes(app);
 }
 
@@ -37,6 +41,7 @@ export type CustomerType = 'โอนก่อนส่ง' | 'เครดิ�
 export type PaymentSource = 'line' | 'manual_transfer' | 'cash' | 'cheque';
 // cash/cheque banking state: '' (รอ) -> cash 'deposited' (ฝากธนาคารแล้ว) / cheque 'cleared' (เคลียร์แล้ว)
 export type SettleState = '' | 'deposited' | 'cleared';
+export type DiscResolution = '' | 'refund' | 'credit' | 'chase' | 'writeoff';
 
 export interface Payment {
   id: string;
@@ -74,20 +79,27 @@ export interface Payment {
   // DEPRECATED join mirror (reNumbers.join('/')); reNumbers is the real (list) source of truth.
   reNumber: string;
   reNumbers: string[];
+  billNos: string[];
   receiptName: string;
   customerType: CustomerType;
-  // how this row was created + cash/cheque banking state (see settlePayment)
+  // how this row was created + legacy read-only cash/cheque banking state
   source: PaymentSource;
   settleState: SettleState;
   settledAt: string | null;
-  // CEO receipt-verify gate (task 1) — SEPARATE from settleState/settledAt above (that's the
-  // banking deposit/clear state). null = the CEO hasn't yet confirmed physical receipt. See
-  // confirmReceived. A cheque's KBiz auto-clear does NOT set these.
+  // CEO receipt-verify gate (task 1). null = the CEO hasn't yet confirmed physical receipt.
+  // See confirmReceived; bank matching does not set these.
   receivedAt: string | null;
   receivedBy: string | null;
   chequeNo: string;
   chequeBank: string;
   chequeDueDate: string;
+  discExpected: string;
+  discResolution: DiscResolution;
+  discNote: string;
+  discResolvedAt: string | null;
+  discResolvedBy: string;
+  discConfirmedAt: string | null;
+  discConfirmedBy: string;
 }
 
 export interface Summary {
@@ -97,9 +109,9 @@ export interface Summary {
   recorded: number;
   flagged: number;
   taxRequested: number;
-  cashChequePending: number;
   // รอยืนยันรับเงิน tab badge (task 1): cash/cheque awaiting the CEO's receipt confirmation.
   awaitingReceive: number;
+  discrepancyOpen: number;
 }
 
 export interface ReportGroup {
@@ -288,7 +300,7 @@ export const createPayment = (body: CreatePaymentBody) =>
 // invoice, and (cheque only) the cheque fields. Every field optional — send only what changed.
 // Available to any Juno user (server gates this the same as the rest of the file, NOT
 // supervisor-only — contrast with deletePayment below). Deliberately excludes source/status/
-// flagged/RE-check/WHT/settle fields — those have their own dedicated routes.
+// flagged/RE-check/WHT/legacy banking fields — those have their own dedicated routes.
 export interface EditPaymentBody {
   customerCode?: string;
   customerName?: string;
@@ -321,13 +333,6 @@ export const setStatus = (id: string, status: PaymentStatus) =>
 // deletable; there is no "too far along" guard here, matching the server.
 export const deletePayment = (id: string) =>
   authed<{ ok: boolean }>(`/api/juno/payments/${id}`, { method: 'DELETE' });
-
-// cash/cheque settle control (the เงินสด/เช็ค tab's drawer section) — '' reverts (ยกเลิก).
-export const settlePayment = (id: string, state: SettleState) =>
-  authed<{ ok: boolean; payment: Payment }>(`/api/juno/payments/${id}/settle`, {
-    method: 'POST',
-    body: JSON.stringify({ state }),
-  });
 
 // CEO-only receipt-verify gate (task 1): confirms physical receipt of cash/cheque — a hard
 // prerequisite for ยืนยันใน Express (see STATUS_META.recorded's rail gate in Juno.tsx). Server
@@ -364,6 +369,18 @@ export const readManualSlip = (uploadId: string) =>
     body: JSON.stringify({ uploadId }),
   });
 
+export interface ManualChequeFields {
+  chequeNo: string;
+  chequeBank: string;
+  chequeDueDate: string;
+  amount: string;
+}
+export const readManualCheque = (uploadId: string) =>
+  authed<ManualChequeFields>('/api/juno/read-cheque', {
+    method: 'POST',
+    body: JSON.stringify({ uploadId }),
+  });
+
 // Withholding tax (หัก ณ ที่จ่าย, task 2) rate options — mirrors the server's WHT_RATES
 // (api/src/routes/juno.ts). 0 = ไม่มี (no WHT).
 export type WhtRate = 0 | 1 | 2 | 3 | 5;
@@ -375,15 +392,71 @@ export const verifyPayment = (
   id: string,
   data: {
     reNumbers: string[];
+    billNos?: string[];
     receiptName?: string;
     customerType?: CustomerType;
     whtRate?: WhtRate;
     whtAmount?: string;
+    discExpected?: string;
   },
 ) =>
   authed<{ ok: boolean; payment: Payment }>(`/api/juno/payments/${id}/verify`, {
     method: 'POST',
     body: JSON.stringify(data),
+  });
+
+// ── Payment discrepancy ledger (ยอดเกิน/ขาด) ───────────────────────────────
+export type DiscrepancyDirection = 'over' | 'under' | 'balanced';
+export interface DiscrepancyRow {
+  id: string;
+  transferAt: string;
+  createdAt: string;
+  customerCode: string;
+  customerName: string;
+  receiptName: string;
+  source: PaymentSource;
+  hasSlip: boolean;
+  reNumbers: string[];
+  status: PaymentStatus;
+  expected: number;
+  expectedSource: 'typed' | 're';
+  gross: number;
+  diff: number;
+  direction: DiscrepancyDirection;
+  discExpected: string;
+  discResolution: DiscResolution;
+  discNote: string;
+  discResolvedAt: string | null;
+  discResolvedBy: string;
+  discConfirmedAt: string | null;
+  discConfirmedBy: string;
+}
+
+export interface DiscrepancyResponse {
+  rows: DiscrepancyRow[];
+  totals: {
+    over: { count: number; sum: number };
+    under: { count: number; sum: number };
+    pendingConfirm: number;
+  };
+  groupHints: number;
+}
+
+export const getDiscrepancies = () => authed<DiscrepancyResponse>('/api/juno/discrepancies');
+
+export const setDiscrepancyExpected = (id: string, expected: string) =>
+  authed<{ ok: boolean; payment: Payment }>(`/api/juno/payments/${id}/discrepancy`, {
+    method: 'POST', body: JSON.stringify({ expected }),
+  });
+
+export const resolveDiscrepancy = (id: string, resolution: DiscResolution, note?: string) =>
+  authed<{ ok: boolean; payment: Payment }>(`/api/juno/payments/${id}/disc-resolve`, {
+    method: 'POST', body: JSON.stringify({ resolution, note }),
+  });
+
+export const confirmDiscrepancy = (id: string, confirmed: boolean) =>
+  authed<{ ok: boolean; payment: Payment }>(`/api/juno/payments/${id}/disc-confirm`, {
+    method: 'POST', body: JSON.stringify({ confirmed }),
   });
 
 export const setFlag = (id: string, flagged: boolean, note?: string) =>
@@ -457,6 +530,7 @@ export type BankTxnStatusFilter = 'all' | 'unmatched' | 'matched' | 'confirmed';
 export interface BankTxnLink {
   paymentId: string;
   reNumber: string;
+  chequeNo: string;
   receiptName: string;
   customerName: string;
   amount: string;
@@ -509,18 +583,46 @@ export interface BankImportApplyResult {
   source: BankSource;
   counts: { parsed: number; new: number; dup: number; excluded: number };
   autoMatched: number;
-  autoCleared: number; // cheque payments auto-set settleState='cleared' by the cheque pass
+  chequeMatched: number; // cheque number + amount links created by the cheque pass
 }
 
 export interface BankSuggestion {
   paymentId: string;
   reNumber: string;
+  chequeNo: string;
   receiptName: string;
   customerName: string;
   senderName: string;
   amount: string;
   dayDistance: number;
   exactAmount: boolean;
+  nameScore: number;
+}
+
+export type PaymentReconState = 'pending' | 'matched';
+
+export interface PaymentReconLinkedTxn {
+  bankTxnId: string;
+  txnAt: string;
+  amount: string;
+  channel: string;
+  payerName: string;
+  expressConfirmedAt: string | null;
+}
+
+export type PaymentReconRow = Payment & { linkedTxns: PaymentReconLinkedTxn[] };
+
+export interface TxnSuggestion {
+  bankTxnId: string;
+  txnAt: string;
+  amount: string;
+  channel: string;
+  payerName: string;
+  details: string;
+  matchStatus: BankMatchStatus;
+  linkedCount: number;
+  exactAmount: boolean;
+  dayDistance: number;
   nameScore: number;
 }
 
@@ -560,7 +662,7 @@ export const applyBankImport = (token: string) =>
   });
 
 export const runBankAutomatch = () =>
-  authed<{ ok: boolean; autoMatched: number; autoCleared: number }>('/api/juno/bank/automatch', { method: 'POST' });
+  authed<{ ok: boolean; autoMatched: number; chequeMatched: number }>('/api/juno/bank/automatch', { method: 'POST' });
 
 export interface BankTxnFilter {
   status?: BankTxnStatusFilter;
@@ -584,6 +686,22 @@ export const getBankTxns = (f: BankTxnFilter) =>
 
 export const getBankSuggestions = (txnId: string) =>
   authed<{ suggestions: BankSuggestion[] }>(`/api/juno/bank/txns/${txnId}/suggestions`);
+
+export const getPaymentsRecon = (state: PaymentReconState = 'pending', q?: string, limit?: number) => {
+  const p = new URLSearchParams({ state });
+  if (q) p.set('q', q);
+  if (limit) p.set('limit', String(limit));
+  return authed<{ payments: PaymentReconRow[] }>(`/api/juno/payments-recon?${p.toString()}`);
+};
+
+export const getPaymentTxnSuggestions = (paymentId: string) =>
+  authed<{ suggestions: TxnSuggestion[] }>(`/api/juno/payments/${paymentId}/txn-suggestions`);
+
+export const matchPaymentTxns = (paymentId: string, bankTxnIds: string[]) =>
+  authed<{ ok: boolean; linkedSum: number; sumDelta: number }>(`/api/juno/payments/${paymentId}/match`, {
+    method: 'POST',
+    body: JSON.stringify({ bankTxnIds }),
+  });
 
 export const matchBankTxn = (txnId: string, paymentIds: string[]) =>
   authed<{ ok: boolean; sumDelta: number }>(`/api/juno/bank/txns/${txnId}/match`, {
@@ -641,8 +759,8 @@ export interface ReReconRow {
   notPosted: boolean;
   invoices: ReReceiptInvoice[];
   status: ReReconStatus;
-  paidGross: number; // sum of grossOf() over every Payment whose reNumbers include this RE
-  diff: number; // paidGross - amount (0 when matched)
+  paidGross: number; // this RE's apportioned share of the covering transfer(s) — its own receipt amount when the transfer ties out, NOT the whole payment
+  diff: number; // paidGross - amount (≈0 when matched)
   paymentCount: number;
 }
 
@@ -694,3 +812,121 @@ export const getReReconciliation = (f: ReReconFilter) =>
 // LINE display name. Returns {} when nothing's imported yet → the cover falls back to receiptName.
 export const getReNames = (reNumbers: string[]) =>
   authed<Record<string, string>>(`/api/juno/re/names?res=${encodeURIComponent([...new Set(reNumbers)].join(','))}`);
+
+// ── บิลมือ (manual bills) ──────────────────────────────────────────────────
+export type ManualBillStatus = 'paid' | 'mismatch' | 'unpaid' | 'void';
+export type ManualBillStatusFilter = 'all' | ManualBillStatus;
+
+export interface ManualBillItem {
+  productId?: string;
+  sku?: string;
+  name: string;
+  qty: number;
+  unitPrice: string;
+  amount: string;
+}
+
+export interface ManualBillLinkedPayment {
+  id: string;
+  amount: string;
+  whtAmount: string;
+  status: PaymentStatus;
+  source: PaymentSource;
+  createdAt: string;
+  customerName: string;
+}
+
+export interface ManualBill {
+  id: string;
+  billNo: string;
+  billedAt: string;
+  buyerName: string;
+  buyerPhone: string;
+  buyerAddress: string;
+  items: ManualBillItem[];
+  amount: string;
+  note: string;
+  status: 'open' | 'void';
+  voidedAt: string | null;
+  voidedById: string | null;
+  createdAt: string;
+  createdById: string | null;
+  createdByName: string;
+  updatedAt: string;
+  linkedPayments: ManualBillLinkedPayment[];
+  billStatus: ManualBillStatus;
+  paidGross: number;
+}
+
+export interface ManualBillBody {
+  billNo?: string;
+  billedAt: string;
+  buyerName: string;
+  buyerPhone: string;
+  buyerAddress: string;
+  items: ManualBillItem[];
+  amount: string;
+  note: string;
+}
+
+export interface ManualBillCounts { unpaid: number; mismatch: number }
+
+export const getManualBills = (f: { q?: string; status?: ManualBillStatusFilter } = {}) => {
+  const p = new URLSearchParams();
+  if (f.q) p.set('q', f.q);
+  if (f.status && f.status !== 'all') p.set('status', f.status);
+  const query = p.toString();
+  return authed<{ bills: ManualBill[]; counts: ManualBillCounts }>(`/api/juno/bills${query ? `?${query}` : ''}`);
+};
+
+export const createManualBill = (body: ManualBillBody) =>
+  authed<{ ok: boolean; bill: ManualBill }>('/api/juno/bills', {
+    method: 'POST', body: JSON.stringify(body),
+  });
+
+export const updateManualBill = (id: string, body: Omit<ManualBillBody, 'billNo'>) =>
+  authed<{ ok: boolean; bill: ManualBill }>(`/api/juno/bills/${id}`, {
+    method: 'PATCH', body: JSON.stringify(body),
+  });
+
+export const setManualBillVoid = (id: string, value: boolean) =>
+  authed<{ ok: boolean; bill: ManualBill }>(`/api/juno/bills/${id}/void`, {
+    method: 'POST', body: JSON.stringify({ void: value }),
+  });
+
+export interface ManualBillProduct {
+  id: string;
+  sku: string;
+  name: string;
+  price: number;
+  stock: number | null;
+  stockAt: string | null;
+}
+
+export const getManualBillProducts = (q: string) =>
+  authed<{ products: ManualBillProduct[] }>(`/api/juno/products?q=${encodeURIComponent(q)}`);
+
+// ── ตรวจสอบยอด (FinanceAudit mis-read trail) ─────────────────────────────────
+// Every time staff submit a slip amount that differs from what the AI read (OCR), Minerva logs
+// a FinanceAudit row. It lives on Juno now (api/src/routes/finance.ts, requireApp('juno')): any
+// Juno user can READ the open flags on payments they process; only a supervisor can RESOLVE.
+// Shape mirrors web/src/lib/api.ts (the Minerva console's supervisor-only view).
+export interface FinanceAudit {
+  id: string;
+  messageId: string;
+  customerId: string;
+  nickname: string;
+  senderName: string;
+  ocrAmount: string;
+  amount: string;
+  diff: string;
+  salesName: string;
+  resolvedAt: string | null;
+  createdAt: string;
+  slipUrl: string;
+}
+export const getFinanceAudits = (status = 'open') =>
+  authed<{ audits: FinanceAudit[] }>(`/api/finance/audits?status=${encodeURIComponent(status)}`);
+// Supervisor-only server-side (403 otherwise) — the Juno UI hides the button for non-supervisors.
+export const resolveFinanceAudit = (id: string) =>
+  authed<{ ok: boolean }>(`/api/finance/audits/${id}/resolve`, { method: 'POST' });

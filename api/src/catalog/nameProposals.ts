@@ -1,11 +1,11 @@
-// STAGING name proposals for the Vulcan ตรวจทาน (name-review) tab — NOT the live catalog.
+// STAGING name proposals for the Vesta ตรวจทาน (name-review) tab — NOT the live catalog.
 // Generated from the name-normalization workflow (decapitalise ALL-CAPS, restructure to
 // "Brand Model – Descriptor (size)", size last & omitted when a product has a single size,
 // keep shade codes in-name, keep the "Ortho" prefix). needsReview = the AI could not resolve a
 // shade/variant and it must be checked with the team (e.g. Self Cure Dentine, H.C.D).
 //
 // Loading these fills ONLY Product.proposedNameEn (staging). The live Product.nameEn changes
-// only when a proposal is APPROVED in Vulcan → then this file is the durable record so a future
+// only when a proposal is APPROVED in Vesta → then this file is the durable record so a future
 // catalog re-seed keeps the approved names. Regenerate: scratchpad/norm/gen-proposals.ts.
 //
 // 994 proposals | 907 rename the product | 397 flagged for team review.

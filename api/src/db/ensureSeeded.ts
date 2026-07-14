@@ -4,6 +4,7 @@ import { HISTORY_KB } from '../kb/historyKb.js';
 import { embed, embeddingsAvailable, storeKbEmbedding, kbEmbeddingText, kbTextHash } from '../memory/embeddings.js';
 import { prewarmDraftCache } from '../llm/prewarm.js';
 import { env } from '../env.js';
+import { backfillProductEmbeddings } from '../catalog/productEmbeddings.js';
 
 // Canonical staff roster — the single source of truth for who can log in.
 // Synced on every boot (see syncStaff): names/roles come from here, passwords from the
@@ -12,11 +13,11 @@ import { env } from '../env.js';
 //
 // Three tiers (unified auth):
 //   supervisor — Dr. M, implicit access to everything.
-//   md         — Nee, implicit access to Ceres (management side) only.
-//   employee   — all staff; per-person app access via Agent.apps (owner-edited, Jupiter's
+//   md         — Nee, implicit access via MD_APPS in auth/jwt.ts (including scoped Juno).
+//   employee   — all staff; per-person app access via Agent.apps (owner-edited, Pantheon's
 //                admin UI — boot-sync never overwrites it on an existing row).
 // `group` + `gender` are DISPLAY metadata for the suite login screens (role-grouped tiles +
-// cute avatars) — they mirror Jupiter's portal grouping and have nothing to do with auth.
+// cute avatars) — they mirror Pantheon's portal grouping and have nothing to do with auth.
 export const TIER_ACCOUNTS = [
   { email: 'drm@prominent.local', name: 'Dr. M', role: 'supervisor', pwEnvs: ['SEED_PASSWORD'], group: 'ceo', gender: 'male' },
   { email: 'md@prominent.local', name: 'Nee', role: 'md', pwEnvs: ['MD_PASSWORD'], group: 'md', gender: 'female' },
@@ -26,27 +27,30 @@ export const TIER_ACCOUNTS = [
 // app grants. NOTE: นี (Nee) is the MD tier account above — she is NOT an employee row (the
 // old MESSENGERS list wrongly included her under a "nee" slug; fixed here).
 // `group` + `gender`: DISPLAY metadata for the login screens (see TIER_ACCOUNTS note). The
-// group mirrors Jupiter's portal grouping — note นุ่น displays under MD and พิณ/เล็ก under Others.
+// group mirrors Pantheon's portal grouping — note นุ่น displays under MD and พิณ/เล็ก under Others.
 export const EMPLOYEES = [
-  { slug: 'nadeer', name: 'NaDeer', apps: ['minerva', 'ceres'], group: 'sales', gender: 'female' },
-  { slug: 'anny', name: 'Anny', apps: ['minerva', 'ceres'], group: 'sales', gender: 'female' },
-  { slug: 'noey', name: 'Noey', apps: ['minerva', 'ceres'], group: 'sales', gender: 'female' },
-  { slug: 'ta', name: 'ต้า', apps: ['ceres'], group: 'messengers', gender: 'male' },
-  { slug: 'arm', name: 'อาร์ม', apps: ['ceres'], group: 'messengers', gender: 'male' },
-  { slug: 'man', name: 'แมน', apps: ['ceres'], group: 'messengers', gender: 'male' },
-  { slug: 'boonson', name: 'บุญสอน', apps: ['ceres'], group: 'messengers', gender: 'male' },
-  { slug: 'kaew', name: 'แก้ว', apps: ['ceres'], group: 'messengers', gender: 'male' },
-  { slug: 'lungko', name: 'ลุงโก๊ะ', apps: ['ceres'], group: 'messengers', gender: 'male' },
-  { slug: 'wong', name: 'วง', apps: ['ceres'], group: 'messengers', gender: 'male' },
-  { slug: 'paeng', name: 'แป๋ง', apps: ['ceres'], group: 'messengers', gender: 'male' },
-  { slug: 'nun', name: 'นุ่น', apps: ['minerva', 'juno', 'ceres'], group: 'md', gender: 'female' }, // Noon — MD side, same access as Nee
-  { slug: 'pin', name: 'พิณ', apps: ['ceres'], group: 'others', gender: 'male' },
-  { slug: 'lekmaeban', name: 'เล็กแม่บ้าน', apps: ['ceres'], group: 'others', gender: 'female' }, // housekeeper — enters expenses like everyone
-  { slug: 'da', name: 'ด้า', apps: ['ceres'], group: 'messengers', gender: 'male' },
+  { slug: 'nadeer', name: 'NaDeer', apps: ['minerva', 'ceres', 'apollo'], group: 'sales', gender: 'female' },
+  { slug: 'anny', name: 'Anny', apps: ['minerva', 'ceres', 'apollo'], group: 'sales', gender: 'female' },
+  { slug: 'noey', name: 'Noey', apps: ['minerva', 'ceres', 'apollo'], group: 'sales', gender: 'female' },
+  { slug: 'bow', name: 'Bow', apps: ['minerva', 'ceres', 'apollo'], group: 'sales', gender: 'female' },
+  { slug: 'tham', name: 'Tham', apps: ['minerva', 'ceres', 'apollo'], group: 'sales', gender: 'male' },
+  { slug: 'rak', name: 'Rak', apps: ['minerva', 'ceres', 'apollo'], group: 'sales', gender: 'female' },
+  { slug: 'ta', name: 'ต้า', apps: ['ceres', 'apollo'], group: 'messengers', gender: 'male' },
+  { slug: 'arm', name: 'อาร์ม', apps: ['ceres', 'apollo'], group: 'messengers', gender: 'male' },
+  { slug: 'man', name: 'แมน', apps: ['ceres', 'apollo'], group: 'messengers', gender: 'male' },
+  { slug: 'boonson', name: 'บุญสอน', apps: ['ceres', 'apollo'], group: 'messengers', gender: 'male' },
+  { slug: 'kaew', name: 'แก้ว', apps: ['ceres', 'apollo'], group: 'messengers', gender: 'male' },
+  { slug: 'lungko', name: 'ลุงโก๊ะ', apps: ['ceres', 'apollo'], group: 'messengers', gender: 'male' },
+  { slug: 'wong', name: 'วง', apps: ['ceres', 'apollo'], group: 'messengers', gender: 'male' },
+  { slug: 'paeng', name: 'แป๋ง', apps: ['ceres', 'apollo'], group: 'messengers', gender: 'male' },
+  { slug: 'nun', name: 'นุ่น', apps: ['minerva', 'juno', 'ceres', 'apollo'], group: 'md', gender: 'female' }, // Noon — MD side, same access as Nee
+  { slug: 'pin', name: 'พิณ', apps: ['ceres', 'apollo'], group: 'others', gender: 'male' },
+  { slug: 'lekmaeban', name: 'เล็กแม่บ้าน', apps: ['ceres', 'apollo'], group: 'others', gender: 'female' }, // housekeeper — enters expenses like everyone
+  { slug: 'da', name: 'ด้า', apps: ['ceres', 'apollo'], group: 'messengers', gender: 'male' },
   // Finance team (การเงิน) — owner-granted Minerva + Juno + Ceres (2026-07-05). Juno's route
   // gate was widened from supervisor-only to requireApp('juno') so the juno grant admits them.
-  { slug: 'benz', name: 'Benz', apps: ['minerva', 'juno', 'ceres'], group: 'finance', gender: 'female' },
-  { slug: 'meow', name: 'Meow', apps: ['minerva', 'juno', 'ceres'], group: 'finance', gender: 'female' },
+  { slug: 'benz', name: 'Benz', apps: ['minerva', 'juno', 'ceres', 'apollo'], group: 'finance', gender: 'female' },
+  { slug: 'meow', name: 'Meow', apps: ['minerva', 'juno', 'ceres', 'apollo'], group: 'finance', gender: 'female' },
 ] as const;
 
 export const employeeEmail = (slug: string): string => `${slug}@prominent.local`;
@@ -120,14 +124,20 @@ async function syncStaff(): Promise<void> {
         : await hashPassword(pw);
     await prisma.agent.upsert({
       where: { email: t.email },
-      // apps is never touched on update — Jupiter's admin UI owns it for existing rows.
+      // apps is never touched on update — Pantheon's admin UI owns it for existing rows.
       update: { name: t.name, role: t.role, passwordHash },
       create: { email: t.email, name: t.name, role: t.role, passwordHash, apps: [] },
     });
   }
 
-  // Employees, each with their own 6-digit PIN and per-person app grants.
-  const employeePins = parseAgentPins(env.EMPLOYEE_PINS, 'EMPLOYEE_PINS');
+  // Employees, each with their own 6-digit PIN and per-person app grants. Accept BOTH the
+  // current EMPLOYEE_PINS and the legacy AGENT_PINS name (some deployments never renamed the
+  // Railway var): start from AGENT_PINS, then overlay EMPLOYEE_PINS so the canonical name wins
+  // on any slug that appears in both. Either var alone fully provisions the roster.
+  const employeePins = parseAgentPins(env.AGENT_PINS, 'AGENT_PINS');
+  for (const [slug, pin] of parseAgentPins(env.EMPLOYEE_PINS, 'EMPLOYEE_PINS')) {
+    employeePins.set(slug, pin);
+  }
   for (const e of EMPLOYEES) {
     const email = employeeEmail(e.slug);
     const pin = employeePins.get(e.slug);
@@ -285,6 +295,8 @@ export async function ensureSeeded(): Promise<void> {
 
     // Populate any missing KB embeddings in the background (never blocks boot/readiness).
     void backfillKbEmbeddings();
+    // Diana's product index follows the same fail-soft, idempotent boot-backfill pattern.
+    void backfillProductEmbeddings();
 
     // Pre-warm the draft prompt cache so the first post-deploy draft reads a warm cache
     // instead of paying the write premium (single shot, best-effort — see prewarm.ts).

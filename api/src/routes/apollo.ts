@@ -1,0 +1,382 @@
+import { randomBytes, randomUUID } from 'node:crypto';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
+import { Prisma } from '@prisma/client';
+import { z } from 'zod';
+import { prisma } from '../db/prisma.js';
+import { requireAuth, requireApp } from '../auth/middleware.js';
+import { completeApolloTask, parseRecurrenceRule } from '../apollo/recurrence.js';
+import { notifyApolloAssignment, thaiDateKey } from '../apollo/notify.js';
+import { deleteApolloAttachment, readApolloAttachment, saveApolloAttachment } from '../apollo/attachmentStore.js';
+
+const prioritySchema = z.enum(['urgent', 'high', 'normal', 'low']);
+const recurrenceSchema = z.discriminatedUnion('freq', [
+  z.object({ freq: z.literal('daily') }),
+  z.object({ freq: z.literal('weekly'), weekday: z.number().int().min(0).max(6) }),
+  z.object({ freq: z.literal('monthly'), dayOfMonth: z.number().int().min(1).max(31) }),
+]);
+const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+const taskBody = z.object({
+  title: z.string().trim().min(1).max(300),
+  notes: z.string().max(20_000).optional(),
+  assigneeId: z.string().cuid().nullable().optional(),
+  dueDate: dateSchema,
+  priority: prioritySchema.optional(),
+  status: z.string().trim().min(1).max(80).optional(),
+  customerRef: z.string().trim().max(300).nullable().optional(),
+  recurrenceRule: recurrenceSchema.nullable().optional(),
+});
+
+const peopleSelect = { id: true, name: true, email: true, role: true } as const;
+const taskInclude = {
+  project: { select: { id: true, name: true, color: true, columns: true, archived: true } },
+  assignee: { select: peopleSelect },
+  creator: { select: peopleSelect },
+  comments: { include: { author: { select: peopleSelect } }, orderBy: { createdAt: 'asc' as const } },
+  attachments: { include: { uploadedBy: { select: peopleSelect } }, orderBy: { createdAt: 'asc' as const } },
+} as const;
+
+function manager(req: FastifyRequest): boolean {
+  return req.agent?.role === 'supervisor' || req.agent?.role === 'md';
+}
+
+function parseDate(value: string): Date | null {
+  const d = new Date(`${value}T00:00:00.000Z`);
+  return Number.isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== value ? null : d;
+}
+
+async function projectMember(projectId: string, agentId: string): Promise<boolean> {
+  return (await prisma.apolloProjectMember.count({ where: { projectId, agentId } })) > 0;
+}
+
+async function canReadTask(req: FastifyRequest, taskId: string) {
+  const task = await prisma.apolloTask.findUnique({ where: { id: taskId }, select: { id: true, projectId: true, assigneeId: true, creatorId: true } });
+  if (!task) return null;
+  if (manager(req) || task.assigneeId === req.agent!.id || await projectMember(task.projectId, req.agent!.id)) return task;
+  return false;
+}
+
+async function canWorkInProject(req: FastifyRequest, projectId: string): Promise<boolean> {
+  return manager(req) || projectMember(projectId, req.agent!.id);
+}
+
+async function assigneeAllowed(agentId: string | null | undefined): Promise<boolean> {
+  if (!agentId) return true;
+  return !!(await prisma.agent.findFirst({
+    where: { id: agentId, OR: [{ role: { in: ['supervisor', 'md'] } }, { apps: { has: 'apollo' } }] },
+    select: { id: true },
+  }));
+}
+
+export async function apolloRoutes(app: FastifyInstance) {
+  app.addHook('onRequest', requireAuth);
+  app.addHook('onRequest', requireApp('apollo'));
+
+  app.get('/api/apollo/agents', async () => ({
+    agents: await prisma.agent.findMany({
+      where: { OR: [{ role: { in: ['supervisor', 'md'] } }, { apps: { has: 'apollo' } }] },
+      select: peopleSelect,
+      orderBy: { name: 'asc' },
+    }),
+  }));
+
+  app.get('/api/apollo/projects', async (req) => ({
+    projects: await prisma.apolloProject.findMany({
+      where: manager(req) ? {} : { members: { some: { agentId: req.agent!.id } } },
+      include: { members: { include: { agent: { select: peopleSelect } } }, _count: { select: { tasks: true } } },
+      orderBy: [{ archived: 'asc' }, { updatedAt: 'desc' }],
+    }),
+  }));
+
+  app.post('/api/apollo/projects', async (req, reply) => {
+    if (!manager(req)) return reply.code(403).send({ error: 'forbidden' });
+    const parsed = z.object({
+      name: z.string().trim().min(1).max(200),
+      color: z.string().trim().min(1).max(40).optional(),
+      columns: z.array(z.string().trim().min(1).max(80)).min(1).max(20).optional(),
+      memberIds: z.array(z.string().cuid()).max(500).optional(),
+    }).safeParse(req.body);
+    if (!parsed.success || parsed.data.columns && new Set(parsed.data.columns).size !== parsed.data.columns.length) {
+      return reply.code(400).send({ error: 'invalid_body' });
+    }
+    const { memberIds = [], ...data } = parsed.data;
+    const uniqueMemberIds = [...new Set(memberIds)];
+    const validMembers = await prisma.agent.count({ where: { id: { in: uniqueMemberIds }, OR: [{ role: { in: ['supervisor', 'md'] } }, { apps: { has: 'apollo' } }] } });
+    if (validMembers !== uniqueMemberIds.length) return reply.code(400).send({ error: 'invalid_member' });
+    const project = await prisma.apolloProject.create({
+      data: {
+        ...data,
+        createdById: req.agent!.id,
+        members: { create: uniqueMemberIds.map((agentId) => ({ agentId })) },
+      },
+      include: { members: { include: { agent: { select: peopleSelect } } } },
+    });
+    return reply.code(201).send(project);
+  });
+
+  app.get<{ Params: { id: string } }>('/api/apollo/projects/:id', async (req, reply) => {
+    if (!manager(req) && !await projectMember(req.params.id, req.agent!.id)) return reply.code(404).send({ error: 'not_found' });
+    const project = await prisma.apolloProject.findUnique({
+      where: { id: req.params.id },
+      include: {
+        members: { include: { agent: { select: peopleSelect } } },
+        tasks: { include: { assignee: { select: peopleSelect }, creator: { select: peopleSelect }, _count: { select: { comments: true, attachments: true } } }, orderBy: [{ status: 'asc' }, { sortOrder: 'asc' }] },
+      },
+    });
+    return project ?? reply.code(404).send({ error: 'not_found' });
+  });
+
+  app.patch<{ Params: { id: string } }>('/api/apollo/projects/:id', async (req, reply) => {
+    if (!manager(req)) return reply.code(403).send({ error: 'forbidden' });
+    const parsed = z.object({ name: z.string().trim().min(1).max(200).optional(), color: z.string().trim().min(1).max(40).optional(), archived: z.boolean().optional() }).safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'invalid_body' });
+    try { return await prisma.apolloProject.update({ where: { id: req.params.id }, data: parsed.data }); }
+    catch { return reply.code(404).send({ error: 'not_found' }); }
+  });
+
+  app.delete<{ Params: { id: string } }>('/api/apollo/projects/:id', async (req, reply) => {
+    if (!manager(req)) return reply.code(403).send({ error: 'forbidden' });
+    const files = await prisma.apolloAttachment.findMany({ where: { task: { projectId: req.params.id } }, select: { uploadId: true } });
+    try { await prisma.apolloProject.delete({ where: { id: req.params.id } }); }
+    catch { return reply.code(404).send({ error: 'not_found' }); }
+    await Promise.all(files.map((f) => deleteApolloAttachment(f.uploadId)));
+    return { ok: true };
+  });
+
+  app.put<{ Params: { id: string } }>('/api/apollo/projects/:id/columns', async (req, reply) => {
+    if (!manager(req)) return reply.code(403).send({ error: 'forbidden' });
+    const parsed = z.object({ columns: z.array(z.string().trim().min(1).max(80)).min(1).max(20), renames: z.record(z.string()).optional() }).safeParse(req.body);
+    if (!parsed.success || new Set(parsed.data.columns).size !== parsed.data.columns.length) return reply.code(400).send({ error: 'invalid_columns' });
+    const project = await prisma.apolloProject.findUnique({ where: { id: req.params.id }, select: { columns: true } });
+    if (!project) return reply.code(404).send({ error: 'not_found' });
+    const renames = parsed.data.renames ?? {};
+    await prisma.$transaction(async (tx) => {
+      for (const [from, to] of Object.entries(renames)) {
+        if (project.columns.includes(from) && parsed.data.columns.includes(to)) {
+          await tx.apolloTask.updateMany({ where: { projectId: req.params.id, status: from }, data: { status: to } });
+        }
+      }
+      await tx.apolloTask.updateMany({
+        where: { projectId: req.params.id, status: { notIn: parsed.data.columns } },
+        data: { status: parsed.data.columns[0] },
+      });
+      await tx.apolloProject.update({ where: { id: req.params.id }, data: { columns: parsed.data.columns } });
+    });
+    return { ok: true, columns: parsed.data.columns };
+  });
+
+  app.put<{ Params: { id: string } }>('/api/apollo/projects/:id/members', async (req, reply) => {
+    if (!manager(req)) return reply.code(403).send({ error: 'forbidden' });
+    const parsed = z.object({ memberIds: z.array(z.string().cuid()).max(500) }).safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'invalid_body' });
+    const ids = [...new Set(parsed.data.memberIds)];
+    const valid = await prisma.agent.count({ where: { id: { in: ids }, OR: [{ role: { in: ['supervisor', 'md'] } }, { apps: { has: 'apollo' } }] } });
+    if (valid !== ids.length) return reply.code(400).send({ error: 'invalid_member' });
+    await prisma.$transaction(async (tx) => {
+      await tx.apolloProjectMember.deleteMany({ where: { projectId: req.params.id } });
+      if (ids.length) await tx.apolloProjectMember.createMany({ data: ids.map((agentId) => ({ projectId: req.params.id, agentId })) });
+    });
+    return { ok: true };
+  });
+
+  app.post('/api/apollo/tasks', async (req, reply) => {
+    const parsed = taskBody.extend({ projectId: z.string().cuid() }).safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'invalid_body' });
+    const { projectId, dueDate, recurrenceRule, ...data } = parsed.data;
+    if (!await canWorkInProject(req, projectId)) return reply.code(403).send({ error: 'forbidden' });
+    const project = await prisma.apolloProject.findUnique({ where: { id: projectId }, select: { columns: true, archived: true } });
+    const date = parseDate(dueDate);
+    if (!project || project.archived || !date) return reply.code(400).send({ error: 'invalid_project_or_date' });
+    const status = data.status ?? project.columns[0];
+    if (!project.columns.includes(status) || !await assigneeAllowed(data.assigneeId)) return reply.code(400).send({ error: 'invalid_status_or_assignee' });
+    const max = await prisma.apolloTask.aggregate({ where: { projectId, status }, _max: { sortOrder: true } });
+    const task = await prisma.apolloTask.create({
+      data: {
+        ...data,
+        projectId, dueDate: date, status, creatorId: req.agent!.id,
+        recurrenceRule: recurrenceRule ? recurrenceRule : Prisma.JsonNull,
+        seriesId: recurrenceRule ? randomUUID() : null,
+        sortOrder: (max._max.sortOrder ?? 0) + 1024,
+      },
+      include: taskInclude,
+    });
+    if (task.assigneeId) await notifyApolloAssignment(task.id).catch((err) => req.log.error({ err }, '[apollo] assignment LINE failed'));
+    return reply.code(201).send(task);
+  });
+
+  app.get<{ Params: { id: string } }>('/api/apollo/tasks/:id', async (req, reply) => {
+    const allowed = await canReadTask(req, req.params.id);
+    if (!allowed) return reply.code(404).send({ error: 'not_found' });
+    return prisma.apolloTask.findUnique({ where: { id: req.params.id }, include: taskInclude });
+  });
+
+  app.patch<{ Params: { id: string } }>('/api/apollo/tasks/:id', async (req, reply) => {
+    const allowed = await canReadTask(req, req.params.id);
+    if (!allowed) return reply.code(404).send({ error: 'not_found' });
+    const parsed = taskBody.partial().safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'invalid_body' });
+    const before = await prisma.apolloTask.findUnique({ where: { id: req.params.id }, include: { project: { select: { columns: true } } } });
+    if (!before) return reply.code(404).send({ error: 'not_found' });
+    if (parsed.data.status && !before.project.columns.includes(parsed.data.status)) return reply.code(400).send({ error: 'invalid_status' });
+    if (parsed.data.assigneeId !== undefined && !await assigneeAllowed(parsed.data.assigneeId)) return reply.code(400).send({ error: 'invalid_assignee' });
+    const dueDate = parsed.data.dueDate ? parseDate(parsed.data.dueDate) : undefined;
+    if (parsed.data.dueDate && !dueDate) return reply.code(400).send({ error: 'invalid_date' });
+    const rule = parsed.data.recurrenceRule;
+    if (rule !== undefined && rule !== null && !parseRecurrenceRule(rule)) return reply.code(400).send({ error: 'invalid_recurrence' });
+    const { dueDate: _due, recurrenceRule: _rule, ...rest } = parsed.data;
+    const task = await prisma.apolloTask.update({
+      where: { id: req.params.id },
+      data: {
+        ...rest,
+        ...(dueDate ? { dueDate } : {}),
+        ...(rule === null ? { recurrenceRule: Prisma.JsonNull, seriesId: null } : rule ? { recurrenceRule: rule, seriesId: before.seriesId ?? randomUUID() } : {}),
+      },
+      include: taskInclude,
+    });
+    if (task.assigneeId && task.assigneeId !== before.assigneeId) await notifyApolloAssignment(task.id).catch((err) => req.log.error({ err }, '[apollo] assignment LINE failed'));
+    return task;
+  });
+
+  app.delete<{ Params: { id: string } }>('/api/apollo/tasks/:id', async (req, reply) => {
+    const allowed = await canReadTask(req, req.params.id);
+    if (!allowed) return reply.code(404).send({ error: 'not_found' });
+    // Hard delete purges attachments with no undo — employees may only delete tasks they created.
+    if (!manager(req) && allowed.creatorId !== req.agent!.id) return reply.code(403).send({ error: 'forbidden' });
+    const files = await prisma.apolloAttachment.findMany({ where: { taskId: req.params.id }, select: { uploadId: true } });
+    await prisma.apolloTask.delete({ where: { id: req.params.id } });
+    await Promise.all(files.map((f) => deleteApolloAttachment(f.uploadId)));
+    return { ok: true };
+  });
+
+  app.post<{ Params: { id: string } }>('/api/apollo/tasks/:id/move', async (req, reply) => {
+    const allowed = await canReadTask(req, req.params.id);
+    if (!allowed) return reply.code(404).send({ error: 'not_found' });
+    const parsed = z.object({ status: z.string().min(1).max(80), orderedTaskIds: z.array(z.string().cuid()).min(1).max(500) }).safeParse(req.body);
+    if (!parsed.success || !parsed.data.orderedTaskIds.includes(req.params.id)) return reply.code(400).send({ error: 'invalid_body' });
+    const task = await prisma.apolloTask.findUnique({ where: { id: req.params.id }, include: { project: { select: { columns: true } } } });
+    if (!task || !task.project.columns.includes(parsed.data.status)) return reply.code(400).send({ error: 'invalid_status' });
+    const mayReorderAll = await canWorkInProject(req, task.projectId);
+    if (!mayReorderAll) {
+      const max = await prisma.apolloTask.aggregate({ where: { projectId: task.projectId, status: parsed.data.status }, _max: { sortOrder: true } });
+      return prisma.apolloTask.update({ where: { id: task.id }, data: { status: parsed.data.status, sortOrder: (max._max.sortOrder ?? 0) + 1024 } });
+    }
+    const rows = await prisma.apolloTask.findMany({ where: { id: { in: parsed.data.orderedTaskIds }, projectId: task.projectId }, select: { id: true } });
+    if (rows.length !== new Set(parsed.data.orderedTaskIds).size) return reply.code(400).send({ error: 'invalid_tasks' });
+    await prisma.$transaction(parsed.data.orderedTaskIds.map((id, index) => prisma.apolloTask.update({ where: { id }, data: { status: parsed.data.status, sortOrder: (index + 1) * 1024 } })));
+    return { ok: true };
+  });
+
+  app.post<{ Params: { id: string } }>('/api/apollo/tasks/:id/complete', async (req, reply) => {
+    const allowed = await canReadTask(req, req.params.id);
+    if (!allowed) return reply.code(404).send({ error: 'not_found' });
+    const result = await completeApolloTask(req.params.id);
+    if (!result) return reply.code(404).send({ error: 'not_found' });
+    if (result.nextTask?.assigneeId) await notifyApolloAssignment(result.nextTask.id).catch((err) => req.log.error({ err }, '[apollo] recurrence LINE failed'));
+    return result;
+  });
+
+  app.post<{ Params: { id: string } }>('/api/apollo/tasks/:id/comments', async (req, reply) => {
+    const allowed = await canReadTask(req, req.params.id);
+    if (!allowed) return reply.code(404).send({ error: 'not_found' });
+    const parsed = z.object({ body: z.string().trim().min(1).max(10_000) }).safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'invalid_body' });
+    return reply.code(201).send(await prisma.apolloComment.create({ data: { taskId: req.params.id, authorId: req.agent!.id, body: parsed.data.body }, include: { author: { select: peopleSelect } } }));
+  });
+
+  app.delete<{ Params: { id: string } }>('/api/apollo/comments/:id', async (req, reply) => {
+    const comment = await prisma.apolloComment.findUnique({ where: { id: req.params.id }, select: { authorId: true, taskId: true } });
+    if (!comment || !await canReadTask(req, comment.taskId)) return reply.code(404).send({ error: 'not_found' });
+    if (!manager(req) && comment.authorId !== req.agent!.id) return reply.code(403).send({ error: 'forbidden' });
+    await prisma.apolloComment.delete({ where: { id: req.params.id } });
+    return { ok: true };
+  });
+
+  app.post<{ Params: { id: string } }>('/api/apollo/tasks/:id/attachments', { bodyLimit: 35 * 1024 * 1024 }, async (req, reply) => {
+    const allowed = await canReadTask(req, req.params.id);
+    if (!allowed) return reply.code(404).send({ error: 'not_found' });
+    const parsed = z.object({ dataB64: z.string().min(1), fileName: z.string().trim().min(1).max(255), contentType: z.string().trim().min(1).max(120) }).safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'invalid_body' });
+    const stored = await saveApolloAttachment(parsed.data.dataB64, parsed.data.contentType);
+    if (!stored) return reply.code(413).send({ error: 'too_large_or_empty' });
+    try {
+      return reply.code(201).send(await prisma.apolloAttachment.create({
+        data: { taskId: req.params.id, uploadedById: req.agent!.id, fileName: parsed.data.fileName, contentType: parsed.data.contentType, ...stored },
+        include: { uploadedBy: { select: peopleSelect } },
+      }));
+    } catch (err) {
+      await deleteApolloAttachment(stored.uploadId);
+      throw err;
+    }
+  });
+
+  app.get<{ Params: { id: string } }>('/api/apollo/attachments/:id/content', async (req, reply) => {
+    const attachment = await prisma.apolloAttachment.findUnique({ where: { id: req.params.id } });
+    if (!attachment || !await canReadTask(req, attachment.taskId)) return reply.code(404).send({ error: 'not_found' });
+    const buffer = await readApolloAttachment(attachment.uploadId);
+    if (!buffer) return reply.code(404).send({ error: 'content_unavailable' });
+    reply.header('content-type', attachment.contentType).header('x-content-type-options', 'nosniff').header('cache-control', 'private, max-age=3600');
+    if (attachment.kind !== 'image') reply.header('content-disposition', `attachment; filename*=UTF-8''${encodeURIComponent(attachment.fileName)}`);
+    return reply.send(buffer);
+  });
+
+  app.delete<{ Params: { id: string } }>('/api/apollo/attachments/:id', async (req, reply) => {
+    const attachment = await prisma.apolloAttachment.findUnique({ where: { id: req.params.id } });
+    if (!attachment || !await canReadTask(req, attachment.taskId)) return reply.code(404).send({ error: 'not_found' });
+    if (!manager(req) && attachment.uploadedById !== req.agent!.id) return reply.code(403).send({ error: 'forbidden' });
+    await prisma.apolloAttachment.delete({ where: { id: attachment.id } });
+    await deleteApolloAttachment(attachment.uploadId);
+    return { ok: true };
+  });
+
+  app.get('/api/apollo/my-tasks', async (req) => {
+    const today = thaiDateKey();
+    const tasks = await prisma.apolloTask.findMany({
+      where: { assigneeId: req.agent!.id, completedAt: null },
+      include: { project: { select: { id: true, name: true, color: true } }, assignee: { select: peopleSelect } },
+      orderBy: [{ dueDate: 'asc' }, { priority: 'asc' }],
+    });
+    return {
+      overdue: tasks.filter((t) => t.dueDate.toISOString().slice(0, 10) < today),
+      today: tasks.filter((t) => t.dueDate.toISOString().slice(0, 10) === today),
+      upcoming: tasks.filter((t) => t.dueDate.toISOString().slice(0, 10) > today),
+    };
+  });
+
+  app.get('/api/apollo/dashboard', async (req, reply) => {
+    if (!manager(req)) return reply.code(403).send({ error: 'forbidden' });
+    const today = new Date(`${thaiDateKey()}T00:00:00.000Z`);
+    const [agents, openRows, overdueRows, statusRows] = await Promise.all([
+      prisma.agent.findMany({ where: { OR: [{ role: { in: ['supervisor', 'md'] } }, { apps: { has: 'apollo' } }] }, select: peopleSelect, orderBy: { name: 'asc' } }),
+      prisma.apolloTask.groupBy({ by: ['assigneeId'], where: { completedAt: null, assigneeId: { not: null } }, _count: true }),
+      prisma.apolloTask.groupBy({ by: ['assigneeId'], where: { completedAt: null, assigneeId: { not: null }, dueDate: { lt: today } }, _count: true }),
+      prisma.apolloTask.groupBy({ by: ['projectId', 'status'], where: { completedAt: null }, _count: true }),
+    ]);
+    const open = new Map(openRows.map((r) => [r.assigneeId, r._count]));
+    const overdue = new Map(overdueRows.map((r) => [r.assigneeId, r._count]));
+    const projects = await prisma.apolloProject.findMany({ select: { id: true, name: true, color: true, columns: true }, orderBy: { name: 'asc' } });
+    return {
+      people: agents.map((a) => ({ ...a, open: open.get(a.id) ?? 0, overdue: overdue.get(a.id) ?? 0 })),
+      projects: projects.map((p) => ({ ...p, statuses: Object.fromEntries(p.columns.map((status) => [status, statusRows.find((r) => r.projectId === p.id && r.status === status)?._count ?? 0])) })),
+    };
+  });
+
+  app.get('/api/apollo/line-bind', async (req) => {
+    const agent = await prisma.agent.findUnique({ where: { id: req.agent!.id }, select: { lineUserId: true, lineBindCode: true } });
+    return { bound: !!agent?.lineUserId, code: agent?.lineBindCode ?? null };
+  });
+
+  // 32-char unambiguous alphabet (no I/O/0/1): 256 % 32 === 0, so bytes map uniformly —
+  // every position carries full randomness (base64url stripping left deterministic filler).
+  const BIND_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  app.post('/api/apollo/line-bind', async (req) => {
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const code = Array.from(randomBytes(8), (b) => BIND_ALPHABET[b % BIND_ALPHABET.length]).join('');
+      try {
+        await prisma.agent.update({ where: { id: req.agent!.id }, data: { lineBindCode: code } });
+        return { bound: false, code };
+      } catch (err) {
+        if (!(err instanceof Prisma.PrismaClientKnownRequestError) || err.code !== 'P2002') throw err;
+      }
+    }
+    throw new Error('unable_to_generate_line_bind_code');
+  });
+}

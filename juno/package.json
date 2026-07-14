@@ -11,6 +11,7 @@
     "typecheck": "tsc -b --noEmit"
   },
   "dependencies": {
+    "@pantheon/ui": "*",
     "@dicebear/collection": "^9.4.2",
     "@dicebear/core": "^9.4.3",
     "lucide-react": "^0.454.0",

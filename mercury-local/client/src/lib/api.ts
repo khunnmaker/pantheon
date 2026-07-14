@@ -84,7 +84,7 @@ export interface PendingRequest {
   status: string;
   itemDisplayName: string;
   itemIsSecret: boolean;
-  itemVulcanSku: string | null;
+  itemVestaSku: string | null;
   cloudCreatedAt: string;
   syncedAt: string;
 }
@@ -111,7 +111,7 @@ export interface UnresolvedLine {
   reason: UnresolvedReason;
   displayName: string;
   qty: string;
-  vulcanSku: string | null;
+  vestaSku: string | null;
 }
 
 // ── Fetch helper ─────────────────────────────────────────────────────────
@@ -216,7 +216,7 @@ export const sync = () =>
 export const getPending = () => req<{ pending: PendingRequest[] }>('/pending');
 
 // SECRET goods-receipt (Phase 3, local-side): resolve realSku from the local SecretMap → bump
-// Vulcan stock on the cloud → mark the cloud request 'received' (STATUS ONLY). Ordinary items are
+// Vesta stock on the cloud → mark the cloud request 'received' (STATUS ONLY). Ordinary items are
 // received on the CLOUD side instead. Keyed by the cloud request id.
 export const receiveSecret = (cloudRequestId: string, qty: number) =>
   req<{ ok: boolean; cloudRequestId: string; realSku: string; qty: number; toQty: number }>(

@@ -3,7 +3,8 @@ import {
   User, LogOut, Clock, Inbox, Loader2, ShieldCheck, MessageSquare,
   Send, Check, CheckCircle2, RefreshCw, Brain, GraduationCap, Wand2, Pencil, AlertTriangle, Search,
   Download, Paperclip, Camera, Banknote, X, ChevronDown, ChevronUp, Crown, Pin, CornerUpLeft, Volume2, VolumeX,
-  ExternalLink, Eye,
+  ExternalLink, Eye, ArrowLeft, Sparkles,
+  Eraser,
 } from 'lucide-react';
 import {
   getQueue, getCustomers, getCustomer, searchCustomers, logout as logoutSuite, regenerateDraft, rewriteText, sendReply, setNickname, setCategory, setStage, STAGES,
@@ -11,14 +12,14 @@ import {
   uploadAttachment, getLearned, getLearnedMetrics, promoteLearned, rejectLearned, endSession, API_URL, flatSku, getToken,
   getFinanceAudits, resolveFinanceAudit, type FinanceAudit,
   getQuickReplies, addQuickReply, deleteQuickReply, sendQuickReply, sendMessage, sendPhotoNow, searchCatalog, addProductToDraft, readSlip, sendToFinance,
+  draftNow, clearDrafts,
   type Agent, type CustomerLite, type CustomerDetail, type Message, type LearnedAnswer, type LearnedMetrics, type PendingProduct, type QuickReply,
 } from './lib/api';
 import { getSocket, disconnectSocket } from './lib/socket';
 import AppSwitcher from './AppSwitcher';
 
-// Portal-back link (Jupiter). URL from build-time env; hidden when unset, so it is completely
-// inert until VITE_PORTAL_URL is configured (Phase 1 go-live / Phase 2 domains).
-const PORTAL_URL: string | undefined = import.meta.env.VITE_PORTAL_URL;
+// Portal-back link uses the canonical Pantheon domain unless build-time env overrides it.
+const PORTAL_URL: string = import.meta.env.VITE_PORTAL_URL ?? 'https://pantheon.prominentdental.com';
 
 // LINE OA account id for the per-customer OA Manager deep-link. The read-sync chip's link uses
 // the OA-native oaChatId (from the extension), so chat.line.biz/{oa}/chat/{oaChatId} now resolves.
@@ -241,7 +242,7 @@ function PhotoStrip({ direct, cross, selected, onToggle }: {
           <div className="text-sky-600">{p.price > 0 ? `${p.price.toLocaleString()} บาท` : '—'}</div>
           {p.stock != null ? (() => {
             const out = p.stock <= 0;
-            // Low = Vulcan reorderPoint reached (preferred); fall back to the ≤5 heuristic
+            // Low = Vesta reorderPoint reached (preferred); fall back to the ≤5 heuristic
             // when no reorder point is configured for this SKU.
             const lowFlag = !out && (p.low ?? (p.reorderPoint == null && p.stock <= 5));
             const stale = p.stockAt ? Date.now() - new Date(p.stockAt).getTime() > 3 * 86400000 : false;
@@ -555,6 +556,13 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
   const [customers, setCustomers] = useState<CustomerLite[]>([]);
   const [waitingIds, setWaitingIds] = useState<Set<string>>(new Set());
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // Mobile-only (< md) master-detail nav: true = the conversation pane is showing full-screen
+  // in place of the queue, like the LINE app. Has no effect at md+, where both panes are
+  // always shown side by side regardless of this flag.
+  const [mobileShowChat, setMobileShowChat] = useState(false);
+  // Mobile-only (< md) bottom-sheet state for the AI panel (long-term memory + draft composer +
+  // product picker). At md+ the panel is always a normal inline column, ignoring this flag.
+  const [aiDrawerOpen, setAiDrawerOpen] = useState(false);
   const [detail, setDetail] = useState<CustomerDetail | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
   // Notification sound on inbound customer messages (per-browser mute, throttled).
@@ -622,6 +630,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
   const [freeText, setFreeText] = useState('');
   const [freeNeedsConfirm, setFreeNeedsConfirm] = useState(false);
   const [freeSending, setFreeSending] = useState(false);
+  const [forceDrafting, setForceDrafting] = useState(false);
   const [replyingTo, setReplyingTo] = useState<string | null>(null); // Message.id being LINE-quote-replied
   const [freeProducts, setFreeProducts] = useState<PendingProduct[]>([]); // catalog photos picked in the answered-state composer (no draft to attach to)
   const [freeRewriting, setFreeRewriting] = useState(false);
@@ -640,6 +649,9 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
   const [learnNotice, setLearnNotice] = useState<{ kind: 'warn' | 'error'; text: string } | null>(null);
 
   const selectedRef = useRef<string | null>(null);
+  // Tracks the customer id we already asked the OA-sync extension to auto-open, so a same-customer
+  // detail reload (socket push, etc.) never re-fires the navigation — only an actual customer switch does.
+  const lastAutoOpenRef = useRef<string | null>(null);
   const endRef = useRef<HTMLDivElement | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
   const cameraRef = useRef<HTMLInputElement | null>(null);
@@ -652,7 +664,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
     setWaitingIds(new Set(queue.map((q) => q.customer.id)));
   }, []);
 
-  const loadDetail = useCallback(async (id: string) => {
+  const loadDetail = useCallback(async (id: string, preserveStaffInput = false) => {
     setLoadingDetail(true);
     try {
       const d = await getCustomer(id);
@@ -681,9 +693,11 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
         return kept.length ? kept : defaultSel;
       });
       setSelectionDirty(false); // a freshly loaded draft already reflects the current selection
-      setUpload(null);
-      setFreeText('');
-      setFreeProducts([]);
+      if (!preserveStaffInput) {
+        setUpload(null);
+        setFreeText('');
+        setFreeProducts([]);
+      }
     } finally {
       setLoadingDetail(false);
     }
@@ -755,7 +769,32 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
     const onDraft = (payload: { customerId?: string; messageId: string }) => {
       // Refresh the open conversation when its draft arrives/updates.
       if (selectedRef.current && (payload.customerId === selectedRef.current || !payload.customerId)) {
+        setForceDrafting(false);
         loadDetail(selectedRef.current).catch(() => undefined);
+      }
+    };
+    const onDraftQueued = (payload: { customerId: string; fireAt: number }) => {
+      if (selectedRef.current !== payload.customerId) return;
+      setDetail((d) => (d ? { ...d, draftQueued: { fireAt: payload.fireAt } } : d));
+    };
+    const onDraftCleared = (payload: { customerId: string }) => {
+      if (selectedRef.current !== payload.customerId) return;
+      setForceDrafting(false);
+      loadDetail(payload.customerId, true).catch(() => undefined);
+    };
+    const onDraftFailed = (payload: { customerId: string }) => {
+      if (selectedRef.current !== payload.customerId) return;
+      setForceDrafting(false);
+      flashToast('ร่างคำตอบไม่สำเร็จ');
+    };
+    // The 👁 read chip updates live when the extension (or another staff's console) syncs a new
+    // OA read marker for the currently-open customer, without needing a manual refresh.
+    const onOaRead = (payload: {
+      customerId: string;
+      oaRead: { oaChatId: string; readLabel: string | null; readSeenAt: string | null };
+    }) => {
+      if (selectedRef.current === payload.customerId) {
+        setDetail((d) => (d ? { ...d, oaRead: payload.oaRead } : d));
       }
     };
     const onConversation = (payload: { customerId: string; ended?: boolean; message?: Message }) => {
@@ -763,6 +802,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
       if (selectedRef.current !== payload.customerId) return;
       if (payload.ended) {
         setSelectedId(null); // another staff ended this chat — close it here too
+        setMobileShowChat(false); // mobile: return to the queue list
         setDetail(null);
       } else if (payload.message) {
         // append the new message without clobbering the open composer / draft text
@@ -778,24 +818,53 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
     socket.on('connect_error', onConnectError);
     socket.on('message:new', onMessage);
     socket.on('draft:new', onDraft);
+    socket.on('draft:queued', onDraftQueued);
+    socket.on('draft:cleared', onDraftCleared);
+    socket.on('draft:failed', onDraftFailed);
     socket.on('conversation:update', onConversation);
+    socket.on('oa:read', onOaRead);
     return () => {
       socket.off('connect_error', onConnectError);
       socket.off('message:new', onMessage);
       socket.off('draft:new', onDraft);
+      socket.off('draft:queued', onDraftQueued);
+      socket.off('draft:cleared', onDraftCleared);
+      socket.off('draft:failed', onDraftFailed);
       socket.off('conversation:update', onConversation);
+      socket.off('oa:read', onOaRead);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refreshLists, loadDetail, refreshLearned, playChime]);
 
   useEffect(() => {
     selectedRef.current = selectedId;
+    setForceDrafting(false);
     if (selectedId) loadDetail(selectedId).catch(() => undefined);
   }, [selectedId, loadDetail]);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [detail?.messages.length]);
+
+  // Auto-open in LINE OA: when the opened customer has a known OA read-sync chat id, ask the
+  // OA-sync Chrome extension (via a same-origin postMessage a content-script bridge relays to
+  // its background worker) to silently navigate a BACKGROUND chat.line.biz tab there, so the
+  // passive read-sync fires without staff manually hunting for the chat. Guarded by customer id
+  // (not object identity — `detail` reloads on socket events for the SAME open customer and must
+  // not re-trigger) and debounced 1500ms so click-skimming through the queue never fires it. If
+  // the extension isn't installed, the postMessage is simply never picked up (harmless no-op).
+  useEffect(() => {
+    const customerId = detail?.customer.id;
+    const oaChatId = detail?.oaRead?.oaChatId;
+    if (!customerId || !oaChatId) return;
+    if (lastAutoOpenRef.current === customerId) return;
+    if (document.visibilityState !== 'visible') return;
+    lastAutoOpenRef.current = customerId;
+    const t = setTimeout(() => {
+      window.postMessage({ type: 'minerva-oa-open', url: `https://chat.line.biz/${LINE_OA_ID}/chat/${oaChatId}` }, window.location.origin);
+    }, 1500);
+    return () => clearTimeout(t);
+  }, [detail?.customer.id, detail?.oaRead?.oaChatId]);
 
   // Debounced customer search (by nickname / LINE name) — includes ended chats.
   useEffect(() => {
@@ -811,6 +880,33 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
     if (toastTimer.current) clearTimeout(toastTimer.current);
     setToast(msg);
     toastTimer.current = setTimeout(() => setToast(''), 2600);
+  }
+
+  async function clearMinervaDrafts() {
+    if (!selectedId) return;
+    try {
+      await clearDrafts(selectedId);
+      setForceDrafting(false);
+      await loadDetail(selectedId, true);
+      flashToast('ล้างร่าง Minerva แล้ว');
+    } catch {
+      flashToast('ล้างร่าง Minerva ไม่สำเร็จ');
+    }
+  }
+
+  async function forceDraftNow() {
+    if (!selectedId || forceDrafting) return;
+    setForceDrafting(true);
+    try {
+      const result = await draftNow(selectedId);
+      if ('noPending' in result) {
+        setForceDrafting(false);
+        flashToast('ยังไม่มีข้อความใหม่จากลูกค้า');
+      }
+    } catch {
+      setForceDrafting(false);
+      flashToast('ร่างคำตอบไม่สำเร็จ');
+    }
   }
 
   // Pin/unpin a customer chat for THIS agent (private). Optimistically flip local state,
@@ -1286,7 +1382,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
     const active = selectedId === c.id;
     const pinned = pinnedIds.has(c.id);
     return (
-      <button key={c.id} onClick={() => setSelectedId(c.id)}
+      <button key={c.id} onClick={() => { setSelectedId(c.id); setMobileShowChat(true); }}
         className={'w-full text-left px-3 py-2 rounded-xl border transition ' + (active ? 'bg-sky-50 border-sky-300' : 'bg-white border-slate-100 hover:bg-slate-50')}>
         <div className="flex items-center gap-2">
           <Avatar src={c.pictureUrl} size={32} />
@@ -1315,7 +1411,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
   }
 
   return (
-    <div className="min-h-screen bg-slate-100 p-3 sm:p-5 font-sans text-slate-800">
+    <div className="min-h-screen bg-slate-100 p-3 sm:p-5 font-sans text-slate-800 overflow-x-hidden max-w-full">
       <div className="max-w-6xl mx-auto">
         {toast && <div className="mb-3 text-sm bg-sky-50 border border-sky-200 text-sky-700 rounded-xl px-3 py-2 flex items-center gap-2"><Check size={15} /> {toast}</div>}
         {lightbox && (
@@ -1337,9 +1433,10 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
             }}
           />
         )}
-        <div className="grid md:grid-cols-[300px_1fr] gap-4 h-[calc(100vh-2.5rem)]">
-          {/* LEFT: icon bar (top) + queue (bottom) */}
-          <div className="flex flex-col gap-3 min-h-0">
+        <div className="grid md:grid-cols-[300px_1fr] gap-4 h-[calc(100dvh-2.5rem)]">
+          {/* LEFT: icon bar (top) + queue (bottom). Hidden on mobile once a chat is open
+              (mobileShowChat) so only one pane shows at a time; always shown at md+. */}
+          <div className={(mobileShowChat ? 'hidden' : 'flex') + ' md:flex flex-col gap-3 min-h-0'}>
             {/* icon bar */}
             <div className="bg-white rounded-2xl shadow-sm border border-slate-200 flex items-center gap-1 px-2 py-2 shrink-0">
               <AppSwitcher agent={agent} />
@@ -1363,7 +1460,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                 {soundOn ? <Volume2 size={17} /> : <VolumeX size={17} />}
               </button>
               {PORTAL_URL && (
-                <a href={PORTAL_URL} title="กลับพอร์ทัล Jupiter" className="p-2 rounded-xl text-slate-400 hover:text-violet-600 hover:bg-slate-100"><Crown size={17} /></a>
+                <a href={PORTAL_URL} title="กลับพอร์ทัล Pantheon" className="p-2 rounded-xl text-slate-400 hover:text-violet-600 hover:bg-slate-100"><Crown size={17} /></a>
               )}
               <span title={agent.name + (agent.role === 'supervisor' ? ' (หัวหน้า)' : '')}
                 className="relative w-8 h-8 rounded-full bg-sky-600 text-white flex items-center justify-center text-xs font-bold shrink-0">
@@ -1440,8 +1537,9 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
             </div>
           </div>
 
-          {/* RIGHT: conversation (or learning) */}
-          <div className="min-h-0 overflow-y-auto">
+          {/* RIGHT: conversation (or learning). Shown on mobile only once a chat is open
+              (mobileShowChat); always shown at md+. */}
+          <div className={(mobileShowChat ? 'block' : 'hidden') + ' md:block min-h-0 overflow-y-auto'}>
             {view === 'audit' ? (
               <FinanceAuditView audits={audits} onResolve={doResolveAudit} onRefresh={() => { void refreshAudits(); }} />
             ) : view === 'learning' ? (
@@ -1457,7 +1555,13 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
             ) : (
             <div className="bg-white rounded-2xl shadow-sm border border-slate-200 flex flex-col h-full">
               <div className="px-4 py-2.5 bg-sky-600 text-white rounded-t-2xl font-semibold flex items-center gap-2">
-                <div className="flex items-center gap-2 min-w-0 flex-1">
+                {/* mobile-only: back to the queue list (keeps selectedId — desktop stays selected) */}
+                <button type="button" onClick={() => setMobileShowChat(false)}
+                  title="กลับไปที่คิว" aria-label="กลับไปที่คิว"
+                  className="md:hidden shrink-0 -ml-1 p-1.5 rounded-lg text-white/90 hover:text-white hover:bg-white/10">
+                  <ArrowLeft size={18} />
+                </button>
+                <div className="flex flex-wrap md:flex-nowrap items-center gap-x-2 gap-y-1 min-w-0 flex-1">
                   {detail
                     ? <Avatar src={detail.customer.pictureUrl} size={28} />
                     : <MessageSquare size={18} className="shrink-0" />}
@@ -1553,7 +1657,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                           </span>
                         );
                       })()}
-                      {detail && <span className="text-[11px] font-normal text-sky-100 truncate min-w-0">· {detail.customer.lineUserId}</span>}
+                      {detail && <span className="text-[11px] font-normal text-sky-100 truncate min-w-0 max-w-full">· {detail.customer.lineUserId}</span>}
                       {detail && <span className="text-[11px] font-normal text-sky-100 shrink-0">· ถาม {detail.stats.questions} · ตอบ {detail.stats.replies}</span>}
                     </>
                   )}
@@ -1627,8 +1731,38 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                     <div ref={endRef} />
                   </div>
                     </div>{/* /LEFT column */}
-                    {/* RIGHT: drafting / composer. Full width on phones, 42% split on desktop. */}
-                    <div className="flex flex-col w-full md:w-[42%] md:min-w-[360px] min-h-0 overflow-y-auto">
+
+                    {/* mobile-only ✨ trigger: opens the AI panel (memory + draft + products) as a
+                        bottom-sheet drawer. Hidden once the drawer is open; irrelevant at md+. */}
+                    {!aiDrawerOpen && (
+                      <button type="button" onClick={() => setAiDrawerOpen(true)}
+                        title="เปิดแผงร่างคำตอบ / สินค้า" aria-label="เปิดแผงร่างคำตอบ / สินค้า"
+                        className="md:hidden fixed bottom-5 right-5 z-20 w-12 h-12 rounded-full bg-sky-600 hover:bg-sky-700 text-white shadow-lg flex items-center justify-center">
+                        <Sparkles size={20} />
+                      </button>
+                    )}
+                    {/* mobile-only dim backdrop behind the open drawer; tap to close */}
+                    {aiDrawerOpen && (
+                      <div className="fixed inset-0 bg-black/30 z-30 md:hidden" onClick={() => setAiDrawerOpen(false)} />
+                    )}
+
+                    {/* RIGHT: drafting / composer (long-term memory + AI draft + product picker).
+                        Full width on phones as a hidden-by-default bottom-sheet drawer (aiDrawerOpen);
+                        the md: classes restore the normal static 42%-split column on desktop. */}
+                    <div className={
+                      'flex flex-col w-full md:w-[42%] md:min-w-[360px] min-h-0 overflow-y-auto bg-white ' +
+                      'fixed inset-x-0 bottom-0 z-40 max-h-[85dvh] rounded-t-2xl shadow-2xl transition-transform ' +
+                      (aiDrawerOpen ? 'translate-y-0 ' : 'translate-y-full ') +
+                      'md:static md:inset-auto md:z-auto md:max-h-none md:rounded-none md:shadow-none md:translate-y-0 md:transition-none'
+                    }>
+                      {/* mobile-only drag handle + close button for the bottom-sheet drawer */}
+                      <div className="md:hidden relative shrink-0 flex items-center justify-center py-2 border-b border-slate-100">
+                        <div className="w-10 h-1 rounded-full bg-slate-300" />
+                        <button type="button" onClick={() => setAiDrawerOpen(false)} title="ปิด" aria-label="ปิด"
+                          className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
+                          <X size={18} />
+                        </button>
+                      </div>
                   {detail?.memory?.summary && (
                     <div className="shrink-0 bg-slate-50 border-b border-slate-100 p-2">
                       <div className="text-[11px] text-sky-800 bg-sky-50 border border-sky-200 rounded-lg p-2">
@@ -1737,7 +1871,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                           <button type="button" onClick={() => setUpload(null)} className="text-slate-400 hover:text-rose-500"><X size={14} /></button>
                         </div>
                       )}
-                      <div className="grid grid-cols-[auto_auto_auto_1fr_1fr_1fr] gap-2">
+                      <div className="grid grid-cols-[auto_auto_auto_auto_1fr_1fr_1fr] gap-2">
                         <button type="button" disabled={uploading || sending || rewriting} onClick={openCamera}
                           title="ถ่ายรูปแล้วส่ง" aria-label="ถ่ายรูปแล้วส่ง"
                           className="px-2.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 flex items-center justify-center disabled:opacity-50">
@@ -1753,6 +1887,11 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                           qrManage={qrManage} setQrManage={setQrManage} qrLabel={qrLabel} setQrLabel={setQrLabel} qrBody={qrBody} setQrBody={setQrBody}
                           qrSaving={qrSaving} saveQuickReply={saveQuickReply} removeQuickReply={removeQuickReply}
                         />
+                        <button type="button" onClick={clearMinervaDrafts}
+                          title="ล้างร่างของ Minerva ทั้งหมด" aria-label="ล้างร่างของ Minerva ทั้งหมด"
+                          className="px-2 py-2 rounded-xl bg-slate-100 hover:bg-rose-100 text-slate-600 hover:text-rose-600 flex items-center justify-center">
+                          <Eraser size={16} />
+                        </button>
                         <button onClick={() => regenerate()} disabled={sending || rewriting}
                           title="ร่างคำตอบใหม่จากบทสนทนา + สินค้าที่เลือก (ไม่ใช้ข้อความที่พิมพ์ในกล่อง)"
                           className="min-w-0 px-2 py-2 rounded-xl bg-slate-200 hover:bg-slate-300 text-slate-700 text-sm font-semibold flex items-center justify-center gap-1 disabled:opacity-50">
@@ -1773,7 +1912,15 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                   ) : detail && detail.messages.length > 0 ? (
                     <div className="border-t border-slate-200 p-3 space-y-2 bg-white flex flex-col flex-1 min-h-0">
                       <div className="flex items-start gap-2">
-                        <div className="text-[11px] text-slate-400">ลูกค้าได้รับคำตอบล่าสุดแล้ว — ส่งข้อความเพิ่มเติม แนบรูปสินค้า หรือใช้ ✨ ช่วยเรียบเรียงได้</div>
+                        <div className={'text-[11px] ' + ((detail.generating || forceDrafting)
+                          ? 'text-indigo-600'
+                          : detail.draftQueued ? 'text-amber-600' : 'text-slate-400')}>
+                          {(detail.generating || forceDrafting)
+                            ? '✨ Minerva กำลังร่างคำตอบ…'
+                            : detail.draftQueued
+                              ? '⏳ ลูกค้าส่งข้อความใหม่มา — ระบบรอข้อความเพิ่มเติมสักครู่ก่อนร่าง (กด ↻ เพื่อร่างทันที)'
+                              : 'ลูกค้าได้รับคำตอบล่าสุดแล้ว — ส่งข้อความเพิ่มเติม แนบรูปสินค้า หรือใช้ ✨ ช่วยเรียบเรียงได้'}
+                        </div>
                         <button type="button" onClick={() => setProdSearchOpen((v) => !v)}
                           title="ค้นหา / แนบรูปสินค้า" aria-label="ค้นหา / แนบรูปสินค้า"
                           className={'ml-auto shrink-0 p-1 rounded-lg hover:bg-slate-100 ' + (prodSearchOpen ? 'text-sky-600 bg-sky-50' : 'text-slate-400 hover:text-slate-600')}>
@@ -1855,9 +2002,9 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                           <span><span className="font-semibold">หมายเหตุจาก AI</span> (ไม่ส่งให้ลูกค้า): {rewriteNote}</span>
                         </div>
                       )}
-                      {/* Same column template + button classes as the pending composer's row (minus
-                          the regenerate column) so the two states look identical in size. */}
-                      <div className="grid grid-cols-[auto_auto_auto_1fr_1fr] gap-2">
+                      {/* Same column template + button classes as the pending composer's row so the
+                          two states look identical in size. */}
+                      <div className="grid grid-cols-[auto_auto_auto_auto_1fr_1fr_1fr] gap-2">
                         <button type="button" disabled={uploading || freeSending} onClick={openCamera}
                           title="ถ่ายรูปแล้วส่งทันที" aria-label="ถ่ายรูปแล้วส่งทันที"
                           className="px-2.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 flex items-center justify-center disabled:opacity-50">
@@ -1873,6 +2020,17 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                           qrManage={qrManage} setQrManage={setQrManage} qrLabel={qrLabel} setQrLabel={setQrLabel} qrBody={qrBody} setQrBody={setQrBody}
                           qrSaving={qrSaving} saveQuickReply={saveQuickReply} removeQuickReply={removeQuickReply}
                         />
+                        <button type="button" onClick={clearMinervaDrafts}
+                          title="ล้างร่างของ Minerva ทั้งหมด" aria-label="ล้างร่างของ Minerva ทั้งหมด"
+                          className="px-2 py-2 rounded-xl bg-slate-100 hover:bg-rose-100 text-slate-600 hover:text-rose-600 flex items-center justify-center">
+                          <Eraser size={16} />
+                        </button>
+                        <button type="button" onClick={forceDraftNow}
+                          disabled={freeSending || uploading || forceDrafting || detail.generating}
+                          title="ร่างคำตอบใหม่ทันที — ไม่ต้องรอระบบ"
+                          className="min-w-0 px-2 py-2 rounded-xl bg-slate-200 hover:bg-slate-300 text-slate-700 text-sm font-semibold flex items-center justify-center gap-1 disabled:opacity-50">
+                          {(forceDrafting || detail.generating) ? <Loader2 size={17} className="animate-spin" /> : <RefreshCw size={17} />}
+                        </button>
                         <button onClick={freeRewrite} disabled={freeRewriting || freeSending || !freeText.trim()}
                           title="ให้ AI ช่วยแก้ไวยากรณ์/เรียบเรียงข้อความนี้"
                           className="min-w-0 px-2 py-2 rounded-xl bg-indigo-100 hover:bg-indigo-200 text-indigo-700 text-sm font-semibold flex items-center justify-center gap-1 disabled:opacity-50">

@@ -16,6 +16,7 @@ export function embeddingsAvailable(): boolean {
 export async function embed(
   texts: string[],
   inputType: 'document' | 'query' = 'document',
+  signal?: AbortSignal,
 ): Promise<number[][]> {
   if (!env.VOYAGE_API_KEY) throw new Error('VOYAGE_API_KEY not configured');
   if (texts.length === 0) return [];
@@ -24,6 +25,7 @@ export async function embed(
     method: 'POST',
     headers: { 'content-type': 'application/json', authorization: `Bearer ${env.VOYAGE_API_KEY}` },
     body: JSON.stringify({ input: texts, model: MODEL, input_type: inputType }),
+    ...(signal ? { signal } : {}),
   });
   if (!res.ok) throw new Error(`Voyage API ${res.status}: ${await res.text()}`);
   const data = (await res.json()) as { data: { embedding: number[] }[] };

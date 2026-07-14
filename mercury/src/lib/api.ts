@@ -1,6 +1,6 @@
 // Typed API client for the Mercury procurement UI. Talks to the SHARED Minerva Fastify
 // backend (the /api/mercury/* routes). Cloud-Mercury is the buy-side reorder board: it reads
-// Vulcan low-stock (the single source of stock truth) and creates purchase requests. All
+// Vesta low-stock (the single source of stock truth) and creates purchase requests. All
 // /api/mercury/* routes are gated by requireApp('mercury') server-side (owner-only for now).
 // SECRETS-FREE: no vendor/cost/real-name/real-SKU is ever fetched here (those live only in
 // local-Mercury, Phase 2).
@@ -24,8 +24,12 @@ export interface Agent {
   apps: string[];
 }
 
-// Suite apps the switcher can link to. Keep in sync with AppName in api/src/auth/jwt.ts.
-export type AppName = 'minerva' | 'vulcan' | 'juno' | 'ceres' | 'mercury';
+// Suite apps the switcher can link to. The canonical list now lives in the shared package
+// (@pantheon/ui, mirroring the server SSOT api/src/auth/jwt.ts APP_NAMES). Imported for local
+// use below AND re-exported so existing consumers that import AppName from './lib/api' keep
+// working unchanged.
+import type { AppName } from '@pantheon/ui';
+export type { AppName };
 
 // Mirror of the server's hasAppAccess (api/src/auth/jwt.ts): supervisor → everything;
 // md → Ceres + Minerva + Juno; employee → their own per-person grant list. Mercury is owner-only
@@ -33,7 +37,7 @@ export type AppName = 'minerva' | 'vulcan' | 'juno' | 'ceres' | 'mercury';
 // before the `apps` field existed has no apps → treated as no grants (empty list), which is safe.
 export function hasAppAccess(agent: Agent, app: AppName): boolean {
   if (agent.role === 'supervisor') return true;
-  if (agent.role === 'md') return app === 'ceres' || app === 'minerva' || app === 'juno';
+  if (agent.role === 'md') return app === 'ceres' || app === 'minerva' || app === 'juno' || app === 'apollo';
   return (agent.apps ?? []).includes(app);
 }
 
@@ -42,7 +46,7 @@ export interface MercuryItem {
   id: string;
   displayName: string;
   isSecret: boolean;
-  vulcanSku: string | null;
+  vestaSku: string | null;
   active: boolean;
   createdAt: string;
 }
@@ -62,7 +66,7 @@ export interface MercuryRequest {
   item: MercuryItem | null; // joined for the board
 }
 
-// A low-stock product from Vulcan's feed (the reorder queue). mercuryItemId is set if an
+// A low-stock product from Vesta's feed (the reorder queue). mercuryItemId is set if an
 // active MercuryItem already tracks this SKU.
 export interface ReorderRow {
   sku: string;
@@ -124,9 +128,32 @@ export async function login(email: string, password: string): Promise<{ token: s
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ email, password }),
+    credentials: 'include',
   });
   if (!res.ok) throw new Error('invalid_credentials');
   return res.json() as Promise<{ token: string; agent: Agent }>;
+}
+
+export async function bootstrap(): Promise<Agent | null> {
+  try {
+    const res = await fetch(`${API_URL}/api/auth/me`, { credentials: 'include' });
+    if (!res.ok) return null;
+    const { agent, token } = await res.json() as { agent: Agent; token: string };
+    setSession(token, agent);
+    return agent;
+  } catch {
+    return null;
+  }
+}
+
+export async function logout(): Promise<void> {
+  try {
+    await fetch(`${API_URL}/api/auth/logout`, { method: 'POST', credentials: 'include' });
+  } catch {
+    // Best-effort server logout; local cleanup must always happen.
+  } finally {
+    clearSession();
+  }
 }
 
 export interface LoginCard {
@@ -144,7 +171,7 @@ export async function getLogins(): Promise<LoginCard[]> {
   return res.json() as Promise<LoginCard[]>;
 }
 
-// ── Reorder queue (Vulcan low-stock) ────────────────────────────────────
+// ── Reorder queue (Vesta low-stock) ────────────────────────────────────
 export const getReorderQueue = () =>
   authed<{ products: ReorderRow[] }>('/api/mercury/reorder-queue');
 
@@ -152,7 +179,7 @@ export const getReorderQueue = () =>
 export const getItems = (q = '') =>
   authed<{ items: MercuryItem[] }>(`/api/mercury/items?q=${encodeURIComponent(q)}`);
 
-export const createItem = (input: { displayName: string; vulcanSku?: string; isSecret?: boolean }) =>
+export const createItem = (input: { displayName: string; vestaSku?: string; isSecret?: boolean }) =>
   authed<{ ok: boolean; item: MercuryItem }>('/api/mercury/items', {
     method: 'POST',
     body: JSON.stringify(input),
@@ -160,7 +187,7 @@ export const createItem = (input: { displayName: string; vulcanSku?: string; isS
 
 export const patchItem = (
   id: string,
-  input: { displayName?: string; vulcanSku?: string | null; active?: boolean },
+  input: { displayName?: string; vestaSku?: string | null; active?: boolean },
 ) =>
   authed<{ ok: boolean; item: MercuryItem }>(`/api/mercury/items/${id}`, {
     method: 'PATCH',
@@ -173,10 +200,10 @@ export const getRequests = (status?: RequestStatus) =>
     `/api/mercury/requests${status ? `?status=${status}` : ''}`,
   );
 
-// Create a request from either an existing item (itemId) or a Vulcan product ref (vulcanSku).
+// Create a request from either an existing item (itemId) or a Vesta product ref (vestaSku).
 export const createRequest = (input: {
   itemId?: string;
-  vulcanSku?: string;
+  vestaSku?: string;
   displayName?: string;
   qty?: string;
   note?: string;
@@ -193,7 +220,7 @@ export const setRequestStatus = (id: string, status: RequestStatus) =>
   });
 
 // Goods-receipt (Phase 3, buy→stock loop). Marks the request 'received' and, for ORDINARY items
-// (item.vulcanSku set), bumps Vulcan stock by qty via the shared adjust path. For SECRET items the
+// (item.vestaSku set), bumps Vesta stock by qty via the shared adjust path. For SECRET items the
 // cloud records status only — receive them via local-Mercury (which alone knows the real SKU), so
 // this is only called from the UI for ordinary items.
 export const receiveRequest = (id: string, qty: number) =>

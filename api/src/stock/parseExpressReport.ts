@@ -2,7 +2,7 @@ import iconv from 'iconv-lite';
 
 // Parser for Prominent's Express stock report ("รายงานสินค้าคงเหลือ"). This is NOT a
 // CSV — it's a fixed-width print report exported as a .txt, encoded in Windows-874
-// (TIS-620 superset, Thai). Ported from scripts/parse_stock.js, which Vulcan replaces.
+// (TIS-620 superset, Thai). Ported from scripts/parse_stock.js, which Vesta replaces.
 //
 // A stock line looks like:
 //   <SKU> <name…> <QTY> <unit> <cost> <value>     where value = qty × cost

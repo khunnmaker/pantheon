@@ -20,8 +20,8 @@ api/dist/
 *.tsbuildinfo
 web/vite.config.js
 web/vite.config.d.ts
-vulcan/vite.config.js
-vulcan/vite.config.d.ts
+vesta/vite.config.js
+vesta/vite.config.d.ts
 juno/vite.config.js
 juno/vite.config.d.ts
 jupiter/vite.config.js

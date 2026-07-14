@@ -3,9 +3,8 @@ import { LogOut, Loader2, AlertTriangle, Plus, Pencil, Trash2, CheckCircle2, Cro
 import { listExpenses, deleteExpense, logout as logoutSuite, type Expense, type ExpenseStatus, baht } from './lib/api';
 import { useCeres } from './lib/bootstrapContext';
 
-// Portal-back link (Jupiter). URL from build-time env; hidden when unset, so it is completely
-// inert until VITE_PORTAL_URL is configured (matches web/vulcan/juno headers).
-const PORTAL_URL: string | undefined = import.meta.env.VITE_PORTAL_URL;
+// Portal-back link uses the canonical Pantheon domain unless build-time env overrides it.
+const PORTAL_URL: string = import.meta.env.VITE_PORTAL_URL ?? 'https://pantheon.prominentdental.com';
 import ExpenseSheet from './ExpenseSheet';
 
 const STATUS_META: Record<ExpenseStatus, { label: string; cls: string }> = {
@@ -80,7 +79,7 @@ export default function MessengerHome() {
           <div className="font-bold text-base text-amber-700">{bootstrap.party?.name || bootstrap.agent.name}</div>
           <div className="flex items-center gap-3">
             {PORTAL_URL && (
-              <a href={PORTAL_URL} title="กลับพอร์ทัล Jupiter" className="flex items-center gap-1 text-sm text-slate-500 hover:text-violet-600">
+              <a href={PORTAL_URL} title="กลับพอร์ทัล Pantheon" className="flex items-center gap-1 text-sm text-slate-500 hover:text-violet-600">
                 <Crown size={15} /> <span className="hidden sm:inline">พอร์ทัล</span>
               </a>
             )}

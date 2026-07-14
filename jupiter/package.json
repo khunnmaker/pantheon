@@ -1,9 +1,9 @@
 {
-  "name": "minerva-jupiter",
+  "name": "jupiter",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Jupiter — staff portal for Prominent (one login, per-role app launcher with live pending-work badges). Phase 1: portal + badges, no SSO. See docs/JUPITER_BRIEF.md",
+  "description": "Jupiter — supervisor accounting app for the Prominent group",
   "scripts": {
     "dev": "vite --host --port 5177",
     "build": "tsc -b && vite build",
@@ -11,6 +11,7 @@
     "typecheck": "tsc -b --noEmit"
   },
   "dependencies": {
+    "@pantheon/ui": "*",
     "@dicebear/collection": "^9.4.2",
     "@dicebear/core": "^9.4.2",
     "lucide-react": "^0.454.0",

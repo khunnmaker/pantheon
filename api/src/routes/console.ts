@@ -13,16 +13,44 @@ import { isStage } from '../stages.js';
 import { pushToConsole } from '../ws/io.js';
 import { isLow } from '../stock/helpers.js';
 import { hasPrice } from '../llm/guardrails.js';
+import { captionStaffUpload } from '../llm/captionImage.js';
+import {
+  bumpClearEpoch,
+  cancelPending,
+  flushPending,
+  getPending,
+  isGenerating,
+  runDraft,
+  type Kind as DraftKind,
+} from '../llm/draftQueue.js';
 
 const RECENT_MESSAGES = 50;
 
 type ProductCard = {
   sku: string; nameEn: string; nameTh: string; price: number; photoSku: string | null;
   stock: number | null; stockAt: Date | null;
-  // Vulcan low-stock surfacing for staff (NOT shown to customers): the threshold and a
+  // Vesta low-stock surfacing for staff (NOT shown to customers): the threshold and a
   // computed flag so the console can style a near-empty SKU.
   reorderPoint: number | null; low: boolean;
 };
+
+async function findLatestUnansweredCustomerMessage(customerId: string, answeredThroughAt: Date | null) {
+  const latestCustomer = await prisma.message.findFirst({
+    where: {
+      customerId,
+      role: 'customer',
+      ...(answeredThroughAt ? { createdAt: { gt: answeredThroughAt } } : {}),
+    },
+    orderBy: { createdAt: 'desc' },
+    select: { id: true, attachmentType: true },
+  });
+  if (!latestCustomer) return null;
+  const answered = await prisma.message.findFirst({
+    where: { answersMessageId: latestCustomer.id },
+    select: { id: true },
+  });
+  return answered ? null : latestCustomer;
+}
 
 function toProductCard(p: {
   sku: string; nameEn: string; nameTh: string; price: number; photoSku: string | null;
@@ -162,22 +190,13 @@ export async function consoleRoutes(app: FastifyInstance) {
     // Pending = the most recent CUSTOMER message not yet answered by a reply (a
     // standalone quick-reply does NOT answer it) — so the composer stays open even
     // after the team sends one or more quick-replies.
-    const latestCustomer = [...ordered].reverse().find((m) => m.role === 'customer');
     let pendingMessageId: string | null = null;
     let pendingDraft = null;
-    // A chat marked "ตอบแล้ว" has no pending question until the customer writes again
-    // (a message created after the cutoff).
-    const pastCutoff =
-      !customer.answeredThroughAt || (!!latestCustomer && latestCustomer.createdAt > customer.answeredThroughAt);
-    if (latestCustomer && pastCutoff) {
-      const answered = await prisma.message.findFirst({
-        where: { answersMessageId: latestCustomer.id },
-        select: { id: true },
-      });
-      if (!answered) {
-        pendingMessageId = latestCustomer.id;
-        pendingDraft = await prisma.draft.findUnique({ where: { messageId: latestCustomer.id } });
-      }
+    // A chat marked "ตอบแล้ว" has no pending question until the customer writes again.
+    const latestCustomer = await findLatestUnansweredCustomerMessage(id, customer.answeredThroughAt);
+    if (latestCustomer) {
+      pendingMessageId = latestCustomer.id;
+      pendingDraft = await prisma.draft.findUnique({ where: { messageId: latestCustomer.id } });
     }
 
     const memory = await prisma.customerMemory.findUnique({ where: { customerId: id } });
@@ -255,6 +274,7 @@ export async function consoleRoutes(app: FastifyInstance) {
       quotable: !!quoteToken, // customer inbound OR our own sent text/sticker (self-reply)
     }));
 
+    const queuedDraft = getPending(id);
     return {
       customer,
       messages,
@@ -263,6 +283,8 @@ export async function consoleRoutes(app: FastifyInstance) {
       productCandidates,
       crossSellCandidates,
       pendingMessageId,
+      draftQueued: queuedDraft ? { fireAt: queuedDraft.fireAt } : null,
+      generating: isGenerating(id),
       memory: memory ? { summary: memory.summary, updatedAt: memory.updatedAt } : null,
       oaRead,
       stats: {
@@ -271,6 +293,66 @@ export async function consoleRoutes(app: FastifyInstance) {
         lastSeen: customer.lastSeen,
       },
     };
+  });
+
+  // POST /api/customers/:id/draft-now — skip the burst wait and start the latest draft.
+  app.post<{ Params: { id: string } }>('/api/customers/:id/draft-now', async (req, reply) => {
+    const { id } = req.params;
+    if (isGenerating(id)) return { generating: true };
+    if (flushPending(id)) return reply.code(202).send({ queued: true });
+
+    const customer = await prisma.customer.findUnique({
+      where: { id },
+      select: { answeredThroughAt: true },
+    });
+    const latest = customer
+      ? await findLatestUnansweredCustomerMessage(id, customer.answeredThroughAt)
+      : null;
+    if (!latest) return reply.code(409).send({ error: 'no_pending' });
+
+    const kind: DraftKind = latest.attachmentType === 'image' || latest.attachmentType === 'sticker'
+      ? latest.attachmentType
+      : 'text';
+    void runDraft(id, latest.id, kind);
+    return reply.code(202).send({ queued: true });
+  });
+
+  // POST /api/customers/:id/drafts/clear — cancel queued/in-flight output and remove only
+  // drafts for unanswered customer messages; answered-message drafts remain history.
+  app.post<{ Params: { id: string } }>('/api/customers/:id/drafts/clear', async (req) => {
+    const { id } = req.params;
+    cancelPending(id);
+    bumpClearEpoch(id);
+
+    const customer = await prisma.customer.findUnique({
+      where: { id },
+      select: { answeredThroughAt: true },
+    });
+    if (customer) {
+      const candidates = await prisma.message.findMany({
+        where: {
+          customerId: id,
+          role: 'customer',
+          ...(customer.answeredThroughAt ? { createdAt: { gt: customer.answeredThroughAt } } : {}),
+        },
+        select: { id: true },
+      });
+      if (candidates.length) {
+        const answered = await prisma.message.findMany({
+          where: { answersMessageId: { in: candidates.map((message) => message.id) } },
+          select: { answersMessageId: true },
+        });
+        const answeredIds = new Set(answered.map((message) => message.answersMessageId));
+        const unansweredIds = candidates
+          .map((message) => message.id)
+          .filter((messageId) => !answeredIds.has(messageId));
+        if (unansweredIds.length) {
+          await prisma.draft.deleteMany({ where: { messageId: { in: unansweredIds } } });
+        }
+      }
+    }
+    pushToConsole('draft:cleared', { customerId: id });
+    return { cleared: true };
   });
 
   // POST /api/customers/:id/end-session — end the chat and refresh long-term memory.
@@ -499,6 +581,9 @@ export async function consoleRoutes(app: FastifyInstance) {
         ...(sendResult.quoteToken ? { quoteToken: sendResult.quoteToken } : {}),
       },
     });
+    if (attach?.attachmentType === 'image' && uploadId) {
+      void captionStaffUpload(message.id, uploadId);
+    }
     await prisma.customer.update({ where: { id: customer.id }, data: { lastSeen: new Date() } });
     pushToConsole('conversation:update', { customerId: customer.id, message });
     return { ok: true, message, dryRun: sendResult.dryRun };
@@ -536,6 +621,7 @@ export async function consoleRoutes(app: FastifyInstance) {
         ...(sendResult.channelMsgId ? { channelMsgId: sendResult.channelMsgId } : {}),
       },
     });
+    void captionStaffUpload(message.id, uploadId);
     await prisma.customer.update({ where: { id: customer.id }, data: { lastSeen: new Date() } });
     pushToConsole('conversation:update', { customerId: customer.id, message });
     return { ok: true, message, dryRun: sendResult.dryRun };

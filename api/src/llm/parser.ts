@@ -7,6 +7,8 @@ export interface DraftResult {
   used_products?: string[]; // catalog SKUs the draft drew on (for attaching the photo)
   cross_sell_terms?: string[]; // complementary product types to look up in the catalog
   stage?: string; // AI's guess of the customer's pipeline stage (validated in draft.ts)
+  image_captions?: string[]; // one short Thai caption per attached image, in order
+  product_search_terms?: string[]; // catalog terms requested by the vision first pass
   note: string;
 }
 
@@ -45,8 +47,14 @@ export function parseDraft(raw: string): DraftResult {
       : [];
 
     const stage = typeof obj.stage === 'string' ? obj.stage : undefined;
+    const image_captions = Array.isArray(obj.image_captions)
+      ? obj.image_captions.filter((x): x is string => typeof x === 'string')
+      : [];
+    const product_search_terms = Array.isArray(obj.product_search_terms)
+      ? obj.product_search_terms.filter((x): x is string => typeof x === 'string').slice(0, 6)
+      : [];
 
-    return { type, draft, used_kb, used_products, cross_sell_terms, stage, note };
+    return { type, draft, used_kb, used_products, cross_sell_terms, stage, image_captions, product_search_terms, note };
   } catch {
     return SAFE_DEFAULT;
   }

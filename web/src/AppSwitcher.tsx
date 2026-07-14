@@ -8,35 +8,50 @@
 // (it is the current app OR its VITE_<APP>_URL build-time env is set). Until those envs are
 // configured on Railway, only the current app's label shows — fully inert, no visual change.
 import { useEffect, useRef, useState } from 'react';
-import { Bot, Boxes, Wallet, Coins, ShoppingCart, ChevronDown } from 'lucide-react';
+import { Bot, Boxes, Wallet, Scale, Coins, ShoppingCart, ChevronDown, Users, Globe, Workflow } from 'lucide-react';
 import { hasAppAccess, type Agent, type AppName } from './lib/api';
 
 const CURRENT: AppName = 'minerva';
 
-// Suite app URLs: VITE_*_URL env override (for the future custom-domain cutover), with the
-// current Railway production URL as a built-in default so the switcher works everywhere
-// without per-service env config. Ceres has no service yet → env-only (stays hidden).
+// Suite app URLs: VITE_*_URL env override, with the canonical *.prominentdental.com subdomain
+// as the built-in default. The default MUST be same-site with the api (api.prominentdental.com)
+// or suite SSO breaks: the shared session cookie is SameSite=Lax + Domain=.prominentdental.com,
+// so it is only sent to /api/auth/me when the app is opened from a *.prominentdental.com origin.
+// A raw *.up.railway.app URL is a DIFFERENT site → the Lax cookie is withheld → bootstrap /me
+// returns 401 → the app shows Login even though the user is signed in. Ceres has a subdomain
+// too; Mercury stays env-only until its service+domain exist.
 const APP_URL = {
-  minerva: import.meta.env.VITE_MINERVA_URL ?? 'https://heroic-contentment-production-16e7.up.railway.app',
-  vulcan: import.meta.env.VITE_VULCAN_URL ?? 'https://vulcan-production-dbba.up.railway.app',
-  juno: import.meta.env.VITE_JUNO_URL ?? 'https://juno-production-5cea.up.railway.app',
-  ceres: import.meta.env.VITE_CERES_URL as string | undefined,
-  mercury: import.meta.env.VITE_MERCURY_URL as string | undefined,
+  minerva: import.meta.env.VITE_MINERVA_URL ?? 'https://minerva.prominentdental.com',
+  vesta: import.meta.env.VITE_VESTA_URL ?? 'https://vesta.prominentdental.com',
+  juno: import.meta.env.VITE_JUNO_URL ?? 'https://juno.prominentdental.com',
+  jupiter: import.meta.env.VITE_JUPITER_URL ?? 'https://jupiter.prominentdental.com',
+  ceres: import.meta.env.VITE_CERES_URL ?? 'https://ceres.prominentdental.com',
+  mercury: import.meta.env.VITE_MERCURY_URL ?? 'https://mercury.prominentdental.com',
+  apollo: import.meta.env.VITE_APOLLO_URL ?? 'https://apollo.prominentdental.com',
 };
 const APPS: { app: AppName; label: string; url: string | undefined }[] = [
   { app: 'minerva', label: 'Minerva', url: APP_URL.minerva },
-  { app: 'vulcan', label: 'Vulcan', url: APP_URL.vulcan },
+  { app: 'vesta', label: 'Vesta', url: APP_URL.vesta },
   { app: 'juno', label: 'Juno', url: APP_URL.juno },
+  { app: 'jupiter', label: 'Jupiter', url: APP_URL.jupiter },
   { app: 'ceres', label: 'Ceres', url: APP_URL.ceres },
   { app: 'mercury', label: 'Mercury', url: APP_URL.mercury },
+  { app: 'apollo', label: 'Apollo', url: APP_URL.apollo },
 ];
 
+// Canonical AppName now carries all 8 suite apps (venus, diana included); this Record must
+// enumerate every one. venus/diana have no switcher entry (not in APPS) so their icons are
+// inert placeholders — present only to keep the Record exhaustive.
 const APP_ICON: Record<AppName, typeof Bot> = {
   minerva: Bot,
-  vulcan: Boxes,
+  vesta: Boxes,
   juno: Wallet,
+  jupiter: Scale,
   ceres: Coins,
   mercury: ShoppingCart,
+  venus: Users,
+  diana: Globe,
+  apollo: Workflow,
 };
 
 export default function AppSwitcher({ agent }: { agent: Agent }) {
