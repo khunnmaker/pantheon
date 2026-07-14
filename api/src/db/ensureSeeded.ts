@@ -29,28 +29,28 @@ export const TIER_ACCOUNTS = [
 // `group` + `gender`: DISPLAY metadata for the login screens (see TIER_ACCOUNTS note). The
 // group mirrors Pantheon's portal grouping — note นุ่น displays under MD and พิณ/เล็ก under Others.
 export const EMPLOYEES = [
-  { slug: 'nadeer', name: 'NaDeer', apps: ['minerva', 'ceres'], group: 'sales', gender: 'female' },
-  { slug: 'anny', name: 'Anny', apps: ['minerva', 'ceres'], group: 'sales', gender: 'female' },
-  { slug: 'noey', name: 'Noey', apps: ['minerva', 'ceres'], group: 'sales', gender: 'female' },
-  { slug: 'bow', name: 'Bow', apps: ['minerva', 'ceres'], group: 'sales', gender: 'female' },
-  { slug: 'tham', name: 'Tham', apps: ['minerva', 'ceres'], group: 'sales', gender: 'male' },
-  { slug: 'rak', name: 'Rak', apps: ['minerva', 'ceres'], group: 'sales', gender: 'female' },
-  { slug: 'ta', name: 'ต้า', apps: ['ceres'], group: 'messengers', gender: 'male' },
-  { slug: 'arm', name: 'อาร์ม', apps: ['ceres'], group: 'messengers', gender: 'male' },
-  { slug: 'man', name: 'แมน', apps: ['ceres'], group: 'messengers', gender: 'male' },
-  { slug: 'boonson', name: 'บุญสอน', apps: ['ceres'], group: 'messengers', gender: 'male' },
-  { slug: 'kaew', name: 'แก้ว', apps: ['ceres'], group: 'messengers', gender: 'male' },
-  { slug: 'lungko', name: 'ลุงโก๊ะ', apps: ['ceres'], group: 'messengers', gender: 'male' },
-  { slug: 'wong', name: 'วง', apps: ['ceres'], group: 'messengers', gender: 'male' },
-  { slug: 'paeng', name: 'แป๋ง', apps: ['ceres'], group: 'messengers', gender: 'male' },
-  { slug: 'nun', name: 'นุ่น', apps: ['minerva', 'juno', 'ceres'], group: 'md', gender: 'female' }, // Noon — MD side, same access as Nee
-  { slug: 'pin', name: 'พิณ', apps: ['ceres'], group: 'others', gender: 'male' },
-  { slug: 'lekmaeban', name: 'เล็กแม่บ้าน', apps: ['ceres'], group: 'others', gender: 'female' }, // housekeeper — enters expenses like everyone
-  { slug: 'da', name: 'ด้า', apps: ['ceres'], group: 'messengers', gender: 'male' },
+  { slug: 'nadeer', name: 'NaDeer', apps: ['minerva', 'ceres', 'apollo'], group: 'sales', gender: 'female' },
+  { slug: 'anny', name: 'Anny', apps: ['minerva', 'ceres', 'apollo'], group: 'sales', gender: 'female' },
+  { slug: 'noey', name: 'Noey', apps: ['minerva', 'ceres', 'apollo'], group: 'sales', gender: 'female' },
+  { slug: 'bow', name: 'Bow', apps: ['minerva', 'ceres', 'apollo'], group: 'sales', gender: 'female' },
+  { slug: 'tham', name: 'Tham', apps: ['minerva', 'ceres', 'apollo'], group: 'sales', gender: 'male' },
+  { slug: 'rak', name: 'Rak', apps: ['minerva', 'ceres', 'apollo'], group: 'sales', gender: 'female' },
+  { slug: 'ta', name: 'ต้า', apps: ['ceres', 'apollo'], group: 'messengers', gender: 'male' },
+  { slug: 'arm', name: 'อาร์ม', apps: ['ceres', 'apollo'], group: 'messengers', gender: 'male' },
+  { slug: 'man', name: 'แมน', apps: ['ceres', 'apollo'], group: 'messengers', gender: 'male' },
+  { slug: 'boonson', name: 'บุญสอน', apps: ['ceres', 'apollo'], group: 'messengers', gender: 'male' },
+  { slug: 'kaew', name: 'แก้ว', apps: ['ceres', 'apollo'], group: 'messengers', gender: 'male' },
+  { slug: 'lungko', name: 'ลุงโก๊ะ', apps: ['ceres', 'apollo'], group: 'messengers', gender: 'male' },
+  { slug: 'wong', name: 'วง', apps: ['ceres', 'apollo'], group: 'messengers', gender: 'male' },
+  { slug: 'paeng', name: 'แป๋ง', apps: ['ceres', 'apollo'], group: 'messengers', gender: 'male' },
+  { slug: 'nun', name: 'นุ่น', apps: ['minerva', 'juno', 'ceres', 'apollo'], group: 'md', gender: 'female' }, // Noon — MD side, same access as Nee
+  { slug: 'pin', name: 'พิณ', apps: ['ceres', 'apollo'], group: 'others', gender: 'male' },
+  { slug: 'lekmaeban', name: 'เล็กแม่บ้าน', apps: ['ceres', 'apollo'], group: 'others', gender: 'female' }, // housekeeper — enters expenses like everyone
+  { slug: 'da', name: 'ด้า', apps: ['ceres', 'apollo'], group: 'messengers', gender: 'male' },
   // Finance team (การเงิน) — owner-granted Minerva + Juno + Ceres (2026-07-05). Juno's route
   // gate was widened from supervisor-only to requireApp('juno') so the juno grant admits them.
-  { slug: 'benz', name: 'Benz', apps: ['minerva', 'juno', 'ceres'], group: 'finance', gender: 'female' },
-  { slug: 'meow', name: 'Meow', apps: ['minerva', 'juno', 'ceres'], group: 'finance', gender: 'female' },
+  { slug: 'benz', name: 'Benz', apps: ['minerva', 'juno', 'ceres', 'apollo'], group: 'finance', gender: 'female' },
+  { slug: 'meow', name: 'Meow', apps: ['minerva', 'juno', 'ceres', 'apollo'], group: 'finance', gender: 'female' },
 ] as const;
 
 export const employeeEmail = (slug: string): string => `${slug}@prominent.local`;

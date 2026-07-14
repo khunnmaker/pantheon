@@ -33,6 +33,8 @@ import { ceresRoutes } from './routes/ceres/index.js';
 import { startCeresDigestScheduler } from './ceres/nightlyDigest.js';
 import { mercuryRoutes } from './routes/mercury/index.js';
 import { oaSyncRoutes } from './routes/oaSync.js';
+import { apolloRoutes } from './routes/apollo.js';
+import { startApolloSchedulers } from './apollo/scheduler.js';
 
 // Raw body is needed to verify the LINE webhook signature.
 declare module 'fastify' {
@@ -101,6 +103,8 @@ async function buildServer() {
   await app.register(venusRoutes);
   await app.register(mercuryRoutes);
   await app.register(oaSyncRoutes);
+  await app.register(apolloRoutes);
+  startApolloSchedulers(app.log);
 
   return app;
 }

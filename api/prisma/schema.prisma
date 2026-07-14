@@ -129,10 +129,107 @@ model Agent {
   passwordHash String
   role         String   @default("agent") // agent | supervisor
   createdAt    DateTime @default(now())
-  // Per-employee app grants ('minerva'|'vesta'|'juno'|'ceres'); supervisor/md access is
+  // Per-employee app grants ('minerva'|'vesta'|'juno'|'ceres'|'apollo'); supervisor/md access is
   // implicit by role, this list matters only for role 'employee'. Edited later by Jupiter's
   // admin UI — boot-sync must never overwrite it (create-only default).
   apps         String[] @default([])
+  lineUserId   String?  @unique
+  lineBindCode String?  @unique
+
+  apolloProjectMemberships ApolloProjectMember[]
+  apolloCreatedProjects    ApolloProject[]       @relation("ApolloProjectCreator")
+  apolloCreatedTasks       ApolloTask[]          @relation("ApolloTaskCreator")
+  apolloAssignedTasks      ApolloTask[]          @relation("ApolloTaskAssignee")
+  apolloComments           ApolloComment[]
+  apolloAttachments        ApolloAttachment[]
+}
+
+// ─── Apollo: employee work management ──────────────────────────────────────
+
+model ApolloProject {
+  id          String                @id @default(cuid())
+  name        String
+  color       String                @default("#4f46e5")
+  columns     String[]              @default(["To do", "Doing", "Done"])
+  archived    Boolean               @default(false)
+  createdById String
+  createdBy   Agent                 @relation("ApolloProjectCreator", fields: [createdById], references: [id])
+  members     ApolloProjectMember[]
+  tasks       ApolloTask[]
+  createdAt   DateTime              @default(now())
+  updatedAt   DateTime              @updatedAt
+
+  @@index([archived])
+}
+
+model ApolloProjectMember {
+  id        String        @id @default(cuid())
+  projectId String
+  project   ApolloProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  agentId   String
+  agent     Agent         @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  createdAt DateTime      @default(now())
+
+  @@unique([projectId, agentId])
+  @@index([agentId])
+}
+
+model ApolloTask {
+  id             String             @id @default(cuid())
+  projectId      String
+  project        ApolloProject      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  title          String
+  notes          String             @default("")
+  assigneeId     String?
+  assignee       Agent?             @relation("ApolloTaskAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
+  creatorId      String
+  creator        Agent              @relation("ApolloTaskCreator", fields: [creatorId], references: [id])
+  dueDate        DateTime           @db.Date
+  priority       String             @default("normal")
+  status         String
+  customerRef    String?
+  recurrenceRule Json?
+  seriesId       String?
+  sortOrder      Float              @default(0)
+  completedAt    DateTime?
+  comments       ApolloComment[]
+  attachments    ApolloAttachment[]
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+
+  @@unique([seriesId, dueDate])
+  @@index([projectId, status, sortOrder])
+  @@index([assigneeId, completedAt, dueDate])
+  @@index([seriesId, completedAt])
+}
+
+model ApolloComment {
+  id        String     @id @default(cuid())
+  taskId    String
+  task      ApolloTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  authorId  String
+  author    Agent      @relation(fields: [authorId], references: [id])
+  body      String
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  @@index([taskId, createdAt])
+}
+
+model ApolloAttachment {
+  id           String     @id @default(cuid())
+  taskId       String
+  task         ApolloTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  uploadedById String
+  uploadedBy   Agent      @relation(fields: [uploadedById], references: [id])
+  uploadId     String     @unique
+  fileName     String
+  contentType  String
+  kind         String
+  size         Int
+  createdAt    DateTime   @default(now())
+
+  @@index([taskId, createdAt])
 }
 
 model KbEntry {
@@ -612,7 +709,7 @@ model WebOrder {
   invoicedAt      DateTime?
   createdAt       DateTime       @default(now())
   // Human-readable, monotonic order number shown as WD-00001 (additive; SERIAL backfills existing rows).
-  orderNo         Int            @default(autoincrement()) @unique
+  orderNo         Int            @unique @default(autoincrement())
   lines           WebOrderLine[]
 
   @@index([clinicAccountId])
@@ -885,7 +982,7 @@ model MercuryItem {
   id          String   @id @default(cuid())
   displayName String // ordinary item name OR an opaque alias ("วัตถุดิบ A-17"); never the real name
   isSecret    Boolean  @default(false) // secret items resolve to a real vendor ONLY in local-Mercury
-  vestaSku   String? // dashed Product.sku for ordinary stocked items; NULL for secret items
+  vestaSku    String? // dashed Product.sku for ordinary stocked items; NULL for secret items
   active      Boolean  @default(true)
   createdAt   DateTime @default(now())
 
@@ -1127,16 +1224,16 @@ model JupiterTxn {
 // posts them to POST /api/oa-sync. We map OA chats to our Customer conservatively (unique
 // exact name matches only) — customerId stays null when ambiguous (harmless). ADD-ONLY.
 model OaReadSync {
-  id            String    @id @default(cuid())
-  oaChatId      String    @unique // OA-Manager-native customer id (U…32hex)
-  customerId    String? // our Customer.id once matched (nullable)
-  oaTitle       String? // OA header title (may be an OA-assigned nickname)
-  oaSubName     String? // parenthesized/subtitle LINE display name if present
-  readLabel     String? // raw marker text e.g. "Read 16:50" / "อ่านแล้ว 16:50"
-  readSeenAt    DateTime? // when the extension observed the marker
-  reportedById  String? // agent who synced
-  updatedAt     DateTime  @updatedAt
-  createdAt     DateTime  @default(now())
+  id           String    @id @default(cuid())
+  oaChatId     String    @unique // OA-Manager-native customer id (U…32hex)
+  customerId   String? // our Customer.id once matched (nullable)
+  oaTitle      String? // OA header title (may be an OA-assigned nickname)
+  oaSubName    String? // parenthesized/subtitle LINE display name if present
+  readLabel    String? // raw marker text e.g. "Read 16:50" / "อ่านแล้ว 16:50"
+  readSeenAt   DateTime? // when the extension observed the marker
+  reportedById String? // agent who synced
+  updatedAt    DateTime  @updatedAt
+  createdAt    DateTime  @default(now())
 
   @@index([customerId])
 }

@@ -80,12 +80,20 @@ export const APPS: AppDef[] = [
     accent: 'text-orange-600',
     badge: (b) => b.mercury?.pending ?? null,
   },
+  {
+    key: 'apollo',
+    name: 'Apollo',
+    job: 'งาน · โครงการทีม',
+    url: env.VITE_APOLLO_URL || 'https://apollo.prominentdental.com',
+    accent: 'text-blue-600',
+    badge: () => null,
+  },
 ];
 
 // Most-used-first display order. The supervisor's day starts in finance (verify slips) then
 // the console, stock, expenses; other accounts see whichever of these they're granted, in the
 // same relative order. Any app missing here sorts last (defensive; all four are listed).
-const ORDER: AppKey[] = ['juno', 'jupiter', 'minerva', 'vesta', 'ceres', 'mercury'];
+const ORDER: AppKey[] = ['juno', 'apollo', 'jupiter', 'minerva', 'vesta', 'ceres', 'mercury'];
 
 // The tiles this account should see: GRANTED (hasAppAccess) AND has a configured URL, in
 // most-used order. Grant-gated so tiles match the person's badges exactly.

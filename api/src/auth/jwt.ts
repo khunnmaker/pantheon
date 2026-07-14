@@ -19,7 +19,7 @@ type TokenRole = (typeof TOKEN_ROLES)[number];
 // The suite's app names — the SINGLE source of truth (runtime tuple + type). requireApp,
 // loginCards, and the badges route all derive from this; adding a future god (mars/neptune/
 // vulcan) is a one-line edit here that both the type and the runtime checks pick up.
-export const APP_NAMES = ['minerva', 'vesta', 'juno', 'jupiter', 'ceres', 'mercury', 'venus', 'diana'] as const;
+export const APP_NAMES = ['minerva', 'vesta', 'juno', 'jupiter', 'ceres', 'mercury', 'venus', 'diana', 'apollo'] as const;
 export type AppName = (typeof APP_NAMES)[number];
 
 // What we put inside the signed token (and hydrate onto each request).
@@ -110,7 +110,7 @@ export function verifyToken(
 // supervisor → everything; md → Ceres + Minerva + Juno. The Juno grant admits Nee to the app,
 // while routes/juno.ts narrows her to bills/products only (owner decision 2026-07-13).
 // employee → their own per-person Agent.apps grant list.
-export const MD_APPS: readonly AppName[] = ['ceres', 'minerva', 'juno'];
+export const MD_APPS: readonly AppName[] = ['ceres', 'minerva', 'juno', 'apollo'];
 export function hasAppAccess(agent: AuthedAgent, app: AppName): boolean {
   if (agent.role === 'supervisor') return true;
   if (agent.role === 'md') return MD_APPS.includes(app);

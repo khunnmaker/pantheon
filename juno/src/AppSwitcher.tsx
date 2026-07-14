@@ -8,7 +8,7 @@
 // (it is the current app OR its VITE_<APP>_URL build-time env is set). Until those envs are
 // configured on Railway, only the current app's label shows — fully inert, no visual change.
 import { useEffect, useRef, useState } from 'react';
-import { Bot, Boxes, Wallet, Scale, Coins, ShoppingCart, ChevronDown, Users, Globe } from 'lucide-react';
+import { Bot, Boxes, Wallet, Scale, Coins, ShoppingCart, ChevronDown, Users, Globe, Workflow } from 'lucide-react';
 import { hasAppAccess, type Agent, type AppName } from './lib/api';
 
 const CURRENT: AppName = 'juno';
@@ -27,6 +27,7 @@ const APP_URL = {
   jupiter: import.meta.env.VITE_JUPITER_URL ?? 'https://jupiter.prominentdental.com',
   ceres: import.meta.env.VITE_CERES_URL ?? 'https://ceres.prominentdental.com',
   mercury: import.meta.env.VITE_MERCURY_URL ?? 'https://mercury.prominentdental.com',
+  apollo: import.meta.env.VITE_APOLLO_URL ?? 'https://apollo.prominentdental.com',
 };
 const APPS: { app: AppName; label: string; url: string | undefined }[] = [
   { app: 'minerva', label: 'Minerva', url: APP_URL.minerva },
@@ -35,6 +36,7 @@ const APPS: { app: AppName; label: string; url: string | undefined }[] = [
   { app: 'jupiter', label: 'Jupiter', url: APP_URL.jupiter },
   { app: 'ceres', label: 'Ceres', url: APP_URL.ceres },
   { app: 'mercury', label: 'Mercury', url: APP_URL.mercury },
+  { app: 'apollo', label: 'Apollo', url: APP_URL.apollo },
 ];
 
 // Canonical AppName now carries all 8 suite apps (venus, diana included); this Record must
@@ -49,6 +51,7 @@ const APP_ICON: Record<AppName, typeof Bot> = {
   mercury: ShoppingCart,
   venus: Users,
   diana: Globe,
+  apollo: Workflow,
 };
 
 export default function AppSwitcher({ agent }: { agent: Agent }) {

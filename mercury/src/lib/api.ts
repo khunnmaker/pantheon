@@ -37,7 +37,7 @@ export type { AppName };
 // before the `apps` field existed has no apps → treated as no grants (empty list), which is safe.
 export function hasAppAccess(agent: Agent, app: AppName): boolean {
   if (agent.role === 'supervisor') return true;
-  if (agent.role === 'md') return app === 'ceres' || app === 'minerva' || app === 'juno';
+  if (agent.role === 'md') return app === 'ceres' || app === 'minerva' || app === 'juno' || app === 'apollo';
   return (agent.apps ?? []).includes(app);
 }
 
