@@ -6,7 +6,14 @@ import { requireAuth, requireApp, requireRole } from '../auth/middleware.js';
 import { parseKbiz } from '../bank/parseKbiz.js';
 import { parseKshop } from '../bank/parseKshop.js';
 import { makeUniqueDedupeKeys } from '../bank/dedupe.js';
-import { paymentTimestamp, amountsEqual, dayDistance, nameSimilarity } from '../bank/match.js';
+import {
+  paymentTimestamp,
+  amountsEqual,
+  dayDistance,
+  nameAgreement,
+  narrowByAgreement,
+  nameSimilarity,
+} from '../bank/match.js';
 import type { BankSource, ParsedBankRow } from '../bank/types.js';
 import { BankParseError } from '../bank/types.js';
 import { readStaffUploadFile, readStaffUploadMeta, UPLOAD_ID_RE } from '../line/staffUploads.js';
@@ -415,11 +422,14 @@ function normChq(s: string): string {
 // The auto-matcher (see spec B3): runs in TWO passes over the in-scope unmatched "in" lines.
 //   Pass 1 (cheque): a KBiz "Cheque Deposit … Cheque No. N" line is linked to its hand-added
 //     cheque Payment by cheque number + amount. This is bank-side bookkeeping only.
-//   Pass 2 (generic): the amount + day-window match for every OTHER credit line ↔ Payment
-//     status='verified', not void, reconciled=false (cheque-deposit lines and source='cheque'
-//     payments are excluded here — a cheque can ONLY link via its number, never by amount).
-// Both passes link ONLY when the pairing is unambiguous in BOTH directions (exactly one
-// candidate each way) — everything else is left for the UI's ranked suggestions. Runs over a
+//   Pass 2 (generic): owner's "date + name + amount" rule for every OTHER credit line ↔
+//     Payment status='verified', not void, reconciled=false. Amount + ≤3-day window creates a
+//     candidate only when names do not conflict; name agreement then narrows ambiguity, so an
+//     agreeing pair can beat a name-unknown alternative. All-unknown behaves exactly as before.
+//     Cheque-deposit lines and source='cheque' payments are excluded here — a cheque can ONLY
+//     link via its number, never by amount.
+// Both passes link ONLY when the effective pairing is unambiguous in BOTH directions —
+// everything else is left for the UI's ranked suggestions. Runs over a
 // specific set of new txn ids (import apply) or ALL unmatched in-txns (manual re-run via
 // /bank/automatch). createdById is left null on every link this function creates — a
 // deliberate marker distinguishing "the system auto-matched this" from a FIN-driven manual
@@ -434,7 +444,15 @@ async function runAutoMatcher(txnIds?: string[]): Promise<{ matched: number; che
     }),
     prisma.payment.findMany({
       where: { status: 'verified', reconciled: false, source: { not: 'cheque' } },
-      select: { id: true, amount: true, transferAt: true, createdAt: true },
+      select: {
+        id: true,
+        amount: true,
+        transferAt: true,
+        createdAt: true,
+        senderName: true,
+        customerName: true,
+        receiptName: true,
+      },
     }),
     prisma.payment.findMany({
       where: { source: 'cheque', reconciled: false, status: { not: 'void' } },
@@ -496,28 +514,38 @@ async function runAutoMatcher(txnIds?: string[]): Promise<{ matched: number; che
   if (genericLinkable.length && payments.length) {
     const paymentTimes = new Map(payments.map((p) => [p.id, paymentTimestamp(p.transferAt, p.createdAt)]));
 
-    // candidates[txnId] = list of payment ids that pass the amount+day-window rule —
-    // computed over ALL unmatched lines so both ambiguity checks see the full picture.
-    const txnCandidates = new Map<string, string[]>();
-    const paymentCandidates = new Map<string, string[]>();
+    // candidates[txnId] = payments that pass amount + day-window without a name conflict.
+    // WHY: owner's rule is date + name + amount. Agreement is retained to narrow ambiguity,
+    // while all-unknown sets preserve the legacy behavior. Compute over ALL unmatched lines
+    // so both directions still see an older line as an equally plausible home.
+    const txnCandidates = new Map<string, { id: string; agree: boolean }[]>();
+    const paymentCandidates = new Map<string, { id: string; agree: boolean }[]>();
     for (const t of genericTxns) {
-      const matches: string[] = [];
+      const matches: { id: string; agree: boolean }[] = [];
       for (const p of payments) {
         // The payment `amount` is already the net the customer sent, so it equals the bank
         // credit directly — WHT needs no adjustment here (see grossOf's note).
         if (!amountsEqual(t.amount, p.amount)) continue;
         if (dayDistance(t.txnAt, paymentTimes.get(p.id)!) > 3) continue;
-        matches.push(p.id);
+        const agreement = nameAgreement(t.payerName, [p.senderName, p.customerName, p.receiptName]);
+        if (agreement === 'conflict') continue;
+        matches.push({ id: p.id, agree: agreement === 'agree' });
       }
       txnCandidates.set(t.id, matches);
-      for (const pid of matches) paymentCandidates.set(pid, [...(paymentCandidates.get(pid) ?? []), t.id]);
+      for (const match of matches) {
+        paymentCandidates.set(match.id, [
+          ...(paymentCandidates.get(match.id) ?? []),
+          { id: t.id, agree: match.agree },
+        ]);
+      }
     }
 
     for (const t of genericLinkable) {
-      const matches = txnCandidates.get(t.id) ?? [];
-      if (matches.length !== 1) continue; // ambiguous or no candidate on the txn side
-      const pid = matches[0];
-      if ((paymentCandidates.get(pid) ?? []).length !== 1) continue; // ambiguous on the payment side too
+      const effTxn = narrowByAgreement(txnCandidates.get(t.id) ?? []);
+      if (effTxn.length !== 1) continue; // ambiguous or no effective candidate on the txn side
+      const pid = effTxn[0];
+      const effPay = narrowByAgreement(paymentCandidates.get(pid) ?? []);
+      if (effPay.length !== 1 || effPay[0] !== t.id) continue; // symmetric ambiguity guard
       await prisma.$transaction([
         prisma.paymentBankMatch.create({ data: { paymentId: pid, bankTxnId: t.id, createdById: null } }),
         prisma.bankTxn.update({ where: { id: t.id }, data: { matchStatus: 'matched' } }),

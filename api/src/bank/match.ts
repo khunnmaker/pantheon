@@ -29,8 +29,84 @@ export function dayDistance(a: Date, b: Date): number {
   return Math.abs(a.getTime() - b.getTime()) / DAY_MS;
 }
 
+export type NameAgreement = 'agree' | 'conflict' | 'unknown';
+
+const THAI_NAME_AFFIXES = [
+  'จำกัดมหาชน', 'นางสาว', 'บริษัท', 'คลินิก', 'ร้าน', 'จำกัด', 'บจก', 'หจก', 'บมจ', 'หสม', 'นาย', 'นาง', 'คุณ',
+  'ทพญ', 'ดช', 'ดญ', 'ดร', 'ทพ', 'นพ', 'พญ', 'นส',
+].sort((a, b) => b.length - a.length);
+const LATIN_NAME_AFFIXES = [
+  'companylimited', 'coltd', 'limited', 'mister', 'clinic', 'miss', 'mrs', 'inc', 'ltd', 'mr', 'ms', 'dr', 'co',
+].sort((a, b) => b.length - a.length);
+const NAME_AFFIXES = [...THAI_NAME_AFFIXES, ...LATIN_NAME_AFFIXES].sort((a, b) => b.length - a.length);
+
+export function normalizeNameCore(raw: string): { core: string; script: 'thai' | 'latin' | '' } {
+  let core = raw
+    .trim()
+    .replace(/\+\+\s*$/, '')
+    .replace(/\([^)]*\)/g, '')
+    .toLowerCase()
+    .replace(/[.,\-/'"·]/g, '')
+    .replace(/\s/g, '')
+    .replace(/\*+/g, '*');
+
+  // WHY: parser names can carry stacked titles/company wrappers on either side. Keep the
+  // stripping bounded and refuse to erase short real names that happen to start/end in "co".
+  for (let pass = 0; pass < 2; pass++) {
+    const prefix = NAME_AFFIXES.find((affix) => core.startsWith(affix) && core.length - affix.length >= 3);
+    if (!prefix) break;
+    core = core.slice(prefix.length);
+  }
+  for (let pass = 0; pass < 2; pass++) {
+    const suffix = NAME_AFFIXES.find((affix) => core.endsWith(affix) && core.length - affix.length >= 3);
+    if (!suffix) break;
+    core = core.slice(0, -suffix.length);
+  }
+
+  const script = /[฀-๿]/.test(core) ? 'thai' : /[a-z]/.test(core) ? 'latin' : '';
+  return { core, script };
+}
+
+function pairNameAgreement(
+  bank: ReturnType<typeof normalizeNameCore>,
+  payment: ReturnType<typeof normalizeNameCore>,
+): NameAgreement {
+  const bankSolid = bank.core.split('*', 1)[0];
+  const paymentSolid = payment.core.split('*', 1)[0];
+  if (bankSolid.length < 3 || paymentSolid.length < 3) return 'unknown';
+  if (!bank.script || !payment.script || bank.script !== payment.script) return 'unknown';
+
+  if (bank.core.includes('*')) return payment.core.startsWith(bankSolid) ? 'agree' : 'conflict';
+  if (payment.core.includes('*')) return bank.core.startsWith(paymentSolid) ? 'agree' : 'conflict';
+
+  const [shorter, longer] = bank.core.length <= payment.core.length
+    ? [bank.core, payment.core]
+    : [payment.core, bank.core];
+  return longer.startsWith(shorter) || (shorter.length >= 4 && longer.includes(shorter))
+    ? 'agree'
+    : 'conflict';
+}
+
+export function nameAgreement(bankName: string, paymentNames: string[]): NameAgreement {
+  const bank = normalizeNameCore(bankName);
+  let sawConflict = false;
+  for (const raw of paymentNames) {
+    if (!raw.trim()) continue;
+    const verdict = pairNameAgreement(bank, normalizeNameCore(raw));
+    if (verdict === 'agree') return 'agree';
+    if (verdict === 'conflict') sawConflict = true;
+  }
+  return sawConflict ? 'conflict' : 'unknown';
+}
+
+export function narrowByAgreement(cands: { id: string; agree: boolean }[]): string[] {
+  const agreed = cands.filter((cand) => cand.agree);
+  return (agreed.length ? agreed : cands).map((cand) => cand.id);
+}
+
 // Casefolded substring / token-overlap name similarity — a soft signal for ranking
-// suggestions (never used to auto-link; only the unambiguous-exact-amount rule does that).
+// suggestions only. The separate strict nameAgreement verdict gates/disambiguates auto-links
+// in runAutoMatcher Pass 2; this fuzzy score never does.
 // Handles both a bank Details "PAYER NAME" style string and a plain customer name.
 export function nameSimilarity(bankSide: string, paymentSide: string): number {
   const a = bankSide.trim().toLowerCase();
