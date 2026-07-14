@@ -87,6 +87,25 @@ function stageOf(p: Payment): Stage {
   return { n: 2, label: 'ตรวจแล้ว', cls: 'bg-sky-100 text-sky-700' };
 }
 
+// CEO confirmed physical receipt while the row is still รอตรวจ (common for cash: the money is
+// handed over the same evening, FIN types the RE the next morning — owner hit this 2026-07-14).
+// The stage badge deliberately stays on the spine (stage 3 never lights before stage 2, or
+// FIN's รอตรวจ queue would lose rows that still need an RE), so this companion chip is the
+// visible trace of the out-of-order confirm; it disappears into the ได้รับเงินแล้ว badge the
+// moment FIN verifies the row.
+const receiveAhead = (p: Payment): boolean =>
+  p.status === 'received' && !!p.receivedAt && (p.source === 'cash' || p.source === 'cheque');
+function ReceiveAheadChip() {
+  return (
+    <span
+      title="CEO ยืนยันรับเงินแล้ว — รอ FIN ตรวจ (ใส่เลข RE/บิล) แล้วสถานะจะเป็น ได้รับเงินแล้ว"
+      className="px-1.5 py-0.5 rounded-full text-[11px] bg-teal-50 text-teal-700 whitespace-nowrap"
+    >
+      ✓ ได้รับแล้ว
+    </span>
+  );
+}
+
 function Badge({ children, cls }: { children: React.ReactNode; cls: string }) {
   return <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-semibold ${cls}`}>{children}</span>;
 }
@@ -769,6 +788,7 @@ function PaymentsView({ view, onChanged, canDelete, isCeo }: { view: Exclude<Vie
                     <td className="px-3 py-2">
                       <div className="flex items-center gap-1">
                         <Badge cls={stageOf(p).cls}>{stageOf(p).label}</Badge>
+                        {receiveAhead(p) && <ReceiveAheadChip />}
                         {p.flagged && <Flag size={13} className="text-rose-500" />}
                       </div>
                     </td>
@@ -1403,6 +1423,7 @@ function Detail({ payment, onClose, onUpdate, onDelete, onPrint, canDelete, isCe
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-1.5 min-w-0">
               <Badge cls={stageOf(p).cls}>{stageOf(p).label}</Badge>
+              {receiveAhead(p) && <ReceiveAheadChip />}
               {p.reNumbers.length > 0 && (
                 <div className="flex items-center gap-1 min-w-0 overflow-hidden">
                   {p.reNumbers.length <= 2 ? (
