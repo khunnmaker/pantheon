@@ -133,7 +133,9 @@ export default function Juno({ agent, onLogout }: { agent: Agent; onLogout: () =
       return;
     }
     getSummary().then(setSummary).catch(() => setSummary(null));
-    getBankSummary().then((s) => setBankUnmatched(s.unmatchedIn.count)).catch(() => setBankUnmatched(undefined));
+    // Badge = RECENT unmatched lines only (≤31d) — the full-history backlog count made the
+    // badge a meaningless 962 (owner report 2026-07-14). Falls back on a stale api.
+    getBankSummary().then((s) => setBankUnmatched(s.unmatchedInRecent?.count ?? s.unmatchedIn.count)).catch(() => setBankUnmatched(undefined));
     getFinanceAudits('open').then((r) => setAuditOpen(r.audits.length)).catch(() => setAuditOpen(undefined));
     if (scope === 'full') {
       getManualBills().then((r) => handleBillCounts(r.counts)).catch(() => setBillAlerts(undefined));
@@ -141,26 +143,57 @@ export default function Juno({ agent, onLogout }: { agent: Agent; onLogout: () =
   }, [handleBillCounts, scope]);
   useEffect(() => { refreshSummary(); }, [refreshSummary]);
 
-  const billTab = { key: 'bills' as const, label: 'บิลมือ', icon: <ReceiptText size={16} />, count: billAlerts };
-  const tabs: { key: View; label: string; icon: React.ReactNode; count?: number }[] = scope === 'billsOnly'
-    ? [billTab]
+  // The tab bar reads left→right as the money's journey (owner's 4-stage workflow,
+  // 2026-07-14 — the flat 10-tab bar was "confusing"): captioned groups, thin dividers.
+  //   ขั้น 1–2 รับเงิน · ตรวจ — FIN's daily desk (slips in, RE/MB typed); บิลมือ lives here
+  //     because its numbers are what stage 2 types for off-system sales.
+  //   ขั้น 3–4 จับคู่ · ยืนยัน — the CEO's lane: เงินสด/เช็ค daily receive, bank import +
+  //     match Wed/Sat, Express cross-check, bulk confirm.
+  //   คิวตรวจสอบ — exception queues (only lit badges need attention).
+  //   สรุป — reference views, no queue semantics.
+  // Per-role visibility unchanged from the flat bar; groups render only if non-empty.
+  type Tab = { key: View; label: string; icon: React.ReactNode; count?: number };
+  const billTab: Tab = { key: 'bills', label: 'บิลมือ', icon: <ReceiptText size={16} />, count: billAlerts };
+  const tabGroups: { caption: string; tabs: Tab[] }[] = (scope === 'billsOnly'
+    ? [{ caption: 'ออกบิล', tabs: [billTab] }]
     : [
-        { key: 'inbox', label: 'รายการรับเงิน', icon: <Inbox size={16} />, count: summary?.total },
-        // หัก ณ ที่จ่าย (WHT, task 2) — visible to every non-md Juno user (not CEO-gated,
-        // unlike รอยืนยันรับเงิน/รายงาน below). Its own totals bar covers the count.
-        { key: 'wht', label: 'หัก ณ ที่จ่าย', icon: <Percent size={16} /> },
-        { key: 'disc', label: 'ยอดเกิน/ขาด', icon: <Scale size={16} />, count: summary?.discrepancyOpen },
-        // เงินสด/เช็ค tab is CEO-only: it's where the CEO marks ได้รับเงินแล้ว (server 403s
-        // POST /receive for non-supervisor). Badge = cash/cheque still awaiting that confirm.
-        ...(isCeo ? [{ key: 'receive' as const, label: 'เงินสด/เช็ค', icon: <HandCoins size={16} />, count: summary?.awaitingReceive }] : []),
-        { key: 'flags', label: 'ปักธง', icon: <Flag size={16} />, count: summary?.flagged },
-        { key: 'recon', label: 'กระทบยอด', icon: <Scale size={16} />, count: bankUnmatched },
-        { key: 'reRecon', label: 'กระทบยอด RE', icon: <FileCheck size={16} /> },
-        ...(scope === 'full' ? [billTab] : []),
-        // ตรวจสอบยอด stays employee/supervisor-visible; only the CEO can resolve.
-        { key: 'audit', label: 'ตรวจสอบยอด', icon: <Banknote size={16} />, count: auditOpen },
-        ...(isCeo ? [{ key: 'reports' as const, label: 'รายงาน', icon: <BarChart3 size={16} /> }] : []),
-      ];
+        {
+          caption: 'ขั้น 1–2 · รับเงิน+ตรวจ',
+          tabs: [
+            // badge = รอตรวจ queue (actionable), not the all-time total the bar used to show
+            { key: 'inbox' as const, label: 'รายการรับเงิน', icon: <Inbox size={16} />, count: summary?.received },
+            ...(scope === 'full' ? [billTab] : []),
+          ],
+        },
+        {
+          caption: 'ขั้น 3–4 · จับคู่+ยืนยัน',
+          tabs: [
+            // เงินสด/เช็ค is CEO-only: it's where the CEO marks ได้รับเงินแล้ว (server 403s
+            // POST /receive for non-supervisor). Badge = still awaiting that confirm.
+            ...(isCeo ? [{ key: 'receive' as const, label: 'เงินสด/เช็ค', icon: <HandCoins size={16} />, count: summary?.awaitingReceive }] : []),
+            { key: 'recon' as const, label: 'กระทบยอดธนาคาร', icon: <Scale size={16} />, count: bankUnmatched },
+            { key: 'reRecon' as const, label: 'กระทบยอด RE', icon: <FileCheck size={16} /> },
+          ],
+        },
+        {
+          caption: 'คิวตรวจสอบ',
+          tabs: [
+            { key: 'flags' as const, label: 'ปักธง', icon: <Flag size={16} />, count: summary?.flagged },
+            { key: 'disc' as const, label: 'ยอดเกิน/ขาด', icon: <Scale size={16} />, count: summary?.discrepancyOpen },
+            // ตรวจสอบยอด stays employee/supervisor-visible; only the CEO can resolve.
+            { key: 'audit' as const, label: 'ตรวจสอบยอด', icon: <Banknote size={16} />, count: auditOpen },
+          ],
+        },
+        {
+          caption: 'สรุป',
+          tabs: [
+            // หัก ณ ที่จ่าย — visible to every non-md user; its own totals bar covers the count.
+            { key: 'wht' as const, label: 'หัก ณ ที่จ่าย', icon: <Percent size={16} /> },
+            ...(isCeo ? [{ key: 'reports' as const, label: 'รายงาน', icon: <BarChart3 size={16} /> }] : []),
+          ],
+        },
+      ]
+  ).filter((group) => group.tabs.length > 0);
 
   return (
     <div className="min-h-screen bg-slate-100 font-sans text-slate-800">
@@ -182,22 +215,31 @@ export default function Juno({ agent, onLogout }: { agent: Agent; onLogout: () =
             </button>
           </div>
         </div>
-        <div className="max-w-7xl mx-auto px-4 flex gap-1 overflow-x-auto">
-          {tabs.map((t) => (
-            <button
-              key={t.key}
-              onClick={() => setView(t.key)}
-              className={`flex items-center gap-1.5 px-3 py-2 text-sm font-medium border-b-2 whitespace-nowrap ${
-                view === t.key ? 'border-emerald-600 text-emerald-700' : 'border-transparent text-slate-500 hover:text-slate-700'
-              }`}
-            >
-              {t.icon} {t.label}
-              {typeof t.count === 'number' && t.count > 0 && (
-                <span className={`ml-1 px-1.5 rounded-full text-xs ${t.key === 'flags' || t.key === 'recon' || t.key === 'receive' || t.key === 'audit' || t.key === 'disc' || t.key === 'bills' ? 'bg-rose-100 text-rose-700' : 'bg-slate-100 text-slate-600'}`}>
-                  {t.count}
-                </span>
-              )}
-            </button>
+        {/* Height budget: caption 13px + py-1.5 buttons keeps the header at ~104px total, so
+            the drawers' sticky md:top-[104px] (Detail, BillDrawer) still clears exactly. */}
+        <div className="max-w-7xl mx-auto px-4 flex gap-3 overflow-x-auto">
+          {tabGroups.map((group, index) => (
+            <div key={group.caption} className={`flex flex-col shrink-0 ${index > 0 ? 'border-l border-slate-200 pl-3' : ''}`}>
+              <div className="text-[10px] leading-[13px] text-slate-400 whitespace-nowrap select-none">{group.caption}</div>
+              <div className="flex gap-1">
+                {group.tabs.map((t) => (
+                  <button
+                    key={t.key}
+                    onClick={() => setView(t.key)}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium border-b-2 whitespace-nowrap ${
+                      view === t.key ? 'border-emerald-600 text-emerald-700' : 'border-transparent text-slate-500 hover:text-slate-700'
+                    }`}
+                  >
+                    {t.icon} {t.label}
+                    {typeof t.count === 'number' && t.count > 0 && (
+                      <span className={`ml-1 px-1.5 rounded-full text-xs ${t.key === 'inbox' ? 'bg-slate-100 text-slate-600' : 'bg-rose-100 text-rose-700'}`}>
+                        {t.count}
+                      </span>
+                    )}
+                  </button>
+                ))}
+              </div>
+            </div>
           ))}
         </div>
       </header>

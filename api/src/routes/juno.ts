@@ -2009,8 +2009,14 @@ export async function junoRoutes(app: FastifyInstance) {
 
   // GET /api/juno/bank/summary — cards for the กระทบยอด tab.
   app.get('/api/juno/bank/summary', async () => {
-    const [unmatchedIn, matchedUnconfirmed, unreconciledVerified, lastKbiz, lastKshop] = await Promise.all([
+    // Rolling 31 days ≈ the actionable window for the Wed/Sat import cadence. The TAB BADGE
+    // uses this recent count — the full-history unmatched backlog (962+ lines nobody will
+    // ever match: pre-Juno history, K SHOP counter noise) made the badge meaningless as an
+    // attention signal (owner report 2026-07-14). The cards below keep the full totals.
+    const recentCutoff = new Date(Date.now() - 31 * 24 * 3600 * 1000);
+    const [unmatchedIn, unmatchedInRecent, matchedUnconfirmed, unreconciledVerified, lastKbiz, lastKshop] = await Promise.all([
       prisma.bankTxn.findMany({ where: { direction: 'in', matchStatus: 'unmatched' }, select: { amount: true } }),
+      prisma.bankTxn.count({ where: { direction: 'in', matchStatus: 'unmatched', txnAt: { gte: recentCutoff } } }),
       prisma.bankTxn.findMany({ where: { direction: 'in', matchStatus: 'matched', expressConfirmedAt: null }, select: { amount: true } }),
       prisma.payment.findMany({ where: { status: 'verified', reconciled: false }, select: { amount: true, verifiedAt: true, createdAt: true } }),
       prisma.bankImport.findFirst({ where: { source: 'kbiz' }, orderBy: { importedAt: 'desc' } }),
@@ -2024,6 +2030,8 @@ export async function junoRoutes(app: FastifyInstance) {
 
     return {
       unmatchedIn: { count: unmatchedIn.length, sum: sum(unmatchedIn) },
+      // tab-badge signal only (see recentCutoff note above) — cards keep the full backlog
+      unmatchedInRecent: { count: unmatchedInRecent },
       matchedUnconfirmed: { count: matchedUnconfirmed.length, sum: sum(matchedUnconfirmed) },
       verifiedUnreconciled: { count: unreconciledVerified.length, sum: sum(unreconciledVerified), oldestDays: Math.round(oldestDays) },
       lastImports: { kbiz: lastKbiz, kshop: lastKshop },

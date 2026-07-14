@@ -631,6 +631,9 @@ export interface TxnSuggestion {
 
 export interface BankSummary {
   unmatchedIn: { count: number; sum: number };
+  // unmatched "in" lines from the last ~31 days — the tab badge's attention signal (the
+  // full-history count above stays for the กระทบยอด cards). Optional: absent on a stale api.
+  unmatchedInRecent?: { count: number };
   matchedUnconfirmed: { count: number; sum: number };
   verifiedUnreconciled: { count: number; sum: number; oldestDays: number };
   lastImports: {
