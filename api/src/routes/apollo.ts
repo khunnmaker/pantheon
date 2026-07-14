@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { prisma } from '../db/prisma.js';
 import { requireAuth, requireApp } from '../auth/middleware.js';
 import { completeApolloTask, parseRecurrenceRule } from '../apollo/recurrence.js';
-import { CALENDAR_MAX_RANGE_DAYS, dateSchema, parseCalendarRange, parseDate, resolveCalendarAssignee } from '../apollo/calendarQuery.js';
+import { CALENDAR_MAX_RANGE_DAYS, buildEventData, dateSchema, eventDateRangeWhere, eventTimeSchema, maskEvent, parseCalendarRange, parseDate, resolveCalendarScope } from '../apollo/calendarQuery.js';
 import { notifyApolloAssignment, thaiDateKey } from '../apollo/notify.js';
 import { deleteApolloAttachment, readApolloAttachment, saveApolloAttachment } from '../apollo/attachmentStore.js';
 import { EMPLOYEES, TIER_ACCOUNTS, employeeEmail } from '../db/ensureSeeded.js';
@@ -33,6 +33,17 @@ const taskBody = z.object({
   customerRef: z.string().trim().max(300).nullable().optional(),
   recurrenceRule: recurrenceSchema.nullable().optional(),
 });
+// Same shape for create AND update — the EventModal always submits the whole form (there's no
+// partial-edit UI), so PATCH reuses this rather than a second .partial() schema with its own
+// provided/omitted tri-state to reason about.
+const eventBody = z.object({
+  title: z.string().trim().min(1).max(200),
+  note: z.string().max(5000).optional(),
+  date: dateSchema,
+  endDate: dateSchema.nullable().optional(),
+  startTime: eventTimeSchema.nullable().optional(),
+  endTime: eventTimeSchema.nullable().optional(),
+});
 
 const peopleSelect = { id: true, name: true, email: true, role: true } as const;
 const taskInclude = {
@@ -47,6 +58,12 @@ const calendarTaskSelect = {
   id: true, title: true, dueDate: true, priority: true, status: true, recurrenceRule: true, customerRef: true,
   project: { select: { id: true, name: true, color: true, archived: true } },
   assignee: { select: peopleSelect },
+} as const;
+// Raw projection for the calendar's events — title/note ARE selected here (the DB read is
+// unfiltered); maskEvent() strips them for non-owners afterward, in application code, never here.
+const calendarEventSelect = {
+  id: true, agentId: true, title: true, note: true, date: true, endDate: true, startTime: true, endTime: true,
+  agent: { select: peopleSelect },
 } as const;
 
 function manager(req: FastifyRequest): boolean {
@@ -336,6 +353,37 @@ export async function apolloRoutes(app: FastifyInstance) {
     return { ok: true };
   });
 
+  // ── ApolloEvent: private personal events (นัดหมอ, ธุระส่วนตัว) ──────────
+  // Owner-only CRUD, no manager bypass anywhere here — the manager exception that governs
+  // task delete/comment-delete/attachment-delete deliberately does NOT apply to events; see the
+  // spec's hard rule. All three use the same 404-for-both-missing-and-forbidden shape as the
+  // rest of this file (canReadTask etc.) so a probe can't tell "not yours" from "doesn't exist".
+  app.post('/api/apollo/events', async (req, reply) => {
+    const parsed = eventBody.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'invalid_body' });
+    const data = buildEventData(parsed.data);
+    if (!data) return reply.code(400).send({ error: 'invalid_body' });
+    // agentId always the caller — never accepted from the body.
+    return reply.code(201).send(await prisma.apolloEvent.create({ data: { ...data, agentId: req.agent!.id } }));
+  });
+
+  app.patch<{ Params: { id: string } }>('/api/apollo/events/:id', async (req, reply) => {
+    const existing = await prisma.apolloEvent.findUnique({ where: { id: req.params.id }, select: { agentId: true } });
+    if (!existing || existing.agentId !== req.agent!.id) return reply.code(404).send({ error: 'not_found' });
+    const parsed = eventBody.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'invalid_body' });
+    const data = buildEventData(parsed.data);
+    if (!data) return reply.code(400).send({ error: 'invalid_body' });
+    return prisma.apolloEvent.update({ where: { id: req.params.id }, data });
+  });
+
+  app.delete<{ Params: { id: string } }>('/api/apollo/events/:id', async (req, reply) => {
+    const existing = await prisma.apolloEvent.findUnique({ where: { id: req.params.id }, select: { agentId: true } });
+    if (!existing || existing.agentId !== req.agent!.id) return reply.code(404).send({ error: 'not_found' });
+    await prisma.apolloEvent.delete({ where: { id: req.params.id } });
+    return { ok: true };
+  });
+
   app.get('/api/apollo/my-tasks', async (req) => {
     const today = thaiDateKey();
     const tasks = await prisma.apolloTask.findMany({
@@ -356,20 +404,36 @@ export async function apolloRoutes(app: FastifyInstance) {
     if (!parsed.success) return reply.code(400).send({ error: 'invalid_query' });
     const range = parseCalendarRange(parsed.data.from, parsed.data.to);
     if (!range) return reply.code(400).send({ error: `invalid_range_or_exceeds_${CALENDAR_MAX_RANGE_DAYS}_days` });
-    // Server-side force: employees always get their own id, never trusting the query param.
-    const assigneeId = resolveCalendarAssignee(manager(req), req.agent!.id, parsed.data.assignee);
+    const viewerId = req.agent!.id;
+    // Peers may now scope to a colleague/'all'/'none' to check availability — but (unlike a
+    // manager) that widened scope is ALSO member-project-restricted for tasks, so no new task
+    // info leaks beyond what the board already shows them. Self scope is unchanged from before.
+    const scope = resolveCalendarScope(manager(req), viewerId, parsed.data.assignee);
     const tasks = await prisma.apolloTask.findMany({
       where: {
         completedAt: null,
         dueDate: { gte: range.from, lte: range.to },
-        project: { archived: false },
-        ...(assigneeId === undefined ? {} : { assigneeId }),
+        project: scope.memberProjectOnly ? { archived: false, members: { some: { agentId: viewerId } } } : { archived: false },
+        ...(scope.assigneeId === undefined ? {} : { assigneeId: scope.assigneeId }),
       },
       select: calendarTaskSelect,
       orderBy: { dueDate: 'asc' },
       take: 500,
     });
-    return { tasks };
+    // Events are always owned, so a 'none' (unassigned) scope can never match one — skip the
+    // query rather than ask Prisma to filter a required column against null. No member-project
+    // restriction here (see resolveCalendarScope's doc) — free/busy is team-wide by design, and
+    // masking (not scoping) is what keeps title/note private.
+    const events = scope.assigneeId === null ? [] : (await prisma.apolloEvent.findMany({
+      where: {
+        ...eventDateRangeWhere(range.from, range.to),
+        ...(scope.assigneeId === undefined ? {} : { agentId: scope.assigneeId }),
+      },
+      select: calendarEventSelect,
+      orderBy: { date: 'asc' },
+      take: 500,
+    })).map((event) => maskEvent(event, viewerId));
+    return { tasks, events };
   });
 
   app.get('/api/apollo/dashboard', async (req, reply) => {

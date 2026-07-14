@@ -65,3 +65,23 @@ export function monthGrid(year: number, month: number): CalendarCell[] {
     return { year: d.getFullYear(), month: d.getMonth(), day: d.getDate(), inMonth: d.getMonth() === month && d.getFullYear() === year };
   });
 }
+
+// Expands a (possibly multi-day) private event's [date, endDate] into every YYYY-MM-DD key it
+// should render a chip on. Unlike the grid math above, this walks in pinned-UTC epoch ms (both
+// endpoints parsed with an explicit "Z") rather than local-time Date construction — since it
+// never mixes the two, it's safe from the toISOString local-offset drift the grid math avoids
+// by NOT using toISOString; here every step is UTC in and UTC out. date/endDate come straight
+// off the API's @db.Date ISO strings. Capped defensively at the server's own multi-day span
+// limit so a bad row can never spin the loop.
+const MAX_EVENT_SPAN_DAYS = 62;
+export function eventDayKeys(date: string, endDate: string | null): string[] {
+  const startKey = date.slice(0, 10);
+  const endKey = (endDate ?? date).slice(0, 10);
+  const keys: string[] = [];
+  let t = new Date(`${startKey}T00:00:00.000Z`).getTime();
+  const endT = new Date(`${endKey}T00:00:00.000Z`).getTime();
+  for (let i = 0; t <= endT && i <= MAX_EVENT_SPAN_DAYS; i += 1, t += 86_400_000) {
+    keys.push(new Date(t).toISOString().slice(0, 10));
+  }
+  return keys;
+}

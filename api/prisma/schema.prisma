@@ -142,6 +142,7 @@ model Agent {
   apolloAssignedTasks      ApolloTask[]          @relation("ApolloTaskAssignee")
   apolloComments           ApolloComment[]
   apolloAttachments        ApolloAttachment[]
+  apolloEvents             ApolloEvent[]
 }
 
 // ─── Apollo: employee work management ──────────────────────────────────────
@@ -230,6 +231,29 @@ model ApolloAttachment {
   createdAt    DateTime   @default(now())
 
   @@index([taskId, createdAt])
+}
+
+// Private personal event on a member's own calendar (นัดหมอ, ธุระส่วนตัว) — see
+// docs/APOLLO_EVENTS spec. Owner sees title/note; everyone else (managers included, no role
+// bypass) only ever gets an anonymous "ไม่ว่าง" busy block — enforced by masking in
+// apollo/calendarQuery.ts's maskEvent, never by hiding rows here. onDelete: Cascade so a
+// removed Agent takes their private events with them (unlike ApolloTask.assignee, which just
+// SetNulls — an orphaned personal event owned by nobody has no meaning).
+model ApolloEvent {
+  id        String    @id @default(cuid())
+  agentId   String
+  agent     Agent     @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  title     String
+  note      String    @default("")
+  date      DateTime  @db.Date
+  endDate   DateTime? @db.Date // multi-day span end (inclusive); null = single-day event
+  startTime String? // wall-clock "HH:MM", optional
+  endTime   String? // wall-clock "HH:MM", optional — requires startTime, must be later
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@index([agentId, date])
+  @@index([date])
 }
 
 model KbEntry {

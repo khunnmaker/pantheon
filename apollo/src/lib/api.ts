@@ -1,5 +1,5 @@
 import type { AppName } from '@pantheon/ui';
-import type { Agent, Attachment, CalendarTask, Comment, Person, Project, Task, TaskInput } from '../types';
+import type { Agent, ApolloEvent, Attachment, CalendarEvent, CalendarTask, Comment, EventInput, Person, Project, Task, TaskInput } from '../types';
 export type { AppName };
 
 export const API_URL: string = import.meta.env.VITE_API_URL ?? 'http://localhost:3000';
@@ -45,7 +45,10 @@ export const uploadAttachment = (id: string, body: { dataB64: string; fileName: 
 export const deleteAttachment = (id: string) => authed(`/api/apollo/attachments/${id}`, { method: 'DELETE' });
 export async function downloadAttachment(a: Attachment) { const res = await fetch(`${API_URL}/api/apollo/attachments/${a.id}/content`, { headers: { authorization: `Bearer ${getToken()}` } }); if (!res.ok) throw new Error('download_failed'); const url = URL.createObjectURL(await res.blob()); const link = document.createElement('a'); link.href = url; link.download = a.fileName; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); }
 export const getMyTasks = () => authed<{ overdue: Task[]; today: Task[]; upcoming: Task[] }>('/api/apollo/my-tasks');
-export const getCalendar = (from: string, to: string, assignee?: string) => authed<{ tasks: CalendarTask[] }>(`/api/apollo/calendar?${new URLSearchParams({ from, to, ...(assignee ? { assignee } : {}) }).toString()}`);
+export const getCalendar = (from: string, to: string, assignee?: string) => authed<{ tasks: CalendarTask[]; events: CalendarEvent[] }>(`/api/apollo/calendar?${new URLSearchParams({ from, to, ...(assignee ? { assignee } : {}) }).toString()}`);
+export const addEvent = (body: EventInput) => authed<ApolloEvent>('/api/apollo/events', { method: 'POST', body: JSON.stringify(body) });
+export const updateEvent = (id: string, body: EventInput) => authed<ApolloEvent>(`/api/apollo/events/${id}`, { method: 'PATCH', body: JSON.stringify(body) });
+export const deleteEvent = (id: string) => authed(`/api/apollo/events/${id}`, { method: 'DELETE' });
 export const getDashboard = () => authed<{ people: (Person & { open: number; overdue: number })[]; projects: (Pick<Project, 'id' | 'name' | 'color' | 'columns'> & { statuses: Record<string, number> })[] }>('/api/apollo/dashboard');
 export const getLineBind = () => authed<{ bound: boolean; code: string | null }>('/api/apollo/line-bind');
 export const generateLineBind = () => authed<{ bound: boolean; code: string }>('/api/apollo/line-bind', { method: 'POST' });

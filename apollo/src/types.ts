@@ -27,3 +27,22 @@ export interface CalendarTask {
   recurrenceRule: RecurrenceRule | null; customerRef: string | null;
   project: Pick<Project, 'id' | 'name' | 'color' | 'archived'>; assignee: Person | null;
 }
+
+// Private personal event (นัดหมอ, ธุระส่วนตัว), as returned by GET /api/apollo/calendar's
+// `events` (see api/src/apollo/calendarQuery.ts maskEvent). The server strips title/note for
+// every event that isn't the viewer's own — genuinely absent from the payload, not just blank —
+// so `own` is what the UI branches on, and title/note only ever show up when it's true.
+export interface CalendarEvent {
+  id: string; agentId: string; date: string; endDate: string | null;
+  startTime: string | null; endTime: string | null; own: boolean;
+  title?: string; note?: string; assignee?: Person;
+}
+// POST /api/apollo/events + PATCH /api/apollo/events/:id body — the same full shape for both
+// (the EventModal always submits the whole form; see apollo.ts's eventBody for why).
+export interface EventInput { title: string; note?: string; date: string; endDate?: string | null; startTime?: string | null; endTime?: string | null }
+// Raw row returned by the CRUD endpoints themselves (always the owner's own event, so no
+// mask/own/assignee — distinct from the calendar's read-shaped CalendarEvent above).
+export interface ApolloEvent {
+  id: string; agentId: string; title: string; note: string; date: string; endDate: string | null;
+  startTime: string | null; endTime: string | null; createdAt: string; updatedAt: string;
+}

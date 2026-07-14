@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { CALENDAR_MAX_RANGE_DAYS, parseCalendarRange, resolveCalendarAssignee } from '../src/apollo/calendarQuery.js';
+import {
+  CALENDAR_MAX_RANGE_DAYS, buildEventData, eventDateRangeWhere, eventOverlapsRange, eventTimeSchema,
+  maskEvent, parseCalendarRange, parseDate, resolveCalendarScope, validEventDateRange, validEventTimeRange,
+} from '../src/apollo/calendarQuery.js';
 
 describe('Apollo calendar date-range validation', () => {
   it('accepts a range up to and including the 62-day cap, rejects anything past it', () => {
@@ -20,18 +23,161 @@ describe('Apollo calendar date-range validation', () => {
   });
 });
 
-describe('Apollo calendar assignee scoping', () => {
-  it('forces employees to themselves no matter what the assignee param says', () => {
-    expect(resolveCalendarAssignee(false, 'self-1', 'someone-else')).toBe('self-1');
-    expect(resolveCalendarAssignee(false, 'self-1', 'all')).toBe('self-1');
-    expect(resolveCalendarAssignee(false, 'self-1', 'none')).toBe('self-1');
-    expect(resolveCalendarAssignee(false, 'self-1', undefined)).toBe('self-1');
+describe('Apollo calendar scope resolution (resolveCalendarScope)', () => {
+  it('manager scope is unchanged: one agent, unassigned-only, or everyone — never member-restricted', () => {
+    expect(resolveCalendarScope(true, 'mgr-1', 'agent-9')).toEqual({ assigneeId: 'agent-9', memberProjectOnly: false });
+    expect(resolveCalendarScope(true, 'mgr-1', 'none')).toEqual({ assigneeId: null, memberProjectOnly: false });
+    expect(resolveCalendarScope(true, 'mgr-1', 'all')).toEqual({ assigneeId: undefined, memberProjectOnly: false });
+    expect(resolveCalendarScope(true, 'mgr-1', undefined)).toEqual({ assigneeId: undefined, memberProjectOnly: false });
   });
 
-  it('lets managers scope to one agent, unassigned-only, or everyone', () => {
-    expect(resolveCalendarAssignee(true, 'mgr-1', 'agent-9')).toBe('agent-9');
-    expect(resolveCalendarAssignee(true, 'mgr-1', 'none')).toBeNull();
-    expect(resolveCalendarAssignee(true, 'mgr-1', 'all')).toBeUndefined();
-    expect(resolveCalendarAssignee(true, 'mgr-1', undefined)).toBeUndefined();
+  it('employee self scope (omitted param or own id) stays unrestricted by project membership — the old forced-to-self behavior', () => {
+    expect(resolveCalendarScope(false, 'self-1', undefined)).toEqual({ assigneeId: 'self-1', memberProjectOnly: false });
+    expect(resolveCalendarScope(false, 'self-1', 'self-1')).toEqual({ assigneeId: 'self-1', memberProjectOnly: false });
+  });
+
+  it('employee peer/all/none scope is now HONORED but carries the member-project clause', () => {
+    expect(resolveCalendarScope(false, 'self-1', 'agent-9')).toEqual({ assigneeId: 'agent-9', memberProjectOnly: true });
+    expect(resolveCalendarScope(false, 'self-1', 'all')).toEqual({ assigneeId: undefined, memberProjectOnly: true });
+    expect(resolveCalendarScope(false, 'self-1', 'none')).toEqual({ assigneeId: null, memberProjectOnly: true });
+  });
+});
+
+describe('Apollo event masking (maskEvent) strips title/note for non-owners', () => {
+  const agent = { id: 'owner-1', name: 'Owner One', email: 'owner@prominent.local', role: 'employee' };
+  const raw = {
+    id: 'evt-1', agentId: 'owner-1', title: 'หมอฟัน', note: 'คลินิกบางนา',
+    date: new Date('2026-07-20T00:00:00.000Z'), endDate: null,
+    startTime: '09:00', endTime: '10:00', agent,
+  };
+
+  it('keeps title/note when the viewer IS the owner, and marks own: true', () => {
+    const masked = maskEvent(raw, 'owner-1');
+    expect(masked.own).toBe(true);
+    expect(masked.title).toBe('หมอฟัน');
+    expect(masked.note).toBe('คลินิกบางนา');
+    expect(masked.assignee).toEqual(agent);
+  });
+
+  it('genuinely omits title/note (not just blanks them) when the viewer is NOT the owner', () => {
+    const masked = maskEvent(raw, 'someone-else');
+    expect(masked.own).toBe(false);
+    expect(masked).not.toHaveProperty('title');
+    expect(masked).not.toHaveProperty('note');
+    expect(Object.keys(masked).sort()).toEqual(['agentId', 'assignee', 'date', 'endDate', 'endTime', 'id', 'own', 'startTime'].sort());
+    // free/busy fields (who + when) still come through — that's the point of the feature.
+    expect(masked.assignee).toEqual(agent);
+    expect(masked.startTime).toBe('09:00');
+  });
+
+  it('never bypasses the mask for a manager viewer — no role bypass', () => {
+    const masked = maskEvent(raw, 'manager-1');
+    expect(masked).not.toHaveProperty('title');
+    expect(masked).not.toHaveProperty('note');
+  });
+});
+
+describe('Apollo event date-overlap logic for multi-day events (eventOverlapsRange)', () => {
+  const from = new Date('2026-07-01T00:00:00.000Z');
+  const to = new Date('2026-07-31T00:00:00.000Z');
+
+  it('single-day events at/inside/outside the range boundaries', () => {
+    expect(eventOverlapsRange(new Date('2026-07-01T00:00:00.000Z'), null, from, to)).toBe(true); // exactly at from
+    expect(eventOverlapsRange(new Date('2026-07-31T00:00:00.000Z'), null, from, to)).toBe(true); // exactly at to
+    expect(eventOverlapsRange(new Date('2026-07-15T00:00:00.000Z'), null, from, to)).toBe(true); // inside
+    expect(eventOverlapsRange(new Date('2026-06-30T00:00:00.000Z'), null, from, to)).toBe(false); // before
+    expect(eventOverlapsRange(new Date('2026-08-01T00:00:00.000Z'), null, from, to)).toBe(false); // after
+  });
+
+  it('multi-day events straddling either boundary overlap', () => {
+    // starts before the month, ends inside it
+    expect(eventOverlapsRange(new Date('2026-06-28T00:00:00.000Z'), new Date('2026-07-03T00:00:00.000Z'), from, to)).toBe(true);
+    // starts inside the month, ends after it
+    expect(eventOverlapsRange(new Date('2026-07-29T00:00:00.000Z'), new Date('2026-08-02T00:00:00.000Z'), from, to)).toBe(true);
+    // spans clean over the whole month on both sides
+    expect(eventOverlapsRange(new Date('2026-06-01T00:00:00.000Z'), new Date('2026-08-31T00:00:00.000Z'), from, to)).toBe(true);
+  });
+
+  it('multi-day events entirely outside the range do not overlap', () => {
+    expect(eventOverlapsRange(new Date('2026-06-01T00:00:00.000Z'), new Date('2026-06-20T00:00:00.000Z'), from, to)).toBe(false);
+    expect(eventOverlapsRange(new Date('2026-08-05T00:00:00.000Z'), new Date('2026-08-20T00:00:00.000Z'), from, to)).toBe(false);
+  });
+
+  it('eventDateRangeWhere translates the same rule into a Prisma where-fragment', () => {
+    expect(eventDateRangeWhere(from, to)).toEqual({
+      date: { lte: to },
+      OR: [
+        { endDate: null, date: { gte: from } },
+        { endDate: { gte: from } },
+      ],
+    });
+  });
+});
+
+describe('Apollo event time validation (validEventTimeRange, eventTimeSchema)', () => {
+  it('accepts a valid 24h "HH:MM" and rejects malformed strings', () => {
+    expect(eventTimeSchema.safeParse('09:00').success).toBe(true);
+    expect(eventTimeSchema.safeParse('23:59').success).toBe(true);
+    expect(eventTimeSchema.safeParse('00:00').success).toBe(true);
+    expect(eventTimeSchema.safeParse('24:00').success).toBe(false); // hour out of range
+    expect(eventTimeSchema.safeParse('9:00').success).toBe(false); // not zero-padded
+    expect(eventTimeSchema.safeParse('09:60').success).toBe(false); // minute out of range
+    expect(eventTimeSchema.safeParse('').success).toBe(false);
+  });
+
+  it('endTime absent is always valid, regardless of startTime', () => {
+    expect(validEventTimeRange(null, null)).toBe(true);
+    expect(validEventTimeRange('09:00', null)).toBe(true);
+  });
+
+  it('endTime present requires startTime, and must be strictly later', () => {
+    expect(validEventTimeRange(null, '10:00')).toBe(false); // endTime without startTime
+    expect(validEventTimeRange('10:00', '09:00')).toBe(false); // endTime before startTime
+    expect(validEventTimeRange('10:00', '10:00')).toBe(false); // equal — must be strictly later
+    expect(validEventTimeRange('09:00', '10:00')).toBe(true);
+  });
+});
+
+describe('Apollo event date-range validation (validEventDateRange)', () => {
+  it('no endDate is always valid', () => {
+    expect(validEventDateRange(new Date('2026-07-20T00:00:00.000Z'), null)).toBe(true);
+  });
+
+  it('endDate must be on/after date, within the 62-day cap', () => {
+    const date = new Date('2026-07-20T00:00:00.000Z');
+    expect(validEventDateRange(date, new Date('2026-07-19T00:00:00.000Z'))).toBe(false); // before date
+    expect(validEventDateRange(date, date)).toBe(true); // same day
+    const atCap = new Date(date.getTime() + CALENDAR_MAX_RANGE_DAYS * 86_400_000);
+    const overCap = new Date(date.getTime() + (CALENDAR_MAX_RANGE_DAYS + 1) * 86_400_000);
+    expect(validEventDateRange(date, atCap)).toBe(true);
+    expect(validEventDateRange(date, overCap)).toBe(false);
+  });
+});
+
+describe('Apollo buildEventData — shared POST/PATCH validation + parsing', () => {
+  it('parses a minimal valid event', () => {
+    const result = buildEventData({ title: 'นัดหมอ', date: '2026-07-20' });
+    expect(result).toEqual({
+      title: 'นัดหมอ', note: '', date: parseDate('2026-07-20'), endDate: null, startTime: null, endTime: null,
+    });
+  });
+
+  it('rejects an invalid calendar date', () => {
+    expect(buildEventData({ title: 'x', date: '2026-02-30' })).toBeNull();
+  });
+
+  it('rejects endDate before date', () => {
+    expect(buildEventData({ title: 'x', date: '2026-07-20', endDate: '2026-07-19' })).toBeNull();
+  });
+
+  it('rejects endTime without startTime', () => {
+    expect(buildEventData({ title: 'x', date: '2026-07-20', endTime: '10:00' })).toBeNull();
+  });
+
+  it('accepts a full multi-day, timed event', () => {
+    const result = buildEventData({ title: 'สัมมนา', note: 'ห้องประชุมใหญ่', date: '2026-07-20', endDate: '2026-07-22', startTime: '09:00', endTime: '17:00' });
+    expect(result).toEqual({
+      title: 'สัมมนา', note: 'ห้องประชุมใหญ่', date: parseDate('2026-07-20'), endDate: parseDate('2026-07-22'), startTime: '09:00', endTime: '17:00',
+    });
   });
 });
