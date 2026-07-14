@@ -7,6 +7,14 @@ import { requireAuth, requireApp } from '../auth/middleware.js';
 import { completeApolloTask, parseRecurrenceRule } from '../apollo/recurrence.js';
 import { notifyApolloAssignment, thaiDateKey } from '../apollo/notify.js';
 import { deleteApolloAttachment, readApolloAttachment, saveApolloAttachment } from '../apollo/attachmentStore.js';
+import { EMPLOYEES, TIER_ACCOUNTS, employeeEmail } from '../db/ensureSeeded.js';
+
+// Roster email → display gender (see ensureSeeded.ts) — UI-only metadata for the board's avatar
+// polish (§0 of the Apollo UI spec). Built once from the static roster consts.
+const GENDER_BY_EMAIL = new Map<string, 'male' | 'female'>([
+  ...TIER_ACCOUNTS.map((t) => [t.email, t.gender] as const),
+  ...EMPLOYEES.map((e) => [employeeEmail(e.slug), e.gender] as const),
+]);
 
 const prioritySchema = z.enum(['urgent', 'high', 'normal', 'low']);
 const recurrenceSchema = z.discriminatedUnion('freq', [
@@ -72,11 +80,11 @@ export async function apolloRoutes(app: FastifyInstance) {
   app.addHook('onRequest', requireApp('apollo'));
 
   app.get('/api/apollo/agents', async () => ({
-    agents: await prisma.agent.findMany({
+    agents: (await prisma.agent.findMany({
       where: { OR: [{ role: { in: ['supervisor', 'md'] } }, { apps: { has: 'apollo' } }] },
       select: peopleSelect,
       orderBy: { name: 'asc' },
-    }),
+    })).map((a) => ({ ...a, gender: GENDER_BY_EMAIL.get(a.email) ?? 'male' })),
   }));
 
   app.get('/api/apollo/projects', async (req) => ({

@@ -1,7 +1,9 @@
 export type Role = 'supervisor' | 'md' | 'employee';
 export type Priority = 'urgent' | 'high' | 'normal' | 'low';
 export interface Agent { id: string; email: string; name: string; role: Role; apps: string[] }
-export interface Person { id: string; email: string; name: string; role: Role }
+// gender is only populated on the agents list from GET /api/apollo/agents (roster lookup, §0 of
+// the polish spec) — other Person-shaped payloads (assignee/author/uploadedBy) omit it.
+export interface Person { id: string; email: string; name: string; role: Role; gender?: 'male' | 'female' }
 export type RecurrenceRule = { freq: 'daily' } | { freq: 'weekly'; weekday: number } | { freq: 'monthly'; dayOfMonth: number };
 export interface ProjectMember { id: string; agentId: string; agent: Person }
 export interface Project { id: string; name: string; color: string; columns: string[]; archived: boolean; members: ProjectMember[]; _count?: { tasks: number }; tasks?: Task[] }

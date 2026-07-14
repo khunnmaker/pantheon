@@ -2,12 +2,12 @@ import { useEffect, useState } from 'react';
 import { CheckCircle2, Download, Loader2, Paperclip, Send, Trash2, X } from 'lucide-react';
 import type { Agent, Person, Priority, Project, RecurrenceRule, Task, TaskInput } from './types';
 import { addComment, completeTask, createTask, deleteAttachment, deleteComment, deleteTask, downloadAttachment, fileToBase64, getTask, updateTask, uploadAttachment } from './lib/api';
+import { PRIORITY_META, agentAvatar } from './lib/ui';
 
-const priorityLabel: Record<Priority, string> = { urgent: 'ด่วนที่สุด', high: 'สูง', normal: 'ปกติ', low: 'ต่ำ' };
 const today = () => new Date().toLocaleDateString('en-CA');
 
-export default function TaskModal({ taskId, project, agents, me, onClose, onChanged }: {
-  taskId: string | null; project: Project | null; agents: Person[]; me: Agent;
+export default function TaskModal({ taskId, project, agents, me, initialStatus, onClose, onChanged }: {
+  taskId: string | null; project: Project | null; agents: Person[]; me: Agent; initialStatus?: string;
   onClose: () => void; onChanged: () => void;
 }) {
   const [task, setTask] = useState<Task | null>(null);
@@ -16,7 +16,7 @@ export default function TaskModal({ taskId, project, agents, me, onClose, onChan
   const [error, setError] = useState('');
   const [title, setTitle] = useState(''); const [notes, setNotes] = useState('');
   const [assigneeId, setAssigneeId] = useState<string | null>(null); const [dueDate, setDueDate] = useState(today());
-  const [priority, setPriority] = useState<Priority>('normal'); const [status, setStatus] = useState(project?.columns[0] ?? 'To do');
+  const [priority, setPriority] = useState<Priority>('normal'); const [status, setStatus] = useState(initialStatus ?? project?.columns[0] ?? 'To do');
   const [customerRef, setCustomerRef] = useState(''); const [freq, setFreq] = useState<'none' | 'daily' | 'weekly' | 'monthly'>('none');
   const [weekday, setWeekday] = useState(new Date().getDay()); const [dayOfMonth, setDayOfMonth] = useState(new Date().getDate());
   const [comment, setComment] = useState('');
@@ -64,7 +64,7 @@ export default function TaskModal({ taskId, project, agents, me, onClose, onChan
       <div className="grid gap-3 sm:grid-cols-2">
         <Field label="ผู้รับผิดชอบ"><select className="input" value={assigneeId ?? ''} onChange={(e) => setAssigneeId(e.target.value || null)}><option value="">ยังไม่มอบหมาย</option>{agents.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}</select></Field>
         <Field label="กำหนดส่ง"><input type="date" className="input" value={dueDate} onChange={(e) => setDueDate(e.target.value)}/></Field>
-        <Field label="ความสำคัญ"><select className="input" value={priority} onChange={(e) => setPriority(e.target.value as Priority)}>{Object.entries(priorityLabel).map(([key, value]) => <option key={key} value={key}>{value}</option>)}</select></Field>
+        <Field label="ความสำคัญ"><div className="flex flex-wrap gap-1.5">{(Object.keys(PRIORITY_META) as Priority[]).map((key) => { const meta = PRIORITY_META[key]; const active = priority === key; return <button type="button" key={key} onClick={() => setPriority(key)} className={`inline-flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-xs font-medium ${active ? `border-transparent ${meta.chip} ring-2 ${meta.ring}` : 'border-slate-200 text-slate-500 hover:border-slate-300'}`}><meta.icon size={12}/>{meta.label}</button>; })}</div></Field>
         <Field label="สถานะ"><select className="input" value={status} onChange={(e) => setStatus(e.target.value)}>{columns.map((c) => <option key={c}>{c}</option>)}</select></Field>
       </div>
       <label className="label">อ้างอิงลูกค้า (ถ้ามี)</label><input className="input" value={customerRef} onChange={(e) => setCustomerRef(e.target.value)}/>
@@ -85,7 +85,7 @@ export default function TaskModal({ taskId, project, agents, me, onClose, onChan
         <section className="mt-7 border-t border-slate-200 pt-5"><div className="flex items-center justify-between"><h3 className="font-bold">ไฟล์แนบ</h3><label className="btn cursor-pointer border border-slate-200"><Paperclip size={15}/> แนบไฟล์<input type="file" className="hidden" onChange={(e) => { const file = e.currentTarget.files?.[0]; if (file) void attach(file); e.currentTarget.value = ''; }}/></label></div>
           <div className="mt-2 space-y-2">{task?.attachments?.map((a) => <div key={a.id} className="flex items-center gap-2 rounded-lg bg-slate-50 px-3 py-2 text-sm"><Paperclip size={14}/><span className="min-w-0 flex-1 truncate">{a.fileName}</span><button aria-label="ดาวน์โหลด" onClick={() => void downloadAttachment(a)}><Download size={15}/></button>{(a.uploadedById === me.id || me.role !== 'employee') && <button aria-label="ลบไฟล์" onClick={async () => { await deleteAttachment(a.id); await reload(); }} className="text-rose-500"><Trash2 size={15}/></button>}</div>)}</div>
         </section>
-        <section className="mt-6 border-t border-slate-200 pt-5"><h3 className="font-bold">ความคิดเห็น</h3><div className="mt-3 space-y-3">{task?.comments?.map((c) => <div key={c.id} className="rounded-xl bg-slate-50 p-3 text-sm"><div className="flex justify-between text-xs text-slate-500"><span className="font-semibold">{c.author.name}</span>{(c.authorId === me.id || me.role !== 'employee') && <button onClick={async () => { await deleteComment(c.id); await reload(); }} className="text-rose-500">ลบ</button>}</div><p className="mt-1 whitespace-pre-wrap">{c.body}</p></div>)}</div>
+        <section className="mt-6 border-t border-slate-200 pt-5"><h3 className="font-bold">ความคิดเห็น</h3><div className="mt-3 space-y-3">{task?.comments?.map((c) => <div key={c.id} className="rounded-xl bg-slate-50 p-3 text-sm"><div className="flex items-center justify-between text-xs text-slate-500"><span className="flex items-center gap-1.5 font-semibold text-slate-700"><img src={agentAvatar(c.author, agents)} alt="" className="h-[18px] w-[18px] rounded-full"/>{c.author.name}</span>{(c.authorId === me.id || me.role !== 'employee') && <button onClick={async () => { await deleteComment(c.id); await reload(); }} className="text-rose-500">ลบ</button>}</div><p className="mt-1 whitespace-pre-wrap">{c.body}</p></div>)}</div>
           <div className="mt-3 flex gap-2"><input className="input" value={comment} onChange={(e) => setComment(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && void sendComment()} placeholder="เขียนความคิดเห็น…"/><button aria-label="ส่ง" onClick={() => void sendComment()} className="btn-primary"><Send size={16}/></button></div>
         </section>
       </>}
