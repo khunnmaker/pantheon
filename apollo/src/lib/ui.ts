@@ -48,6 +48,10 @@ export function agentAvatar(person: Pick<Person, 'id' | 'email'>, agents: Person
   return memberAvatar(person.email, genderOf(person.id, agents));
 }
 
+// Short Thai weekday labels, Sunday-first — shared by the grid header and QuickCreate's
+// human-readable date summaries so the abbreviation never drifts between the two call sites.
+export const WEEKDAYS_SHORT = ['อา', 'จ', 'อ', 'พ', 'พฤ', 'ศ', 'ส'];
+
 // Calendar month math — manual y/m/d string building (never toISOString) so the grid and its
 // API range never drift a day off the browser's local timezone offset.
 export function pad2(n: number): string { return String(n).padStart(2, '0'); }
@@ -84,4 +88,21 @@ export function eventDayKeys(date: string, endDate: string | null): string[] {
     keys.push(new Date(t).toISOString().slice(0, 10));
   }
   return keys;
+}
+
+// Google-Calendar-style anchored popover placement: prefer flush below-right of the clicked
+// anchor, flip above when it would overflow the bottom edge and flip left-aligned (right edges
+// aligned) when it would overflow the right edge, then clamp into an 8px viewport margin either
+// way. Pure + deterministic (no DOM reads) so QuickCreate can call it on mount, scroll, and
+// resize alike without this file ever touching the DOM itself.
+export function quickCreatePosition(anchor: DOMRect, size: { w: number; h: number }, viewport: { w: number; h: number }): { top: number; left: number } {
+  const MARGIN = 8;
+  const GAP = 4;
+  let top = anchor.bottom + GAP;
+  if (top + size.h > viewport.h - MARGIN) top = anchor.top - size.h - GAP;
+  let left = anchor.left;
+  if (left + size.w > viewport.w - MARGIN) left = anchor.right - size.w;
+  const maxTop = Math.max(MARGIN, viewport.h - size.h - MARGIN);
+  const maxLeft = Math.max(MARGIN, viewport.w - size.w - MARGIN);
+  return { top: Math.min(Math.max(top, MARGIN), maxTop), left: Math.min(Math.max(left, MARGIN), maxLeft) };
 }

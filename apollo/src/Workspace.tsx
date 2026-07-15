@@ -62,7 +62,7 @@ export default function Workspace({ agent, onLogout }: { agent: Agent; onLogout:
           : view === 'board' ? <Board project={project} agents={agents} isManager={isManager} onOpen={openTask} onMoved={() => void loadProject()} onNewTask={(status) => newTask(status)} onNewProject={() => setNewProjectOpen(true)}/>
           : view === 'list' ? <TaskList project={project} agents={agents} onOpen={openTask}/>
           : view === 'mine' ? <MyTasks agents={agents} onOpen={openTask}/>
-          : view === 'calendar' ? <CalendarView agents={agents} me={agent} isManager={isManager} onOpen={openTask}/>
+          : view === 'calendar' ? <CalendarView agents={agents} me={agent} isManager={isManager} onOpen={openTask} projects={projects}/>
           : view === 'dashboard' && isManager ? <Dashboard agents={agents}/> : <LineSettings/>}
       </main>
     </div>

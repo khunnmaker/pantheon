@@ -6,8 +6,10 @@ import { PRIORITY_META, agentAvatar } from './lib/ui';
 
 const today = () => new Date().toLocaleDateString('en-CA');
 
-export default function TaskModal({ taskId, project, agents, me, initialStatus, onClose, onChanged }: {
-  taskId: string | null; project: Project | null; agents: Person[]; me: Agent; initialStatus?: string;
+// `initial` seeds a brand-new task (taskId null) from whatever QuickCreate already had typed
+// when the owner bailed to "ตัวเลือกเพิ่มเติม" — same idea as EventModal's `initial` below.
+export default function TaskModal({ taskId, project, agents, me, initialStatus, initial, onClose, onChanged }: {
+  taskId: string | null; project: Project | null; agents: Person[]; me: Agent; initialStatus?: string; initial?: Partial<TaskInput>;
   onClose: () => void; onChanged: () => void;
 }) {
   const isManager = me.role === 'supervisor' || me.role === 'gm';
@@ -15,10 +17,10 @@ export default function TaskModal({ taskId, project, agents, me, initialStatus, 
   const [loading, setLoading] = useState(!!taskId);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const [title, setTitle] = useState(''); const [notes, setNotes] = useState('');
-  const [assigneeId, setAssigneeId] = useState<string | null>(null); const [dueDate, setDueDate] = useState(today());
-  const [priority, setPriority] = useState<Priority>('normal'); const [status, setStatus] = useState(initialStatus ?? project?.columns[0] ?? 'To do');
-  const [customerRef, setCustomerRef] = useState(''); const [freq, setFreq] = useState<'none' | 'daily' | 'weekly' | 'monthly'>('none');
+  const [title, setTitle] = useState(initial?.title ?? ''); const [notes, setNotes] = useState(initial?.notes ?? '');
+  const [assigneeId, setAssigneeId] = useState<string | null>(initial?.assigneeId ?? null); const [dueDate, setDueDate] = useState(initial?.dueDate ?? today());
+  const [priority, setPriority] = useState<Priority>(initial?.priority ?? 'normal'); const [status, setStatus] = useState(initialStatus ?? initial?.status ?? project?.columns[0] ?? 'To do');
+  const [customerRef, setCustomerRef] = useState(initial?.customerRef ?? ''); const [freq, setFreq] = useState<'none' | 'daily' | 'weekly' | 'monthly'>('none');
   const [weekday, setWeekday] = useState(new Date().getDay()); const [dayOfMonth, setDayOfMonth] = useState(new Date().getDate());
   const [comment, setComment] = useState('');
 

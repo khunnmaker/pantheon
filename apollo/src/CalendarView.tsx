@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import { CalendarDays, CalendarPlus, ChevronLeft, ChevronRight, Loader2, Lock, RefreshCw, Trash2, UserPlus, Users, X } from 'lucide-react';
 import TaskCard from './TaskCard';
-import type { Agent, CalendarEvent, CalendarTask, EventInput, Person } from './types';
+import TaskModal from './TaskModal';
+import QuickCreate from './QuickCreate';
+import type { Agent, CalendarEvent, CalendarTask, EventInput, Person, Project, TaskInput } from './types';
 import { addEvent, deleteEvent, getCalendar, updateEvent } from './lib/api';
-import { agentAvatar, dateKey, daysInMonth, eventDayKeys, monthGrid, type CalendarCell } from './lib/ui';
+import { agentAvatar, dateKey, daysInMonth, eventDayKeys, monthGrid, WEEKDAYS_SHORT, type CalendarCell } from './lib/ui';
 
-const WEEKDAYS = ['อา', 'จ', 'อ', 'พ', 'พฤ', 'ศ', 'ส'];
 const CHIP = 'inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs';
 const CHIP_ON = 'border-transparent bg-blue-50 text-blue-700 ring-1 ring-blue-300';
 const CHIP_OFF = 'border-slate-200 text-slate-600 hover:border-blue-300';
@@ -24,8 +25,8 @@ function dayChips(events: CalendarEvent[], tasks: CalendarTask[]): DayChip[] {
   ];
 }
 
-export default function CalendarView({ agents, me, isManager, onOpen }: {
-  agents: Person[]; me: Agent; isManager: boolean; onOpen: (id: string) => void;
+export default function CalendarView({ agents, me, isManager, onOpen, projects }: {
+  agents: Person[]; me: Agent; isManager: boolean; onOpen: (id: string) => void; projects: Project[];
 }) {
   const today = new Date();
   const [year, setYear] = useState(today.getFullYear());
@@ -34,7 +35,9 @@ export default function CalendarView({ agents, me, isManager, onOpen }: {
   const [tasks, setTasks] = useState<CalendarTask[] | null>(null);
   const [events, setEvents] = useState<CalendarEvent[] | null>(null);
   const [dayModal, setDayModal] = useState<string | null>(null);
-  const [eventModal, setEventModal] = useState<{ date: string; event?: CalendarEvent } | null>(null);
+  const [eventModal, setEventModal] = useState<{ date: string; event?: CalendarEvent; initial?: Partial<EventInput> } | null>(null);
+  const [quickCreate, setQuickCreate] = useState<{ date: string; anchor: HTMLElement } | null>(null);
+  const [taskCreate, setTaskCreate] = useState<{ project: Project; initial?: Partial<TaskInput> } | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const todayKey = new Date().toLocaleDateString('en-CA');
 
@@ -65,6 +68,14 @@ export default function CalendarView({ agents, me, isManager, onOpen }: {
   function goToday() { const t = new Date(); setYear(t.getFullYear()); setMonth(t.getMonth()); }
   function openEvent(event: CalendarEvent) { setEventModal({ date: event.date.slice(0, 10), event }); }
   function afterEventChange() { setRefreshKey((k) => k + 1); }
+  function openQuickCreate(date: string, anchor: HTMLElement) { setQuickCreate({ date, anchor }); }
+  // The escape hatch from QuickCreate's "ตัวเลือกเพิ่มเติม" — swap the popover for the matching
+  // full modal, carrying over whatever was typed so far as `initial`.
+  function moreOptions(payload: { kind: 'event'; date: string; initial: Partial<EventInput> } | { kind: 'task'; project: Project; initial: Partial<TaskInput> }) {
+    setQuickCreate(null);
+    if (payload.kind === 'event') setEventModal({ date: payload.date, initial: payload.initial });
+    else setTaskCreate({ project: payload.project, initial: payload.initial });
+  }
 
   const monthTitle = new Date(year, month, 1).toLocaleDateString('th-TH', { month: 'long', year: 'numeric' });
   const cells = monthGrid(year, month);
@@ -80,7 +91,7 @@ export default function CalendarView({ agents, me, isManager, onOpen }: {
         <button onClick={() => go(-1)} aria-label="เดือนก่อนหน้า" className="btn rounded-lg border border-slate-200 bg-white"><ChevronLeft size={16}/></button>
         <button onClick={goToday} className="btn rounded-lg border border-slate-200 bg-white">วันนี้</button>
         <button onClick={() => go(1)} aria-label="เดือนถัดไป" className="btn rounded-lg border border-slate-200 bg-white"><ChevronRight size={16}/></button>
-        <button onClick={() => setEventModal({ date: todayKey })} className="btn rounded-lg border border-slate-200 bg-white"><CalendarPlus size={16}/> กิจกรรม</button>
+        <button onClick={(e) => openQuickCreate(year === today.getFullYear() && month === today.getMonth() ? todayKey : dateKey(year, month, 1), e.currentTarget)} className="btn rounded-lg border border-slate-200 bg-white"><CalendarPlus size={16}/> กิจกรรม</button>
       </div>
     </div>
 
@@ -94,14 +105,14 @@ export default function CalendarView({ agents, me, isManager, onOpen }: {
 
     {tasks === null ? <div className="py-20 text-center text-slate-400">กำลังโหลด…</div> : <>
       <div className="hidden md:grid grid-cols-7 pb-1 text-center text-xs font-semibold text-slate-500">
-        {WEEKDAYS.map((w) => <div key={w}>{w}</div>)}
+        {WEEKDAYS_SHORT.map((w) => <div key={w}>{w}</div>)}
       </div>
       <div className="hidden md:grid grid-cols-7 gap-px overflow-hidden rounded-2xl border border-slate-200 bg-slate-200">
         {cells.map((cell) => {
           const key = dateKey(cell.year, cell.month, cell.day);
           return <DayCell key={key} cell={cell} isToday={key === todayKey} isPast={key < todayKey}
             tasks={tasksByDay.get(key) ?? []} events={eventsByDay.get(key) ?? []} scope={scope} agents={agents} onOpen={onOpen}
-            onMore={() => setDayModal(key)} onDateClick={() => setEventModal({ date: key })} onOpenEvent={openEvent}/>;
+            onMore={() => setDayModal(key)} onQuickCreate={(el) => openQuickCreate(key, el)} onOpenEvent={openEvent}/>;
         })}
       </div>
 
@@ -134,21 +145,29 @@ export default function CalendarView({ agents, me, isManager, onOpen }: {
       </div>
     </Shell>}
 
-    {eventModal && <EventModal date={eventModal.date} event={eventModal.event} onClose={() => setEventModal(null)} onChanged={afterEventChange}/>}
+    {eventModal && <EventModal date={eventModal.date} event={eventModal.event} initial={eventModal.initial} onClose={() => setEventModal(null)} onChanged={afterEventChange}/>}
+    {quickCreate && <QuickCreate date={quickCreate.date} anchor={quickCreate.anchor} agents={agents} me={me} scope={scope} projects={projects}
+      onClose={() => setQuickCreate(null)} onChanged={afterEventChange} onMoreOptions={moreOptions}/>}
+    {taskCreate && <TaskModal taskId={null} project={taskCreate.project} agents={agents} me={me} initial={taskCreate.initial} onClose={() => setTaskCreate(null)} onChanged={afterEventChange}/>}
   </div>;
 }
 
-function DayCell({ cell, isToday, isPast, tasks, events, scope, agents, onOpen, onMore, onDateClick, onOpenEvent }: {
+function DayCell({ cell, isToday, isPast, tasks, events, scope, agents, onOpen, onMore, onQuickCreate, onOpenEvent }: {
   cell: CalendarCell; isToday: boolean; isPast: boolean; tasks: CalendarTask[]; events: CalendarEvent[]; scope: string; agents: Person[];
-  onOpen: (id: string) => void; onMore: () => void; onDateClick: () => void; onOpenEvent: (event: CalendarEvent) => void;
+  onOpen: (id: string) => void; onMore: () => void; onQuickCreate: (anchor: HTMLElement) => void; onOpenEvent: (event: CalendarEvent) => void;
 }) {
   const chips = dayChips(events, tasks);
   const shown = chips.slice(0, 3);
   const extra = chips.length - shown.length;
-  return <div className={`flex min-h-[96px] flex-col p-1.5 ${cell.inMonth ? 'bg-white' : 'bg-slate-50/60'}`}>
-    <span onClick={onDateClick} role="button"
+  // Guarded at both this level and the chip-wrapper below so a click on genuinely empty cell
+  // background opens QuickCreate, while a click that bubbles up from a chip or the +n button
+  // (e.target stays that descendant, never === currentTarget) is ignored — no changes needed
+  // to the chips themselves.
+  const openHere = (e: React.MouseEvent<HTMLDivElement>) => { if (e.target === e.currentTarget) onQuickCreate(e.currentTarget); };
+  return <div onClick={openHere} className={`flex min-h-[96px] flex-col p-1.5 ${cell.inMonth ? 'bg-white' : 'bg-slate-50/60'}`}>
+    <span onClick={(e) => onQuickCreate(e.currentTarget)} role="button"
       className={`self-end cursor-pointer rounded text-xs hover:bg-blue-50 ${!cell.inMonth ? 'text-slate-300' : isToday ? 'grid h-5 w-5 place-items-center rounded-full bg-blue-600 text-white' : isPast ? 'text-slate-400' : ''}`}>{cell.day}</span>
-    <div className="mt-1 flex min-h-0 flex-1 flex-col gap-1">
+    <div onClick={openHere} className="mt-1 flex min-h-0 flex-1 flex-col gap-1">
       {shown.map((c) => c.kind === 'event'
         ? <EventChip key={`e-${c.event.id}`} event={c.event} agents={agents} onOpen={onOpenEvent}/>
         : <TaskChip key={`t-${c.task.id}`} task={c.task} scope={scope} agents={agents} isPast={isPast} isToday={isToday} onOpen={onOpen}/>)}
@@ -213,14 +232,16 @@ function Shell({ children, onClose }: { children: React.ReactNode; onClose: () =
 
 // Personal-event editor — same Shell as the day modal. Non-owners never reach this (their chips
 // aren't clickable), so there's no "view-only" mode to build: this is always the owner's own.
-function EventModal({ date, event, onClose, onChanged }: { date: string; event?: CalendarEvent; onClose: () => void; onChanged: () => void }) {
-  const [title, setTitle] = useState(event?.title ?? '');
-  const [note, setNote] = useState(event?.note ?? '');
-  const [eventDate, setEventDate] = useState(event ? event.date.slice(0, 10) : date);
-  const [endDate, setEndDate] = useState(event?.endDate ? event.endDate.slice(0, 10) : '');
-  const [startTime, setStartTime] = useState(event?.startTime ?? '');
-  const [endTime, setEndTime] = useState(event?.endTime ?? '');
-  const [visibility, setVisibility] = useState<'private' | 'public'>(event?.visibility ?? 'public');
+// `initial` seeds a brand-new event (no `event`) from whatever QuickCreate already had typed
+// when the owner bailed to "ตัวเลือกเพิ่มเติม".
+function EventModal({ date, event, initial, onClose, onChanged }: { date: string; event?: CalendarEvent; initial?: Partial<EventInput>; onClose: () => void; onChanged: () => void }) {
+  const [title, setTitle] = useState(initial?.title ?? event?.title ?? '');
+  const [note, setNote] = useState(initial?.note ?? event?.note ?? '');
+  const [eventDate, setEventDate] = useState(initial?.date ?? (event ? event.date.slice(0, 10) : date));
+  const [endDate, setEndDate] = useState(initial?.endDate ?? (event?.endDate ? event.endDate.slice(0, 10) : ''));
+  const [startTime, setStartTime] = useState(initial?.startTime ?? event?.startTime ?? '');
+  const [endTime, setEndTime] = useState(initial?.endTime ?? event?.endTime ?? '');
+  const [visibility, setVisibility] = useState<'private' | 'public'>(initial?.visibility ?? event?.visibility ?? 'public');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
