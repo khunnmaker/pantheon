@@ -125,16 +125,32 @@ export async function callClaudeWithImages(
       {
         role: 'user',
         content: [
-          ...images.map((image) => ({
-            type: 'image' as const,
-            source: {
-              type: 'base64' as const,
-              media_type: (SUPPORTED_IMAGE_TYPES.includes(image.mediaType)
-                ? image.mediaType
-                : 'image/jpeg') as 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp',
-              data: image.base64,
-            },
-          })),
+          // PDFs ride the same reader as images: Claude takes application/pdf natively as a
+          // `document` content block (base64 source, no beta header) — bank apps export slips
+          // as PDF, so Juno's manual-add OCR must accept both. Anything that is neither a
+          // supported raster nor a PDF still coerces to image/jpeg (legacy: uploads that
+          // arrived without a contentType are stored application/octet-stream but ARE jpegs).
+          ...images.map((image) =>
+            image.mediaType === 'application/pdf'
+              ? {
+                  type: 'document' as const,
+                  source: {
+                    type: 'base64' as const,
+                    media_type: 'application/pdf' as const,
+                    data: image.base64,
+                  },
+                }
+              : {
+                  type: 'image' as const,
+                  source: {
+                    type: 'base64' as const,
+                    media_type: (SUPPORTED_IMAGE_TYPES.includes(image.mediaType)
+                      ? image.mediaType
+                      : 'image/jpeg') as 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp',
+                    data: image.base64,
+                  },
+                },
+          ),
           { type: 'text', text: userText },
         ],
       },

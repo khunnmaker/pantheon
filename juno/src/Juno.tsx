@@ -878,8 +878,10 @@ function AddPaymentModal({ onClose, onSaved }: { onClose: () => void; onSaved: (
     setErr('');
     try {
       const b64 = await fileToBase64(file);
-      const { uploadId, url } = await uploadSlip(b64, file.name);
-      setSlipUrl(url);
+      const { uploadId, url } = await uploadSlip(b64, file.name, file.type || undefined);
+      // #pdf fragment = display hint for the drawer (iframe, not <img>). Never sent to the
+      // server, so serving/caching are unaffected.
+      setSlipUrl(file.type === 'application/pdf' ? `${url}#pdf` : url);
       setSlipName(file.name);
       setUploadingSlip(false);
 
@@ -913,8 +915,8 @@ function AddPaymentModal({ onClose, onSaved }: { onClose: () => void; onSaved: (
     setErr('');
     try {
       const b64 = await fileToBase64(file);
-      const { uploadId, url } = await uploadSlip(b64, file.name);
-      setChequeUrl(url);
+      const { uploadId, url } = await uploadSlip(b64, file.name, file.type || undefined);
+      setChequeUrl(file.type === 'application/pdf' ? `${url}#pdf` : url);
       setChequeName(file.name);
       setUploadingCheque(false);
 
@@ -1015,9 +1017,9 @@ function AddPaymentModal({ onClose, onSaved }: { onClose: () => void; onSaved: (
               ) : slipUrl ? (
                 <><Check size={16} /> แนบแล้ว: {slipName || 'สลิป'} — แตะเพื่อแนบใหม่</>
               ) : (
-                <><Paperclip size={16} /> แนบสลิป</>
+                <><Paperclip size={16} /> แนบสลิป (รูป/PDF)</>
               )}
-              <input type="file" accept="image/*" className="hidden" disabled={uploadingSlip || readingSlip}
+              <input type="file" accept="image/*,application/pdf" className="hidden" disabled={uploadingSlip || readingSlip}
                 onChange={(e) => void pickSlip(e.target.files?.[0])} />
             </label>
 
@@ -1071,9 +1073,9 @@ function AddPaymentModal({ onClose, onSaved }: { onClose: () => void; onSaved: (
                 ) : chequeUrl ? (
                   <><Check size={16} /> แนบแล้ว: {chequeName || 'รูปเช็ค'} — แตะเพื่อแนบใหม่</>
                 ) : (
-                  <><Paperclip size={16} /> แนบรูปเช็ค</>
+                  <><Paperclip size={16} /> แนบเช็ค (รูป/PDF)</>
                 )}
-                <input type="file" accept="image/*" className="hidden" disabled={uploadingCheque || readingCheque}
+                <input type="file" accept="image/*,application/pdf" className="hidden" disabled={uploadingCheque || readingCheque}
                   onChange={(e) => void pickCheque(e.target.files?.[0])} />
               </label>
             )}
@@ -1563,12 +1565,24 @@ function Detail({ payment, onClose, onUpdate, onDelete, onPrint, canDelete, isCe
             {/* slip image */}
             <div className="p-4">
               {p.slipUrl ? (
-                <a href={p.slipUrl} target="_blank" rel="noreferrer" className="block relative group">
-                  <img src={p.slipUrl} alt="สลิป" className="w-full rounded-lg border border-slate-200 bg-slate-50" />
-                  <span className="absolute top-2 right-2 bg-black/60 text-white rounded-md p-1 opacity-0 group-hover:opacity-100">
-                    <ExternalLink size={14} />
-                  </span>
-                </a>
+                p.slipUrl.endsWith('#pdf') ? (
+                  // PDF slip (marked with the #pdf display hint at upload time): an <img> can't
+                  // render it, so embed inline + keep an open-in-tab link. Server serves real
+                  // PDFs with an inline disposition, so the iframe just works.
+                  <div className="relative group">
+                    <iframe src={p.slipUrl} title="สลิป (PDF)" className="w-full h-96 rounded-lg border border-slate-200 bg-slate-50" />
+                    <a href={p.slipUrl} target="_blank" rel="noreferrer" className="absolute top-2 right-2 bg-black/60 text-white rounded-md p-1 opacity-0 group-hover:opacity-100">
+                      <ExternalLink size={14} />
+                    </a>
+                  </div>
+                ) : (
+                  <a href={p.slipUrl} target="_blank" rel="noreferrer" className="block relative group">
+                    <img src={p.slipUrl} alt="สลิป" className="w-full rounded-lg border border-slate-200 bg-slate-50" />
+                    <span className="absolute top-2 right-2 bg-black/60 text-white rounded-md p-1 opacity-0 group-hover:opacity-100">
+                      <ExternalLink size={14} />
+                    </span>
+                  </a>
+                )
               ) : (
                 <div className="text-center text-slate-400 text-sm py-6 border border-dashed border-slate-200 rounded-lg">ไม่มีสลิป</div>
               )}

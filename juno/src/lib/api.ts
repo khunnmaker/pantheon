@@ -348,10 +348,13 @@ export const confirmReceived = (id: string, received: boolean) =>
 
 // Reuses Minerva's staff-upload endpoint (see api/src/routes/messages.ts POST /api/uploads)
 // for the optional transfer slip photo. Returns the public URL to store on Payment.slipUrl.
-export async function uploadSlip(dataB64: string, fileName?: string): Promise<{ uploadId: string; url: string }> {
+// contentType matters for PDFs: it selects the Claude document-block OCR path server-side
+// and inline (vs download) serving in the drawer. Omitted → stored application/octet-stream,
+// which still renders fine for the legacy image uploads.
+export async function uploadSlip(dataB64: string, fileName?: string, contentType?: string): Promise<{ uploadId: string; url: string }> {
   const { uploadId } = await authed<{ uploadId: string }>('/api/uploads', {
     method: 'POST',
-    body: JSON.stringify({ dataB64, fileName }),
+    body: JSON.stringify({ dataB64, fileName, contentType }),
   });
   return { uploadId, url: `${API_URL}/content/upload/${uploadId}` };
 }

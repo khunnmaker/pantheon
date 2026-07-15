@@ -45,7 +45,16 @@ export async function contentRoutes(app: FastifyInstance) {
       // rasters ever reach kind='image' (see saveStaffUpload), everything else downloads.
       .header('x-content-type-options', 'nosniff');
     if (meta.kind === 'file') {
-      reply.header('content-disposition', `attachment; filename*=UTF-8''${encodeURIComponent(meta.fileName)}`);
+      // application/pdf is the ONE non-raster type served inline — bank apps export payment
+      // slips as PDFs and the Juno drawer embeds them in an iframe. Gated on the %PDF- magic
+      // bytes so a mislabeled body can't ride an inline disposition (the same job
+      // looksLikeRaster does for images); everything else still downloads, keeping the
+      // stored-XSS posture above unchanged (fixed content-type + nosniff).
+      const isRealPdf = meta.contentType === 'application/pdf' && buf.subarray(0, 5).toString('latin1') === '%PDF-';
+      reply.header(
+        'content-disposition',
+        `${isRealPdf ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(meta.fileName)}`,
+      );
     }
     return reply.send(buf);
   });
