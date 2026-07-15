@@ -779,7 +779,7 @@ function PaymentsView({ view, onChanged, canDelete, isCeo }: { view: Exclude<Vie
                       {p.reNumbers.length > 0 || p.billNos.length > 0 ? (
                         <div className="flex flex-wrap gap-1 max-w-[180px]">
                           {p.reNumbers.map((re) => <span key={`re-${re}`} className="px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 text-[11px]">RE {re}</span>)}
-                          {p.billNos.map((billNo) => <span key={`bill-${billNo}`} className="px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 text-[11px]">{billNo}</span>)}
+                          {p.billNos.map((billNo) => <span key={`bill-${billNo}`} className="px-1.5 py-0.5 rounded bg-sky-50 text-sky-700 text-[11px]">{billLabel(billNo)}</span>)}
                         </div>
                       ) : (
                         <span className="text-slate-300">—</span>
@@ -1445,9 +1445,9 @@ function Detail({ payment, onClose, onUpdate, onDelete, onPrint, canDelete, isCe
               {p.billNos.length > 0 && (
                 <div className="flex items-center gap-1 min-w-0 overflow-hidden">
                   {p.billNos.slice(0, 2).map((billNo) => (
-                    <span key={billNo} className="text-xs font-bold text-amber-700 whitespace-nowrap px-1.5 py-0.5 rounded bg-amber-50 shrink-0">{billNo}</span>
+                    <span key={billNo} className="text-xs font-bold text-sky-700 whitespace-nowrap px-1.5 py-0.5 rounded bg-sky-50 shrink-0">{billLabel(billNo)}</span>
                   ))}
-                  {p.billNos.length > 2 && <span className="text-xs text-amber-700">+{p.billNos.length - 2}</span>}
+                  {p.billNos.length > 2 && <span className="text-xs text-sky-700">+{p.billNos.length - 2}</span>}
                 </div>
               )}
               {p.flagged && <Flag size={13} className="text-rose-500 shrink-0" />}
@@ -1592,7 +1592,7 @@ function Detail({ payment, onClose, onUpdate, onDelete, onPrint, canDelete, isCe
               {field('วันที่ส่งเข้า', fmtDateTime(p.createdAt))}
               {p.reNumbers.length > 0 && field('ชื่อบนใบเสร็จ', p.receiptName)}
               {p.reNumbers.length > 0 && field('ประเภทลูกค้า', p.customerType)}
-              {p.billNos.length > 0 && field('บิลมือ', p.billNos.join(' / '))}
+              {p.billNos.length > 0 && field('บิลมือ', p.billNos.map(billLabel).join(' / '))}
             </div>
 
             {p.mismatch && (
@@ -1737,6 +1737,11 @@ function CashChequeSection({ payment: p, busy, run, isCeo }: {
 // The server mirrors both rules (POST /verify rejects 9-leading REs; POST /bills rejects
 // RE-shaped bill numbers), so a token can never land in the wrong bucket.
 const RE_SEPARATOR = /[/,\s]+/;
+// Display label for a บิลมือ chip — "MB 9690001", mirroring the RE chips' "RE 6900025"
+// (owner 2026-07-15: bill chips read as first-class next to REs — blue, MB-prefixed;
+// amber previously read as a warning). Legacy MB69-#### numbers already carry the
+// letters, so they render as-is instead of "MB MB69-0001".
+const billLabel = (billNo: string) => (billNo.toUpperCase().startsWith('MB') ? billNo : `MB ${billNo}`);
 type ReceiptToken = { kind: 're' | 'bill'; value: string };
 function normalizeReceiptToken(raw: string): ReceiptToken | null {
   const trimmed = raw.trim();
@@ -1857,9 +1862,9 @@ function ReceiptChipsBox({ state, onEnter, autoFocus }: {
         {state.billNos.map((billNo) => {
           const unknown = state.unknownBills.has(billNo);
           return (
-            <span key={`bill-${billNo}`} title={unknown ? 'ไม่พบบิลนี้ในระบบ' : 'บิลมือ'} className={`flex items-center gap-1 pl-2 pr-1 py-0.5 rounded-full bg-amber-50 text-amber-700 text-xs font-semibold ${unknown ? 'ring-1 ring-rose-400' : ''}`}>
-              {billNo}{unknown && <AlertTriangle size={10} className="text-rose-500" />}
-              <button type="button" onClick={() => state.removeToken({ kind: 'bill', value: billNo })} className="p-0.5 rounded-full hover:bg-amber-100" title="เอาออก"><X size={11} /></button>
+            <span key={`bill-${billNo}`} title={unknown ? 'ไม่พบบิลนี้ในระบบ' : 'บิลมือ'} className={`flex items-center gap-1 pl-2 pr-1 py-0.5 rounded-full bg-sky-50 text-sky-700 text-xs font-semibold ${unknown ? 'ring-1 ring-rose-400' : ''}`}>
+              {billLabel(billNo)}{unknown && <AlertTriangle size={10} className="text-rose-500" />}
+              <button type="button" onClick={() => state.removeToken({ kind: 'bill', value: billNo })} className="p-0.5 rounded-full hover:bg-sky-100" title="เอาออก"><X size={11} /></button>
             </span>
           );
         })}
