@@ -1738,10 +1738,12 @@ function CashChequeSection({ payment: p, busy, run, isCeo }: {
 // RE-shaped bill numbers), so a token can never land in the wrong bucket.
 const RE_SEPARATOR = /[/,\s]+/;
 // Display label for a บิลมือ chip — "MB 9690001", mirroring the RE chips' "RE 6900025"
-// (owner 2026-07-15: bill chips read as first-class next to REs — blue, MB-prefixed;
-// amber previously read as a warning). Legacy MB69-#### numbers already carry the
-// letters, so they render as-is instead of "MB MB69-0001".
-const billLabel = (billNo: string) => (billNo.toUpperCase().startsWith('MB') ? billNo : `MB ${billNo}`);
+// (owner 2026-07-15: bill chips read as first-class next to REs — blue, MB-prefixed).
+// ONLY the canonical 9-leading 7-digit บิลมือ numbers get the prefix: staff also type other
+// document refs into the bill slot (Express XS cash-sale numbers like XS6900343, legacy
+// MB69-####) and those must render exactly as typed — "MB XS6900343" mislabeled the form
+// (owner correction, same day).
+const billLabel = (billNo: string) => (/^9\d{6}$/.test(billNo) ? `MB ${billNo}` : billNo);
 type ReceiptToken = { kind: 're' | 'bill'; value: string };
 function normalizeReceiptToken(raw: string): ReceiptToken | null {
   const trimmed = raw.trim();
