@@ -24,7 +24,7 @@ const fmtDate = (iso: string) =>
 
 const STATUS_FILTERS: { key: BankTxnStatusFilter; label: string }[] = [
   { key: 'all', label: 'ทั้งหมด' },
-  { key: 'unmatched', label: 'ยังไม่จับคู่' },
+  { key: 'unmatched', label: 'รอจับคู่' },
   { key: 'matched', label: 'จับคู่แล้ว' },
   { key: 'confirmed', label: 'ยืนยันแล้ว' },
 ];
@@ -95,7 +95,7 @@ function SummaryCards({ summary }: { summary: BankSummary | null }) {
     );
   }
   const cards = [
-    { label: 'เงินเข้ายังไม่จับคู่', count: summary.unmatchedIn.count, sum: summary.unmatchedIn.sum, tone: 'text-rose-600' },
+    { label: 'เงินเข้ารอจับคู่', count: summary.unmatchedIn.count, sum: summary.unmatchedIn.sum, tone: 'text-rose-600' },
     { label: 'จับคู่แล้ว รอยืนยัน Express', count: summary.matchedUnconfirmed.count, sum: summary.matchedUnconfirmed.sum, tone: 'text-sky-600' },
     {
       label: 'ใบเสร็จตรวจแล้ว ยังไม่พบเงินเข้า',
@@ -455,7 +455,7 @@ function TxnRow({ txn, expanded, onToggle, onChanged }: {
 function StatusBadge({ txn }: { txn: BankTxn }) {
   if (txn.expressConfirmedAt) return <span className="px-1.5 py-0.5 rounded-full text-[11px] bg-emerald-100 text-emerald-700 whitespace-nowrap">ยืนยันแล้ว</span>;
   if (txn.matchStatus === 'matched') return <span className="px-1.5 py-0.5 rounded-full text-[11px] bg-sky-100 text-sky-700 whitespace-nowrap">จับคู่แล้ว</span>;
-  return <span className="px-1.5 py-0.5 rounded-full text-[11px] bg-rose-100 text-rose-700 whitespace-nowrap">ยังไม่จับคู่</span>;
+  return <span className="px-1.5 py-0.5 rounded-full text-[11px] bg-rose-100 text-rose-700 whitespace-nowrap">รอจับคู่</span>;
 }
 
 // Expanded match panel: linked-payment chips (with sum + delta badge), จับคู่ suggestions
