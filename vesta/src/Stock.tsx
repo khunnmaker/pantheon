@@ -25,6 +25,8 @@ import AppSwitcher from './AppSwitcher';
 
 type Tab = 'dashboard' | 'stock' | 'import' | 'history' | 'alias' | 'group' | 'review';
 type StockFilter = 'all' | 'low' | 'out' | 'unknown' | 'noname';
+// One nav button: caption grouping lives in navGroups below, not on the tab itself.
+type NavTab = { key: Tab; label: string; icon: ReactNode; count?: number; tone?: 'rose' | 'slate' };
 
 // Product photo thumbnail (served public from the shared api). photoSku is the catalog
 // photo key (variants share a lead photo); hides itself if the image is missing.
@@ -90,11 +92,16 @@ export default function Stock({ agent, onLogout }: { agent: Agent; onLogout: () 
   const [summary, setSummary] = useState<StockSummary | null>(null);
   // Stock-tab filter lifted here so the dashboard cards can deep-link into a filtered view.
   const [stockFilter, setStockFilter] = useState<StockFilter>('all');
+  // Nav badges: ยังไม่จัดกลุ่ม count (จัดกลุ่ม) and pending name proposals (ตรวจทานชื่อ).
+  const [groupUnassigned, setGroupUnassigned] = useState<number | undefined>(undefined);
+  const [proposalPending, setProposalPending] = useState<number | undefined>(undefined);
 
-  const loadSummary = useCallback(() => {
+  const refreshCounts = useCallback(() => {
     getSummary().then(setSummary).catch(() => {});
+    getGroups().then((r) => setGroupUnassigned(r.unassigned)).catch(() => setGroupUnassigned(undefined));
+    getProposalSummary().then((s) => setProposalPending(s.pending)).catch(() => setProposalPending(undefined));
   }, []);
-  useEffect(() => loadSummary(), [loadSummary]);
+  useEffect(() => { refreshCounts(); }, [refreshCounts, tab]);
 
   function goToStock(filter: StockFilter) {
     setStockFilter(filter);
@@ -106,45 +113,45 @@ export default function Stock({ agent, onLogout }: { agent: Agent; onLogout: () 
     onLogout();
   }
 
+  // Captioned groups, Juno-style (owner: the flat 7-tab bar read as one undifferentiated row):
+  // สรุป is the landing view, สต็อกรายวัน is the daily stock desk, จัดแคตตาล็อก is catalog
+  // upkeep — ordered groups→names→codes per the owner's work order.
+  const navGroups: { caption: string; tabs: NavTab[] }[] = [
+    {
+      caption: 'สรุป',
+      tabs: [
+        { key: 'dashboard', label: 'ภาพรวม', icon: <LayoutDashboard size={16} /> },
+      ],
+    },
+    {
+      caption: 'สต็อกรายวัน',
+      tabs: [
+        { key: 'stock', label: 'สต็อก', icon: <Package size={16} />, count: summary?.low, tone: 'rose' },
+        { key: 'import', label: 'นำเข้า', icon: <Upload size={16} /> },
+        { key: 'history', label: 'ประวัติ', icon: <History size={16} /> },
+      ],
+    },
+    {
+      caption: 'จัดแคตตาล็อก',
+      tabs: [
+        { key: 'group', label: 'จัดกลุ่ม', icon: <Layers size={16} />, count: groupUnassigned, tone: 'slate' },
+        { key: 'review', label: 'ตรวจทานชื่อ', icon: <ClipboardCheck size={16} />, count: proposalPending, tone: 'slate' },
+        { key: 'alias', label: 'รหัสย่อ', icon: <Tag size={16} /> },
+      ],
+    },
+  ];
+
   return (
     <div className="min-h-screen bg-slate-100 font-sans text-slate-800">
       <header className="bg-white border-b border-slate-200 sticky top-0 z-10">
-        <div className="max-w-6xl mx-auto px-4 py-3 flex items-center gap-4">
-          <div className="flex items-center gap-2 text-indigo-700 font-bold">
-            <AppSwitcher agent={agent} />
+        <div className="max-w-6xl mx-auto px-4 h-14 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 text-indigo-700 font-bold">
+              <AppSwitcher agent={agent} />
+            </div>
+            <span className="text-slate-400 text-sm hidden sm:inline">· ระบบสต็อก</span>
           </div>
-          <nav className="flex gap-1 text-sm">
-            <TabBtn active={tab === 'dashboard'} onClick={() => setTab('dashboard')} icon={<LayoutDashboard size={15} />}>
-              ภาพรวม
-            </TabBtn>
-            <TabBtn active={tab === 'stock'} onClick={() => setTab('stock')} icon={<Package size={15} />}>
-              สต็อก
-            </TabBtn>
-            <TabBtn active={tab === 'import'} onClick={() => setTab('import')} icon={<Upload size={15} />}>
-              นำเข้าสต็อก
-            </TabBtn>
-            <TabBtn active={tab === 'history'} onClick={() => setTab('history')} icon={<History size={15} />}>
-              ประวัติ
-            </TabBtn>
-            <TabBtn active={tab === 'alias'} onClick={() => setTab('alias')} icon={<Tag size={15} />}>
-              รหัสย่อ
-            </TabBtn>
-            <TabBtn active={tab === 'group'} onClick={() => setTab('group')} icon={<Layers size={15} />}>
-              จัดกลุ่ม
-            </TabBtn>
-            <TabBtn active={tab === 'review'} onClick={() => setTab('review')} icon={<ClipboardCheck size={15} />}>
-              ตรวจทานชื่อ
-            </TabBtn>
-          </nav>
           <div className="ml-auto flex items-center gap-3 text-sm text-slate-500">
-            {summary && (
-              <span className="hidden sm:inline">
-                {summary.withStock}/{summary.total} มีสต็อก ·{' '}
-                <span className={summary.low > 0 ? 'text-rose-600 font-semibold' : ''}>
-                  {summary.low} ใกล้หมด
-                </span>
-              </span>
-            )}
             {PORTAL_URL && (
               <a href={PORTAL_URL} title="กลับพอร์ทัล Pantheon" className="flex items-center gap-1 text-slate-500 hover:text-violet-600">
                 <Crown size={15} /> <span className="hidden sm:inline">พอร์ทัล</span>
@@ -155,6 +162,31 @@ export default function Stock({ agent, onLogout }: { agent: Agent; onLogout: () 
               <LogOut size={15} /> ออก
             </button>
           </div>
+        </div>
+        <div className="max-w-6xl mx-auto px-4 flex gap-2 overflow-x-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
+          {navGroups.map((group, index) => (
+            <div key={group.caption} className={`flex flex-col shrink-0 ${index > 0 ? 'border-l border-slate-200 pl-2' : ''}`}>
+              <div className="text-[10px] leading-[13px] text-slate-400 whitespace-nowrap select-none">{group.caption}</div>
+              <div className="flex gap-1">
+                {group.tabs.map((t) => (
+                  <button
+                    key={t.key}
+                    onClick={() => setTab(t.key)}
+                    className={`flex items-center gap-1.5 px-2.5 py-1.5 text-sm font-medium border-b-2 whitespace-nowrap ${
+                      tab === t.key ? 'border-indigo-600 text-indigo-700' : 'border-transparent text-slate-500 hover:text-slate-700'
+                    }`}
+                  >
+                    {t.icon} {t.label}
+                    {typeof t.count === 'number' && t.count > 0 && (
+                      <span className={`ml-1 px-1.5 rounded-full text-xs ${t.tone === 'rose' ? 'bg-rose-100 text-rose-700' : 'bg-slate-100 text-slate-600'}`}>
+                        {t.count}
+                      </span>
+                    )}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
         </div>
       </header>
 
@@ -167,12 +199,12 @@ export default function Stock({ agent, onLogout }: { agent: Agent; onLogout: () 
           />
         )}
         {tab === 'stock' && (
-          <StockTab filter={stockFilter} setFilter={setStockFilter} onChanged={loadSummary} />
+          <StockTab filter={stockFilter} setFilter={setStockFilter} onChanged={refreshCounts} />
         )}
         {tab === 'import' && (
           <ImportTab
             onApplied={() => {
-              loadSummary();
+              refreshCounts();
               setTab('stock');
             }}
           />
@@ -183,21 +215,6 @@ export default function Stock({ agent, onLogout }: { agent: Agent; onLogout: () 
         {tab === 'review' && <ReviewTab />}
       </main>
     </div>
-  );
-}
-
-function TabBtn({
-  active, onClick, icon, children,
-}: { active: boolean; onClick: () => void; icon: ReactNode; children: ReactNode }) {
-  return (
-    <button
-      onClick={onClick}
-      className={`flex items-center gap-1 px-3 py-1.5 rounded-lg font-medium ${
-        active ? 'bg-indigo-600 text-white' : 'text-slate-600 hover:bg-slate-100'
-      }`}
-    >
-      {icon} {children}
-    </button>
   );
 }
 
