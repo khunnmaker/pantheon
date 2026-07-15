@@ -597,6 +597,7 @@ export interface BankSuggestion {
   customerName: string;
   senderName: string;
   amount: string;
+  ref: string; // slip reference (OCR อ้างอิง) — eyeball-check vs the bank line's txn id
   dayDistance: number;
   exactAmount: boolean;
   nameScore: number;

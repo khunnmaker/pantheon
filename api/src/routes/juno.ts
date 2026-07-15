@@ -1854,7 +1854,7 @@ export async function junoRoutes(app: FastifyInstance) {
 
     const candidates = await prisma.payment.findMany({
       where: { status: 'verified', id: { notIn: [...excludeIds] } },
-      select: { id: true, reNumber: true, chequeNo: true, receiptName: true, customerName: true, senderName: true, amount: true, transferAt: true, createdAt: true },
+      select: { id: true, reNumber: true, chequeNo: true, receiptName: true, customerName: true, senderName: true, amount: true, transferAt: true, createdAt: true, ref: true },
       take: 500, // ranked below; a bound keeps this cheap even on a large backlog
     });
 
@@ -1890,6 +1890,9 @@ export async function junoRoutes(app: FastifyInstance) {
         customerName: s.p.customerName,
         senderName: s.p.senderName,
         amount: s.p.amount,
+        // slip reference (OCR อ้างอิง) — lets FIN eyeball a QR payment against the K SHOP
+        // line's transaction id, the one reference both sides actually share
+        ref: s.p.ref,
         dayDistance: Number(s.days.toFixed(2)),
         exactAmount: s.exact,
         nameScore: Number(s.nameScore.toFixed(2)),

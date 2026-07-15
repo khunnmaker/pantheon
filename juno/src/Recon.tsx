@@ -443,6 +443,9 @@ function TxnRow({ txn, expanded, onToggle, onChanged }: {
         {chequeNo && (
           <span className="shrink-0 px-1.5 py-0.5 rounded text-[11px] font-mono bg-violet-50 text-violet-700 whitespace-nowrap" title="เลขที่เช็ค (เลขอ้างอิงรายการที่ใช้จับคู่)">เช็ค #{chequeNo}</span>
         )}
+        {!chequeNo && txnRefOf(txn.details) && (
+          <span className="shrink-0 px-1.5 py-0.5 rounded text-[11px] font-mono bg-slate-100 text-slate-600 whitespace-nowrap" title="เลขอ้างอิงรายการจากไฟล์ธนาคาร">อ้างอิง {txnRefOf(txn.details)}</span>
+        )}
         <div className="flex-1 min-w-0 truncate text-slate-500">{txn.payerName || txn.details}</div>
         <div className="shrink-0 flex items-center gap-1 flex-wrap justify-end max-w-[45%]">
           {txn.links.slice(0, 3).map((l) => (
@@ -460,6 +463,18 @@ function TxnRow({ txn, expanded, onToggle, onChanged }: {
       {expanded && <TxnDetail txn={txn} onChanged={onChanged} />}
     </div>
   );
+}
+
+// Non-cheque reference on a bank line (cheques get their own chip): the branch Ref Code on
+// cash deposits, or the K SHOP transaction id (kshop details = "payer · source · txnId";
+// requires a digit so bank names like KASIKORNBANK never false-positive). KBiz TRANSFERS
+// carry no reference at all in the statement (just "From X#### NAME++") — those return ''
+// by design; the bank never exports the slip's เลขอ้างอิง for ordinary transfers.
+function txnRefOf(details: string): string {
+  const refCode = details.match(/Ref Code\s+(\S+)/i);
+  if (refCode) return refCode[1];
+  const tail = details.split(' · ').pop() ?? '';
+  return /^(?=.*\d)[A-Z0-9]{10,}$/i.test(tail) ? tail : '';
 }
 
 function StatusBadge({ txn }: { txn: BankTxn }) {
@@ -609,6 +624,7 @@ function TxnDetail({ txn, onChanged }: { txn: BankTxn; onChanged: (updated?: Ban
                 <span className="shrink-0">{baht(parseFloat(s.amount || '0'))}</span>
                 {s.exactAmount && <span className="px-1 py-0.5 rounded bg-emerald-50 text-emerald-600 shrink-0">ยอดตรง</span>}
                 {s.chequeNo && <span className="text-slate-400 shrink-0">เช็ค {s.chequeNo}</span>}
+                {s.ref && <span className="text-slate-400 font-mono shrink-0 truncate max-w-[120px]" title="เลขอ้างอิงบนสลิป">อ้างอิง {s.ref}</span>}
                 <span className="text-slate-500 truncate flex-1">{s.receiptName || s.customerName}</span>
                 <span className="text-slate-400 shrink-0">±{s.dayDistance.toFixed(1)}ว</span>
               </label>
@@ -767,6 +783,7 @@ function ReceiptRow({ payment, expanded, onToggle, onChanged }: {
         <div className="w-24 shrink-0 text-slate-500 whitespace-nowrap">{fmtDate(payment.createdAt)}</div>
         <div className="w-28 shrink-0 font-semibold text-emerald-700 truncate">RE {payment.reNumber || '—'}</div>
         {payment.chequeNo && <span className="shrink-0 px-1.5 py-0.5 rounded-full text-[11px] bg-slate-100 text-slate-600">เช็ค {payment.chequeNo}</span>}
+        {payment.ref && <span className="shrink-0 px-1.5 py-0.5 rounded-full text-[11px] font-mono bg-slate-100 text-slate-600 truncate max-w-[130px]" title="เลขอ้างอิงบนสลิป (จาก OCR)">อ้างอิง {payment.ref}</span>}
         <div className="flex-1 min-w-0 truncate text-slate-500">{payment.receiptName || payment.customerName}</div>
         <div className="w-28 shrink-0 text-right font-semibold whitespace-nowrap">{baht(payment.amountNum)}</div>
         {rowPending ? (
@@ -893,6 +910,7 @@ function ReceiptMatchDetail({ payment, onChanged }: {
                   {suggestion.exactAmount && <span className="px-1 py-0.5 rounded bg-emerald-50 text-emerald-600 shrink-0">ยอดตรง</span>}
                   <span className="px-1 py-0.5 rounded bg-slate-100 text-slate-600 shrink-0">{channelChip(suggestion.channel)}</span>
                   <span className="text-slate-500 truncate flex-1">{suggestion.payerName || suggestion.details}</span>
+                  {txnRefOf(suggestion.details) && <span className="text-slate-400 font-mono shrink-0 truncate max-w-[130px]" title="เลขอ้างอิงรายการจากไฟล์ธนาคาร">อ้างอิง {txnRefOf(suggestion.details)}</span>}
                   <span className="text-slate-400 shrink-0">±{suggestion.dayDistance.toFixed(1)}ว</span>
                   {suggestion.linkedCount > 0 && <span className="px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-600 shrink-0">จับคู่แล้ว {suggestion.linkedCount} ใบ</span>}
                 </label>
