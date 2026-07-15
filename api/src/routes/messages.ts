@@ -19,7 +19,7 @@ import { recordReplyOutcome } from '../learning/recordOutcome.js';
 import { recordProductKeywords } from '../catalog/match.js';
 import { readSlip } from '../llm/readSlip.js';
 import { sendToFinance } from '../finance/sendToFinance.js';
-import { buildSlipUrl } from '../finance/slipLink.js';
+import { buildSlipUrl, isPdfSlip, isSlipCapable } from '../finance/slipLink.js';
 import { normalizeSlipDate, normalizeAmount } from '../finance/normalize.js';
 import { pushToConsole } from '../ws/io.js';
 import { captionStaffUpload } from '../llm/captionImage.js';
@@ -149,9 +149,12 @@ export async function messageRoutes(app: FastifyInstance) {
   // empty fields when the LLM is unavailable). Also returns the customer's names.
   app.post<{ Params: { id: string } }>('/api/messages/:id/read-slip', async (req, reply) => {
     const msg = await prisma.message.findUnique({ where: { id: req.params.id } });
-    if (!msg || msg.attachmentType !== 'image') return reply.code(404).send({ error: 'not_an_image' });
+    // Images or PDF file messages — bank apps export slips as PDFs (see isSlipCapable).
+    if (!msg || !isSlipCapable(msg)) return reply.code(404).send({ error: 'not_a_slip' });
     const customer = await prisma.customer.findUnique({ where: { id: msg.customerId } });
-    const fields = await readSlip(msg.id, msg.attachmentRef || 'image/jpeg');
+    // PDFs are forced to application/pdf so the reader picks the document-block path even if
+    // the stored ref is missing (filename fallback matched); images keep the jpeg fallback.
+    const fields = await readSlip(msg.id, isPdfSlip(msg) ? 'application/pdf' : msg.attachmentRef || 'image/jpeg');
     // Store the OCR amount server-side (tamper-proof) for the corrected-amount audit.
     if (fields.amount) await prisma.message.update({ where: { id: msg.id }, data: { slipAmount: fields.amount } }).catch(() => undefined);
     return {
@@ -177,7 +180,7 @@ export async function messageRoutes(app: FastifyInstance) {
     }).safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: 'invalid_body' });
     const msg = await prisma.message.findUnique({ where: { id: req.params.id } });
-    if (!msg || msg.attachmentType !== 'image') return reply.code(404).send({ error: 'not_an_image' });
+    if (!msg || !isSlipCapable(msg)) return reply.code(404).send({ error: 'not_a_slip' });
     if (msg.financeSentAt) return reply.code(409).send({ error: 'already_sent', financeSentAt: msg.financeSentAt });
     const customer = await prisma.customer.findUnique({ where: { id: msg.customerId } });
     if (!customer) return reply.code(404).send({ error: 'customer_not_found' });
@@ -198,7 +201,7 @@ export async function messageRoutes(app: FastifyInstance) {
     const ref = parsed.data.ref ?? '';
     const taxInvoice = parsed.data.taxInvoice ?? '';
     const note = parsed.data.note ?? '';
-    const slipUrl = buildSlipUrl(base, msg.id);
+    const slipUrl = buildSlipUrl(base, msg.id, isPdfSlip(msg));
     const sales = req.agent?.name ?? '';
 
     // Anti-tamper signal, now a dormant backstop: with the amount server-enforced above this

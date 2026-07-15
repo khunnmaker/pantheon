@@ -1729,8 +1729,11 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                             <span className="flex items-center gap-1 flex-wrap">
                               {fmtTime(m.createdAt)}
                               {canReply && <CornerUpLeft size={11} className={isReplying ? 'text-sky-500' : 'text-slate-300'} />}
-                              {/* แจ้งการเงิน sits inline right after the time + reply icon (customer image/slip only). */}
-                              {m.role === 'customer' && m.attachmentType === 'image' && (
+                              {/* แจ้งการเงิน sits inline right after the time + reply icon — customer images
+                                  AND PDF file messages (bank apps export slips as PDF; the api's isSlipCapable
+                                  mirrors this exact condition). */}
+                              {m.role === 'customer' && (m.attachmentType === 'image' ||
+                                (m.attachmentType === 'file' && (m.attachmentRef === 'application/pdf' || (m.attachmentName ?? '').toLowerCase().endsWith('.pdf')))) && (
                                 m.financeSentAt
                                   ? <span className="text-sky-600 font-medium flex items-center gap-1"><CheckCircle2 size={11} /> ส่งการเงินแล้ว</span>
                                   : <button type="button" onClick={(e) => { e.stopPropagation(); setFinanceMsg(m.id); }}

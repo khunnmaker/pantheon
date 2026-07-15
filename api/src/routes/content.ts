@@ -4,7 +4,7 @@ import path from 'node:path';
 import { prisma } from '../db/prisma.js';
 import { UPLOAD_DIR, readImageContent } from '../line/contentStore.js';
 import { readStaffUploadMeta, readStaffUploadFile } from '../line/staffUploads.js';
-import { slipToken } from '../finance/slipLink.js';
+import { slipToken, isPdfSlip, isSlipCapable } from '../finance/slipLink.js';
 
 // SKU path segment whitelist — blocks path traversal on the public route.
 const SKU_RE = /^[A-Za-z0-9_-]+$/;
@@ -65,9 +65,26 @@ export async function contentRoutes(app: FastifyInstance) {
   app.get<{ Params: { id: string }; Querystring: { t?: string } }>('/content/slip/:id', async (req, reply) => {
     if (!req.query.t || req.query.t !== slipToken(req.params.id)) return reply.code(403).send({ error: 'forbidden' });
     const msg = await prisma.message.findUnique({ where: { id: req.params.id } });
-    if (!msg || msg.attachmentType !== 'image') return reply.code(404).send({ error: 'not_found' });
+    // Image slips (classic) or PDF file slips (bank-app exports) — same set the
+    // แจ้งการเงิน forward accepts; anything else stays a 404.
+    if (!msg || !isSlipCapable(msg)) return reply.code(404).send({ error: 'not_found' });
     const buf = await readImageContent(req.params.id);
     if (!buf) return reply.code(404).send({ error: 'content_unavailable' });
+    if (isPdfSlip(msg)) {
+      // Inline only when the bytes really are a PDF (%PDF- magic — same job looksLikeRaster
+      // does for images); a mislabeled body downloads instead of rendering. nosniff below
+      // keeps the browser from second-guessing the declared type.
+      const realPdf = buf.subarray(0, 5).toString('latin1') === '%PDF-';
+      reply.header(
+        'content-disposition',
+        `${realPdf ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(msg.attachmentName || 'slip.pdf')}`,
+      );
+      return reply
+        .header('content-type', 'application/pdf')
+        .header('cache-control', 'private, max-age=3600')
+        .header('x-content-type-options', 'nosniff')
+        .send(buf);
+    }
     return reply
       .header('content-type', msg.attachmentRef || 'image/jpeg')
       .header('cache-control', 'private, max-age=3600')
