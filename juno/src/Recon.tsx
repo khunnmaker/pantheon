@@ -679,9 +679,13 @@ function ReceiptList({ onChanged, refreshKey }: { onChanged: () => void; refresh
     <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
       <div className="p-3 border-b border-slate-100 flex flex-wrap items-center gap-2">
         <div className="flex rounded-lg border border-slate-300 overflow-hidden">
+          {/* Same four states as the ตามเงินเข้า view (owner parity request 2026-07-15);
+              default stays รอจับคู่ — the work queue. */}
           {([
+            { key: 'all', label: 'ทั้งหมด' },
             { key: 'pending', label: 'รอจับคู่' },
             { key: 'matched', label: 'จับคู่แล้ว' },
+            { key: 'confirmed', label: 'ยืนยันแล้ว' },
           ] as { key: PaymentReconState; label: string }[]).map((filter) => (
             <button
               key={filter.key}
@@ -718,7 +722,6 @@ function ReceiptList({ onChanged, refreshKey }: { onChanged: () => void; refresh
             <ReceiptRow
               key={payment.id}
               payment={payment}
-              state={state}
               expanded={expanded === payment.id}
               onToggle={() => setExpanded((id) => id === payment.id ? null : payment.id)}
               onChanged={handleChanged}
@@ -730,15 +733,17 @@ function ReceiptList({ onChanged, refreshKey }: { onChanged: () => void; refresh
   );
 }
 
-function ReceiptRow({ payment, state, expanded, onToggle, onChanged }: {
+function ReceiptRow({ payment, expanded, onToggle, onChanged }: {
   payment: PaymentReconRow;
-  state: PaymentReconState;
   expanded: boolean;
   onToggle: () => void;
   onChanged: () => void;
 }) {
   const ageDays = Math.floor((Date.now() - new Date(payment.createdAt).getTime()) / (24 * 3600 * 1000));
   const allConfirmed = payment.linkedTxns.length > 0 && payment.linkedTxns.every((txn) => !!txn.expressConfirmedAt);
+  // Derived from the row itself (not the active filter) so mixed lists like ทั้งหมด render
+  // each row correctly: no links yet → the pending look (age + suggestions panel).
+  const rowPending = payment.linkedTxns.length === 0;
 
   return (
     <div>
@@ -749,7 +754,7 @@ function ReceiptRow({ payment, state, expanded, onToggle, onChanged }: {
         {payment.chequeNo && <span className="shrink-0 px-1.5 py-0.5 rounded-full text-[11px] bg-slate-100 text-slate-600">เช็ค {payment.chequeNo}</span>}
         <div className="flex-1 min-w-0 truncate text-slate-500">{payment.receiptName || payment.customerName}</div>
         <div className="w-28 shrink-0 text-right font-semibold whitespace-nowrap">{baht(payment.amountNum)}</div>
-        {state === 'pending' ? (
+        {rowPending ? (
           <span className={`shrink-0 px-1.5 py-0.5 rounded-full text-[11px] ${ageDays >= 7 ? 'bg-rose-100 text-rose-700 font-semibold' : 'bg-slate-100 text-slate-500'}`}>
             {ageDays} วัน
           </span>
@@ -760,30 +765,31 @@ function ReceiptRow({ payment, state, expanded, onToggle, onChanged }: {
           </div>
         )}
       </div>
-      {expanded && <ReceiptMatchDetail payment={payment} state={state} onChanged={onChanged} />}
+      {expanded && <ReceiptMatchDetail payment={payment} onChanged={onChanged} />}
     </div>
   );
 }
 
-function ReceiptMatchDetail({ payment, state, onChanged }: {
+function ReceiptMatchDetail({ payment, onChanged }: {
   payment: PaymentReconRow;
-  state: PaymentReconState;
   onChanged: () => void;
 }) {
+  // Row-derived, same rule as ReceiptRow: no links yet → suggestions panel; linked → chips.
+  const rowPending = payment.linkedTxns.length === 0;
   const [suggestions, setSuggestions] = useState<TxnSuggestion[]>([]);
-  const [loadingSug, setLoadingSug] = useState(state === 'pending');
+  const [loadingSug, setLoadingSug] = useState(rowPending);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
   useEffect(() => {
-    if (state !== 'pending') return;
+    if (!rowPending) return;
     setLoadingSug(true);
     getPaymentTxnSuggestions(payment.id)
       .then((result) => setSuggestions(result.suggestions))
       .catch(() => setSuggestions([]))
       .finally(() => setLoadingSug(false));
-  }, [payment.id, state]);
+  }, [payment.id, rowPending]);
 
   function toggle(id: string) {
     setSelected((previous) => {
@@ -831,7 +837,7 @@ function ReceiptMatchDetail({ payment, state, onChanged }: {
     <div className="px-4 pb-4 pt-2 bg-slate-50 border-t border-slate-100 text-sm">
       {error && <div className="mb-2 p-2 rounded-lg bg-rose-50 text-rose-700 text-xs flex items-center gap-1"><AlertTriangle size={13} /> {error}</div>}
 
-      {state === 'matched' ? (
+      {!rowPending ? (
         <div>
           <div className="text-xs text-slate-400 mb-1">เงินเข้าที่เชื่อมไว้</div>
           <div className="flex flex-wrap gap-1.5 items-center">

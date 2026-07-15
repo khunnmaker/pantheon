@@ -1679,7 +1679,7 @@ export async function junoRoutes(app: FastifyInstance) {
   });
 
   const paymentsReconQuerySchema = z.object({
-    state: z.enum(['pending', 'matched']).optional(),
+    state: z.enum(['pending', 'matched', 'confirmed', 'all']).optional(),
     q: z.string().max(120).optional(),
     limit: z.coerce.number().int().min(1).max(500).optional(),
   });
@@ -1687,18 +1687,36 @@ export async function junoRoutes(app: FastifyInstance) {
     const parsed = paymentsReconQuerySchema.safeParse(req.query ?? {});
     if (!parsed.success) return reply.code(400).send({ error: 'invalid_query' });
     const { state = 'pending', limit = 100 } = parsed.data;
-    const where: Record<string, unknown> = state === 'pending'
-      ? { status: 'verified', reconciled: false, source: { not: 'cash' } }
-      : { reconciled: true, status: { in: ['verified', 'recorded'] } };
+    // Four states mirroring the ตามเงินเข้า ledger (owner parity request 2026-07-15):
+    //   pending   = verified, still awaiting a bank line (cash never gets one — excluded);
+    //   matched   = linked to a bank line but not yet ยืนยัน Express (status still 'verified');
+    //   confirmed = linked + recorded (the receipt-side ยืนยันแล้ว);
+    //   all       = union of the three (the receipt-side universe of bank reconciliation).
+    // The old two-state design lumped confirmed into matched, so ตามใบเสร็จ showed fewer
+    // filters than ตามเงินเข้า for no workflow reason.
+    const pendingWhere = { status: 'verified', reconciled: false, source: { not: 'cash' } };
+    const where: Record<string, unknown> =
+      state === 'pending' ? { ...pendingWhere }
+      : state === 'matched' ? { reconciled: true, status: 'verified' }
+      : state === 'confirmed' ? { reconciled: true, status: 'recorded' }
+      : { OR: [{ ...pendingWhere }, { reconciled: true, status: { in: ['verified', 'recorded'] } }] };
     const term = parsed.data.q?.trim();
     if (term) {
-      where.OR = [
+      const search = [
         { reNumber: { contains: term, mode: 'insensitive' } },
         { receiptName: { contains: term, mode: 'insensitive' } },
         { customerName: { contains: term, mode: 'insensitive' } },
         { senderName: { contains: term, mode: 'insensitive' } },
         { amount: { contains: term } },
       ];
+      // 'all' already carries an OR for its state union — nest both under AND so the search
+      // doesn't clobber the state filter.
+      if (where.OR) {
+        where.AND = [{ OR: where.OR }, { OR: search }];
+        delete where.OR;
+      } else {
+        where.OR = search;
+      }
     }
 
     const payments = await prisma.payment.findMany({

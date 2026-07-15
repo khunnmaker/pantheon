@@ -602,7 +602,9 @@ export interface BankSuggestion {
   nameScore: number;
 }
 
-export type PaymentReconState = 'pending' | 'matched';
+// Mirrors the ตามเงินเข้า ledger states (ทั้งหมด/ยังไม่จับคู่/จับคู่แล้ว/ยืนยันแล้ว) on the
+// receipt side: confirmed = linked + recorded; all = the full recon universe.
+export type PaymentReconState = 'pending' | 'matched' | 'confirmed' | 'all';
 
 export interface PaymentReconLinkedTxn {
   bankTxnId: string;
