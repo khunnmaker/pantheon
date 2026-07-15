@@ -638,13 +638,14 @@ model CatalogGroupDef {
 }
 
 model CatalogSubgroupDef {
-  id        String   @id @default(cuid())
-  groupKey  String // the parent group (built-in key or a CatalogGroupDef.key)
-  code      String // 2-letter, unique WITHIN its group
-  nameTh    String   @default("")
-  nameEn    String   @default("")
-  sortOrder Int      @default(0)
-  createdAt DateTime @default(now())
+  id              String   @id @default(cuid())
+  groupKey        String // the parent group (built-in key or a CatalogGroupDef.key)
+  code            String // 2-letter, unique WITHIN its group
+  nameTh          String   @default("")
+  nameEn          String   @default("")
+  replacesBuiltin String?
+  sortOrder       Int      @default(0)
+  createdAt       DateTime @default(now())
 
   @@unique([groupKey, code])
   @@index([groupKey])

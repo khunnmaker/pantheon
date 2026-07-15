@@ -374,7 +374,7 @@ export const setSubgroups = (skus: string[], subgroup: string | null) =>
     body: JSON.stringify({ skus, subgroup }),
   });
 
-// ── Create / rename / delete staff-defined groups + sub-groups ───────────
+// ── Create / rename / re-code / delete staff-defined groups + sub-groups ─────
 // Group codes = 2 uppercase letters; subgroup codes = 2 uppercase letters/digits with ≥1 letter.
 // Throws 'HTTP 409' on a duplicate code.
 export const createGroup = (nameTh: string, nameEn: string, code: string, pillar: Pillar) =>
@@ -389,10 +389,10 @@ export const createSubgroup = (groupKey: string, nameTh: string, nameEn: string,
     body: JSON.stringify({ groupKey, nameTh, nameEn, code }),
   });
 
-export const renameSubgroup = (groupKey: string, code: string, nameTh: string, nameEn: string) =>
+export const renameSubgroup = (groupKey: string, code: string, nameTh: string, nameEn: string, newCode?: string) =>
   authed<{ ok: boolean; groupKey: string; subgroup: SubGroupInfo }>('/api/stock/groups/rename-subgroup', {
     method: 'POST',
-    body: JSON.stringify({ groupKey, code, nameTh, nameEn }),
+    body: JSON.stringify({ groupKey, code, nameTh, nameEn, ...(newCode !== undefined ? { newCode } : {}) }),
   });
 
 // Delete a staff-created group (its products become ungrouped). Built-ins return HTTP 404.

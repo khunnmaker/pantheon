@@ -1446,6 +1446,7 @@ function SubgroupManager({ group, onChanged }: { group: CatalogGroupInfo; onChan
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const [editing, setEditing] = useState<string | null>(null);
+  const [editCode, setEditCode] = useState('');
   const [editNameTh, setEditNameTh] = useState('');
   const [editNameEn, setEditNameEn] = useState('');
 
@@ -1471,18 +1472,21 @@ function SubgroupManager({ group, onChanged }: { group: CatalogGroupInfo; onChan
   function startEdit(c: string) {
     const s = group.subgroups.find((x) => x.code === c);
     if (!s) return;
-    setEditing(c); setEditNameTh(s.nameTh); setEditNameEn(s.nameEn); setErr('');
+    setEditing(c); setEditCode(s.code); setEditNameTh(s.nameTh); setEditNameEn(s.nameEn); setErr('');
   }
   async function saveEdit() {
     if (!editing) return;
     setErr('');
     if (!editNameTh.trim() && !editNameEn.trim()) { setErr('กรอกชื่อชนิด'); return; }
+    const nextCode = editCode.trim().toUpperCase();
+    if (nextCode !== editing && !/^(?=.*[A-Z])[A-Z0-9]{2}$/.test(nextCode)) { setErr('รหัส 2 ตัว ใช้อักษร A-Z/เลขได้ ต้องมีอักษรอย่างน้อย 1 ตัว'); return; }
+    if (nextCode !== editing && !window.confirm(`เปลี่ยนรหัสจาก ${editing} เป็น ${nextCode}? สินค้าจะย้ายไปใช้รหัสใหม่ และรหัสย่อเดิม (เช่น ${group.code}${editing}01) จะถูกล้าง และต้องออกใหม่ในแท็บ รหัสย่อ`)) return;
     setBusy(true);
     try {
-      await renameSubgroup(group.key, editing, editNameTh.trim(), editNameEn.trim());
+      await renameSubgroup(group.key, editing, editNameTh.trim(), editNameEn.trim(), nextCode !== editing ? nextCode : undefined);
       setEditing(null);
       onChanged();
-    } catch { setErr('เปลี่ยนชื่อไม่สำเร็จ'); } finally { setBusy(false); }
+    } catch (e) { setErr(e instanceof Error && e.message.includes('409') ? 'รหัสซ้ำ' : 'เปลี่ยนชื่อไม่สำเร็จ'); } finally { setBusy(false); }
   }
 
   return (
@@ -1491,7 +1495,7 @@ function SubgroupManager({ group, onChanged }: { group: CatalogGroupInfo; onChan
       {group.subgroups.length === 0 && <span className="text-[11px] text-slate-300">— ยังไม่มี —</span>}
       {group.subgroups.map((s) => editing === s.code ? (
         <span key={s.code} className="inline-flex items-center gap-1">
-          <b className="px-2 py-1 rounded-lg bg-slate-100 font-mono text-xs text-indigo-600">{s.code}</b>
+          <input value={editCode} onChange={(e) => setEditCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 2))} placeholder="รหัส" className="w-14 px-2 py-1 rounded-lg border border-slate-300 text-xs font-mono uppercase focus:outline-none focus:ring-2 focus:ring-indigo-400" />
           <input value={editNameTh} onChange={(e) => setEditNameTh(e.target.value)} placeholder="ชื่อไทย" className="w-24 px-2 py-1 rounded-lg border border-slate-300 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-400" />
           <input value={editNameEn} onChange={(e) => setEditNameEn(e.target.value)} placeholder="อังกฤษ" className="w-20 px-2 py-1 rounded-lg border border-slate-300 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-400" />
           <button onClick={saveEdit} disabled={busy} className="px-2 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs disabled:opacity-50">{busy ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}</button>

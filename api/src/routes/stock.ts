@@ -634,6 +634,7 @@ export async function stockRoutes(app: FastifyInstance) {
   app.post('/api/stock/groups/auto-assign', async (req) => {
     const onlyUnassigned = (req.body as { onlyUnassigned?: boolean }).onlyUnassigned !== false;
     const CHUNK = 200;
+    const tax = await loadTaxonomy();
     // Write a sku→value map bucketed by value (one updateMany per distinct value).
     const writeBucketed = async (bySku: Map<string, string>, field: 'catalogGroup' | 'catalogSubgroup') => {
       const byVal = new Map<string, string[]>();
@@ -663,7 +664,13 @@ export async function stockRoutes(app: FastifyInstance) {
       select: { sku: true, nameEn: true, nameTh: true, keywords: true, catalogGroup: true },
     });
     const subBySku = new Map<string, string>();
-    for (const p of subScope) { const s = autoAssignSubgroup(p.catalogGroup!, p); if (s) subBySku.set(p.sku, s); }
+    for (const p of subScope) {
+      const g = p.catalogGroup!;
+      let s = autoAssignSubgroup(g, p);
+      if (s) s = tax.builtinSubRemap[g]?.[s] ?? s;
+      if (s && !tax.subCodesByGroup[g]?.has(s)) s = null;
+      if (s) subBySku.set(p.sku, s);
+    }
     const subAssigned = await writeBucketed(subBySku, 'catalogSubgroup');
 
     const stillNull = await prisma.product.count({ where: { status: VESTA_STATUS, catalogGroup: null } });
@@ -834,18 +841,45 @@ export async function stockRoutes(app: FastifyInstance) {
     return { ok: true, groupKey, subgroup: { code: s.code, nameTh: s.nameTh, nameEn: s.nameEn, custom: true } };
   });
 
-  // POST /api/stock/groups/rename-subgroup { groupKey, code, nameTh, nameEn } — update display
-  // names for any sub-group. A built-in sub-group gets a DB-backed name override; its code stays.
+  // POST /api/stock/groups/rename-subgroup { groupKey, code, nameTh, nameEn, newCode? } — update
+  // display names and optionally re-key any sub-group, migrating products and retiring old aliases.
   app.post('/api/stock/groups/rename-subgroup', async (req, reply) => {
-    const b = req.body as { groupKey?: string; code?: string; nameTh?: string; nameEn?: string };
+    const b = req.body as { groupKey?: string; code?: string; nameTh?: string; nameEn?: string; newCode?: string };
     const groupKey = String(b.groupKey ?? '').trim();
     const code = String(b.code ?? '').trim().toUpperCase();
+    const newCode = b.newCode === undefined ? code : String(b.newCode).trim().toUpperCase();
     const nameTh = String(b.nameTh ?? '').trim();
     const nameEn = String(b.nameEn ?? '').trim();
     if (!nameTh && !nameEn) return reply.code(400).send({ error: 'name_required' });
     const tax = await loadTaxonomy();
     if (!tax.groupKeys.has(groupKey)) return reply.code(400).send({ error: 'bad_group' });
     if (!tax.subCodesByGroup[groupKey]?.has(code)) return reply.code(400).send({ error: 'bad_subgroup' });
+    if (newCode !== code && !/^(?=.*[A-Z])[A-Z0-9]{2}$/.test(newCode)) return reply.code(400).send({ error: 'bad_code' });
+    if (newCode !== code && tax.subCodesByGroup[groupKey]?.has(newCode)) return reply.code(409).send({ error: 'code_taken' });
+    if (newCode !== code) {
+      const isBuiltin = (SUBGROUPS[groupKey] ?? []).some((s) => s.code === code);
+      const prefixOld = `${tax.groupCodeByKey.get(groupKey)}${code}`;
+      // A subgroup code change is an identity migration, so its definition and every product move atomically.
+      await prisma.$transaction(async (tx) => {
+        const existing = await tx.catalogSubgroupDef.findUnique({ where: { groupKey_code: { groupKey, code } } });
+        if (existing) {
+          await tx.catalogSubgroupDef.update({
+            where: { groupKey_code: { groupKey, code } },
+            data: { code: newCode, nameTh, nameEn, ...(isBuiltin ? { replacesBuiltin: existing.replacesBuiltin ?? code } : {}) },
+          });
+        } else if (isBuiltin) {
+          const sortOrder = await tx.catalogSubgroupDef.count({ where: { groupKey } });
+          await tx.catalogSubgroupDef.create({ data: { groupKey, code: newCode, nameTh, nameEn, replacesBuiltin: code, sortOrder } });
+        }
+        await tx.product.updateMany({
+          where: { catalogGroup: groupKey, catalogSubgroup: code },
+          data: { catalogSubgroup: newCode },
+        });
+        // Aliases under the old subgroup prefix are invalid identities and will be re-issued explicitly later.
+        await tx.productAlias.deleteMany({ where: { alias: { startsWith: prefixOld } } });
+      });
+      return { ok: true, groupKey, subgroup: { code: newCode, nameTh, nameEn } };
+    }
     const sortOrder = await prisma.catalogSubgroupDef.count({ where: { groupKey } });
     await prisma.catalogSubgroupDef.upsert({
       where: { groupKey_code: { groupKey, code } },
