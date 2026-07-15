@@ -95,8 +95,8 @@ export function validEventTimeRange(startTime: string | null, endTime: string | 
   return endTime > startTime;
 }
 
-export interface EventInput { title: string; note?: string; date: string; endDate?: string | null; startTime?: string | null; endTime?: string | null }
-export interface EventData { title: string; note: string; date: Date; endDate: Date | null; startTime: string | null; endTime: string | null }
+export interface EventInput { title: string; note?: string; date: string; endDate?: string | null; startTime?: string | null; endTime?: string | null; visibility?: 'private' | 'public' }
+export interface EventData { title: string; note: string; date: Date; endDate: Date | null; startTime: string | null; endTime: string | null; visibility: 'private' | 'public' }
 
 /**
  * Cross-field validation + parsing shared by POST /api/apollo/events and PATCH
@@ -111,7 +111,7 @@ export function buildEventData(input: EventInput): EventData | null {
   const startTime = input.startTime ?? null;
   const endTime = input.endTime ?? null;
   if (!validEventTimeRange(startTime, endTime)) return null;
-  return { title: input.title, note: input.note ?? '', date, endDate, startTime, endTime };
+  return { title: input.title, note: input.note ?? '', date, endDate, startTime, endTime, visibility: input.visibility ?? 'private' };
 }
 
 // ─── ApolloEvent: calendar-range query + masking ─────────────────────────
@@ -140,7 +140,7 @@ export function eventDateRangeWhere(from: Date, to: Date): Prisma.ApolloEventWhe
 }
 
 export interface ApolloEventRow {
-  id: string; agentId: string; title: string; note: string;
+  id: string; agentId: string; title: string; note: string; visibility: string;
   date: Date; endDate: Date | null; startTime: string | null; endTime: string | null;
   agent: { id: string; name: string; email: string; role: string };
 }
@@ -148,17 +148,21 @@ export interface MaskedApolloEvent {
   id: string; agentId: string; date: Date; endDate: Date | null;
   startTime: string | null; endTime: string | null; own: boolean;
   assignee: { id: string; name: string; email: string; role: string };
-  title?: string; note?: string;
+  title?: string; note?: string; visibility?: 'private' | 'public';
 }
 
 /**
- * Server-side privacy mask for GET /api/apollo/calendar's events: the owner gets the full row;
- * everyone else (managers included — no role bypass) gets only the free/busy shape, with
- * title/note genuinely ABSENT from the object (not just blanked), so a non-owner payload can
- * never leak them even if a caller forgets to check `own` before reading further.
+ * Server-side privacy mask for GET /api/apollo/calendar's events. Full payload (title/note/
+ * visibility) goes to: the owner; the CEO (viewerIsCeo — the caller must derive this as EXACTLY
+ * `role === 'supervisor'`, never the manager() helper, which also covers 'md' — md/Nee must
+ * never see private details); or anyone at all when the event itself is visibility 'public'.
+ * Every other viewer gets only the free/busy shape, with title/note/visibility genuinely ABSENT
+ * from the object (not just blanked), so a masked payload can never leak them even if a caller
+ * forgets to check `own`/`visibility` before reading further.
  */
-export function maskEvent(event: ApolloEventRow, viewerId: string): MaskedApolloEvent {
+export function maskEvent(event: ApolloEventRow, viewerId: string, viewerIsCeo: boolean): MaskedApolloEvent {
   const own = event.agentId === viewerId;
-  const { agent, title, note, ...rest } = event;
-  return { ...rest, own, assignee: agent, ...(own ? { title, note } : {}) };
+  const { agent, title, note, visibility, ...rest } = event;
+  const full = own || viewerIsCeo || visibility === 'public';
+  return { ...rest, own, assignee: agent, ...(full ? { title, note, visibility: visibility as 'private' | 'public' } : {}) };
 }

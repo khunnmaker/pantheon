@@ -43,37 +43,61 @@ describe('Apollo calendar scope resolution (resolveCalendarScope)', () => {
   });
 });
 
-describe('Apollo event masking (maskEvent) strips title/note for non-owners', () => {
+describe('Apollo event masking (maskEvent): visibility matrix — own/CEO/public get full payload, else masked', () => {
   const agent = { id: 'owner-1', name: 'Owner One', email: 'owner@prominent.local', role: 'employee' };
-  const raw = {
-    id: 'evt-1', agentId: 'owner-1', title: 'หมอฟัน', note: 'คลินิกบางนา',
+  const privateRaw = {
+    id: 'evt-1', agentId: 'owner-1', title: 'หมอฟัน', note: 'คลินิกบางนา', visibility: 'private',
     date: new Date('2026-07-20T00:00:00.000Z'), endDate: null,
     startTime: '09:00', endTime: '10:00', agent,
   };
+  const publicRaw = { ...privateRaw, id: 'evt-2', title: 'ประชุมทีม', note: 'ห้องประชุมใหญ่', visibility: 'public' };
 
-  it('keeps title/note when the viewer IS the owner, and marks own: true', () => {
-    const masked = maskEvent(raw, 'owner-1');
+  it('keeps title/note/visibility when the viewer IS the owner, and marks own: true', () => {
+    const masked = maskEvent(privateRaw, 'owner-1', false);
     expect(masked.own).toBe(true);
     expect(masked.title).toBe('หมอฟัน');
     expect(masked.note).toBe('คลินิกบางนา');
+    expect(masked.visibility).toBe('private');
     expect(masked.assignee).toEqual(agent);
   });
 
-  it('genuinely omits title/note (not just blanks them) when the viewer is NOT the owner', () => {
-    const masked = maskEvent(raw, 'someone-else');
+  it('genuinely omits title/note/visibility (not just blanks them) for a non-owner, non-CEO viewer of a PRIVATE event', () => {
+    const masked = maskEvent(privateRaw, 'someone-else', false);
     expect(masked.own).toBe(false);
     expect(masked).not.toHaveProperty('title');
     expect(masked).not.toHaveProperty('note');
+    expect(masked).not.toHaveProperty('visibility');
     expect(Object.keys(masked).sort()).toEqual(['agentId', 'assignee', 'date', 'endDate', 'endTime', 'id', 'own', 'startTime'].sort());
     // free/busy fields (who + when) still come through — that's the point of the feature.
     expect(masked.assignee).toEqual(agent);
     expect(masked.startTime).toBe('09:00');
   });
 
-  it('never bypasses the mask for a manager viewer — no role bypass', () => {
-    const masked = maskEvent(raw, 'manager-1');
+  it('gives the CEO (viewerIsCeo: true) full title/note/visibility on someone else\'s PRIVATE event', () => {
+    const masked = maskEvent(privateRaw, 'ceo-1', true);
+    expect(masked.own).toBe(false);
+    expect(masked.title).toBe('หมอฟัน');
+    expect(masked.note).toBe('คลินิกบางนา');
+    expect(masked.visibility).toBe('private');
+  });
+
+  it('never leaks private title/note to a non-CEO manager viewer (e.g. md/Nee) — regression: manager() must not be used here', () => {
+    // The route computes viewerIsCeo as EXACTLY role === 'supervisor', so an md viewer always
+    // calls in with false here, same as any other non-CEO employee — this is what would break
+    // if maskEvent (or its caller) ever swapped in the manager() helper (which also covers 'md').
+    const masked = maskEvent(privateRaw, 'md-1', false);
+    expect(masked.own).toBe(false);
     expect(masked).not.toHaveProperty('title');
     expect(masked).not.toHaveProperty('note');
+    expect(masked).not.toHaveProperty('visibility');
+  });
+
+  it('gives ANY viewer (not owner, not CEO) the full payload on a PUBLIC event', () => {
+    const masked = maskEvent(publicRaw, 'someone-else', false);
+    expect(masked.own).toBe(false);
+    expect(masked.title).toBe('ประชุมทีม');
+    expect(masked.note).toBe('ห้องประชุมใหญ่');
+    expect(masked.visibility).toBe('public');
   });
 });
 
@@ -155,10 +179,10 @@ describe('Apollo event date-range validation (validEventDateRange)', () => {
 });
 
 describe('Apollo buildEventData — shared POST/PATCH validation + parsing', () => {
-  it('parses a minimal valid event', () => {
+  it('parses a minimal valid event, defaulting visibility to private', () => {
     const result = buildEventData({ title: 'นัดหมอ', date: '2026-07-20' });
     expect(result).toEqual({
-      title: 'นัดหมอ', note: '', date: parseDate('2026-07-20'), endDate: null, startTime: null, endTime: null,
+      title: 'นัดหมอ', note: '', date: parseDate('2026-07-20'), endDate: null, startTime: null, endTime: null, visibility: 'private',
     });
   });
 
@@ -177,7 +201,12 @@ describe('Apollo buildEventData — shared POST/PATCH validation + parsing', () 
   it('accepts a full multi-day, timed event', () => {
     const result = buildEventData({ title: 'สัมมนา', note: 'ห้องประชุมใหญ่', date: '2026-07-20', endDate: '2026-07-22', startTime: '09:00', endTime: '17:00' });
     expect(result).toEqual({
-      title: 'สัมมนา', note: 'ห้องประชุมใหญ่', date: parseDate('2026-07-20'), endDate: parseDate('2026-07-22'), startTime: '09:00', endTime: '17:00',
+      title: 'สัมมนา', note: 'ห้องประชุมใหญ่', date: parseDate('2026-07-20'), endDate: parseDate('2026-07-22'), startTime: '09:00', endTime: '17:00', visibility: 'private',
     });
+  });
+
+  it('accepts an explicit visibility of "public"', () => {
+    const result = buildEventData({ title: 'ประชุมทีม', date: '2026-07-20', visibility: 'public' });
+    expect(result?.visibility).toBe('public');
   });
 });

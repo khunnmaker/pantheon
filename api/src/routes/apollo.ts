@@ -43,6 +43,7 @@ const eventBody = z.object({
   endDate: dateSchema.nullable().optional(),
   startTime: eventTimeSchema.nullable().optional(),
   endTime: eventTimeSchema.nullable().optional(),
+  visibility: z.enum(['private', 'public']).optional(),
 });
 
 const peopleSelect = { id: true, name: true, email: true, role: true } as const;
@@ -62,7 +63,7 @@ const calendarTaskSelect = {
 // Raw projection for the calendar's events — title/note ARE selected here (the DB read is
 // unfiltered); maskEvent() strips them for non-owners afterward, in application code, never here.
 const calendarEventSelect = {
-  id: true, agentId: true, title: true, note: true, date: true, endDate: true, startTime: true, endTime: true,
+  id: true, agentId: true, title: true, note: true, date: true, endDate: true, startTime: true, endTime: true, visibility: true,
   agent: { select: peopleSelect },
 } as const;
 
@@ -353,11 +354,13 @@ export async function apolloRoutes(app: FastifyInstance) {
     return { ok: true };
   });
 
-  // ── ApolloEvent: private personal events (นัดหมอ, ธุระส่วนตัว) ──────────
+  // ── ApolloEvent: personal events (นัดหมอ, ธุระส่วนตัว) ──────────────────
   // Owner-only CRUD, no manager bypass anywhere here — the manager exception that governs
   // task delete/comment-delete/attachment-delete deliberately does NOT apply to events; see the
   // spec's hard rule. All three use the same 404-for-both-missing-and-forbidden shape as the
   // rest of this file (canReadTask etc.) so a probe can't tell "not yours" from "doesn't exist".
+  // The CEO's view-only exception (see maskEvent) lives entirely in GET /calendar below — there
+  // is no read exception here, so CRUD stays owner-only regardless of visibility or role.
   app.post('/api/apollo/events', async (req, reply) => {
     const parsed = eventBody.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: 'invalid_body' });
@@ -405,6 +408,10 @@ export async function apolloRoutes(app: FastifyInstance) {
     const range = parseCalendarRange(parsed.data.from, parsed.data.to);
     if (!range) return reply.code(400).send({ error: `invalid_range_or_exceeds_${CALENDAR_MAX_RANGE_DAYS}_days` });
     const viewerId = req.agent!.id;
+    // CEO-only view exception for private events (see maskEvent) — role 'supervisor' EXACTLY,
+    // deliberately NOT the manager() helper above (which also covers 'md'): md/Nee must never
+    // see private event details, only the free/busy block everyone else gets.
+    const isCeo = req.agent!.role === 'supervisor';
     // Peers may now scope to a colleague/'all'/'none' to check availability — but (unlike a
     // manager) that widened scope is ALSO member-project-restricted for tasks, so no new task
     // info leaks beyond what the board already shows them. Self scope is unchanged from before.
@@ -432,7 +439,7 @@ export async function apolloRoutes(app: FastifyInstance) {
       select: calendarEventSelect,
       orderBy: { date: 'asc' },
       take: 500,
-    })).map((event) => maskEvent(event, viewerId));
+    })).map((event) => maskEvent(event, viewerId, isCeo));
     return { tasks, events };
   });
 

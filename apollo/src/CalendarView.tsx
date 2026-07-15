@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { CalendarClock, CalendarDays, CalendarPlus, ChevronLeft, ChevronRight, Loader2, RefreshCw, Trash2, UserPlus, Users, X } from 'lucide-react';
+import { CalendarDays, CalendarPlus, ChevronLeft, ChevronRight, Loader2, Lock, RefreshCw, Trash2, UserPlus, Users, X } from 'lucide-react';
 import TaskCard from './TaskCard';
 import type { Agent, CalendarEvent, CalendarTask, EventInput, Person } from './types';
 import { addEvent, deleteEvent, getCalendar, updateEvent } from './lib/api';
@@ -115,7 +115,7 @@ export default function CalendarView({ agents, me, isManager, onOpen }: {
                 {new Date(`${key}T00:00:00`).toLocaleDateString('th-TH', { weekday: 'long', day: 'numeric', month: 'long' })}{isToday ? ' · วันนี้' : ''}
               </h3>
               <div className="space-y-2">
-                {(eventsByDay.get(key) ?? []).map((e) => <EventChip key={`e-${e.id}`} event={e} agents={agents} onOpen={openEvent}/>)}
+                {(eventsByDay.get(key) ?? []).map((e) => <EventChip key={`e-${e.id}`} event={e} agents={agents} detailed onOpen={openEvent}/>)}
                 {(tasksByDay.get(key) ?? []).map((t) => <TaskCard key={t.id} task={t} agents={agents} showProject onClick={() => onOpen(t.id)}/>)}
               </div>
             </div>;
@@ -129,7 +129,7 @@ export default function CalendarView({ agents, me, isManager, onOpen }: {
         <button aria-label="ปิด" onClick={() => setDayModal(null)} className="rounded-lg p-1 text-slate-400 hover:bg-slate-100"><X/></button>
       </div>
       <div className="max-h-[calc(85vh-70px)] space-y-2 overflow-y-auto p-5">
-        {(eventsByDay.get(dayModal) ?? []).map((e) => <EventChip key={`e-${e.id}`} event={e} agents={agents} onOpen={(event) => { openEvent(event); setDayModal(null); }}/>)}
+        {(eventsByDay.get(dayModal) ?? []).map((e) => <EventChip key={`e-${e.id}`} event={e} agents={agents} detailed onOpen={(event) => { openEvent(event); setDayModal(null); }}/>)}
         {(tasksByDay.get(dayModal) ?? []).map((t) => <TaskCard key={t.id} task={t} agents={agents} showProject onClick={() => { onOpen(t.id); setDayModal(null); }}/>)}
       </div>
     </Shell>}
@@ -169,16 +169,35 @@ function TaskChip({ task, scope, agents, isPast, isToday, onOpen }: {
   </button>;
 }
 
-// Own events are editable (violet, clickable); everyone else's are an anonymous "ไม่ว่าง" busy
-// block (dashed gray, static) — the server already stripped title/note for those, so there is
-// nothing here that could leak them even by accident.
-function EventChip({ event, agents, onOpen }: { event: CalendarEvent; agents: Person[]; onOpen: (event: CalendarEvent) => void }) {
+// Own events are editable (violet, clickable, Lock/Users icon showing the owner their own
+// visibility choice). A non-own event with title present — 'public', or the CEO viewing someone
+// else's 'private' one — renders read-only (sky, not clickable; no read modal in this pass), with
+// a Lock suffix ONLY on the CEO-viewing-private case as a confidentiality reminder. Everyone else
+// gets the anonymous "ไม่ว่าง" busy block (dashed gray, static) — the server already stripped
+// title/note/visibility for those, so there is nothing here that could leak them even by
+// accident. `detailed` additionally shows the note as a secondary line (day modal/agenda only —
+// the grid cell has no room for it).
+function EventChip({ event, agents, onOpen, detailed }: { event: CalendarEvent; agents: Person[]; onOpen: (event: CalendarEvent) => void; detailed?: boolean }) {
   if (event.own) {
+    const VisIcon = event.visibility === 'public' ? Users : Lock;
     return <button onClick={() => onOpen(event)}
-      className="flex w-full items-center gap-1 truncate rounded-md bg-violet-50 px-1.5 py-0.5 text-left text-[11px] text-violet-700">
-      <CalendarClock size={10} className="shrink-0"/>
-      <span className="truncate">{(event.startTime ? `${event.startTime} ` : '') + (event.title ?? '')}</span>
+      className="flex w-full flex-col gap-0.5 rounded-md bg-violet-50 px-1.5 py-0.5 text-left text-[11px] text-violet-700">
+      <span className="flex items-center gap-1 truncate">
+        <VisIcon size={10} className="shrink-0"/>
+        <span className="truncate">{(event.startTime ? `${event.startTime} ` : '') + (event.title ?? '')}</span>
+      </span>
+      {detailed && event.note && <span className="truncate text-slate-500">{event.note}</span>}
     </button>;
+  }
+  if (event.title !== undefined) {
+    return <div className="flex w-full flex-col gap-0.5 rounded-md bg-sky-50 px-1.5 py-0.5 text-[11px] text-sky-700">
+      <span className="flex items-center gap-1 truncate">
+        {event.assignee && <img src={agentAvatar(event.assignee, agents)} alt="" className="h-3 w-3 shrink-0 rounded-full"/>}
+        <span className="truncate">{(event.startTime ? `${event.startTime} ` : '') + event.title}</span>
+        {event.visibility === 'private' && <Lock size={10} className="ml-auto shrink-0 opacity-70"/>}
+      </span>
+      {detailed && event.note && <span className="truncate text-slate-500">{event.note}</span>}
+    </div>;
   }
   return <div className="flex w-full items-center gap-1 truncate rounded-md border border-dashed border-slate-300 bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-500">
     {event.assignee && <img src={agentAvatar(event.assignee, agents)} alt="" className="h-3 w-3 shrink-0 rounded-full"/>}
@@ -192,7 +211,7 @@ function Shell({ children, onClose }: { children: React.ReactNode; onClose: () =
   </div>;
 }
 
-// Private-event editor — same Shell as the day modal. Non-owners never reach this (their chips
+// Personal-event editor — same Shell as the day modal. Non-owners never reach this (their chips
 // aren't clickable), so there's no "view-only" mode to build: this is always the owner's own.
 function EventModal({ date, event, onClose, onChanged }: { date: string; event?: CalendarEvent; onClose: () => void; onChanged: () => void }) {
   const [title, setTitle] = useState(event?.title ?? '');
@@ -201,6 +220,7 @@ function EventModal({ date, event, onClose, onChanged }: { date: string; event?:
   const [endDate, setEndDate] = useState(event?.endDate ? event.endDate.slice(0, 10) : '');
   const [startTime, setStartTime] = useState(event?.startTime ?? '');
   const [endTime, setEndTime] = useState(event?.endTime ?? '');
+  const [visibility, setVisibility] = useState<'private' | 'public'>(event?.visibility ?? 'private');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
@@ -212,6 +232,7 @@ function EventModal({ date, event, onClose, onChanged }: { date: string; event?:
       endDate: endDate || null,
       startTime: startTime || null,
       endTime: startTime && endTime ? endTime : null,
+      visibility,
     };
     try {
       if (event) await updateEvent(event.id, body); else await addEvent(body);
@@ -228,7 +249,7 @@ function EventModal({ date, event, onClose, onChanged }: { date: string; event?:
     <div className="flex items-start justify-between border-b border-slate-200 px-5 py-4">
       <div>
         <h2 className="text-lg font-bold">กิจกรรมส่วนตัว</h2>
-        <p className="mt-0.5 text-xs text-slate-500">คนอื่นจะเห็นเพียงว่า &quot;ไม่ว่าง&quot;</p>
+        <p className="mt-0.5 text-xs text-slate-500">{visibility === 'public' ? 'ทุกคนเห็นรายละเอียดกิจกรรมนี้' : 'คนอื่นจะเห็นเพียงว่า "ไม่ว่าง" (CEO เห็นรายละเอียด)'}</p>
       </div>
       <button aria-label="ปิด" onClick={onClose} className="rounded-lg p-1 text-slate-400 hover:bg-slate-100"><X/></button>
     </div>
@@ -252,6 +273,17 @@ function EventModal({ date, event, onClose, onChanged }: { date: string; event?:
       <div className="flex gap-2">
         <input type="time" className="input" value={startTime} onChange={(e) => { setStartTime(e.target.value); if (!e.target.value) setEndTime(''); }}/>
         <input type="time" className="input" value={endTime} min={startTime || undefined} disabled={!startTime} onChange={(e) => setEndTime(e.target.value)}/>
+      </div>
+      <label className="label">การมองเห็น</label>
+      <div className="flex flex-wrap gap-1.5">
+        <button type="button" onClick={() => setVisibility('private')}
+          className={`inline-flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-xs font-medium ${visibility === 'private' ? 'border-transparent bg-violet-50 text-violet-700 ring-2 ring-violet-300' : 'border-slate-200 text-slate-500 hover:border-slate-300'}`}>
+          <Lock size={12}/>ส่วนตัว
+        </button>
+        <button type="button" onClick={() => setVisibility('public')}
+          className={`inline-flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-xs font-medium ${visibility === 'public' ? 'border-transparent bg-sky-50 text-sky-700 ring-2 ring-sky-300' : 'border-slate-200 text-slate-500 hover:border-slate-300'}`}>
+          <Users size={12}/>สาธารณะ
+        </button>
       </div>
       <label className="label">โน้ต</label>
       <textarea className="input min-h-24" value={note} onChange={(e) => setNote(e.target.value)}/>
