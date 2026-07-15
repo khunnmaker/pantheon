@@ -42,7 +42,9 @@ function BillStatusChip({ status }: { status: ManualBillStatus }) {
 }
 
 // canDelete = CEO-only ลบถาวร (mirrors the payment drawer's gate; server 403s non-supervisor).
-export default function Bills({ onCountsChanged, canDelete }: { onCountsChanged: (counts: ManualBillCounts) => void; canDelete: boolean }) {
+// canEdit = md/supervisor only (owner 2026-07-15): FIN sees the ledger + print but never
+// issues/edits/voids — mirrors the server's EMPLOYEE_JUNO_DENIED_ROUTES 403s.
+export default function Bills({ onCountsChanged, canDelete, canEdit }: { onCountsChanged: (counts: ManualBillCounts) => void; canDelete: boolean; canEdit: boolean }) {
   const [q, setQ] = useState('');
   const [status, setStatus] = useState<ManualBillStatusFilter>('all');
   const [rows, setRows] = useState<ManualBill[]>([]);
@@ -79,9 +81,11 @@ export default function Bills({ onCountsChanged, canDelete }: { onCountsChanged:
           <ReceiptText size={20} className="text-emerald-700" />
           <h1 className="text-lg font-bold">บิลมือ</h1>
         </div>
-        <button onClick={() => setEditing('new')} className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-700">
-          <Plus size={15} /> ออกบิล
-        </button>
+        {canEdit && (
+          <button onClick={() => setEditing('new')} className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-700">
+            <Plus size={15} /> ออกบิล
+          </button>
+        )}
       </div>
 
       <div className="flex gap-3 items-start">
@@ -135,6 +139,7 @@ export default function Bills({ onCountsChanged, canDelete }: { onCountsChanged:
           <BillDrawer
             bill={selected}
             canDelete={canDelete}
+            canEdit={canEdit}
             onClose={() => setSelected(null)}
             onEdit={() => setEditing(selected)}
             onPrint={() => setPrintQueue([selected])}
@@ -154,8 +159,8 @@ export default function Bills({ onCountsChanged, canDelete }: { onCountsChanged:
   );
 }
 
-function BillDrawer({ bill, canDelete, onClose, onEdit, onPrint, onChanged }: {
-  bill: ManualBill; canDelete: boolean; onClose: () => void; onEdit: () => void; onPrint: () => void; onChanged: () => void;
+function BillDrawer({ bill, canDelete, canEdit, onClose, onEdit, onPrint, onChanged }: {
+  bill: ManualBill; canDelete: boolean; canEdit: boolean; onClose: () => void; onEdit: () => void; onPrint: () => void; onChanged: () => void;
 }) {
   // 'void' = the reversible ยกเลิก confirm; 'delete' = the CEO-only ลบถาวร confirm (กู้คืนไม่ได้).
   const [confirming, setConfirming] = useState<'void' | 'delete' | null>(null);
@@ -201,10 +206,10 @@ function BillDrawer({ bill, canDelete, onClose, onEdit, onPrint, onChanged }: {
           <div className="min-w-0"><div className="font-bold truncate">{bill.billNo}</div><BillStatusChip status={bill.billStatus} /></div>
           <div className="flex gap-1">
             <button onClick={onPrint} title="พิมพ์บิล" className="p-2 rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50"><Printer size={16} /></button>
-            <button onClick={onEdit} title="แก้ไข" className="p-2 rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50"><PenLine size={16} /></button>
-            <button onClick={() => setConfirming('void')} title={bill.billStatus === 'void' ? 'กู้คืน' : 'ยกเลิกบิล'} className="p-2 rounded-lg border border-slate-200 text-slate-500 hover:bg-rose-50 hover:text-rose-600">
+            {canEdit && <button onClick={onEdit} title="แก้ไข" className="p-2 rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50"><PenLine size={16} /></button>}
+            {canEdit && <button onClick={() => setConfirming('void')} title={bill.billStatus === 'void' ? 'กู้คืน' : 'ยกเลิกบิล'} className="p-2 rounded-lg border border-slate-200 text-slate-500 hover:bg-rose-50 hover:text-rose-600">
               {bill.billStatus === 'void' ? <RotateCcw size={16} /> : <Ban size={16} />}
-            </button>
+            </button>}
             {/* ลบถาวร — CEO-only (canDelete = supervisor; server 403s everyone else). */}
             {canDelete && (
               <button onClick={() => setConfirming('delete')} title="ลบถาวร (กู้คืนไม่ได้)" className="p-2 rounded-lg border border-rose-200 text-rose-500 hover:bg-rose-50 hover:text-rose-700">

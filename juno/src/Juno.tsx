@@ -127,7 +127,9 @@ function MethodCell({ p }: { p: Payment }) {
 }
 
 export default function Juno({ agent, onLogout }: { agent: Agent; onLogout: () => void }) {
-  const scope = agent.role === 'supervisor' ? 'full' : agent.role === 'md' ? 'billsOnly' : 'noBills';
+  // Owner 2026-07-15: employees (FIN) see the บิลมือ tab READ-ONLY — ledger + print, no
+  // issue/edit/void (server already 403s their bill mutations; buttons hidden in Bills.tsx).
+  const scope = agent.role === 'supervisor' ? 'full' : agent.role === 'md' ? 'billsOnly' : 'readBills';
   const [view, setView] = useState<View>(scope === 'billsOnly' ? 'bills' : 'inbox');
   const [summary, setSummary] = useState<Summary | null>(null);
   // CEO-only actions (mirrors the server's supervisor gate in api/src/routes/juno.ts): reports,
@@ -156,9 +158,7 @@ export default function Juno({ agent, onLogout }: { agent: Agent; onLogout: () =
     // badge a meaningless 962 (owner report 2026-07-14). Falls back on a stale api.
     getBankSummary().then((s) => setBankUnmatched(s.unmatchedInRecent?.count ?? s.unmatchedIn.count)).catch(() => setBankUnmatched(undefined));
     getFinanceAudits('open').then((r) => setAuditOpen(r.audits.length)).catch(() => setAuditOpen(undefined));
-    if (scope === 'full') {
-      getManualBills().then((r) => handleBillCounts(r.counts)).catch(() => setBillAlerts(undefined));
-    }
+    getManualBills().then((r) => handleBillCounts(r.counts)).catch(() => setBillAlerts(undefined));
   }, [handleBillCounts, scope]);
   useEffect(() => { refreshSummary(); }, [refreshSummary]);
 
@@ -181,7 +181,7 @@ export default function Juno({ agent, onLogout }: { agent: Agent; onLogout: () =
           tabs: [
             // badge = รอตรวจ queue (actionable), not the all-time total the bar used to show
             { key: 'inbox' as const, label: 'รายการ', icon: <Inbox size={16} />, count: summary?.received },
-            ...(scope === 'full' ? [billTab] : []),
+            billTab, // full = CRUD, readBills (FIN) = read-only inside the tab
           ],
         },
         {
@@ -284,7 +284,7 @@ export default function Juno({ agent, onLogout }: { agent: Agent; onLogout: () =
         ) : view === 'reRecon' ? (
           <ReRecon isCeo={isCeo} />
         ) : view === 'bills' ? (
-          <Bills onCountsChanged={handleBillCounts} canDelete={canDelete} />
+          <Bills onCountsChanged={handleBillCounts} canDelete={canDelete} canEdit={scope !== 'readBills'} />
         ) : view === 'disc' ? (
           <Discrepancies isCeo={isCeo} onChanged={refreshSummary} />
         ) : view === 'audit' ? (
