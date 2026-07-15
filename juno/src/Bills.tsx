@@ -356,14 +356,16 @@ function BillModal({ bill, onClose, onSaved }: { bill: ManualBill | null; onClos
         </div>
 
         <div className="p-4 space-y-4">
-          <div className="grid sm:grid-cols-2 gap-3">
-            {!bill && <Field label="เลขบิลเดิม (เว้นว่างเพื่อรันอัตโนมัติ)"><input value={billNo} onChange={(event) => setBillNo(event.target.value.replace(/\//g, '-').toUpperCase())} placeholder="เช่น 38/13 → 38-13" className="input" /></Field>}
-            <Field label="วันที่"><input type="date" value={billedAt} onChange={(event) => setBilledAt(event.target.value)} className="input" /></Field>
-            {/* รหัสก่อนชื่อ — owner form-field-order rule 2026-07-15 (CODE name) */}
-            <Field label="รหัสลูกค้า (ถ้ามี)"><input value={customerCode} onChange={(event) => setCustomerCode(event.target.value)} className="input" /></Field>
-            <Field label="ชื่อผู้ซื้อ"><input value={buyerName} onChange={(event) => setBuyerName(event.target.value)} className="input" /></Field>
-            <Field label="เบอร์โทร"><input value={buyerPhone} onChange={(event) => setBuyerPhone(event.target.value)} className="input" /></Field>
-            <div className="sm:col-span-2"><Field label="ที่อยู่"><textarea rows={2} value={buyerAddress} onChange={(event) => setBuyerAddress(event.target.value)} className="input" /></Field></div>
+          {/* Compact header (owner 2026-07-15: "use less space") — 12-col grid, 3 rows max:
+              [เลขบิล | วันที่ | รหัส] → [ชื่อ | โทร] → [ที่อยู่]; code still precedes name
+              (form-field-order rule). Mobile stays single-column. */}
+          <div className="grid sm:grid-cols-12 gap-2">
+            {!bill && <div className="sm:col-span-5"><Field label="เลขบิลเดิม (ว่าง = รันอัตโนมัติ)"><input value={billNo} onChange={(event) => setBillNo(event.target.value.replace(/\//g, '-').toUpperCase())} placeholder="เช่น 38/13 → 38-13" className="input" /></Field></div>}
+            <div className="sm:col-span-4"><Field label="วันที่"><input type="date" value={billedAt} onChange={(event) => setBilledAt(event.target.value)} className="input" /></Field></div>
+            <div className="sm:col-span-3"><Field label="รหัสลูกค้า (ถ้ามี)"><input value={customerCode} onChange={(event) => setCustomerCode(event.target.value)} className="input" /></Field></div>
+            <div className="sm:col-span-7"><Field label="ชื่อผู้ซื้อ"><input value={buyerName} onChange={(event) => setBuyerName(event.target.value)} className="input" /></Field></div>
+            <div className="sm:col-span-5"><Field label="เบอร์โทร"><input value={buyerPhone} onChange={(event) => setBuyerPhone(event.target.value)} className="input" /></Field></div>
+            <div className="sm:col-span-12"><Field label="ที่อยู่"><textarea rows={1} value={buyerAddress} onChange={(event) => setBuyerAddress(event.target.value)} className="input" /></Field></div>
           </div>
 
           <div>
