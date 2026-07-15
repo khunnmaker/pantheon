@@ -173,7 +173,16 @@ function ImportPanel({ onImported }: { onImported: () => void }) {
       setPreview(null);
       setQueue((prev) => prev.slice(1));
     } catch (e) {
-      setError((e as Error).message === 'unauthorized' ? 'เซสชันหมดอายุ — กรุณาเข้าสู่ระบบใหม่' : 'นำเข้าไม่สำเร็จ — ลองใหม่อีกครั้ง');
+      const message = (e as Error).message;
+      if (message === 'HTTP 410') {
+        // The staged preview lives in api memory (30-min TTL, wiped on every deploy/restart) —
+        // the parsed rows are gone, so drop the dead preview and ask for a fresh pick. Fully
+        // safe to redo: dedupeKeys make a re-import of the same file idempotent.
+        setPreview(null);
+        setError('พรีวิวหมดอายุ (ระบบอัปเดตหรือทิ้งไว้นาน) — เลือกไฟล์เดิมอีกครั้งได้เลย ไม่มีอะไรถูกนำเข้าซ้ำ');
+      } else {
+        setError(message === 'unauthorized' ? 'เซสชันหมดอายุ — กรุณาเข้าสู่ระบบใหม่' : 'นำเข้าไม่สำเร็จ — ลองใหม่อีกครั้ง');
+      }
     } finally {
       setBusy(false);
     }
