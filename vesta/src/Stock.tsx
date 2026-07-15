@@ -1409,6 +1409,10 @@ function CreateGroupForm({ onCreated }: { onCreated: () => void }) {
   }
   return (
     <div className="w-full mt-2 p-3 rounded-xl border border-indigo-200 bg-indigo-50/50 flex flex-wrap items-end gap-2">
+      <label className="text-xs text-slate-500">รหัส (2 ตัว)
+        <input value={code} onChange={(e) => setCode(e.target.value.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 2))} placeholder="ZX"
+          className="block mt-0.5 w-16 px-2 py-1.5 rounded-lg border border-slate-300 text-sm font-mono uppercase focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+      </label>
       <label className="text-xs text-slate-500">ชื่อไทย
         <input value={nameTh} onChange={(e) => setNameTh(e.target.value)} placeholder="เช่น วัสดุพิเศษ"
           className="block mt-0.5 w-40 px-2 py-1.5 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400" />
@@ -1416,10 +1420,6 @@ function CreateGroupForm({ onCreated }: { onCreated: () => void }) {
       <label className="text-xs text-slate-500">ชื่ออังกฤษ
         <input value={nameEn} onChange={(e) => setNameEn(e.target.value)} placeholder="Special"
           className="block mt-0.5 w-40 px-2 py-1.5 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400" />
-      </label>
-      <label className="text-xs text-slate-500">รหัส (2 ตัว)
-        <input value={code} onChange={(e) => setCode(e.target.value.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 2))} placeholder="ZX"
-          className="block mt-0.5 w-16 px-2 py-1.5 rounded-lg border border-slate-300 text-sm font-mono uppercase focus:outline-none focus:ring-2 focus:ring-indigo-400" />
       </label>
       <label className="text-xs text-slate-500">หมวด
         <select value={pillar} onChange={(e) => setPillar(e.target.value as Pillar)}
@@ -1510,9 +1510,9 @@ function SubgroupManager({ group, onChanged }: { group: CatalogGroupInfo; onChan
       ))}
       {open ? (
         <span className="inline-flex items-center gap-1">
+          <input value={code} onChange={(e) => setCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 2))} placeholder="รหัส" className="w-14 px-2 py-1 rounded-lg border border-slate-300 text-xs font-mono uppercase focus:outline-none focus:ring-2 focus:ring-indigo-400" />
           <input value={nameTh} onChange={(e) => setNameTh(e.target.value)} placeholder="ชื่อไทย" className="w-24 px-2 py-1 rounded-lg border border-slate-300 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-400" />
           <input value={nameEn} onChange={(e) => setNameEn(e.target.value)} placeholder="อังกฤษ" className="w-20 px-2 py-1 rounded-lg border border-slate-300 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-400" />
-          <input value={code} onChange={(e) => setCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 2))} placeholder="รหัส" className="w-14 px-2 py-1 rounded-lg border border-slate-300 text-xs font-mono uppercase focus:outline-none focus:ring-2 focus:ring-indigo-400" />
           <button onClick={submit} disabled={busy} className="px-2 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs disabled:opacity-50">{busy ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}</button>
           <button onClick={() => { setOpen(false); setErr(''); }} className="text-xs text-slate-400 hover:text-slate-600 px-1">✕</button>
         </span>
