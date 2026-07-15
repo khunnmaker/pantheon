@@ -1681,6 +1681,10 @@ export async function junoRoutes(app: FastifyInstance) {
   const paymentsReconQuerySchema = z.object({
     state: z.enum(['pending', 'matched', 'confirmed', 'all']).optional(),
     q: z.string().max(120).optional(),
+    // Thai-day date range on the receipt's วันที่ส่งเข้า (createdAt) — same semantics as the
+    // bank-line list's from/to, so the two recon views filter identically (owner 2026-07-15).
+    from: z.string().max(10).optional(),
+    to: z.string().max(10).optional(),
     limit: z.coerce.number().int().min(1).max(500).optional(),
   });
   app.get('/api/juno/payments-recon', async (req, reply) => {
@@ -1718,6 +1722,9 @@ export async function junoRoutes(app: FastifyInstance) {
         where.OR = search;
       }
     }
+    // Top-level key — composes safely with the state OR / search AND above.
+    const range = thaiDayRange(parsed.data.from, parsed.data.to);
+    if (range) where.createdAt = range;
 
     const payments = await prisma.payment.findMany({
       where,

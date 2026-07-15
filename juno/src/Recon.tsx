@@ -650,6 +650,9 @@ function TxnDetail({ txn, onChanged }: { txn: BankTxn; onChanged: (updated?: Ban
 function ReceiptList({ onChanged, refreshKey }: { onChanged: () => void; refreshKey: number }) {
   const [state, setState] = useState<PaymentReconState>('pending');
   const [q, setQ] = useState('');
+  // Same from/to date range as the ตามเงินเข้า toolbar (owner: the two views identical).
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
   const [payments, setPayments] = useState<PaymentReconRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -658,11 +661,11 @@ function ReceiptList({ onChanged, refreshKey }: { onChanged: () => void; refresh
   const load = useCallback(() => {
     setLoading(true);
     setError('');
-    getPaymentsRecon(state, q.trim() || undefined, 100)
+    getPaymentsRecon(state, q.trim() || undefined, 100, from || undefined, to || undefined)
       .then((result) => setPayments(result.payments))
       .catch(() => setError('โหลดข้อมูลไม่สำเร็จ'))
       .finally(() => setLoading(false));
-  }, [state, q, refreshKey]);
+  }, [state, q, from, to, refreshKey]);
 
   useEffect(() => {
     const t = setTimeout(load, 250);
@@ -705,6 +708,8 @@ function ReceiptList({ onChanged, refreshKey }: { onChanged: () => void; refresh
             className="w-full pl-7 pr-2 py-1.5 rounded-lg border border-slate-300 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-400"
           />
         </div>
+        <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="px-2 py-1.5 rounded-lg border border-slate-300 text-xs" title="ตั้งแต่วันที่" />
+        <input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="px-2 py-1.5 rounded-lg border border-slate-300 text-xs" title="ถึงวันที่" />
         <button onClick={load} className="p-1.5 rounded-lg border border-slate-300 text-slate-500 hover:bg-slate-50" title="รีเฟรช">
           <RefreshCw size={14} />
         </button>

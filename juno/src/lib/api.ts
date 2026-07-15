@@ -695,10 +695,12 @@ export const getBankTxns = (f: BankTxnFilter) =>
 export const getBankSuggestions = (txnId: string) =>
   authed<{ suggestions: BankSuggestion[] }>(`/api/juno/bank/txns/${txnId}/suggestions`);
 
-export const getPaymentsRecon = (state: PaymentReconState = 'pending', q?: string, limit?: number) => {
+export const getPaymentsRecon = (state: PaymentReconState = 'pending', q?: string, limit?: number, from?: string, to?: string) => {
   const p = new URLSearchParams({ state });
   if (q) p.set('q', q);
   if (limit) p.set('limit', String(limit));
+  if (from) p.set('from', from);
+  if (to) p.set('to', to);
   return authed<{ payments: PaymentReconRow[] }>(`/api/juno/payments-recon?${p.toString()}`);
 };
 
