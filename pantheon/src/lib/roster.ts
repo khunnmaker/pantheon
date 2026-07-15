@@ -56,7 +56,7 @@ export const ROLE_GROUPS: RoleGroup[] = [
   },
   {
     id: 'gm',
-    label: 'GM',
+    label: 'ผู้จัดการทั่วไป (GM)',
     color: 'bg-teal-600',
     members: [
       // Legacy-but-kept email: changing Nee's Agent identity would orphan bills/audit history.
@@ -101,7 +101,7 @@ export const ROLE_GROUPS: RoleGroup[] = [
   },
   {
     id: 'messengers',
-    label: 'แมสเซนเจอร์',
+    label: 'แมสเซนเจอร์ (Messenger)',
     color: 'bg-sky-600',
     members: [
       { email: slugEmail('ta'), label: 'ต้า', cred: 'pin', gender: 'male' },
@@ -117,13 +117,13 @@ export const ROLE_GROUPS: RoleGroup[] = [
   },
   {
     id: 'stores',
-    label: 'สโตร์',
+    label: 'สโตร์ (Store)',
     color: 'bg-amber-500',
     members: [], // No staff yet — clean empty state (placeholder for future staff).
   },
   {
     id: 'others',
-    label: 'อื่นๆ',
+    label: 'อื่นๆ (Others)',
     color: 'bg-fuchsia-600',
     members: [
       { email: slugEmail('pin'), label: 'พิณ', cred: 'pin', gender: 'male' },
