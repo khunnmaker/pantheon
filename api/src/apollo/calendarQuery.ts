@@ -111,7 +111,7 @@ export function buildEventData(input: EventInput): EventData | null {
   const startTime = input.startTime ?? null;
   const endTime = input.endTime ?? null;
   if (!validEventTimeRange(startTime, endTime)) return null;
-  return { title: input.title, note: input.note ?? '', date, endDate, startTime, endTime, visibility: input.visibility ?? 'private' };
+  return { title: input.title, note: input.note ?? '', date, endDate, startTime, endTime, visibility: input.visibility ?? 'public' };
 }
 
 // ─── ApolloEvent: calendar-range query + masking ─────────────────────────

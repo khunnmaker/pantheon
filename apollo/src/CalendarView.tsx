@@ -220,7 +220,7 @@ function EventModal({ date, event, onClose, onChanged }: { date: string; event?:
   const [endDate, setEndDate] = useState(event?.endDate ? event.endDate.slice(0, 10) : '');
   const [startTime, setStartTime] = useState(event?.startTime ?? '');
   const [endTime, setEndTime] = useState(event?.endTime ?? '');
-  const [visibility, setVisibility] = useState<'private' | 'public'>(event?.visibility ?? 'private');
+  const [visibility, setVisibility] = useState<'private' | 'public'>(event?.visibility ?? 'public');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 

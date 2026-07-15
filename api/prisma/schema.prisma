@@ -251,7 +251,7 @@ model ApolloEvent {
   endDate    DateTime? @db.Date // multi-day span end (inclusive); null = single-day event
   startTime  String? // wall-clock "HH:MM", optional
   endTime    String? // wall-clock "HH:MM", optional — requires startTime, must be later
-  visibility String    @default("private") // 'private' | 'public' — see calendarQuery.ts maskEvent
+  visibility String    @default("public") // 'private' | 'public' — see calendarQuery.ts maskEvent
   createdAt  DateTime  @default(now())
   updatedAt  DateTime  @updatedAt
 

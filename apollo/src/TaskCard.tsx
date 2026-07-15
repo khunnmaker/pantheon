@@ -25,7 +25,7 @@ export default function TaskCard({ task, agents, accent, showProject, dragging, 
     </div>}
     <div className="mt-2 flex items-center justify-between text-xs">
       {task.assignee
-        ? <span className="flex min-w-0 items-center gap-1.5 text-slate-600"><img src={agentAvatar(task.assignee, agents)} alt="" className="h-5 w-5 shrink-0 rounded-full"/><span className="truncate">{task.assignee.name.split(' ')[0]}</span></span>
+        ? <span className="flex min-w-0 items-center gap-1.5 text-slate-600"><img src={agentAvatar(task.assignee, agents)} alt="" className="h-5 w-5 shrink-0 rounded-full"/><span className="max-w-[9rem] truncate">{task.assignee.name}</span></span>
         : <span className="flex items-center gap-1.5 text-slate-400"><span className="grid h-5 w-5 shrink-0 place-items-center rounded-full border border-dashed border-slate-300"><UserPlus size={11}/></span>มอบหมาย</span>}
       <span className="flex shrink-0 items-center gap-2 text-slate-400">
         <span className={`inline-flex items-center gap-1 ${dueClass(task.dueDate)}`}><CalendarDays size={12}/>{shortDate(task.dueDate)}</span>

@@ -179,10 +179,10 @@ describe('Apollo event date-range validation (validEventDateRange)', () => {
 });
 
 describe('Apollo buildEventData — shared POST/PATCH validation + parsing', () => {
-  it('parses a minimal valid event, defaulting visibility to private', () => {
+  it('parses a minimal valid event, defaulting visibility to public', () => {
     const result = buildEventData({ title: 'นัดหมอ', date: '2026-07-20' });
     expect(result).toEqual({
-      title: 'นัดหมอ', note: '', date: parseDate('2026-07-20'), endDate: null, startTime: null, endTime: null, visibility: 'private',
+      title: 'นัดหมอ', note: '', date: parseDate('2026-07-20'), endDate: null, startTime: null, endTime: null, visibility: 'public',
     });
   });
 
@@ -201,12 +201,12 @@ describe('Apollo buildEventData — shared POST/PATCH validation + parsing', () 
   it('accepts a full multi-day, timed event', () => {
     const result = buildEventData({ title: 'สัมมนา', note: 'ห้องประชุมใหญ่', date: '2026-07-20', endDate: '2026-07-22', startTime: '09:00', endTime: '17:00' });
     expect(result).toEqual({
-      title: 'สัมมนา', note: 'ห้องประชุมใหญ่', date: parseDate('2026-07-20'), endDate: parseDate('2026-07-22'), startTime: '09:00', endTime: '17:00', visibility: 'private',
+      title: 'สัมมนา', note: 'ห้องประชุมใหญ่', date: parseDate('2026-07-20'), endDate: parseDate('2026-07-22'), startTime: '09:00', endTime: '17:00', visibility: 'public',
     });
   });
 
-  it('accepts an explicit visibility of "public"', () => {
-    const result = buildEventData({ title: 'ประชุมทีม', date: '2026-07-20', visibility: 'public' });
-    expect(result?.visibility).toBe('public');
+  it('accepts an explicit visibility of "private" (overriding the public default)', () => {
+    const result = buildEventData({ title: 'นัดหมอ', date: '2026-07-20', visibility: 'private' });
+    expect(result?.visibility).toBe('private');
   });
 });

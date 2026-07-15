@@ -15,7 +15,7 @@ const PROJECT_COLORS = ['#4f46e5', '#0ea5e9', '#10b981', '#f59e0b', '#ef4444', '
 
 export default function Workspace({ agent, onLogout }: { agent: Agent; onLogout: () => void }) {
   const isManager = agent.role !== 'employee';
-  const [view, setView] = useState<View>('board'); const [projects, setProjects] = useState<Project[]>([]);
+  const [view, setView] = useState<View>(agent.role === 'employee' ? 'mine' : 'board'); const [projects, setProjects] = useState<Project[]>([]);
   const [agents, setAgents] = useState<Person[]>([]); const [projectId, setProjectId] = useState(''); const [project, setProject] = useState<Project | null>(null);
   const [loading, setLoading] = useState(true); const [modalOpen, setModalOpen] = useState(!!deepTaskId()); const [taskId, setTaskId] = useState<string | null>(deepTaskId());
   const [newTaskStatus, setNewTaskStatus] = useState<string | null>(null); const [newProjectOpen, setNewProjectOpen] = useState(false);
