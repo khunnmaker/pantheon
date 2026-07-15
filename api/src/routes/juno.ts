@@ -84,6 +84,7 @@ const manualBillItemSchema = z.object({
 });
 const manualBillFieldsSchema = z.object({
   billedAt: z.string().max(40),
+  customerCode: z.string().max(40),
   buyerName: z.string().max(300),
   buyerPhone: z.string().max(100),
   buyerAddress: z.string().max(1000),
@@ -665,7 +666,7 @@ export async function junoRoutes(app: FastifyInstance) {
     };
     const needle = q.q?.trim().toLocaleLowerCase();
     const searchedRows = needle
-      ? allRows.filter((bill) => bill.billNo.toLocaleLowerCase().includes(needle) || bill.buyerName.toLocaleLowerCase().includes(needle))
+      ? allRows.filter((bill) => bill.billNo.toLocaleLowerCase().includes(needle) || bill.customerCode.toLocaleLowerCase().includes(needle) || bill.buyerName.toLocaleLowerCase().includes(needle))
       : allRows;
     const rows = !q.status || q.status === 'all'
       ? searchedRows
@@ -697,6 +698,7 @@ export async function junoRoutes(app: FastifyInstance) {
     }
     const base = {
       billedAt: parsed.data.billedAt.trim(),
+      customerCode: parsed.data.customerCode.trim(),
       buyerName: parsed.data.buyerName.trim(),
       buyerPhone: parsed.data.buyerPhone.trim(),
       buyerAddress: parsed.data.buyerAddress.trim(),
@@ -779,6 +781,7 @@ export async function junoRoutes(app: FastifyInstance) {
       where: { id: req.params.id },
       data: {
         ...(parsed.data.billedAt === undefined ? {} : { billedAt: parsed.data.billedAt.trim() }),
+        ...(parsed.data.customerCode === undefined ? {} : { customerCode: parsed.data.customerCode.trim() }),
         ...(parsed.data.buyerName === undefined ? {} : { buyerName: parsed.data.buyerName.trim() }),
         ...(parsed.data.buyerPhone === undefined ? {} : { buyerPhone: parsed.data.buyerPhone.trim() }),
         ...(parsed.data.buyerAddress === undefined ? {} : { buyerAddress: parsed.data.buyerAddress.trim() }),

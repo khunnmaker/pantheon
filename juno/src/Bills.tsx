@@ -96,7 +96,7 @@ export default function Bills({ onCountsChanged, canDelete, canEdit }: { onCount
             </select>
             <div className="relative flex-1 min-w-[180px]">
               <Search size={14} className="absolute left-2.5 top-2 text-slate-400" />
-              <input value={q} onChange={(event) => setQ(event.target.value)} placeholder="ค้นหาเลขบิล / ผู้ซื้อ" className="w-full pl-8 pr-2 py-1.5 rounded-lg border border-slate-300 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-400" />
+              <input value={q} onChange={(event) => setQ(event.target.value)} placeholder="ค้นหาเลขบิล / รหัสลูกค้า / ผู้ซื้อ" className="w-full pl-8 pr-2 py-1.5 rounded-lg border border-slate-300 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-400" />
             </div>
             <button onClick={load} title="รีเฟรช" className="p-1.5 rounded-lg border border-slate-300 text-slate-500 hover:bg-slate-50"><RefreshCw size={14} /></button>
           </div>
@@ -124,7 +124,7 @@ export default function Bills({ onCountsChanged, canDelete, canEdit }: { onCount
                     <tr key={bill.id} onClick={() => setSelected(bill)} className={`border-t border-slate-100 cursor-pointer hover:bg-emerald-50/40 ${selected?.id === bill.id ? 'bg-emerald-50' : ''}`}>
                       <td className="px-3 py-2 font-bold whitespace-nowrap">{bill.billNo}</td>
                       <td className="px-3 py-2 text-slate-500 whitespace-nowrap">{fmtDate(bill.billedAt)}</td>
-                      <td className="px-3 py-2"><div className="max-w-[230px] truncate">{bill.buyerName || '—'}</div></td>
+                      <td className="px-3 py-2"><div className="max-w-[230px] truncate">{bill.customerCode && <span className="text-slate-400 mr-1.5">{bill.customerCode}</span>}{bill.buyerName || '—'}</div></td>
                       <td className="px-3 py-2 text-right font-semibold whitespace-nowrap">{baht(numberOf(bill.amount))}</td>
                       <td className="px-3 py-2"><BillStatusChip status={bill.billStatus} /></td>
                     </tr>
@@ -241,6 +241,7 @@ function BillDrawer({ bill, canDelete, canEdit, onClose, onEdit, onPrint, onChan
         <div className="p-4 grid grid-cols-2 gap-3 text-sm">
           <Info label="วันที่" value={fmtDate(bill.billedAt)} />
           <Info label="ยอดรวม" value={<b>{baht(numberOf(bill.amount))}</b>} />
+          <Info label="รหัสลูกค้า" value={bill.customerCode} />
           <Info label="ผู้ซื้อ" value={bill.buyerName} />
           <Info label="โทรศัพท์" value={bill.buyerPhone} />
           <div className="col-span-2"><Info label="ที่อยู่" value={bill.buyerAddress} /></div>
@@ -291,6 +292,7 @@ const blankLine = (): EditorLine => ({ key: nextLineKey++, mode: 'product', name
 function BillModal({ bill, onClose, onSaved }: { bill: ManualBill | null; onClose: () => void; onSaved: () => void }) {
   const [billNo, setBillNo] = useState(bill?.billNo ?? '');
   const [billedAt, setBilledAt] = useState(bill?.billedAt || bangkokToday());
+  const [customerCode, setCustomerCode] = useState(bill?.customerCode ?? '');
   const [buyerName, setBuyerName] = useState(bill?.buyerName ?? '');
   const [buyerPhone, setBuyerPhone] = useState(bill?.buyerPhone ?? '');
   const [buyerAddress, setBuyerAddress] = useState(bill?.buyerAddress ?? '');
@@ -322,7 +324,7 @@ function BillModal({ bill, onClose, onSaved }: { bill: ManualBill | null; onClos
     }
     const body: ManualBillBody = {
       ...(!bill && billNo.trim() ? { billNo: billNo.trim().toUpperCase() } : {}),
-      billedAt, buyerName: buyerName.trim(), buyerPhone: buyerPhone.trim(),
+      billedAt, customerCode: customerCode.trim(), buyerName: buyerName.trim(), buyerPhone: buyerPhone.trim(),
       buyerAddress: buyerAddress.trim(), note: note.trim(), amount: moneyString(total),
       items: lines.map(({ key: _key, mode: _mode, ...line }) => ({
         ...(line.productId ? { productId: line.productId } : {}),
@@ -357,6 +359,8 @@ function BillModal({ bill, onClose, onSaved }: { bill: ManualBill | null; onClos
           <div className="grid sm:grid-cols-2 gap-3">
             {!bill && <Field label="เลขบิลเดิม (เว้นว่างเพื่อรันอัตโนมัติ)"><input value={billNo} onChange={(event) => setBillNo(event.target.value.replace(/\//g, '-').toUpperCase())} placeholder="เช่น 38/13 → 38-13" className="input" /></Field>}
             <Field label="วันที่"><input type="date" value={billedAt} onChange={(event) => setBilledAt(event.target.value)} className="input" /></Field>
+            {/* รหัสก่อนชื่อ — owner form-field-order rule 2026-07-15 (CODE name) */}
+            <Field label="รหัสลูกค้า (ถ้ามี)"><input value={customerCode} onChange={(event) => setCustomerCode(event.target.value)} className="input" /></Field>
             <Field label="ชื่อผู้ซื้อ"><input value={buyerName} onChange={(event) => setBuyerName(event.target.value)} className="input" /></Field>
             <Field label="เบอร์โทร"><input value={buyerPhone} onChange={(event) => setBuyerPhone(event.target.value)} className="input" /></Field>
             <div className="sm:col-span-2"><Field label="ที่อยู่"><textarea rows={2} value={buyerAddress} onChange={(event) => setBuyerAddress(event.target.value)} className="input" /></Field></div>

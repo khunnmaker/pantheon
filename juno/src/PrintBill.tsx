@@ -87,7 +87,7 @@ function BillPage({ bill }: { bill: ManualBill }) {
       <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[11px] mt-3">
         <div><span className="text-slate-500">เลขที่บิล:</span> <b>{bill.billNo}</b></div>
         <div className="text-right"><span className="text-slate-500">วันที่:</span> {fmtBillDate(bill.billedAt)}</div>
-        <div className="col-span-2"><span className="text-slate-500">ผู้ซื้อ:</span> {bill.buyerName || '—'}</div>
+        <div className="col-span-2"><span className="text-slate-500">ผู้ซื้อ:</span> {bill.customerCode && <b className="mr-1">{bill.customerCode}</b>}{bill.buyerName || '—'}</div>
         <div><span className="text-slate-500">โทรศัพท์:</span> {bill.buyerPhone || '—'}</div>
         <div className="col-span-2"><span className="text-slate-500">ที่อยู่:</span> {bill.buyerAddress || '—'}</div>
       </div>

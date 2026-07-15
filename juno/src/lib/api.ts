@@ -850,6 +850,7 @@ export interface ManualBill {
   id: string;
   billNo: string;
   billedAt: string;
+  customerCode: string;
   buyerName: string;
   buyerPhone: string;
   buyerAddress: string;
@@ -871,6 +872,7 @@ export interface ManualBill {
 export interface ManualBillBody {
   billNo?: string;
   billedAt: string;
+  customerCode: string;
   buyerName: string;
   buyerPhone: string;
   buyerAddress: string;

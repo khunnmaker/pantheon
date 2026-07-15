@@ -543,6 +543,7 @@ model ManualBill {
   id            String    @id @default(cuid())
   billNo        String    @unique
   billedAt      String    @default("")
+  customerCode  String    @default("") // optional Express customer code (walk-ins leave blank)
   buyerName     String    @default("")
   buyerPhone    String    @default("")
   buyerAddress  String    @default("")
