@@ -779,7 +779,7 @@ function PaymentsView({ view, onChanged, canDelete, isCeo }: { view: Exclude<Vie
                       {p.reNumbers.length > 0 || p.billNos.length > 0 ? (
                         <div className="flex flex-wrap gap-1 max-w-[180px]">
                           {p.reNumbers.map((re) => <span key={`re-${re}`} className="px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 text-[11px]">RE {re}</span>)}
-                          {p.billNos.map((billNo) => <span key={`bill-${billNo}`} className="px-1.5 py-0.5 rounded bg-sky-50 text-sky-700 text-[11px]">{billLabel(billNo)}</span>)}
+                          {p.billNos.map((billNo) => <span key={`bill-${billNo}`} className={`px-1.5 py-0.5 rounded ${BILL_TONE_CLS[billTone(billNo)]} text-[11px]`}>{billLabel(billNo)}</span>)}
                         </div>
                       ) : (
                         <span className="text-slate-300">—</span>
@@ -1445,7 +1445,7 @@ function Detail({ payment, onClose, onUpdate, onDelete, onPrint, canDelete, isCe
               {p.billNos.length > 0 && (
                 <div className="flex items-center gap-1 min-w-0 overflow-hidden">
                   {p.billNos.slice(0, 2).map((billNo) => (
-                    <span key={billNo} className="text-xs font-bold text-sky-700 whitespace-nowrap px-1.5 py-0.5 rounded bg-sky-50 shrink-0">{billLabel(billNo)}</span>
+                    <span key={billNo} className={`text-xs font-bold whitespace-nowrap px-1.5 py-0.5 rounded shrink-0 ${BILL_TONE_CLS[billTone(billNo)]}`}>{billLabel(billNo)}</span>
                   ))}
                   {p.billNos.length > 2 && <span className="text-xs text-sky-700">+{p.billNos.length - 2}</span>}
                 </div>
@@ -1744,6 +1744,26 @@ const RE_SEPARATOR = /[/,\s]+/;
 // MB69-####) and those must render exactly as typed — "MB XS6900343" mislabeled the form
 // (owner correction, same day).
 const billLabel = (billNo: string) => (/^9\d{6}$/.test(billNo) ? `MB ${billNo}` : billNo);
+// Chip tone by pattern (owner's color language, 2026-07-15): blue = a real บิลมือ number
+// (canonical 969xxxx or legacy MB…, registry-checked), orange = an Express XS cash-sale ref
+// (a legitimate OTHER document — deliberately not registry-checked), red = unrecognized
+// format (e.g. staff typing the word "บิลมือ") — a loud flag, still saveable per the
+// soft-warning philosophy.
+type BillTone = 'mb' | 'xs' | 'other';
+const billTone = (billNo: string): BillTone =>
+  /^9\d{6}$/.test(billNo) || /^MB/i.test(billNo) ? 'mb'
+  : /^XS\d{3,}$/i.test(billNo) ? 'xs'
+  : 'other';
+const BILL_TONE_CLS: Record<BillTone, string> = {
+  mb: 'bg-sky-50 text-sky-700',
+  xs: 'bg-amber-50 text-amber-700',
+  other: 'bg-rose-100 text-rose-700',
+};
+const BILL_TONE_TITLE: Record<BillTone, string> = {
+  mb: 'บิลมือ',
+  xs: 'เลขเอกสารขายสด Express (XS)',
+  other: 'ไม่รู้จักรูปแบบเลขนี้ — ตรวจสอบก่อนบันทึก',
+};
 type ReceiptToken = { kind: 're' | 'bill'; value: string };
 function normalizeReceiptToken(raw: string): ReceiptToken | null {
   const trimmed = raw.trim();
@@ -1862,11 +1882,14 @@ function ReceiptChipsBox({ state, onEnter, autoFocus }: {
           </span>
         ))}
         {state.billNos.map((billNo) => {
-          const unknown = state.unknownBills.has(billNo);
+          const tone = billTone(billNo);
+          // registry-miss ring only makes sense for actual บิลมือ numbers — XS is a different
+          // document (never in the registry), and 'other' is already loud-red by itself
+          const unknown = tone === 'mb' && state.unknownBills.has(billNo);
           return (
-            <span key={`bill-${billNo}`} title={unknown ? 'ไม่พบบิลนี้ในระบบ' : 'บิลมือ'} className={`flex items-center gap-1 pl-2 pr-1 py-0.5 rounded-full bg-sky-50 text-sky-700 text-xs font-semibold ${unknown ? 'ring-1 ring-rose-400' : ''}`}>
-              {billLabel(billNo)}{unknown && <AlertTriangle size={10} className="text-rose-500" />}
-              <button type="button" onClick={() => state.removeToken({ kind: 'bill', value: billNo })} className="p-0.5 rounded-full hover:bg-sky-100" title="เอาออก"><X size={11} /></button>
+            <span key={`bill-${billNo}`} title={unknown ? 'ไม่พบบิลนี้ในระบบ' : BILL_TONE_TITLE[tone]} className={`flex items-center gap-1 pl-2 pr-1 py-0.5 rounded-full ${BILL_TONE_CLS[tone]} text-xs font-semibold ${unknown ? 'ring-1 ring-rose-400' : ''}`}>
+              {billLabel(billNo)}{(unknown || tone === 'other') && <AlertTriangle size={10} className="text-rose-500" />}
+              <button type="button" onClick={() => state.removeToken({ kind: 'bill', value: billNo })} className="p-0.5 rounded-full hover:bg-black/10" title="เอาออก"><X size={11} /></button>
             </span>
           );
         })}
