@@ -10,7 +10,7 @@ const PIN_LEN = 6;
 // (GET /api/auth/logins?app=juno) — a rich card list carrying group + gender. 3-level DRILL-DOWN:
 //   L1 role groups (2-col Metro grid) → L2 that group's people (avatar tiles) → L3 person + cred.
 // The auth mechanism is UNCHANGED: submit() still calls login() → setSession() → onLogin().
-// Entry is gated to anyone with the 'juno' grant (hasAppAccess) — supervisor, md, and the
+// Entry is gated to anyone with the 'juno' grant (hasAppAccess) — supervisor, gm, and the
 // finance team — matching the server's requireApp('juno'). The manual email/password form
 // stays as a fallback for when the card fetch fails.
 export default function Login({ onLogin }: { onLogin: (agent: Agent) => void }) {

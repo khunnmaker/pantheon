@@ -1,5 +1,5 @@
 // The people shown on the portal login screen, grouped into collapsible ROLE sections
-// (suite login standard: no credential box until a name is tapped — then Dr. M & Nee-MD type a
+// (suite login standard: no credential box until a name is tapped — then Dr. M & Nee-GM type a
 // password, everyone else a masked auto-submit 6-digit PIN).
 //
 // Emails follow the suite convention (<slug>@prominent.local) and MUST mirror the seeded
@@ -8,10 +8,10 @@
 // log in (the api rejects it). This roster is DISPLAY only; it never sets backend roles/apps.
 //
 // The role GROUPS below are a login-screen grouping for humans and do NOT have to match the
-// backend tier/apps. Intentional display moves vs the old flat list: นุ่น → MD, พิณ + เล็ก →
+// backend tier/apps. Intentional display moves vs the old flat list: นุ่น → GM, พิณ + เล็ก →
 // Others (all three were formerly lumped under messengers).
 
-export type Cred = 'password' | 'pin';   // Dr. M & Nee (MD) use a password; everyone else a 6-digit PIN.
+export type Cred = 'password' | 'pin';   // Dr. M & Nee (GM) use a password; everyone else a 6-digit PIN.
 
 // Drives the cute avatar's look (feminine vs masculine hair). Display-only — nothing to do with
 // auth. Sales are female, messengers are male (owner-specified); the rest are set per person.
@@ -40,7 +40,7 @@ const slugEmail = (slug: string) => `${slug}@prominent.local`;
 // The supervisor (Dr. M) is the only "หัวหน้า" — keep this identity check for the shield/tag.
 export const SUPERVISOR_EMAIL = 'drm@prominent.local';
 
-// 6 collapsible role groups, in display order. Stores is intentionally empty (placeholder for
+// Collapsible role groups, in display order. Stores is intentionally empty (placeholder for
 // future staff). Every email below is verified against ensureSeeded.ts except the two
 // comingSoon cards, which have no account by design.
 export const ROLE_GROUPS: RoleGroup[] = [
@@ -55,12 +55,23 @@ export const ROLE_GROUPS: RoleGroup[] = [
     ],
   },
   {
-    id: 'md',
-    label: 'MD',
+    id: 'gm',
+    label: 'GM',
     color: 'bg-teal-600',
     members: [
+      // Legacy-but-kept email: changing Nee's Agent identity would orphan bills/audit history.
       { email: 'md@prominent.local', label: 'Nee (นี)', cred: 'password', gender: 'female' },
       { email: slugEmail('nun'), label: 'Noon (นุ่น)', cred: 'pin', gender: 'female' },
+    ],
+  },
+  {
+    id: 'agm',
+    label: 'ผู้ช่วยผู้จัดการ (AGM)',
+    color: 'bg-cyan-600',
+    members: [
+      { email: slugEmail('poopae'), label: 'Poopae (ปูเป้)', cred: 'pin', gender: 'female' },
+      { email: slugEmail('win'), label: 'Win (วิน)', cred: 'pin', gender: 'male' },
+      { email: slugEmail('mail'), label: 'Mail (เมล)', cred: 'pin', gender: 'female' },
     ],
   },
   {

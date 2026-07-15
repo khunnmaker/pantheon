@@ -7,7 +7,7 @@ import { thaiDayKey, thaiDayRange } from './common.js';
 // P5 — weekly export pack (CERES_BRIEF §2 P5 step 3: "Ceres provides a weekly export
 // pack" for the CEO's physical cross-check). House CSV style copied exactly from
 // routes/juno.ts: UTF-8 BOM, CRLF, formula-injection-safe esc(), content-disposition
-// attachment headers. md|ceo only, same gate as the rest of Ceres.
+// attachment headers. gm|ceo only, same gate as the rest of Ceres.
 
 const TH_OFFSET_MS = 7 * 3600 * 1000;
 
@@ -36,7 +36,7 @@ const rangeQuery = z.object({ from: z.string().optional(), to: z.string().option
 
 export function exportsRoutes(app: FastifyInstance) {
   // GET /api/ceres/export/expenses.csv?from=&to=
-  app.get('/api/ceres/export/expenses.csv', { preHandler: requireCeresRole('md', 'ceo') }, async (req, reply) => {
+  app.get('/api/ceres/export/expenses.csv', { preHandler: requireCeresRole('gm', 'ceo') }, async (req, reply) => {
     const parsed = rangeQuery.safeParse(req.query ?? {});
     if (!parsed.success) return reply.code(400).send({ error: 'invalid_query' });
     const range = thaiDayRange(parsed.data.from, parsed.data.to);
@@ -55,7 +55,7 @@ export function exportsRoutes(app: FastifyInstance) {
   });
 
   // GET /api/ceres/export/movements.csv?from=&to=
-  app.get('/api/ceres/export/movements.csv', { preHandler: requireCeresRole('md', 'ceo') }, async (req, reply) => {
+  app.get('/api/ceres/export/movements.csv', { preHandler: requireCeresRole('gm', 'ceo') }, async (req, reply) => {
     const parsed = rangeQuery.safeParse(req.query ?? {});
     if (!parsed.success) return reply.code(400).send({ error: 'invalid_query' });
     const range = thaiDayRange(parsed.data.from, parsed.data.to);
@@ -68,7 +68,7 @@ export function exportsRoutes(app: FastifyInstance) {
   });
 
   // GET /api/ceres/export/requests.csv?from=&to=
-  app.get('/api/ceres/export/requests.csv', { preHandler: requireCeresRole('md', 'ceo') }, async (req, reply) => {
+  app.get('/api/ceres/export/requests.csv', { preHandler: requireCeresRole('gm', 'ceo') }, async (req, reply) => {
     const parsed = rangeQuery.safeParse(req.query ?? {});
     if (!parsed.success) return reply.code(400).send({ error: 'invalid_query' });
     const range = thaiDayRange(parsed.data.from, parsed.data.to);
@@ -87,7 +87,7 @@ export function exportsRoutes(app: FastifyInstance) {
   });
 
   // GET /api/ceres/export/reviews.csv?from=&to=
-  app.get('/api/ceres/export/reviews.csv', { preHandler: requireCeresRole('md', 'ceo') }, async (req, reply) => {
+  app.get('/api/ceres/export/reviews.csv', { preHandler: requireCeresRole('gm', 'ceo') }, async (req, reply) => {
     const parsed = rangeQuery.safeParse(req.query ?? {});
     if (!parsed.success) return reply.code(400).send({ error: 'invalid_query' });
     const range = thaiDayRange(parsed.data.from, parsed.data.to);
@@ -100,7 +100,7 @@ export function exportsRoutes(app: FastifyInstance) {
   });
 
   // GET /api/ceres/export/statement-lines.csv?from=&to=
-  app.get('/api/ceres/export/statement-lines.csv', { preHandler: requireCeresRole('md', 'ceo') }, async (req, reply) => {
+  app.get('/api/ceres/export/statement-lines.csv', { preHandler: requireCeresRole('gm', 'ceo') }, async (req, reply) => {
     const parsed = rangeQuery.safeParse(req.query ?? {});
     if (!parsed.success) return reply.code(400).send({ error: 'invalid_query' });
     const range = thaiDayRange(parsed.data.from, parsed.data.to);

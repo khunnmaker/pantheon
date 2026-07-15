@@ -25,7 +25,7 @@ add-only).
 The portal is the `pantheon/` app at **pantheon.prominentdental.com**; `jupiter/` is the
 accounting app at **jupiter.prominentdental.com**. The API service name and
 `/api/jupiter/acct/*` paths belong to the accounting lane. Auth is unified suite-wide
-(supervisor / MD / employee with per-person app grants).
+(supervisor / GM / Assistant GM / employee with per-person app grants).
 
 ---
 

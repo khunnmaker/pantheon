@@ -1,14 +1,14 @@
 // Typed API client for the Ceres petty-cash UI. Talks to the SHARED Minerva Fastify
 // backend (the /api/ceres/* routes — see api/src/routes/ceres/p1.ts, common.ts, index.ts).
-// Raw auth roles (Agent table): 'supervisor' | 'md' | 'employee'. GET /api/ceres/bootstrap
-// normalizes that into the Ceres role vocabulary 'messenger' | 'md' | 'ceo'
-// ('employee' -> 'messenger', 'supervisor' -> 'ceo') — always trust the bootstrap role
+// Raw auth roles: 'supervisor' | 'gm' | 'agm' | 'employee'. GET /api/ceres/bootstrap
+// normalizes that into the Ceres vocabulary 'messenger' | 'gm' | 'ceo'
+// ('agm'/'employee' -> 'messenger', 'supervisor' -> 'ceo') — always trust the bootstrap role
 // for UI routing/branching, never the raw login role.
 
 export const API_URL: string = import.meta.env.VITE_API_URL ?? 'http://localhost:3000';
 
 // Raw Agent-table role as returned by POST /api/auth/login.
-export type Role = 'supervisor' | 'md' | 'employee';
+export type Role = 'supervisor' | 'gm' | 'agm' | 'employee';
 export interface Agent {
   id: string;
   email: string;
@@ -157,7 +157,7 @@ export interface Party {
   sortOrder: number;
 }
 export interface Bootstrap {
-  role: 'messenger' | 'md' | 'ceo';
+  role: 'messenger' | 'gm' | 'ceo';
   agent: { id: string; name: string };
   party: { id: string; name: string } | null;
   categories: Category[];
@@ -173,11 +173,10 @@ export interface LoginName {
   name: string;
   kind: 'password' | 'pin';
   // DISPLAY metadata for the role-grouped, avatar login screen (additive; server-provided).
-  group: string;                 // ceo | md | sales | finance | messengers | stores | others
+  group: string;                 // ceo | gm | agm | sales | finance | messengers | stores | others
   gender: 'male' | 'female';     // drives the cute (DiceBear) avatar
 }
-// PUBLIC — no auth required. Ordered: supervisor first (kind 'password'), then the MD
-// (kind 'password'), then messenger/employee cards (kind 'pin').
+// PUBLIC — no auth required. Ordered: supervisor, GM, AGM, then other employee cards.
 export const getLogins = () => fetch(`${API_URL}/api/ceres/logins`).then((r) => r.json() as Promise<LoginName[]>);
 
 export interface OcrResult {
@@ -187,7 +186,7 @@ export interface OcrResult {
 }
 // Backend flags a receipt photo that hash-matches one already used on another expense.
 // Surfaced as a non-blocking warning in ExpenseSheet and, via Expense.duplicateReceipt,
-// as a badge in the MD/CEO review screens (MdApproval/MdExpenses).
+// as a badge in the GM/CEO review screens (MdApproval/MdExpenses).
 export interface DuplicateReceipt {
   partyName: string;
   amount: string;

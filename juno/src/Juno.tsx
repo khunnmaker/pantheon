@@ -129,19 +129,19 @@ function MethodCell({ p }: { p: Payment }) {
 export default function Juno({ agent, onLogout }: { agent: Agent; onLogout: () => void }) {
   // Owner 2026-07-15: employees (FIN) see the บิลมือ tab READ-ONLY — ledger + print, no
   // issue/edit/void (server already 403s their bill mutations; buttons hidden in Bills.tsx).
-  const scope = agent.role === 'supervisor' ? 'full' : agent.role === 'md' ? 'billsOnly' : 'readBills';
+  const scope = agent.role === 'supervisor' ? 'full' : agent.role === 'gm' ? 'billsOnly' : 'readBills';
   const [view, setView] = useState<View>(scope === 'billsOnly' ? 'bills' : 'inbox');
   const [summary, setSummary] = useState<Summary | null>(null);
   // CEO-only actions (mirrors the server's supervisor gate in api/src/routes/juno.ts): reports,
-  // CSV export, bank-file import, clearing a flag, and hard delete. md never reaches these
+  // CSV export, bank-file import, clearing a flag, and hard delete. gm never reaches these
   // views because its scope is billsOnly; employees retain the non-CEO finance controls.
   const isCeo = agent.role === 'supervisor';
-  // ลบถาวร (permanent delete) is the CEO-only override — even md, who can now open Juno,
+  // ลบถาวร (permanent delete) is the CEO-only override — even gm, who can now open Juno,
   // cannot delete. Mirrors the server's `req.agent?.role !== 'supervisor'` gate exactly.
   const canDelete = isCeo;
   // unmatched-in bank txn count — the badge on the กระทบยอด tab (phase B)
   const [bankUnmatched, setBankUnmatched] = useState<number | undefined>(undefined);
-  // open FinanceAudit (ตรวจสอบยอด) count — employee/supervisor badge; md skips this request.
+  // open FinanceAudit (ตรวจสอบยอด) count — employee/supervisor badge; gm skips this request.
   const [auditOpen, setAuditOpen] = useState<number | undefined>(undefined);
   const [billAlerts, setBillAlerts] = useState<number | undefined>(undefined);
   const handleBillCounts = useCallback((counts: { unpaid: number; mismatch: number }) => {
@@ -217,7 +217,7 @@ export default function Juno({ agent, onLogout }: { agent: Agent; onLogout: () =
         {
           caption: 'สรุป',
           tabs: [
-            // WHT (หัก ณ ที่จ่าย) — visible to every non-md user; its own totals bar covers the count.
+            // WHT (หัก ณ ที่จ่าย) — visible to every non-gm user; its own totals bar covers the count.
             { key: 'wht' as const, label: 'WHT', icon: <Percent size={16} /> },
             ...(isCeo ? [{ key: 'reports' as const, label: 'รายงาน', icon: <BarChart3 size={16} /> }] : []),
           ],
@@ -568,7 +568,7 @@ function PaymentsView({ view, onChanged, canDelete, isCeo }: { view: Exclude<Vie
               <Printer size={15} /> พิมพ์ใบปะหน้า ({coverCountInView})
             </button>
           )}
-          {/* CSV export is CEO-only (server 403s /export.csv for non-supervisor) — hidden for finance/MD */}
+          {/* CSV export is CEO-only (server 403s /export.csv for non-supervisor) — hidden for finance/GM */}
           {isCeo && (
             <button
               onClick={() => downloadCsv(filter).catch(() => setError('ดาวน์โหลดไม่สำเร็จ'))}

@@ -36,7 +36,7 @@ export async function ensureCeres(): Promise<void> {
       await prisma.cashAccount.createMany({
         data: [
           { id: 'pettyCash', name: 'เงินสดย่อย (กล่อง)' },
-          { id: 'bank', name: 'บัญชีบริษัท (MD)' },
+          { id: 'bank', name: 'บัญชีบริษัท (GM)' },
         ],
       });
       // eslint-disable-next-line no-console
@@ -66,7 +66,7 @@ export async function ensureCeres(): Promise<void> {
     //  (a) every EMPLOYEE gets a person party linked to the CURRENT <slug>@ email —
     //      relinks the old m-<slug>@ rows and creates missing parties (e.g. the three
     //      sales, who also enter expenses under the unified model);
-    //  (b) the party named "นี" is Nee the MD, not an employee (owner correction) —
+    //  (b) the party named "นี" is Nee the GM, not an employee (owner correction) —
     //      unlink + deactivate it, but NEVER delete (append-only history).
     for (const [i, e] of EMPLOYEES.entries()) {
       const email = employeeEmail(e.slug);
@@ -90,7 +90,7 @@ export async function ensureCeres(): Promise<void> {
         data: { agentEmail: null, active: false },
       });
       // eslint-disable-next-line no-console
-      console.log('[seed] unlinked/deactivated party "นี" (she is the MD, not an employee)');
+      console.log('[seed] unlinked/deactivated party "นี" (she is the GM, not an employee)');
     }
 
     if ((await prisma.ceresCategory.count()) === 0) {

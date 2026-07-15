@@ -7,9 +7,9 @@ export const API_URL: string = import.meta.env.VITE_API_URL ?? 'http://localhost
 
 // Access to Venus is per-grant, enforced server-side via requireApp('venus') (see
 // api/src/routes/venus.ts): supervisor always has access; employees need the explicit
-// 'venus' grant (Agent.apps); md is excluded. The login screen does not hard-block by
+// 'venus' grant (Agent.apps); gm is excluded. The login screen does not hard-block by
 // role — an ungranted employee logs in fine and gets a friendly 403 state instead (App.tsx).
-export type Role = 'supervisor' | 'md' | 'employee';
+export type Role = 'supervisor' | 'gm' | 'agm' | 'employee';
 export interface Agent {
   id: string;
   email: string;
@@ -275,7 +275,7 @@ async function authed<T>(path: string, init?: RequestInit): Promise<T> {
 // Same shared login endpoint every service uses — any live account may authenticate here;
 // per-app access is enforced server-side by requireApp('venus') on the app's own routes
 // (api/src/routes/venus.ts): supervisor always has access, employees need the explicit
-// 'venus' grant, md is excluded.
+// 'venus' grant, gm is excluded.
 export async function login(email: string, password: string): Promise<{ token: string; agent: Agent }> {
   const res = await fetch(`${API_URL}/api/auth/login`, {
     method: 'POST',
@@ -317,7 +317,7 @@ export interface LoginName {
   gender?: string;
 }
 // PUBLIC — no auth required. Ordered: supervisor first (kind 'password'), then any
-// granted MD/employee cards. Uses the GENERAL suite endpoint (not an app-owned one like
+// granted GM/AGM/employee cards. Uses the GENERAL suite endpoint (not an app-owned one like
 // Ceres's /api/ceres/logins) since Venus access is grant-based, not role-based.
 export const getLogins = () =>
   fetch(`${API_URL}/api/auth/logins?app=venus`).then((r) => {

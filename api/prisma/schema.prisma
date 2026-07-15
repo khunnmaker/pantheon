@@ -129,7 +129,7 @@ model Agent {
   passwordHash String
   role         String   @default("agent") // agent | supervisor
   createdAt    DateTime @default(now())
-  // Per-employee app grants ('minerva'|'vesta'|'juno'|'ceres'|'apollo'); supervisor/md access is
+  // Per-person app grants ('minerva'|'vesta'|'juno'|'ceres'|'apollo'); supervisor/gm access is
   // implicit by role, this list matters only for role 'employee'. Edited later by Jupiter's
   // admin UI — boot-sync must never overwrite it (create-only default).
   apps         String[] @default([])
@@ -235,7 +235,7 @@ model ApolloAttachment {
 
 // Personal event on a member's own calendar (นัดหมอ, ธุระส่วนตัว) — see docs/APOLLO_EVENTS
 // spec. `visibility` gates who sees title/note beyond the owner: 'private' (default) limits
-// that to the owner and role 'supervisor' (the CEO) — every other viewer, md/Nee included (NO
+// that to the owner and role 'supervisor' (the CEO) — every other viewer, GM users included (NO
 // role bypass via the manager() helper), only ever gets an anonymous "ไม่ว่าง" busy block;
 // 'public' shows title/note to everyone. Enforced by masking in apollo/calendarQuery.ts's
 // maskEvent, never by hiding rows here. onDelete: Cascade so a removed Agent takes their
@@ -840,7 +840,7 @@ model CeresExpense {
   approvedById    String?
   approvedAt      DateTime?
   rejectReason    String    @default("")
-  // void = soft-delete by md/ceo; the row is kept (struck-through, excluded from every
+  // void = soft-delete by gm/ceo; the row is kept (struck-through, excluded from every
   // total/board/settlement) so a closed day's books stay auditable. Never hard-deleted.
   voidedById      String?
   voidedAt        DateTime?

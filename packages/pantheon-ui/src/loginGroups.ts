@@ -13,7 +13,8 @@ export interface GroupMeta {
 // Display order is fixed; empty groups are omitted at render time.
 export const GROUP_META: GroupMeta[] = [
   { id: 'ceo', label: 'ผู้บริหาร (CEO)', color: 'bg-violet-600' },
-  { id: 'md', label: 'MD', color: 'bg-teal-600' },
+  { id: 'gm', label: 'GM', color: 'bg-teal-600' },
+  { id: 'agm', label: 'ผู้ช่วยผู้จัดการ (AGM)', color: 'bg-cyan-600' },
   { id: 'sales', label: 'ฝ่ายขาย (Sales)', color: 'bg-emerald-600' },
   { id: 'finance', label: 'การเงิน (Finance)', color: 'bg-rose-600' },
   { id: 'messengers', label: 'แมสเซนเจอร์', color: 'bg-sky-600' },

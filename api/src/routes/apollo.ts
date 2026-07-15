@@ -9,6 +9,7 @@ import { CALENDAR_MAX_RANGE_DAYS, buildEventData, dateSchema, eventDateRangeWher
 import { notifyApolloAssignment, thaiDateKey } from '../apollo/notify.js';
 import { deleteApolloAttachment, readApolloAttachment, saveApolloAttachment } from '../apollo/attachmentStore.js';
 import { EMPLOYEES, TIER_ACCOUNTS, employeeEmail } from '../db/ensureSeeded.js';
+import { isApolloManager } from '../apollo/access.js';
 
 // Roster email → display gender (see ensureSeeded.ts) — UI-only metadata for the board's avatar
 // polish (§0 of the Apollo UI spec). Built once from the static roster consts.
@@ -68,7 +69,7 @@ const calendarEventSelect = {
 } as const;
 
 function manager(req: FastifyRequest): boolean {
-  return req.agent?.role === 'supervisor' || req.agent?.role === 'md';
+  return isApolloManager(req.agent?.role);
 }
 
 async function projectMember(projectId: string, agentId: string): Promise<boolean> {
@@ -89,7 +90,7 @@ async function canWorkInProject(req: FastifyRequest, projectId: string): Promise
 async function assigneeAllowed(agentId: string | null | undefined): Promise<boolean> {
   if (!agentId) return true;
   return !!(await prisma.agent.findFirst({
-    where: { id: agentId, OR: [{ role: { in: ['supervisor', 'md'] } }, { apps: { has: 'apollo' } }] },
+    where: { id: agentId, OR: [{ role: { in: ['supervisor', 'gm'] } }, { apps: { has: 'apollo' } }] },
     select: { id: true },
   }));
 }
@@ -100,7 +101,7 @@ export async function apolloRoutes(app: FastifyInstance) {
 
   app.get('/api/apollo/agents', async () => ({
     agents: (await prisma.agent.findMany({
-      where: { OR: [{ role: { in: ['supervisor', 'md'] } }, { apps: { has: 'apollo' } }] },
+      where: { OR: [{ role: { in: ['supervisor', 'gm'] } }, { apps: { has: 'apollo' } }] },
       select: peopleSelect,
       orderBy: { name: 'asc' },
     })).map((a) => ({ ...a, gender: GENDER_BY_EMAIL.get(a.email) ?? 'male' })),
@@ -127,7 +128,7 @@ export async function apolloRoutes(app: FastifyInstance) {
     }
     const { memberIds = [], ...data } = parsed.data;
     const uniqueMemberIds = [...new Set(memberIds)];
-    const validMembers = await prisma.agent.count({ where: { id: { in: uniqueMemberIds }, OR: [{ role: { in: ['supervisor', 'md'] } }, { apps: { has: 'apollo' } }] } });
+    const validMembers = await prisma.agent.count({ where: { id: { in: uniqueMemberIds }, OR: [{ role: { in: ['supervisor', 'gm'] } }, { apps: { has: 'apollo' } }] } });
     if (validMembers !== uniqueMemberIds.length) return reply.code(400).send({ error: 'invalid_member' });
     const project = await prisma.apolloProject.create({
       data: {
@@ -196,7 +197,7 @@ export async function apolloRoutes(app: FastifyInstance) {
     const parsed = z.object({ memberIds: z.array(z.string().cuid()).max(500) }).safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: 'invalid_body' });
     const ids = [...new Set(parsed.data.memberIds)];
-    const valid = await prisma.agent.count({ where: { id: { in: ids }, OR: [{ role: { in: ['supervisor', 'md'] } }, { apps: { has: 'apollo' } }] } });
+    const valid = await prisma.agent.count({ where: { id: { in: ids }, OR: [{ role: { in: ['supervisor', 'gm'] } }, { apps: { has: 'apollo' } }] } });
     if (valid !== ids.length) return reply.code(400).send({ error: 'invalid_member' });
     await prisma.$transaction(async (tx) => {
       await tx.apolloProjectMember.deleteMany({ where: { projectId: req.params.id } });
@@ -409,7 +410,7 @@ export async function apolloRoutes(app: FastifyInstance) {
     if (!range) return reply.code(400).send({ error: `invalid_range_or_exceeds_${CALENDAR_MAX_RANGE_DAYS}_days` });
     const viewerId = req.agent!.id;
     // CEO-only view exception for private events (see maskEvent) — role 'supervisor' EXACTLY,
-    // deliberately NOT the manager() helper above (which also covers 'md'): md/Nee must never
+    // deliberately NOT the manager() helper above (which also covers 'gm'): GM users must never
     // see private event details, only the free/busy block everyone else gets.
     const isCeo = req.agent!.role === 'supervisor';
     // Peers may now scope to a colleague/'all'/'none' to check availability — but (unlike a
@@ -447,7 +448,7 @@ export async function apolloRoutes(app: FastifyInstance) {
     if (!manager(req)) return reply.code(403).send({ error: 'forbidden' });
     const today = new Date(`${thaiDateKey()}T00:00:00.000Z`);
     const [agents, openRows, overdueRows, statusRows] = await Promise.all([
-      prisma.agent.findMany({ where: { OR: [{ role: { in: ['supervisor', 'md'] } }, { apps: { has: 'apollo' } }] }, select: peopleSelect, orderBy: { name: 'asc' } }),
+      prisma.agent.findMany({ where: { OR: [{ role: { in: ['supervisor', 'gm'] } }, { apps: { has: 'apollo' } }] }, select: peopleSelect, orderBy: { name: 'asc' } }),
       prisma.apolloTask.groupBy({ by: ['assigneeId'], where: { completedAt: null, assigneeId: { not: null } }, _count: true }),
       prisma.apolloTask.groupBy({ by: ['assigneeId'], where: { completedAt: null, assigneeId: { not: null }, dueDate: { lt: today } }, _count: true }),
       prisma.apolloTask.groupBy({ by: ['projectId', 'status'], where: { completedAt: null }, _count: true }),

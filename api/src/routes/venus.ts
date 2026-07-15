@@ -14,8 +14,8 @@ import { generateAllCards } from '../venus/cards.js';
 // analytics yet — just the customer dimension the rest of Venus builds on.
 //
 // Import is supervisor-only (mirrors Vesta/Juno: imports/config = supervisor). Reading
-// the customer list is per-grant: requireApp('venus') — supervisor always passes, md is
-// excluded (the md implicit app set does not include Venus), employees need 'venus' in their
+// the customer list is per-grant: requireApp('venus') — supervisor always passes, gm is
+// excluded (the gm implicit app set does not include Venus), agm/employees need 'venus' in their
 // Agent.apps (owner-granted via Jupiter's admin UI). Suite-consistent with Vesta/Juno/Ceres.
 
 const MAX_UPLOAD_BYTES = 12 * 1024 * 1024; // real ARMAST export is ~6.6MB
@@ -424,7 +424,7 @@ export async function venusRoutes(app: FastifyInstance) {
     return { ok: true, started: false, ...result };
   });
 
-  // Everything below requires login + the 'venus' app grant (supervisor always passes; md
+  // Everything below requires login + the 'venus' app grant (supervisor always passes; gm
   // excluded; employees need the grant). requireApp implies requireAuth ran, so run both.
   app.addHook('onRequest', requireAuth);
   app.addHook('preHandler', requireApp('venus'));

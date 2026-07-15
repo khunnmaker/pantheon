@@ -6,7 +6,7 @@
 // or `shared/` dir is OUTSIDE every app's build context and can't be imported without flipping
 // all 8 services' root dirs + rewriting 8 Dockerfiles (an owner-driven infra cutover). Until then
 // these files are physically copied per app — and THIS guard fails CI the moment a copy drifts,
-// which is the actual bug class the review flagged (stale Diana Role type, AppName drift, MD-tile
+// which is the actual bug class the review flagged (stale Diana Role type, AppName drift, GM-tile
 // bug). Run locally: `node scripts/check-shared-drift.mjs`.
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';

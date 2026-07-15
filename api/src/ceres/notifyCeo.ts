@@ -1,7 +1,7 @@
 import { env } from '../env.js';
 import { sendLineText } from '../line/send.js';
 
-// Push a LINE alert to the CEO when a P2/P3 payment request escalates, so the MD isn't
+// Push a LINE alert to the CEO when a P2/P3 payment request escalates, so the GM isn't
 // blocked for hours waiting on the web UI (CERES_BRIEF §10 Q4). No-op when unconfigured;
 // a LINE failure must never affect the request flow (fail-open for notification only —
 // the request itself is already correctly gated regardless of whether this send works).

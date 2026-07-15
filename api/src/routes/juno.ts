@@ -31,11 +31,11 @@ import {
   satangToBaht,
 } from '../finance/discrepancy.js';
 
-// Owner decision 2026-07-13: Nee's md tier is default-deny inside Juno and may use only
+// Owner decision 2026-07-13: the gm tier is default-deny inside Juno and may use only
 // the manual-bill lane plus its read-only product picker. Employees keep the existing Juno
-// surface except that issuing/editing/voiding manual bills belongs to md/supervisor only.
+// surface except that issuing/editing/voiding manual bills belongs to gm/supervisor only.
 // Keys deliberately use Fastify's route pattern (req.routeOptions.url), never the raw URL.
-const MD_JUNO_ALLOWED_ROUTES = new Set([
+const GM_JUNO_ALLOWED_ROUTES = new Set([
   'GET /api/juno/bills',
   'POST /api/juno/bills',
   'PATCH /api/juno/bills/:id',
@@ -46,7 +46,7 @@ const EMPLOYEE_JUNO_DENIED_ROUTES = new Set([
   'POST /api/juno/bills',
   'PATCH /api/juno/bills/:id',
   'POST /api/juno/bills/:id/void',
-  // hard delete is supervisor-only INSIDE the handler too (md is blocked by default-deny
+  // hard delete is supervisor-only INSIDE the handler too (gm is blocked by default-deny
   // above — deletion is deliberately NOT in Nee's allowlist); this entry keeps the
   // "employees never mutate bills" invariant readable in one place.
   'DELETE /api/juno/bills/:id',
@@ -55,7 +55,7 @@ const EMPLOYEE_JUNO_DENIED_ROUTES = new Set([
 // Juno finance API. Reads the Payment table (written by Minerva's /to-finance hook) and
 // owns the finance lifecycle: verify → record, flag-queue triage, tax-invoice tracking,
 // and reporting/export. INCOME / LINE-slip only for the MVP. Access starts with requireApp('juno'):
-// supervisor + granted employees keep the finance surface, while md is narrowed by the hook
+// supervisor + granted employees keep the finance surface, while gm is narrowed by the hook
 // below to manual bills/products only (owner decision 2026-07-13). See JUNO_BRIEF.md.
 //
 // PHASE B (see JUNO_PROCESS_BRIEF.md): bank import (KBIZ + K SHOP) + reconciliation
@@ -571,8 +571,8 @@ export async function junoRoutes(app: FastifyInstance) {
     if (role === 'supervisor') return;
 
     const routeKey = `${req.method} ${req.routeOptions.url}`;
-    if (role === 'md') {
-      if (!MD_JUNO_ALLOWED_ROUTES.has(routeKey)) {
+    if (role === 'gm') {
+      if (!GM_JUNO_ALLOWED_ROUTES.has(routeKey)) {
         return reply.code(403).send({ error: 'forbidden' });
       }
       return;
@@ -808,7 +808,7 @@ export async function junoRoutes(app: FastifyInstance) {
   });
 
   // DELETE /api/juno/bills/:id — CEO-ONLY hard delete (ลบถาวร), mirroring the Payment delete:
-  // gated to `supervisor` INSIDE the handler (first line 403) — md can issue/edit/void bills
+  // gated to `supervisor` INSIDE the handler (first line 403) — gm can issue/edit/void bills
   // but never destroy them (deletion is deliberately absent from Nee's allowlist as well).
   // A bill any Payment still references (billNos has its number) is protected with a 409:
   // deleting it would strand orphan chips on verified payments (red "ไม่พบบิลนี้ในระบบ") and
@@ -984,8 +984,8 @@ export async function junoRoutes(app: FastifyInstance) {
 
   // DELETE /api/juno/payments/:id — CEO-ONLY permanent hard delete. Contrast with
   // POST /status {status:'void'}, which only soft-deletes (the row stays, filterable back
-  // in). This is the true "gone forever" override — supervisor only, not even md, so it is
-  // gated EXPLICITLY here in addition to the plugin's md bills-only hook. Any status is
+  // in). This is the true "gone forever" override — supervisor only, not even gm, so it is
+  // gated EXPLICITLY here in addition to the plugin's gm bills-only hook. Any status is
   // deletable; there is no
   // such thing as "too far along to delete" for the CEO override.
   app.delete<{ Params: { id: string } }>('/api/juno/payments/:id', async (req, reply) => {

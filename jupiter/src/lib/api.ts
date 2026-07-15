@@ -7,8 +7,8 @@ export const API_URL: string = import.meta.env.VITE_API_URL ?? 'http://localhost
 // Mirrors the backend's Role vocabulary post unified-auth (api/src/auth/jwt.ts): three live
 // tiers. Which apps a person may open is NO LONGER derived from role alone — it's a per-person
 // grant (`apps`), exactly as the server gates it (see hasAppAccess in apps.ts). supervisor →
-// everything; md → ceres only; employee → their own `apps` list.
-export type Role = 'supervisor' | 'md' | 'employee';
+// everything; gm → Ceres + Minerva + Juno + Apollo; agm/employee → their own `apps` list.
+export type Role = 'supervisor' | 'gm' | 'agm' | 'employee';
 import type { AppName } from '@pantheon/ui';
 export type { AppName };
 export interface Agent {
@@ -31,7 +31,7 @@ export interface LoginCard {
 
 export function hasAppAccess(agent: Agent, app: AppName): boolean {
   if (agent.role === 'supervisor') return true;
-  if (agent.role === 'md') return app === 'ceres' || app === 'minerva' || app === 'juno' || app === 'apollo';
+  if (agent.role === 'gm') return app === 'ceres' || app === 'minerva' || app === 'juno' || app === 'apollo';
   return (agent.apps ?? []).includes(app);
 }
 

@@ -81,11 +81,11 @@ describe('Apollo event masking (maskEvent): visibility matrix — own/CEO/public
     expect(masked.visibility).toBe('private');
   });
 
-  it('never leaks private title/note to a non-CEO manager viewer (e.g. md/Nee) — regression: manager() must not be used here', () => {
-    // The route computes viewerIsCeo as EXACTLY role === 'supervisor', so an md viewer always
+  it('never leaks private title/note to a non-CEO manager viewer (e.g. gm/Nee) — regression: manager() must not be used here', () => {
+    // The route computes viewerIsCeo as EXACTLY role === 'supervisor', so a gm viewer always
     // calls in with false here, same as any other non-CEO employee — this is what would break
-    // if maskEvent (or its caller) ever swapped in the manager() helper (which also covers 'md').
-    const masked = maskEvent(privateRaw, 'md-1', false);
+    // if maskEvent (or its caller) ever swapped in the manager() helper (which also covers 'gm').
+    const masked = maskEvent(privateRaw, 'gm-1', false);
     expect(masked.own).toBe(false);
     expect(masked).not.toHaveProperty('title');
     expect(masked).not.toHaveProperty('note');

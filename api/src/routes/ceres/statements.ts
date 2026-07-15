@@ -163,7 +163,7 @@ export function statementsRoutes(app: FastifyInstance) {
   const previewBody = z.object({ dataB64: z.string().min(1), fileName: z.string().min(1).max(300) });
   app.post(
     '/api/ceres/statements/preview',
-    { preHandler: requireCeresRole('md', 'ceo'), bodyLimit: 15 * 1024 * 1024 },
+    { preHandler: requireCeresRole('gm', 'ceo'), bodyLimit: 15 * 1024 * 1024 },
     async (req, reply) => {
       const parsed = previewBody.safeParse(req.body);
       if (!parsed.success) return reply.code(400).send({ error: 'invalid_body' });
@@ -236,7 +236,7 @@ export function statementsRoutes(app: FastifyInstance) {
   // POST /api/ceres/statements/apply { token } — insert the previewed NEW lines,
   // archive the original file, and run the auto-matcher over just the new lines.
   const applyBody = z.object({ token: z.string().min(1) });
-  app.post('/api/ceres/statements/apply', { preHandler: requireCeresRole('md', 'ceo') }, async (req, reply) => {
+  app.post('/api/ceres/statements/apply', { preHandler: requireCeresRole('gm', 'ceo') }, async (req, reply) => {
     const parsed = applyBody.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: 'invalid_body' });
     const staged = previews.get(parsed.data.token);
@@ -294,13 +294,13 @@ export function statementsRoutes(app: FastifyInstance) {
   });
 
   // POST /api/ceres/statements/automatch — re-run the matcher over ALL unmatched lines.
-  app.post('/api/ceres/statements/automatch', { preHandler: requireCeresRole('md', 'ceo') }, async () => {
+  app.post('/api/ceres/statements/automatch', { preHandler: requireCeresRole('gm', 'ceo') }, async () => {
     const autoMatched = await autoMatchLines();
     return { autoMatched };
   });
 
   // GET /api/ceres/statements — recent import audit rows, newest first.
-  app.get('/api/ceres/statements', { preHandler: requireCeresRole('md', 'ceo') }, async () => {
+  app.get('/api/ceres/statements', { preHandler: requireCeresRole('gm', 'ceo') }, async () => {
     const imports = await prisma.ceresStatementImport.findMany({ orderBy: { importedAt: 'desc' }, take: 50 });
     return { imports };
   });
@@ -314,7 +314,7 @@ export function statementsRoutes(app: FastifyInstance) {
     q: z.string().optional(),
     limit: z.coerce.number().int().min(1).max(500).optional(),
   });
-  app.get('/api/ceres/statements/lines', { preHandler: requireCeresRole('md', 'ceo') }, async (req, reply) => {
+  app.get('/api/ceres/statements/lines', { preHandler: requireCeresRole('gm', 'ceo') }, async (req, reply) => {
     const parsed = linesQuery.safeParse(req.query ?? {});
     if (!parsed.success) return reply.code(400).send({ error: 'invalid_query' });
     const q = parsed.data;
@@ -388,7 +388,7 @@ export function statementsRoutes(app: FastifyInstance) {
   const matchBody = z.object({ type: z.enum(['paymentRequest', 'cashMovement']), id: z.string().min(1) });
   app.post<{ Params: { id: string } }>(
     '/api/ceres/statements/lines/:id/match',
-    { preHandler: requireCeresRole('md', 'ceo') },
+    { preHandler: requireCeresRole('gm', 'ceo') },
     async (req, reply) => {
       const parsed = matchBody.safeParse(req.body);
       if (!parsed.success) return reply.code(400).send({ error: 'invalid_body' });
@@ -420,7 +420,7 @@ export function statementsRoutes(app: FastifyInstance) {
   // POST /api/ceres/statements/lines/:id/unmatch — clear the link.
   app.post<{ Params: { id: string } }>(
     '/api/ceres/statements/lines/:id/unmatch',
-    { preHandler: requireCeresRole('md', 'ceo') },
+    { preHandler: requireCeresRole('gm', 'ceo') },
     async (req, reply) => {
       const line = await prisma.ceresStatementLine.findUnique({ where: { id: req.params.id } });
       if (!line) return reply.code(404).send({ error: 'not_found' });
@@ -444,7 +444,7 @@ export function statementsRoutes(app: FastifyInstance) {
   const refBody = z.object({ refText: z.string().max(300) });
   app.post<{ Params: { id: string } }>(
     '/api/ceres/statements/lines/:id/ref',
-    { preHandler: requireCeresRole('md', 'ceo') },
+    { preHandler: requireCeresRole('gm', 'ceo') },
     async (req, reply) => {
       const parsed = refBody.safeParse(req.body);
       if (!parsed.success) return reply.code(400).send({ error: 'invalid_body' });
@@ -468,7 +468,7 @@ export function statementsRoutes(app: FastifyInstance) {
   );
 
   // GET /api/ceres/statements/summary — reconciliation dashboard cards.
-  app.get('/api/ceres/statements/summary', { preHandler: requireCeresRole('md', 'ceo') }, async () => {
+  app.get('/api/ceres/statements/summary', { preHandler: requireCeresRole('gm', 'ceo') }, async () => {
     const [unmatchedOutLines, unmatchedInLines, lastImport] = await Promise.all([
       prisma.ceresStatementLine.findMany({ where: { direction: 'out', matchStatus: 'unmatched' } }),
       prisma.ceresStatementLine.findMany({ where: { direction: 'in', matchStatus: 'unmatched' } }),

@@ -10,7 +10,7 @@ export function getToken() { return localStorage.getItem(TOKEN_KEY); }
 export function getStoredAgent(): Agent | null { const value = localStorage.getItem(AGENT_KEY); if (!value) return null; try { return JSON.parse(value) as Agent; } catch { clearSession(); return null; } }
 export function setSession(token: string, agent: Agent) { localStorage.setItem(TOKEN_KEY, token); localStorage.setItem(AGENT_KEY, JSON.stringify(agent)); }
 export function clearSession() { localStorage.removeItem(TOKEN_KEY); localStorage.removeItem(AGENT_KEY); }
-export function hasAppAccess(agent: Agent, app: AppName) { if (agent.role === 'supervisor') return true; if (agent.role === 'md') return ['ceres', 'minerva', 'juno', 'apollo'].includes(app); return (agent.apps ?? []).includes(app); }
+export function hasAppAccess(agent: Agent, app: AppName) { if (agent.role === 'supervisor') return true; if (agent.role === 'gm') return ['ceres', 'minerva', 'juno', 'apollo'].includes(app); return (agent.apps ?? []).includes(app); }
 
 async function authed<T>(path: string, init?: RequestInit): Promise<T> {
   const token = getToken();

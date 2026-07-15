@@ -69,7 +69,7 @@ export default function MdApp() {
             <Wallet size={22} />
             <span className="font-bold text-lg">Ceres</span>
             <span className="text-slate-400 text-sm hidden sm:inline">
-              · {bootstrap.role === 'ceo' ? 'CEO' : 'MD'}
+              · {bootstrap.role === 'ceo' ? 'CEO' : 'GM'}
             </span>
           </div>
           <div className="flex items-center gap-3 text-sm">

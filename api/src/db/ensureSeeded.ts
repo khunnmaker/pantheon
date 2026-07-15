@@ -11,24 +11,35 @@ import { backfillProductEmbeddings } from '../catalog/productEmbeddings.js';
 // named env var(s), and any account NOT in TIER_ACCOUNTS + EMPLOYEES is removed. Passwords
 // are never committed — only the env-var NAME lives in code.
 //
-// Three tiers (unified auth):
+// Four tiers (unified auth):
 //   supervisor — Dr. M, implicit access to everything.
-//   md         — Nee, implicit access via MD_APPS in auth/jwt.ts (including scoped Juno).
+//   gm         — Nee and Noon, implicit access via GM_APPS in auth/jwt.ts (including scoped Juno).
+//   agm        — assistant GMs; employee-equivalent per-person app access today.
 //   employee   — all staff; per-person app access via Agent.apps (owner-edited, Pantheon's
 //                admin UI — boot-sync never overwrites it on an existing row).
 // `group` + `gender` are DISPLAY metadata for the suite login screens (role-grouped tiles +
 // cute avatars) — they mirror Pantheon's portal grouping and have nothing to do with auth.
 export const TIER_ACCOUNTS = [
   { email: 'drm@prominent.local', name: 'Dr. M', role: 'supervisor', pwEnvs: ['SEED_PASSWORD'], group: 'ceo', gender: 'male' },
-  { email: 'md@prominent.local', name: 'Nee', role: 'md', pwEnvs: ['MD_PASSWORD'], group: 'md', gender: 'female' },
+  // KEEP this legacy email: Nee's Agent row id is referenced by bills/audit history; changing it would orphan it.
+  { email: 'md@prominent.local', name: 'Nee', role: 'gm', pwEnvs: ['GM_PASSWORD', 'MD_PASSWORD'], group: 'gm', gender: 'female' },
 ] as const;
 
 // Every employee, each with their own 6-digit PIN (EMPLOYEE_PINS) and a per-person set of
-// app grants. NOTE: นี (Nee) is the MD tier account above — she is NOT an employee row (the
+// app grants. NOTE: นี (Nee) is the GM tier account above — she is NOT an employee row (the
 // old MESSENGERS list wrongly included her under a "nee" slug; fixed here).
 // `group` + `gender`: DISPLAY metadata for the login screens (see TIER_ACCOUNTS note). The
-// group mirrors Pantheon's portal grouping — note นุ่น displays under MD and พิณ/เล็ก under Others.
-export const EMPLOYEES = [
+// group mirrors Pantheon's portal grouping — note นุ่น displays under GM and พิณ/เล็ก under Others.
+type EmployeeSeed = {
+  slug: string;
+  name: string;
+  apps: readonly string[];
+  role?: 'gm' | 'agm' | 'employee';
+  group: string;
+  gender: 'male' | 'female';
+};
+
+export const EMPLOYEES: readonly EmployeeSeed[] = [
   { slug: 'nadeer', name: 'NaDeer', apps: ['minerva', 'ceres', 'apollo'], group: 'sales', gender: 'female' },
   { slug: 'anny', name: 'Anny', apps: ['minerva', 'ceres', 'apollo'], group: 'sales', gender: 'female' },
   { slug: 'noey', name: 'Noey', apps: ['minerva', 'ceres', 'apollo'], group: 'sales', gender: 'female' },
@@ -43,7 +54,10 @@ export const EMPLOYEES = [
   { slug: 'lungko', name: 'ลุงโก๊ะ', apps: ['ceres', 'apollo'], group: 'messengers', gender: 'male' },
   { slug: 'wong', name: 'วง', apps: ['ceres', 'apollo'], group: 'messengers', gender: 'male' },
   { slug: 'paeng', name: 'แป๋ง', apps: ['ceres', 'apollo'], group: 'messengers', gender: 'male' },
-  { slug: 'nun', name: 'นุ่น', apps: ['minerva', 'juno', 'ceres', 'apollo'], group: 'md', gender: 'female' }, // Noon — MD side, same access as Nee
+  { slug: 'nun', name: 'นุ่น', apps: ['minerva', 'juno', 'ceres', 'apollo'], role: 'gm', group: 'gm', gender: 'female' }, // Noon — GM, same access as Nee
+  { slug: 'poopae', name: 'ปูเป้', apps: ['minerva', 'ceres', 'apollo'], role: 'agm', group: 'agm', gender: 'female' },
+  { slug: 'win', name: 'วิน', apps: ['minerva', 'ceres', 'apollo'], role: 'agm', group: 'agm', gender: 'male' },
+  { slug: 'mail', name: 'เมล', apps: ['minerva', 'ceres', 'apollo'], role: 'agm', group: 'agm', gender: 'female' },
   { slug: 'pin', name: 'พิณ', apps: ['ceres', 'apollo'], group: 'others', gender: 'male' },
   { slug: 'lekmaeban', name: 'เล็กแม่บ้าน', apps: ['ceres', 'apollo'], group: 'others', gender: 'female' }, // housekeeper — enters expenses like everyone
   { slug: 'da', name: 'ด้า', apps: ['ceres', 'apollo'], group: 'messengers', gender: 'male' },
@@ -51,7 +65,7 @@ export const EMPLOYEES = [
   // gate was widened from supervisor-only to requireApp('juno') so the juno grant admits them.
   { slug: 'benz', name: 'Benz', apps: ['minerva', 'juno', 'ceres', 'apollo'], group: 'finance', gender: 'female' },
   { slug: 'meow', name: 'Meow', apps: ['minerva', 'juno', 'ceres', 'apollo'], group: 'finance', gender: 'female' },
-] as const;
+];
 
 export const employeeEmail = (slug: string): string => `${slug}@prominent.local`;
 
@@ -63,7 +77,7 @@ const WEAK_PINS = new Set([
 ]);
 
 // Parse a PIN map env ("name:pin,name:pin") → Map of key → 6-digit PIN. Used for EMPLOYEE_PINS
-// (all 15 staff, keyed by slug) and the deprecated AGENT_PINS transition fallback. Invalid
+// (all EMPLOYEES entries, keyed by slug) and the deprecated AGENT_PINS transition fallback. Invalid
 // entries are warned and skipped (a malformed env must never lock anyone out). Weak PINs are
 // accepted but warned.
 export function parseAgentPins(raw: string, label = 'AGENT_PINS'): Map<string, string> {
@@ -94,17 +108,19 @@ export function parseAgentPins(raw: string, label = 'AGENT_PINS'): Map<string, s
 // skips just that account (never seeds a blank/default password); pruning is guarded so a
 // misconfigured env can never delete the last working login.
 //
-// Staff credentials come from env: SEED_PASSWORD (Dr. M), MD_PASSWORD (Nee), EMPLOYEE_PINS (all
+// Staff credentials come from env: SEED_PASSWORD (Dr. M), GM_PASSWORD or fallback MD_PASSWORD
+// (Nee), EMPLOYEE_PINS (all
 // employees, "slug:pin,…"). An account with no configured secret is skipped — never seeded with
 // a blank/default — and a fully-unprovisioned env can never prune/lock everyone out (see the
 // allProvisioned guard below). The old AGENT_PINS / STAFF_PASSWORD / CERES_MD_PASSWORD transition
 // fallbacks were removed 2026-07-07 once the new vars were confirmed live on Railway.
-async function syncStaff(): Promise<void> {
+export async function syncStaff(): Promise<void> {
   let allProvisioned = true;
 
-  // Tier accounts (supervisor, md).
+  // Tier accounts (supervisor, gm).
   for (const t of TIER_ACCOUNTS) {
-    const pw = process.env[t.pwEnvs[0]] || undefined; // SEED_PASSWORD (Dr. M) / MD_PASSWORD (Nee)
+    // First configured env wins, so GM_PASSWORD supersedes the legacy MD_PASSWORD fallback.
+    const pw = t.pwEnvs.map((name) => process.env[name]).find(Boolean) || undefined;
     if (!pw) {
       allProvisioned = false;
       // eslint-disable-next-line no-console
@@ -167,8 +183,8 @@ async function syncStaff(): Promise<void> {
     const appsGrew = existing !== null && mergedApps.length > existing.apps.length;
     await prisma.agent.upsert({
       where: { email },
-      update: { name: e.name, role: 'employee', passwordHash, apps: mergedApps },
-      create: { email, name: e.name, role: 'employee', passwordHash, apps: [...e.apps] },
+      update: { name: e.name, role: e.role ?? 'employee', passwordHash, apps: mergedApps },
+      create: { email, name: e.name, role: e.role ?? 'employee', passwordHash, apps: [...e.apps] },
     });
     if (appsGrew) {
       // eslint-disable-next-line no-console

@@ -1,19 +1,19 @@
 import jwt from 'jsonwebtoken';
 import { env } from '../env.js';
 
-// Unified auth: three live tiers. 'agent'/'messenger' are RETIRED roles — no live Agent row
-// can carry them after boot (ensureSeeded heals every row to one of the three below) — but a
-// pre-deploy token signed under the old scheme may still carry one until it expires (<=12h).
-export type Role = 'supervisor' | 'md' | 'employee';
+// Unified auth: four live tiers. 'md'/'agent'/'messenger' are RETIRED roles — no live Agent row
+// can carry them after boot (ensureSeeded heals every row to one of the four below) — but a
+// pre-deploy bearer/session token signed under an old scheme may still carry one until expiry.
+export type Role = 'supervisor' | 'gm' | 'agm' | 'employee';
 // Every live role, as a runtime tuple. Use where an endpoint means "any authenticated
 // account" and then gates per-app inside the handler (see middleware.requireAnyAuth /
 // the Pantheon badges route). Mirrors LIVE_ROLES in middleware.ts; adding a future role
 // here keeps those "any account" paths from silently omitting it.
-export const ALL_ROLES = ['supervisor', 'md', 'employee'] as const;
+export const ALL_ROLES = ['supervisor', 'gm', 'agm', 'employee'] as const;
 // Accepted at TOKEN VERIFICATION ONLY, so an old token isn't rejected outright mid-rollout;
 // every consumer re-reads the LIVE Agent row (see authedAgentFromToken), which decides real
-// access and can never itself be 'agent'/'messenger' post-boot.
-const TOKEN_ROLES = ['supervisor', 'md', 'employee', 'agent', 'messenger'] as const;
+// access and can never itself be 'md'/'agent'/'messenger' post-boot.
+const TOKEN_ROLES = ['supervisor', 'gm', 'agm', 'employee', 'md', 'agent', 'messenger'] as const;
 type TokenRole = (typeof TOKEN_ROLES)[number];
 
 // The suite's app names — the SINGLE source of truth (runtime tuple + type). requireApp,
@@ -107,12 +107,12 @@ export function verifyToken(
   }
 }
 
-// supervisor → everything; md → Ceres + Minerva + Juno. The Juno grant admits Nee to the app,
-// while routes/juno.ts narrows her to bills/products only (owner decision 2026-07-13).
-// employee → their own per-person Agent.apps grant list.
-export const MD_APPS: readonly AppName[] = ['ceres', 'minerva', 'juno', 'apollo'];
+// supervisor → everything; gm → Ceres + Minerva + Juno + Apollo. The Juno grant admits GMs,
+// while routes/juno.ts narrows them to bills/products only (owner decision 2026-07-13).
+// agm/employee → their own per-person Agent.apps grant list.
+export const GM_APPS: readonly AppName[] = ['ceres', 'minerva', 'juno', 'apollo'];
 export function hasAppAccess(agent: AuthedAgent, app: AppName): boolean {
   if (agent.role === 'supervisor') return true;
-  if (agent.role === 'md') return MD_APPS.includes(app);
+  if (agent.role === 'gm') return GM_APPS.includes(app);
   return agent.apps.includes(app);
 }

@@ -154,7 +154,7 @@ export interface MaskedApolloEvent {
 /**
  * Server-side privacy mask for GET /api/apollo/calendar's events. Full payload (title/note/
  * visibility) goes to: the owner; the CEO (viewerIsCeo — the caller must derive this as EXACTLY
- * `role === 'supervisor'`, never the manager() helper, which also covers 'md' — md/Nee must
+ * `role === 'supervisor'`, never the manager() helper, which also covers 'gm' — GM users must
  * never see private details); or anyone at all when the event itself is visibility 'public'.
  * Every other viewer gets only the free/busy shape, with title/note/visibility genuinely ABSENT
  * from the object (not just blanked), so a masked payload can never leak them even if a caller

@@ -33,11 +33,11 @@ export function p1Routes(app: FastifyInstance) {
   // GET /api/ceres/bootstrap — role + identity + reference data for the frontend shell.
   app.get('/api/ceres/bootstrap', async (req) => {
     const agent = req.agent!;
-    const role = ceresRoleOf(agent) as 'messenger' | 'md' | 'ceo';
+    const role = ceresRoleOf(agent) as 'messenger' | 'gm' | 'ceo';
     const [party, categories, parties] = await Promise.all([
       prisma.ceresParty.findFirst({ where: { agentEmail: agent.email } }),
       prisma.ceresCategory.findMany({ where: { active: true }, orderBy: { sortOrder: 'asc' } }),
-      role === 'md' || role === 'ceo'
+      role === 'gm' || role === 'ceo'
         ? prisma.ceresParty.findMany({ where: { active: true }, orderBy: { sortOrder: 'asc' } })
         : Promise.resolve([]),
     ]);
@@ -57,7 +57,7 @@ export function p1Routes(app: FastifyInstance) {
   app.post(
     '/api/ceres/receipts',
     {
-      preHandler: requireCeresRole('messenger', 'md', 'ceo'),
+      preHandler: requireCeresRole('messenger', 'gm', 'ceo'),
       bodyLimit: 15 * 1024 * 1024,
     },
     async (req, reply) => {
@@ -89,7 +89,7 @@ export function p1Routes(app: FastifyInstance) {
     },
   );
 
-  // POST /api/ceres/expenses — messenger self-entry / md,ceo carrier-bucket entry.
+  // POST /api/ceres/expenses — messenger self-entry / gm,ceo carrier-bucket entry.
   const expenseBody = z.object({
     entity: z.enum(ENTITIES),
     category: z.string().min(1),
@@ -100,7 +100,7 @@ export function p1Routes(app: FastifyInstance) {
     note: z.string().max(600).optional(),
     partyId: z.string().optional(),
   });
-  app.post('/api/ceres/expenses', { preHandler: requireCeresRole('messenger', 'md', 'ceo') }, async (req, reply) => {
+  app.post('/api/ceres/expenses', { preHandler: requireCeresRole('messenger', 'gm', 'ceo') }, async (req, reply) => {
     const parsed = expenseBody.safeParse(req.body);
     if (!parsed.success) {
       const amountIssue = parsed.error.issues.some((i) => i.message === 'invalid_amount');
@@ -118,7 +118,7 @@ export function p1Routes(app: FastifyInstance) {
       partyId = own.id;
       partyName = own.name;
     } else {
-      // md/ceo must pick a party too — a party-less expense would never appear on the
+      // gm/ceo must pick a party too — a party-less expense would never appear on the
       // board or in a settlement line (every sum keys by partyId), i.e. it would be
       // stamped "settled" invisibly. The seeded party list always offers a right
       // choice (carrier buckets + ทั่วไป).
@@ -163,7 +163,7 @@ export function p1Routes(app: FastifyInstance) {
     to: z.string().optional(),
     partyId: z.string().optional(),
   });
-  app.get('/api/ceres/expenses', { preHandler: requireCeresRole('messenger', 'md', 'ceo') }, async (req, reply) => {
+  app.get('/api/ceres/expenses', { preHandler: requireCeresRole('messenger', 'gm', 'ceo') }, async (req, reply) => {
     const parsed = listQuery.safeParse(req.query ?? {});
     if (!parsed.success) return reply.code(400).send({ error: 'invalid_query' });
     const q = parsed.data;
@@ -212,7 +212,7 @@ export function p1Routes(app: FastifyInstance) {
     return { expenses: rows.map((e) => toExpenseRow(e, base, isDuplicate(e))) };
   });
 
-  // PATCH /api/ceres/expenses/:id — edit (own+pending for messenger; any non-settled for md/ceo).
+  // PATCH /api/ceres/expenses/:id — edit (own+pending for messenger; any non-settled for gm/ceo).
   const patchBody = z.object({
     entity: z.enum(ENTITIES).optional(),
     category: z.string().min(1).optional(),
@@ -225,7 +225,7 @@ export function p1Routes(app: FastifyInstance) {
   });
   app.patch<{ Params: { id: string } }>(
     '/api/ceres/expenses/:id',
-    { preHandler: requireCeresRole('messenger', 'md', 'ceo') },
+    { preHandler: requireCeresRole('messenger', 'gm', 'ceo') },
     async (req, reply) => {
       const parsed = patchBody.safeParse(req.body);
       if (!parsed.success) {
@@ -300,7 +300,7 @@ export function p1Routes(app: FastifyInstance) {
   // DELETE /api/ceres/expenses/:id — pending only (drafts), for anyone who owns/manages it.
   app.delete<{ Params: { id: string } }>(
     '/api/ceres/expenses/:id',
-    { preHandler: requireCeresRole('messenger', 'md', 'ceo') },
+    { preHandler: requireCeresRole('messenger', 'gm', 'ceo') },
     async (req, reply) => {
       const agent = req.agent!;
       const role = ceresRoleOf(agent);
@@ -318,7 +318,7 @@ export function p1Routes(app: FastifyInstance) {
     },
   );
 
-  // POST /api/ceres/expenses/:id/void { reason } — md/ceo soft-delete of ANY entry
+  // POST /api/ceres/expenses/:id/void { reason } — gm/ceo soft-delete of ANY entry
   // (approved/settled/rejected/pending). Unlike DELETE (which hard-removes a pending
   // draft), void KEEPS the row: it's excluded from every total/board/settlement but stays
   // visible struck-through with who/when/why, so a closed day's books stay auditable.
@@ -326,7 +326,7 @@ export function p1Routes(app: FastifyInstance) {
   // is immutable) — it just stops counting in the live views and future reports.
   app.post<{ Params: { id: string } }>(
     '/api/ceres/expenses/:id/void',
-    { preHandler: requireCeresRole('md', 'ceo') },
+    { preHandler: requireCeresRole('gm', 'ceo') },
     async (req, reply) => {
       const body = z.object({ reason: z.string().min(1).max(300) }).safeParse(req.body);
       if (!body.success) return reply.code(400).send({ error: 'invalid_body' });
@@ -358,7 +358,7 @@ export function p1Routes(app: FastifyInstance) {
   // POST /api/ceres/expenses/:id/approve — Nee's daily approval (P1 step 3).
   app.post<{ Params: { id: string } }>(
     '/api/ceres/expenses/:id/approve',
-    { preHandler: requireCeresRole('md', 'ceo') },
+    { preHandler: requireCeresRole('gm', 'ceo') },
     async (req, reply) => {
       const existing = await prisma.ceresExpense.findUnique({ where: { id: req.params.id } });
       if (!existing) return reply.code(404).send({ error: 'not_found' });
@@ -375,7 +375,7 @@ export function p1Routes(app: FastifyInstance) {
   // POST /api/ceres/expenses/:id/reject { reason }
   app.post<{ Params: { id: string } }>(
     '/api/ceres/expenses/:id/reject',
-    { preHandler: requireCeresRole('md', 'ceo') },
+    { preHandler: requireCeresRole('gm', 'ceo') },
     async (req, reply) => {
       const body = z.object({ reason: z.string().min(1).max(300) }).safeParse(req.body);
       if (!body.success) return reply.code(400).send({ error: 'invalid_body' });
@@ -391,7 +391,7 @@ export function p1Routes(app: FastifyInstance) {
   );
 
   // POST /api/ceres/advances { partyId, amount, entity?, note? } — Nee's morning cash advance.
-  app.post('/api/ceres/advances', { preHandler: requireCeresRole('md', 'ceo') }, async (req, reply) => {
+  app.post('/api/ceres/advances', { preHandler: requireCeresRole('gm', 'ceo') }, async (req, reply) => {
     const body = z
       .object({
         partyId: z.string().min(1),
@@ -423,7 +423,7 @@ export function p1Routes(app: FastifyInstance) {
   });
 
   // POST /api/ceres/refunds { partyId, amount, note? } — messenger returns unspent cash.
-  app.post('/api/ceres/refunds', { preHandler: requireCeresRole('md', 'ceo') }, async (req, reply) => {
+  app.post('/api/ceres/refunds', { preHandler: requireCeresRole('gm', 'ceo') }, async (req, reply) => {
     const body = z
       .object({
         partyId: z.string().min(1),
@@ -453,7 +453,7 @@ export function p1Routes(app: FastifyInstance) {
   });
 
   // POST /api/ceres/movements { type: deposit|topup, amount, note? } — box deposit / CEO top-up.
-  app.post('/api/ceres/movements', { preHandler: requireCeresRole('md', 'ceo') }, async (req, reply) => {
+  app.post('/api/ceres/movements', { preHandler: requireCeresRole('gm', 'ceo') }, async (req, reply) => {
     const body = z
       .object({
         type: z.enum(['deposit', 'topup']),
@@ -483,7 +483,7 @@ export function p1Routes(app: FastifyInstance) {
   });
 
   // GET /api/ceres/movements?from=&to=&type=
-  app.get('/api/ceres/movements', { preHandler: requireCeresRole('md', 'ceo') }, async (req, reply) => {
+  app.get('/api/ceres/movements', { preHandler: requireCeresRole('gm', 'ceo') }, async (req, reply) => {
     const parsed = z
       .object({ from: z.string().optional(), to: z.string().optional(), type: z.string().optional() })
       .safeParse(req.query ?? {});
@@ -498,7 +498,7 @@ export function p1Routes(app: FastifyInstance) {
   });
 
   // GET /api/ceres/board — Nee's expected-change board (P1 step 3).
-  app.get('/api/ceres/board', { preHandler: requireCeresRole('md', 'ceo') }, async () => {
+  app.get('/api/ceres/board', { preHandler: requireCeresRole('gm', 'ceo') }, async () => {
     const { settlement, parties, box } = await computeBoard();
     return {
       dayKey: thaiDayKey(new Date()),
@@ -515,7 +515,7 @@ export function p1Routes(app: FastifyInstance) {
   // CashMovement created mid-close therefore lands strictly AFTER the settlement
   // (createdAt > cutoff) and shows up in the next board's "since last settlement"
   // window instead of vanishing between the two.
-  app.post('/api/ceres/close', { preHandler: requireCeresRole('md', 'ceo') }, async (req, reply) => {
+  app.post('/api/ceres/close', { preHandler: requireCeresRole('gm', 'ceo') }, async (req, reply) => {
     const body = z.object({ note: z.string().max(600).optional() }).safeParse(req.body ?? {});
     if (!body.success) return reply.code(400).send({ error: 'invalid_body' });
 
@@ -586,7 +586,7 @@ export function p1Routes(app: FastifyInstance) {
   });
 
   // GET /api/ceres/settlements?limit=
-  app.get('/api/ceres/settlements', { preHandler: requireCeresRole('md', 'ceo') }, async (req, reply) => {
+  app.get('/api/ceres/settlements', { preHandler: requireCeresRole('gm', 'ceo') }, async (req, reply) => {
     const parsed = z.object({ limit: z.coerce.number().int().min(1).max(200).optional() }).safeParse(req.query ?? {});
     if (!parsed.success) return reply.code(400).send({ error: 'invalid_query' });
     const settlements = await prisma.ceresSettlement.findMany({

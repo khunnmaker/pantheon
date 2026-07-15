@@ -163,11 +163,11 @@ export async function computeTemplateDue(): Promise<TemplateDue[]> {
   return results;
 }
 
-// P2/P3 routes — MD's pre-approval payment requests + recurring templates. Mounted
+// P2/P3 routes — GM's pre-approval payment requests + recurring templates. Mounted
 // inside the requireCeresAuth scope (see routes/ceres/index.ts).
 export function requestsRoutes(app: FastifyInstance) {
-  // POST /api/ceres/requests — MD submits a payment for pre-approval (P2/P3 step 1).
-  // The AI gate runs SYNCHRONOUSLY: the MD needs the answer now, before paying.
+  // POST /api/ceres/requests — GM submits a payment for pre-approval (P2/P3 step 1).
+  // The AI gate runs SYNCHRONOUSLY: the GM needs the answer now, before paying.
   const createBody = z.object({
     entity: z.enum(ENTITIES),
     payee: z.string().min(1).max(200),
@@ -177,7 +177,7 @@ export function requestsRoutes(app: FastifyInstance) {
     recurringTemplateId: z.string().optional(),
     billPeriod: z.string().max(20).optional(),
   });
-  app.post('/api/ceres/requests', { preHandler: requireCeresRole('md', 'ceo') }, async (req, reply) => {
+  app.post('/api/ceres/requests', { preHandler: requireCeresRole('gm', 'ceo') }, async (req, reply) => {
     const parsed = createBody.safeParse(req.body);
     if (!parsed.success) {
       const amountIssue = parsed.error.issues.some((i) => i.message === 'invalid_amount');
@@ -226,7 +226,7 @@ export function requestsRoutes(app: FastifyInstance) {
     q: z.string().optional(),
     limit: z.coerce.number().int().min(1).max(500).optional(),
   });
-  app.get('/api/ceres/requests', { preHandler: requireCeresRole('md', 'ceo') }, async (req, reply) => {
+  app.get('/api/ceres/requests', { preHandler: requireCeresRole('gm', 'ceo') }, async (req, reply) => {
     const parsed = listQuery.safeParse(req.query ?? {});
     if (!parsed.success) return reply.code(400).send({ error: 'invalid_query' });
     const q = parsed.data;
@@ -257,7 +257,7 @@ export function requestsRoutes(app: FastifyInstance) {
   // GET /api/ceres/requests/:id
   app.get<{ Params: { id: string } }>(
     '/api/ceres/requests/:id',
-    { preHandler: requireCeresRole('md', 'ceo') },
+    { preHandler: requireCeresRole('gm', 'ceo') },
     async (req, reply) => {
       const existing = await prisma.ceresPaymentRequest.findUnique({ where: { id: req.params.id } });
       if (!existing) return reply.code(404).send({ error: 'not_found' });
@@ -296,7 +296,7 @@ export function requestsRoutes(app: FastifyInstance) {
   const paidBody = z.object({ paidRef: z.string().max(120).optional() });
   app.post<{ Params: { id: string } }>(
     '/api/ceres/requests/:id/paid',
-    { preHandler: requireCeresRole('md', 'ceo') },
+    { preHandler: requireCeresRole('gm', 'ceo') },
     async (req, reply) => {
       const parsed = paidBody.safeParse(req.body ?? {});
       if (!parsed.success) return reply.code(400).send({ error: 'invalid_body' });
@@ -317,7 +317,7 @@ export function requestsRoutes(app: FastifyInstance) {
   // POST /api/ceres/requests/:id/cancel — requested/escalated only.
   app.post<{ Params: { id: string } }>(
     '/api/ceres/requests/:id/cancel',
-    { preHandler: requireCeresRole('md', 'ceo') },
+    { preHandler: requireCeresRole('gm', 'ceo') },
     async (req, reply) => {
       const existing = await prisma.ceresPaymentRequest.findUnique({ where: { id: req.params.id } });
       if (!existing) return reply.code(404).send({ error: 'not_found' });
@@ -333,7 +333,7 @@ export function requestsRoutes(app: FastifyInstance) {
   // ─── Templates (P3) ───
 
   // GET /api/ceres/templates
-  app.get('/api/ceres/templates', { preHandler: requireCeresRole('md', 'ceo') }, async () => {
+  app.get('/api/ceres/templates', { preHandler: requireCeresRole('gm', 'ceo') }, async () => {
     const templates = await prisma.ceresRecurringTemplate.findMany({ orderBy: { payee: 'asc' } });
     return { templates };
   });
@@ -350,7 +350,7 @@ export function requestsRoutes(app: FastifyInstance) {
     graceDays: z.number().int().min(0).max(30),
     note: z.string().max(600).optional(),
   });
-  app.post('/api/ceres/templates', { preHandler: requireCeresRole('md', 'ceo') }, async (req, reply) => {
+  app.post('/api/ceres/templates', { preHandler: requireCeresRole('gm', 'ceo') }, async (req, reply) => {
     const parsed = templateBody.safeParse(req.body);
     if (!parsed.success) {
       const amountIssue = parsed.error.issues.some((i) => i.message === 'invalid_amount');
@@ -388,7 +388,7 @@ export function requestsRoutes(app: FastifyInstance) {
   });
   app.patch<{ Params: { id: string } }>(
     '/api/ceres/templates/:id',
-    { preHandler: requireCeresRole('md', 'ceo') },
+    { preHandler: requireCeresRole('gm', 'ceo') },
     async (req, reply) => {
       const parsed = templatePatchBody.safeParse(req.body);
       if (!parsed.success) {
@@ -403,7 +403,7 @@ export function requestsRoutes(app: FastifyInstance) {
   );
 
   // GET /api/ceres/templates/due — missed-payment / due-status board (P3 bonus).
-  app.get('/api/ceres/templates/due', { preHandler: requireCeresRole('md', 'ceo') }, async () => {
+  app.get('/api/ceres/templates/due', { preHandler: requireCeresRole('gm', 'ceo') }, async () => {
     const due = await computeTemplateDue();
     return { due };
   });

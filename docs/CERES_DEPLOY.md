@@ -19,8 +19,8 @@ list — each only when its table is empty.
 
 | Var | Value |
 |---|---|
-| `MD_PASSWORD` | Nee's login password (login email: `md@prominent.local`). The old name `CERES_MD_PASSWORD` still works as a deprecated fallback. |
-| `EMPLOYEE_PINS` | **One var for ALL 15 employees** — sales + couriers + housekeeper: `nadeer:XXXXXX,anny:XXXXXX,noey:XXXXXX,ta:XXXXXX,arm:XXXXXX,man:XXXXXX,boonson:XXXXXX,kaew:XXXXXX,lungko:XXXXXX,wong:XXXXXX,paeng:XXXXXX,nun:XXXXXX,pin:XXXXXX,lekmaeban:XXXXXX,da:XXXXXX` — **exactly 6 digits per PIN** (non-6-digit entries skipped with a warning; weak PINs like 123456 warned). Someone missing from the list simply can't log in yet, and the stale-account prune stays disabled until everyone listed is provisioned — partial rollout is safe. Sales keep working via the deprecated `AGENT_PINS`/`STAFF_PASSWORD` fallbacks until their PINs land here. |
+| `GM_PASSWORD` | Nee's GM login password (login email remains `md@prominent.local`). `MD_PASSWORD` is accepted as a fallback, so the existing Railway variable may remain untouched during rollout. |
+| `EMPLOYEE_PINS` | **One var for all EMPLOYEES slugs**, including `nun`, `poopae`, `win`, and `mail` — **exactly 6 digits per PIN** (non-6-digit entries skipped with a warning; weak PINs like 123456 warned). Someone missing from the list simply can't log in yet, and stale-account pruning stays disabled until everyone listed is provisioned, so adding the three AGMs is safe before their Railway PINs exist. |
 | `CEO_LINE_USER_ID` | optional, suite-wide — the CEO's LINE userId for escalation pushes from the Prominent OA (the old name `CERES_CEO_LINE_USER_ID` still works as a deprecated fallback). To find it: message the OA from the personal account, then read the `Customer.lineUserId` of that chat (console or DB). Leave unset to disable pushes (escalations still appear in the CEO tab). |
 | `CERES_FLOOR` | optional, default `40000` (top-up trigger) |
 | `CERES_CEO_THRESHOLD` | optional, default `5000` (mandatory CEO pre-approval above this) |
@@ -28,7 +28,7 @@ list — each only when its table is empty.
 Slug → person: nadeer NaDeer · anny Anny · noey Noey (sales — Minerva + Ceres) · ta ต้า ·
 arm อาร์ม · man แมน · boonson บุญสอน · kaew แก้ว · lungko ลุงโก๊ะ · wong วง · paeng แป๋ง ·
 nun นุ่น · pin พิณ · da ด้า (couriers — Ceres) · lekmaeban เล็กแม่บ้าน (housekeeper — Ceres).
-**นี is Nee the MD — she logs in with `MD_PASSWORD`, not a PIN.** The CEO logs in with the
+**นี is Nee the GM — she logs in with `GM_PASSWORD` (`MD_PASSWORD` fallback), not a PIN.** The CEO logs in with the
 existing Dr. M supervisor account — no new login. What each employee can open is a per-person
 grant list (`Agent.apps`), edited later in Jupiter's admin screen — position changes never
 touch env vars again.

@@ -148,7 +148,7 @@ export default function MdExpenses() {
                       <div className="text-xs text-slate-500 mt-1">ยกเลิกเพราะ: {r.voidReason}</div>
                     )}
 
-                    {/* md/ceo actions — pending drafts hard-delete; anything else voids (kept, struck-through) */}
+                    {/* gm/ceo actions — pending drafts hard-delete; anything else voids (kept, struck-through) */}
                     {!voided && (
                       <div className="flex justify-end gap-2 mt-2">
                         {r.status === 'pending' ? (

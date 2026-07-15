@@ -10,18 +10,18 @@ import { buildSlipUrl } from '../finance/slipLink.js';
 // (web/, supervisor-only) keeps working unchanged.
 //
 // READ (list) is open to employees/supervisor so finance can SEE the flags on payments they
-// process; md is denied at the router hook. RESOLVE stays supervisor-only via requireRole.
+// process; gm is denied at the router hook. RESOLVE stays supervisor-only via requireRole.
 export async function financeRoutes(app: FastifyInstance) {
   app.addHook('preHandler', requireAuth);
   app.addHook('preHandler', requireApp('juno'));
-  // Owner decision 2026-07-13: md is bills-only in Juno; the separate FinanceAudit router
+  // Owner decision 2026-07-13: gm is bills-only in Juno; the separate FinanceAudit router
   // is entirely outside that lane. Employees and supervisors retain their existing access.
   app.addHook('preHandler', async (req, reply) => {
-    if (req.agent?.role === 'md') return reply.code(403).send({ error: 'forbidden' });
+    if (req.agent?.role === 'gm') return reply.code(403).send({ error: 'forbidden' });
   });
 
   // GET /api/finance/audits?status=open|resolved|all — readable by finance employees and the
-  // supervisor; the router hook above denies md.
+  // supervisor; the router hook above denies gm.
   app.get('/api/finance/audits', async (req) => {
     const status = (req.query as { status?: string })?.status ?? 'open';
     const where = status === 'all' ? {} : status === 'resolved' ? { resolvedAt: { not: null } } : { resolvedAt: null };

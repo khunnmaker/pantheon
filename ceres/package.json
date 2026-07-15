@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Ceres — petty-cash expense UI (messenger self-entry, MD/CEO approval, board, close)",
+  "description": "Ceres — petty-cash expense UI (messenger self-entry, GM/CEO approval, board, close)",
   "scripts": {
     "dev": "vite --host --port 5177",
     "build": "tsc -b && vite build",

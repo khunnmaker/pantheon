@@ -16,7 +16,7 @@ function bearer(req: FastifyRequest): string | null {
 }
 
 // Live (unified-auth) roles a request is allowed to be resolved as — any account by default.
-const LIVE_ROLES: readonly Role[] = ['supervisor', 'md', 'employee'];
+const LIVE_ROLES: readonly Role[] = ['supervisor', 'gm', 'agm', 'employee'];
 
 // Resolve a bearer token to the LIVE agent record. The JWT is treated only as a
 // signed claim of identity (its `sub`/id); role, apps, and existence are re-read from
@@ -26,9 +26,9 @@ const LIVE_ROLES: readonly Role[] = ['supervisor', 'md', 'employee'];
 // preHandler and the Socket.IO handshake.
 //
 // `allowed` filters against the LIVE row's role (any live account by default) — the token
-// may still carry a legacy 'agent'/'messenger' claim (see jwt.ts TOKEN_ROLES), but that can
+// may still carry a legacy 'md'/'agent'/'messenger' claim (see jwt.ts TOKEN_ROLES), but that can
 // no longer occur on a live row once boot has healed the DB, so a live role outside `allowed`
-// (or outside the three current roles, belt-and-braces) just resolves to null.
+// (or outside the four current roles, belt-and-braces) just resolves to null.
 export async function authedAgentFromToken(
   token: string | null,
   allowed: readonly Role[] = LIVE_ROLES,
@@ -44,7 +44,7 @@ export async function authedAgentFromToken(
   return { id: live.id, email: live.email, name: live.name, role: live.role as Role, apps: live.apps };
 }
 
-// preHandler: require a valid token backed by a live account (any of the three roles); attaches request.agent.
+// preHandler: require a valid token backed by a live account (any of the four roles); attaches request.agent.
 export const requireAuth: preHandlerHookHandler = async (req: FastifyRequest, reply: FastifyReply) => {
   const agent = await authedAgentFromToken(bearer(req));
   if (!agent) {
@@ -68,7 +68,7 @@ export function requireAuthScoped(scope: string): preHandlerHookHandler {
 }
 
 // preHandler: like requireAuth but explicitly admits EVERY live authenticated role
-// (supervisor, md, employee — see ALL_ROLES in auth/jwt.ts). Functionally the same as
+// (supervisor, gm, agm, employee — see ALL_ROLES in auth/jwt.ts). Functionally the same as
 // requireAuth today (whose default `allowed` is already all live roles), but named for
 // intent: use for endpoints that are open to every account and then gate per-app INSIDE
 // the handler with hasAppAccess (e.g. the Pantheon portal badges route). Deriving from
@@ -92,7 +92,7 @@ export function requireRole(role: Role): preHandlerHookHandler {
 }
 
 // preHandler factory: require access to a specific app (implies requireAuth ran first).
-// supervisor always passes; md passes its implicit MD_APPS set; employee passes per Agent.apps.
+// supervisor always passes; gm passes its implicit GM_APPS set; agm/employee pass per Agent.apps.
 export function requireApp(app: AppName): preHandlerHookHandler {
   return async (req: FastifyRequest, reply: FastifyReply) => {
     if (!req.agent) return reply.code(401).send({ error: 'unauthorized' });

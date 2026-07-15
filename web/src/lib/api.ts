@@ -7,7 +7,7 @@ export const API_URL: string = import.meta.env.VITE_API_URL ?? 'http://localhost
 // Presentation only; the stored key keeps its dashes and search is dash-insensitive.
 export const flatSku = (sku: string): string => sku.replace(/-/g, '');
 
-export type Role = 'supervisor' | 'md' | 'employee';
+export type Role = 'supervisor' | 'gm' | 'agm' | 'employee';
 export interface Agent {
   id: string;
   email: string;
@@ -26,11 +26,11 @@ import type { AppName } from '@pantheon/ui';
 export type { AppName };
 
 // Mirror of the server's hasAppAccess (api/src/auth/jwt.ts): supervisor → everything;
-// md → Ceres only; employee → their own per-person grant list. A stored agent from before
+// gm → Ceres + Minerva + Juno + Apollo; agm/employee → their own per-person grant list. A stored agent from before
 // this field existed has no apps → treated as no grants (empty list), which is safe.
 export function hasAppAccess(agent: Agent, app: AppName): boolean {
   if (agent.role === 'supervisor') return true;
-  if (agent.role === 'md') return app === 'ceres' || app === 'minerva' || app === 'juno' || app === 'apollo';
+  if (agent.role === 'gm') return app === 'ceres' || app === 'minerva' || app === 'juno' || app === 'apollo';
   return (agent.apps ?? []).includes(app);
 }
 export interface Message {
@@ -211,7 +211,7 @@ export interface LoginCard {
   name: string;
   kind: 'password' | 'pin';
   // DISPLAY metadata for the role-grouped, avatar login screen (additive; server-provided).
-  group: string;                 // ceo | md | sales | finance | messengers | stores | others
+  group: string;                 // ceo | gm | agm | sales | finance | messengers | stores | others
   gender: 'male' | 'female';     // drives the cute (DiceBear) avatar
 }
 // PUBLIC — no auth required. Ordered: supervisor first, then employees granted this app.

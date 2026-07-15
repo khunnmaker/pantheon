@@ -3,7 +3,7 @@ export type { AppName };
 
 export const API_URL: string = import.meta.env.VITE_API_URL ?? 'http://localhost:3000';
 
-export type Role = 'supervisor' | 'md' | 'employee';
+export type Role = 'supervisor' | 'gm' | 'agm' | 'employee';
 export interface Agent {
   id: string;
   email: string;
@@ -49,7 +49,7 @@ export function setOnUnauthorized(fn: (() => void) | null): void { onUnauthorize
 
 export function hasAppAccess(agent: Agent, app: AppName): boolean {
   if (agent.role === 'supervisor') return true;
-  if (agent.role === 'md') return app === 'ceres' || app === 'minerva' || app === 'juno' || app === 'apollo';
+  if (agent.role === 'gm') return app === 'ceres' || app === 'minerva' || app === 'juno' || app === 'apollo';
   return (agent.apps ?? []).includes(app);
 }
 

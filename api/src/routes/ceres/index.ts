@@ -11,7 +11,7 @@ import { exportsRoutes } from './exports.js';
 
 // Ceres (expenses & petty cash) API. Two PUBLIC routes (receipt image serving —
 // tokenized, and the messenger login-name picker) plus a scoped sub-plugin gated
-// by requireCeresAuth for everything else (P1 messenger/md/ceo routes — see p1.ts).
+// by requireCeresAuth for everything else (P1 messenger/gm/ceo routes — see p1.ts).
 export async function ceresRoutes(app: FastifyInstance) {
   // PUBLIC (tokenized) — a receipt photo, servable without a login (mirrors
   // /content/slip/:id). The token is an HMAC of the uploadId (unguessable).
@@ -35,7 +35,7 @@ export async function ceresRoutes(app: FastifyInstance) {
   // Dr. M + Nee as password cards, then every ceres-granted employee as a PIN card.
   app.get('/api/ceres/logins', async () => buildLoginCards('ceres'));
 
-  // Everything else requires a Ceres-facing login (messenger | md | ceo/supervisor).
+  // Everything else requires a Ceres-facing login (messenger | gm | ceo/supervisor).
   await app.register(async (scoped) => {
     scoped.addHook('preHandler', requireCeresAuth);
     p1Routes(scoped);

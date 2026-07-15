@@ -11,13 +11,13 @@ import { ceresRole } from '../ceres/auth.js';
 // See docs/JUPITER_BRIEF.md §5.
 //
 // Post unified-auth (PR #7): "who may enter an app" is a PER-PERSON grant, not a role
-// list. hasAppAccess(agent, app) is the single gate (supervisor → everything; md → its
-// implicit MD_APPS; employee → their own Agent.apps). We compute+emit a badge for an app IFF
+// list. hasAppAccess(agent, app) is the single gate (supervisor → everything; gm → its
+// implicit GM_APPS; agm/employee → their own Agent.apps). We compute+emit a badge for an app IFF
 // hasAppAccess is true for that app, so each person's badges match exactly the tiles they
 // can open. AppName values (minerva | vesta | juno | ceres) come straight from auth/jwt.ts.
 //
 // Ceres has an extra persona layer on top of the grant: ceresRole(agent) maps a caller to
-// 'ceo' | 'md' | 'messenger' | null, and each persona has a DIFFERENT awaiting-action queue.
+// 'ceo' | 'gm' | 'messenger' | null, and each persona has a DIFFERENT awaiting-action queue.
 // hasAppAccess(agent,'ceres') and ceresRole(agent) !== null agree for every account, so we
 // use ceresRole to both gate the ceres badge AND pick the right per-persona count.
 
@@ -30,7 +30,7 @@ import { ceresRole } from '../ceres/auth.js';
 // have DIFFERENT app grants (employee A has minerva+ceres, employee B has only ceres), so a
 // role-only key would leak one person's set of counts to another. The key is therefore the
 // caller's full identity — the agent id — for EVERY caller. (The Ceres messenger badge is
-// per-user anyway.) This is strictly safe; the small cost is supervisors/mds no longer share
+// per-user anyway.) This is strictly safe; the small cost is supervisors/GMs no longer share
 // a cache slot, which is negligible at this team size.
 const CACHE_TTL_MS = 30_000;
 
@@ -83,8 +83,8 @@ async function mercuryPending(): Promise<number> {
 // CeresParty.agentEmail).
 //   - ceo (supervisor): escalated payment requests — the only queue the CEO alone clears
 //     (requests/:id/decide is requireCeresRole('ceo')). Indexed on status.
-//   - md              : pending expenses awaiting her approve/reject (global, not party-
-//     scoped — the MD approves ANY pending expense). Indexed on status.
+//   - gm              : pending expenses awaiting approve/reject (global, not party-
+//     scoped — the GM approves ANY pending expense). Indexed on status.
 //   - messenger (an employee with the ceres grant): their OWN drafts + rejections — pending
 //     (still editable/deletable) and rejected (needs fixing/resubmit), scoped to their own
 //     party. Per-user.
@@ -112,14 +112,14 @@ async function badgesHandler(req: FastifyRequest): Promise<BadgeBucket> {
 
     const can = (a: AppName) => hasAppAccess(agent, a);
 
-    // Ceres resolves to a single count per persona (ceo/md/messenger). A caller without the
+    // Ceres resolves to a single count per persona (ceo/gm/messenger). A caller without the
     // ceres grant has ceresRole === null and gets no ceres query and no ceres key at all.
     const cRole = ceresRole(agent);
     const ceresAwaiting: Promise<number | null> = cRole === null
       ? Promise.resolve(null)
       : cRole === 'ceo'
         ? ceresCeoAwaiting()
-        : cRole === 'md'
+        : cRole === 'gm'
           ? ceresMdAwaiting()
           : ceresMessengerAwaiting(agent.email);
 

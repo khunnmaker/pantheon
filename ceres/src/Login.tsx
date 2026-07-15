@@ -4,7 +4,7 @@ import { login, setSession, getLogins, type Agent, type LoginName } from './lib/
 import { groupLogins, type GroupMeta, memberAvatar, teamAvatar } from '@pantheon/ui';
 
 const PIN_LEN = 6;
-const RAW_ROLES = new Set(['employee', 'md', 'supervisor']);
+const RAW_ROLES = new Set(['employee', 'agm', 'gm', 'supervisor']);
 
 export default function Login({ onLogin }: { onLogin: (agent: Agent) => void }) {
   const [manual, setManual] = useState(false);
@@ -32,7 +32,7 @@ export default function Login({ onLogin }: { onLogin: (agent: Agent) => void }) 
 // portal (pantheon/src/Login.tsx), adapted to Ceres's amber accent. People come from the server
 // (GET /api/ceres/logins) — a rich card list carrying group + gender. 3-level DRILL-DOWN:
 //   L1 role groups (2-col Metro grid) → L2 that group's people (avatar tiles) → L3 person + cred
-//   (password field for supervisor/MD, masked auto-submit 6-digit PIN for everyone else).
+//   (password field for supervisor/GM, masked auto-submit 6-digit PIN for everyone else).
 // The auth mechanism is UNCHANGED: submit() still calls login() → setSession() → onLogin(), with
 // the RAW_ROLES guard preserved. Falls back to the manual email/password form (AdminLogin) if the
 // card list fails to load.
@@ -267,7 +267,7 @@ function NameGrid({ members, onPick }: { members: LoginName[]; onPick: (p: Login
   );
 }
 
-// ── Admin (MD/CEO) flow: classic email + password ───────────────────────────
+// ── Admin (GM/CEO) flow: classic email + password ───────────────────────────
 function AdminLogin({ onLogin, onBack }: { onLogin: (agent: Agent) => void; onBack: () => void }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -301,7 +301,7 @@ function AdminLogin({ onLogin, onBack }: { onLogin: (agent: Agent) => void; onBa
         <ShieldCheck size={20} />
         <h2 className="text-lg font-bold">ผู้ดูแล</h2>
       </div>
-      <p className="text-sm text-slate-500 mb-5">MD / CEO · เข้าสู่ระบบ</p>
+      <p className="text-sm text-slate-500 mb-5">GM / CEO · เข้าสู่ระบบ</p>
 
       <label className="block text-xs font-semibold text-slate-500 mb-1">อีเมล</label>
       <input

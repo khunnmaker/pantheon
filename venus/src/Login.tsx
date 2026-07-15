@@ -3,13 +3,13 @@ import { Heart, Loader2, AlertTriangle, Delete, LogIn, ArrowLeft, ShieldCheck } 
 import { login, setSession, getLogins, type Agent, type LoginName } from './lib/api';
 
 // Venus login — suite card-list pattern (same shape as Ceres/Juno/Jupiter): pick your
-// name card, 'password'-kind cards (supervisor/md) open a password field, 'pin'-kind
+// name card, 'password'-kind cards (supervisor/gm) open a password field, 'pin'-kind
 // cards (employees) open a 6-digit PIN pad. Falls back to a manual email/password form
 // (AdminLogin) if the card list fails to load.
 //
 // Unlike Ceres, the login screen does NOT hard-block by role: access to Venus is
 // per-grant (requireApp('venus') server-side — supervisor always in, employees need the
-// explicit 'venus' grant, md excluded). Any account that authenticates here is let in;
+// explicit 'venus' grant, gm excluded). Any account that authenticates here is let in;
 // an ungranted employee gets a friendly 403 state after login instead (see App.tsx).
 export default function Login({ onLogin }: { onLogin: (agent: Agent) => void }) {
   const [manual, setManual] = useState(false);
@@ -34,7 +34,7 @@ export default function Login({ onLogin }: { onLogin: (agent: Agent) => void }) 
 }
 
 // ── Card flow: pick your name — 'pin' cards open a PIN pad, 'password' cards
-// (supervisor + MD) open a password field. Falls back to the manual email/password
+// (supervisor + GM) open a password field. Falls back to the manual email/password
 // form (AdminLogin) if the card list fails to load.
 function CardLogin({ onLogin, onManual }: { onLogin: (agent: Agent) => void; onManual: () => void }) {
   const [names, setNames] = useState<LoginName[] | null>(null);
@@ -100,7 +100,7 @@ function CardLogin({ onLogin, onManual }: { onLogin: (agent: Agent) => void; onM
   );
 }
 
-// ── Password card: for 'password'-kind cards (supervisor + MD) picked from the list. ──
+// ── Password card: for 'password'-kind cards (supervisor + GM) picked from the list. ──
 function PasswordCard({ name, onBack, onLogin }: { name: LoginName; onBack: () => void; onLogin: (agent: Agent) => void }) {
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);

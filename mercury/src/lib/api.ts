@@ -11,9 +11,9 @@ export const API_URL: string = import.meta.env.VITE_API_URL ?? 'http://localhost
 // The stored key keeps its dashes; this is presentation only. Search is dash-insensitive.
 export const flatSku = (sku: string): string => sku.replace(/-/g, '');
 
-// Live roles (mirror of api/src/auth/jwt.ts): three tiers. Which apps a person may open is a
+// Live roles (mirror of api/src/auth/jwt.ts): four tiers. Which apps a person may open is a
 // per-person grant, not derived from role — see hasAppAccess, which mirrors the SERVER logic.
-export type Role = 'supervisor' | 'md' | 'employee';
+export type Role = 'supervisor' | 'gm' | 'agm' | 'employee';
 export interface Agent {
   id: string;
   email: string;
@@ -32,12 +32,12 @@ import type { AppName } from '@pantheon/ui';
 export type { AppName };
 
 // Mirror of the server's hasAppAccess (api/src/auth/jwt.ts): supervisor → everything;
-// md → Ceres + Minerva + Juno; employee → their own per-person grant list. Mercury is owner-only
+// gm → Ceres + Minerva + Juno + Apollo; agm/employee → their own per-person grant list. Mercury is owner-only
 // (only supervisor passes today), so a granted employee is the future path. A stored agent from
 // before the `apps` field existed has no apps → treated as no grants (empty list), which is safe.
 export function hasAppAccess(agent: Agent, app: AppName): boolean {
   if (agent.role === 'supervisor') return true;
-  if (agent.role === 'md') return app === 'ceres' || app === 'minerva' || app === 'juno' || app === 'apollo';
+  if (agent.role === 'gm') return app === 'ceres' || app === 'minerva' || app === 'juno' || app === 'apollo';
   return (agent.apps ?? []).includes(app);
 }
 
@@ -161,7 +161,7 @@ export interface LoginCard {
   name: string;
   kind: 'password' | 'pin';
   // DISPLAY metadata for the role-grouped, avatar login screen (additive; server-provided).
-  group: string;                 // ceo | md | sales | finance | messengers | stores | others
+  group: string;                 // ceo | gm | agm | sales | finance | messengers | stores | others
   gender: 'male' | 'female';     // drives the cute (DiceBear) avatar
 }
 // PUBLIC — no auth required. Ordered: supervisor first, then employees granted this app.

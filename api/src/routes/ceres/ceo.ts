@@ -123,8 +123,8 @@ export function ceoRoutes(app: FastifyInstance) {
     };
   });
 
-  // GET /api/ceres/revisions?subjectType=&subjectId=&limit= — audit trail (md|ceo).
-  app.get('/api/ceres/revisions', { preHandler: requireCeresRole('md', 'ceo') }, async (req, reply) => {
+  // GET /api/ceres/revisions?subjectType=&subjectId=&limit= — audit trail (gm|ceo).
+  app.get('/api/ceres/revisions', { preHandler: requireCeresRole('gm', 'ceo') }, async (req, reply) => {
     const parsed = z
       .object({ subjectType: z.string().optional(), subjectId: z.string().optional(), limit: z.coerce.number().int().min(1).max(500).optional() })
       .safeParse(req.query ?? {});

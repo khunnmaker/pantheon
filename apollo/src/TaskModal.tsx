@@ -10,6 +10,7 @@ export default function TaskModal({ taskId, project, agents, me, initialStatus, 
   taskId: string | null; project: Project | null; agents: Person[]; me: Agent; initialStatus?: string;
   onClose: () => void; onChanged: () => void;
 }) {
+  const isManager = me.role === 'supervisor' || me.role === 'gm';
   const [task, setTask] = useState<Task | null>(null);
   const [loading, setLoading] = useState(!!taskId);
   const [busy, setBusy] = useState(false);
@@ -78,14 +79,14 @@ export default function TaskModal({ taskId, project, agents, me, initialStatus, 
       <div className="mt-5 flex flex-wrap gap-2">
         <button onClick={() => void save()} disabled={busy || !title.trim()} className="btn-primary">{busy && <Loader2 size={15} className="animate-spin"/>} บันทึก</button>
         {taskId && !task?.completedAt && <button onClick={() => void finish()} disabled={busy} className="btn bg-emerald-600 text-white"><CheckCircle2 size={16}/> เสร็จแล้ว</button>}
-        {taskId && (me.role !== 'employee' || task?.creator?.id === me.id) && <button onClick={() => void remove()} disabled={busy} className="btn ml-auto text-rose-600 hover:bg-rose-50"><Trash2 size={16}/> ลบ</button>}
+        {taskId && (isManager || task?.creator?.id === me.id) && <button onClick={() => void remove()} disabled={busy} className="btn ml-auto text-rose-600 hover:bg-rose-50"><Trash2 size={16}/> ลบ</button>}
       </div>
 
       {taskId && <>
         <section className="mt-7 border-t border-slate-200 pt-5"><div className="flex items-center justify-between"><h3 className="font-bold">ไฟล์แนบ</h3><label className="btn cursor-pointer border border-slate-200"><Paperclip size={15}/> แนบไฟล์<input type="file" className="hidden" onChange={(e) => { const file = e.currentTarget.files?.[0]; if (file) void attach(file); e.currentTarget.value = ''; }}/></label></div>
-          <div className="mt-2 space-y-2">{task?.attachments?.map((a) => <div key={a.id} className="flex items-center gap-2 rounded-lg bg-slate-50 px-3 py-2 text-sm"><Paperclip size={14}/><span className="min-w-0 flex-1 truncate">{a.fileName}</span><button aria-label="ดาวน์โหลด" onClick={() => void downloadAttachment(a)}><Download size={15}/></button>{(a.uploadedById === me.id || me.role !== 'employee') && <button aria-label="ลบไฟล์" onClick={async () => { await deleteAttachment(a.id); await reload(); }} className="text-rose-500"><Trash2 size={15}/></button>}</div>)}</div>
+          <div className="mt-2 space-y-2">{task?.attachments?.map((a) => <div key={a.id} className="flex items-center gap-2 rounded-lg bg-slate-50 px-3 py-2 text-sm"><Paperclip size={14}/><span className="min-w-0 flex-1 truncate">{a.fileName}</span><button aria-label="ดาวน์โหลด" onClick={() => void downloadAttachment(a)}><Download size={15}/></button>{(a.uploadedById === me.id || isManager) && <button aria-label="ลบไฟล์" onClick={async () => { await deleteAttachment(a.id); await reload(); }} className="text-rose-500"><Trash2 size={15}/></button>}</div>)}</div>
         </section>
-        <section className="mt-6 border-t border-slate-200 pt-5"><h3 className="font-bold">ความคิดเห็น</h3><div className="mt-3 space-y-3">{task?.comments?.map((c) => <div key={c.id} className="rounded-xl bg-slate-50 p-3 text-sm"><div className="flex items-center justify-between text-xs text-slate-500"><span className="flex items-center gap-1.5 font-semibold text-slate-700"><img src={agentAvatar(c.author, agents)} alt="" className="h-[18px] w-[18px] rounded-full"/>{c.author.name}</span>{(c.authorId === me.id || me.role !== 'employee') && <button onClick={async () => { await deleteComment(c.id); await reload(); }} className="text-rose-500">ลบ</button>}</div><p className="mt-1 whitespace-pre-wrap">{c.body}</p></div>)}</div>
+        <section className="mt-6 border-t border-slate-200 pt-5"><h3 className="font-bold">ความคิดเห็น</h3><div className="mt-3 space-y-3">{task?.comments?.map((c) => <div key={c.id} className="rounded-xl bg-slate-50 p-3 text-sm"><div className="flex items-center justify-between text-xs text-slate-500"><span className="flex items-center gap-1.5 font-semibold text-slate-700"><img src={agentAvatar(c.author, agents)} alt="" className="h-[18px] w-[18px] rounded-full"/>{c.author.name}</span>{(c.authorId === me.id || isManager) && <button onClick={async () => { await deleteComment(c.id); await reload(); }} className="text-rose-500">ลบ</button>}</div><p className="mt-1 whitespace-pre-wrap">{c.body}</p></div>)}</div>
           <div className="mt-3 flex gap-2"><input className="input" value={comment} onChange={(e) => setComment(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && void sendComment()} placeholder="เขียนความคิดเห็น…"/><button aria-label="ส่ง" onClick={() => void sendComment()} className="btn-primary"><Send size={16}/></button></div>
         </section>
       </>}

@@ -13,7 +13,7 @@ export default function ExpenseSheet({
   onSaved,
 }: {
   editing: Expense | null;
-  partyId?: string; // required for md/ceo creating on behalf of a party
+  partyId?: string; // required for gm/ceo creating on behalf of a party
   onClose: () => void;
   onSaved: () => void;
 }) {

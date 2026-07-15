@@ -9,7 +9,7 @@ import type { AppDef } from './lib/apps';
 const PIN_LEN = 6;
 
 // The "หัวหน้า" (boss) marker + shield are the SUPERVISOR's alone — not "anyone with a
-// password". Nee (MD) also logs in with a password now, so key the tag on identity, not cred.
+// password". Nee (GM) also logs in with a password now, so key the tag on identity, not cred.
 const isSupervisor = (p: Person) => p.email === SUPERVISOR_EMAIL;
 
 interface ResolvedLogin {
@@ -23,7 +23,7 @@ const resolveLogin = (email: string): ResolvedLogin | null =>
     group.members.map((person) => ({ person, group })),
   ).find(({ person }) => !person.comingSoon && !!person.email && person.email === email) ?? null;
 
-// Suite login standard: no credential box until a name is tapped; then Dr. M & Nee (MD) type a
+// Suite login standard: no credential box until a name is tapped; then Dr. M & Nee (GM) type a
 // password, everyone else a masked auto-submit 6-digit PIN. The picker is a 3-level DRILL-DOWN:
 //   L1 departments (the 6 ROLE_GROUPS) → tap one hides its siblings and shows
 //   L2 that group's name cards → tap one hides its siblings and shows

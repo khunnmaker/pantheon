@@ -43,7 +43,8 @@ const schema = z.object({
   // Legacy name for the same map — some deployments still maintain the var under AGENT_PINS.
   // Read as an equal source and merged with EMPLOYEE_PINS (EMPLOYEE_PINS wins on any slug clash).
   AGENT_PINS: z.string().default(''),
-  // Unified auth: Nee's (MD) password.
+  // Unified auth: Nee's GM password. MD_PASSWORD remains a deployment fallback during rollout.
+  GM_PASSWORD: z.string().default(''),
   MD_PASSWORD: z.string().default(''),
 
   // Where customer images are stored. In prod set this to a mounted persistent
