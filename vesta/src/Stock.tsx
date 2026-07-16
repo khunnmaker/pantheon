@@ -22,8 +22,12 @@ import {
   getProposalSummary, getProposals, loadProposals, decideProposal, bulkApproveSafe,
 } from './lib/api';
 import AppSwitcher from './AppSwitcher';
+import { useHashTab } from '@pantheon/ui';
 
 type Tab = 'dashboard' | 'stock' | 'import' | 'history' | 'alias' | 'group' | 'review';
+// Vesta is supervisor-only (no per-tab role gating within the app), so every tab is always
+// valid — a shared #<tab> link only ever needs to fall back if the key itself is unrecognized.
+const STOCK_TABS: Tab[] = ['dashboard', 'stock', 'import', 'history', 'alias', 'group', 'review'];
 type StockFilter = 'all' | 'low' | 'out' | 'unknown' | 'noname';
 // One nav button: caption grouping lives in navGroups below, not on the tab itself.
 type NavTab = { key: Tab; label: string; icon: ReactNode; count?: number; tone?: 'rose' | 'slate' };
@@ -88,7 +92,7 @@ function isStale(iso: string | null): boolean {
 }
 
 export default function Stock({ agent, onLogout }: { agent: Agent; onLogout: () => void }) {
-  const [tab, setTab] = useState<Tab>('dashboard');
+  const [tab, setTab] = useHashTab<Tab>(STOCK_TABS, 'dashboard');
   const [summary, setSummary] = useState<StockSummary | null>(null);
   // Stock-tab filter lifted here so the dashboard cards can deep-link into a filtered view.
   const [stockFilter, setStockFilter] = useState<StockFilter>('all');

@@ -22,6 +22,7 @@ import {
   type BackfillStatus,
   logout,
 } from './lib/api';
+import { useHashTab } from '@pantheon/ui';
 
 const PORTAL_URL = import.meta.env.VITE_PORTAL_URL ?? 'https://pantheon.prominentdental.com';
 
@@ -62,10 +63,13 @@ const toNum = (s: string) => {
 };
 
 type Tab = 'overview' | 'ledger' | 'close';
+// The whole component is supervisor-only (gated by the caller in App.tsx) with no further
+// per-tab role split inside it, so all 3 tabs are always valid.
+const ACCT_TABS: Tab[] = ['overview', 'ledger', 'close'];
 
 export default function Accounting({ onLogout }: { onLogout: () => void }) {
   const month = currentMonth();
-  const [tab, setTab] = useState<Tab>('overview');
+  const [tab, setTab] = useHashTab<Tab>(ACCT_TABS, 'overview');
   const [company, setCompany] = useState<string>(ALL); // ALL or a company code
 
   const [companies, setCompanies] = useState<AcctCompany[]>([]);

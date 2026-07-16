@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Heart, LogOut, Crown, Users, Upload, LayoutDashboard, ShoppingBag } from 'lucide-react';
+import { useHashTab } from '@pantheon/ui';
 import { canImport, logout, type Agent } from './lib/api';
 import CustomerList from './CustomerList';
 import CustomerDetail from './CustomerDetail';
@@ -12,10 +13,48 @@ import Dashboard from './Dashboard';
 const PORTAL_URL: string | undefined = import.meta.env.VITE_PORTAL_URL;
 
 type View = { screen: 'dashboard' } | { screen: 'list' } | { screen: 'detail'; code: string } | { screen: 'import' } | { screen: 'import-sales' };
+// Only the top-level screen is synced to the hash — 'detail' carries a customer code that
+// isn't captured there in this pass, so it's deliberately excluded from the hash vocabulary
+// (F5 while viewing a customer detail lands back on the list, not the same customer).
+type Screen = Exclude<View['screen'], 'detail'>;
+
+// Screen (a plain string union) -> View: a switch per-branch keeps each return a single
+// discriminant literal, so it type-checks against the View union (a bare `{ screen: Screen }`
+// object literal does not — TS won't distribute a union-valued field across a discriminated
+// union target) and stays exhaustive if Screen ever grows.
+function screenToView(screen: Screen): View {
+  switch (screen) {
+    case 'dashboard': return { screen: 'dashboard' };
+    case 'list': return { screen: 'list' };
+    case 'import': return { screen: 'import' };
+    case 'import-sales': return { screen: 'import-sales' };
+  }
+}
 
 export default function Venus({ agent, onLogout }: { agent: Agent; onLogout: () => void }) {
-  const [view, setView] = useState<View>({ screen: 'dashboard' });
   const showImport = canImport(agent);
+  // Import screens are gated exactly like their nav buttons below, so a shared #import link
+  // opened by an agent without import rights falls back to the list instead of a hidden tab.
+  const hashScreens: Screen[] = showImport
+    ? ['dashboard', 'list', 'import', 'import-sales']
+    : ['dashboard', 'list'];
+  const [hashScreen, setHashScreen] = useHashTab<Screen>(hashScreens, 'dashboard');
+  // view keeps its existing object shape (customer-detail carries `code`); the hash only ever
+  // mirrors its top-level `screen`, in both directions.
+  const [view, setView] = useState<View>(() => screenToView(hashScreen));
+
+  // Local screen change (nav click, opening/leaving a customer) → mirror into the hash.
+  // Skipped for 'detail' since it isn't in the hash vocabulary — the hash just keeps
+  // whatever top-level screen was last active underneath it.
+  useEffect(() => {
+    if (view.screen !== 'detail') setHashScreen(view.screen);
+  }, [view.screen, setHashScreen]);
+
+  // Hash changed from outside this state (user edited the URL / opened a shared link in the
+  // same tab) → jump the view there.
+  useEffect(() => {
+    setView((v) => (v.screen === hashScreen ? v : screenToView(hashScreen)));
+  }, [hashScreen]);
 
   return (
     <div className="min-h-screen bg-slate-100 font-sans text-slate-800">
