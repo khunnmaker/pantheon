@@ -2,6 +2,8 @@
 // backend (the /api/juno/* routes), which reads the Payment table Minerva writes on
 // /to-finance. All Juno routes are gated to the 'supervisor' role server-side (v1).
 
+import { fetchWithSessionRenewal, renewSuiteSessionOnce } from '@pantheon/ui';
+
 export const API_URL: string = import.meta.env.VITE_API_URL ?? 'http://localhost:3000';
 
 // Live roles (mirror of api/src/auth/jwt.ts). The old 'agent' type was stale — the runtime
@@ -178,15 +180,11 @@ let onUnauthorized: (() => void) | null = null;
 export function setOnUnauthorized(fn: (() => void) | null): void { onUnauthorized = fn; }
 
 async function authed<T>(path: string, init?: RequestInit): Promise<T> {
-  const token = getToken();
-  const res = await fetch(`${API_URL}${path}`, {
-    ...init,
-    headers: {
-      'content-type': 'application/json',
-      ...(token ? { authorization: `Bearer ${token}` } : {}),
-      ...(init?.headers ?? {}),
-    },
-  });
+  const res = await fetchWithSessionRenewal<Agent>(
+    `${API_URL}${path}`,
+    { ...init, headers: { 'content-type': 'application/json', ...(init?.headers ?? {}) } },
+    { apiUrl: API_URL, getToken, setSession },
+  );
   if (res.status === 401) {
     clearSession();
     onUnauthorized?.();
@@ -216,11 +214,10 @@ export async function login(email: string, password: string): Promise<{ token: s
 // Never throws — a missing/invalid cookie just yields null (→ show Login).
 export async function bootstrap(): Promise<Agent | null> {
   try {
-    const res = await fetch(`${API_URL}/api/auth/me`, { credentials: 'include' });
-    if (!res.ok) return null;
-    const { agent, token } = (await res.json()) as { agent: Agent; token: string };
-    setSession(token, agent);
-    return agent;
+    const session = await renewSuiteSessionOnce<Agent>(API_URL);
+    if (!session) return null;
+    setSession(session.token, session.agent);
+    return session.agent;
   } catch {
     return null;
   }
@@ -230,8 +227,13 @@ export async function bootstrap(): Promise<Agent | null> {
 // app's local session. Used by the user-facing "log out" action so logging out here
 // propagates across the suite.
 export async function logout(): Promise<void> {
+  const token = getToken();
   try {
-    await fetch(`${API_URL}/api/auth/logout`, { method: 'POST', credentials: 'include' });
+    await fetch(`${API_URL}/api/auth/logout`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: token ? { authorization: `Bearer ${token}` } : {},
+    });
   } catch {
     // Network failure clearing the cookie shouldn't block local logout.
   }
@@ -504,10 +506,16 @@ export const getWhtSummary = (from?: string, to?: string) => {
 // One-click CSV export (same filters as the inbox). Fetched with auth, then downloaded
 // client-side as a Blob so the bearer token never rides in a plain <a href>.
 export async function downloadCsv(f: PaymentFilter): Promise<void> {
-  const token = getToken();
-  const res = await fetch(`${API_URL}/api/juno/export.csv${filterQuery(f)}`, {
-    headers: token ? { authorization: `Bearer ${token}` } : {},
-  });
+  const res = await fetchWithSessionRenewal<Agent>(
+    `${API_URL}/api/juno/export.csv${filterQuery(f)}`,
+    undefined,
+    { apiUrl: API_URL, getToken, setSession },
+  );
+  if (res.status === 401) {
+    clearSession();
+    onUnauthorized?.();
+    throw new Error('unauthorized');
+  }
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const blob = await res.blob();
   const url = URL.createObjectURL(blob);

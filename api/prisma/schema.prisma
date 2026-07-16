@@ -128,6 +128,7 @@ model Agent {
   name         String
   passwordHash String
   role         String   @default("agent") // agent | supervisor
+  authVersion  Int      @default(0)
   createdAt    DateTime @default(now())
   // Per-person app grants ('minerva'|'vesta'|'juno'|'ceres'|'apollo'); supervisor/gm access is
   // implicit by role, this list matters only for role 'employee'. Edited later by Jupiter's

@@ -10,12 +10,6 @@ import type { FastifyRequest } from 'fastify';
 import { env } from '../env.js';
 
 export const SESSION_COOKIE = 'pantheon_session';
-// Match the device-session token lifetime (jwt.ts SESSION_EXPIRES = '30d') so the cookie and
-// the token inside it expire together. This is the "remember this computer" window: /me
-// re-issues both on every bootstrap, so an actively-used device stays signed in while an idle
-// one lapses after 30 days. The cookie carries the session-SCOPED token (never a bearer), so
-// its long life adds no replay surface on the API routes.
-const MAX_AGE_SECONDS = 30 * 24 * 60 * 60;
 
 // Build a Set-Cookie value. `Secure` is gated on production so the cookie still sets over
 // plain http on localhost during dev. `Domain` is only added when COOKIE_DOMAIN is set
@@ -37,8 +31,8 @@ function serialize(value: string, maxAgeSeconds: number): string {
   return parts.join('; ');
 }
 
-export function sessionSetCookie(token: string): string {
-  return serialize(token, MAX_AGE_SECONDS);
+export function sessionSetCookie(token: string, maxAgeSeconds: number): string {
+  return serialize(token, maxAgeSeconds);
 }
 export function sessionClearCookie(): string {
   return serialize('', 0);

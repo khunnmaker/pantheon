@@ -29,13 +29,15 @@ export interface AuthedAgent {
   name: string;
   role: Role;
   apps: string[];
+  authVersion: number;
 }
 
 const EXPIRES_IN = '12h';
+type TokenAgent = Pick<AuthedAgent, 'id' | 'email' | 'name' | 'role'> & { authVersion?: number };
 
-export function signToken(agent: Pick<AuthedAgent, 'id' | 'email' | 'name' | 'role'>): string {
+export function signToken(agent: TokenAgent): string {
   return jwt.sign(
-    { email: agent.email, name: agent.name, role: agent.role },
+    { email: agent.email, name: agent.name, role: agent.role, authVersion: agent.authVersion ?? 0 },
     env.JWT_SECRET,
     { subject: agent.id, expiresIn: EXPIRES_IN, algorithm: 'HS256' },
   );
@@ -51,9 +53,9 @@ export function signToken(agent: Pick<AuthedAgent, 'id' | 'email' | 'name' | 'ro
 export const OA_SYNC_SCOPE = 'oa-sync';
 const OA_SYNC_EXPIRES = '180d';
 
-export function signOaSyncToken(agent: Pick<AuthedAgent, 'id' | 'email' | 'name' | 'role'>): string {
+export function signOaSyncToken(agent: TokenAgent): string {
   return jwt.sign(
-    { email: agent.email, name: agent.name, role: agent.role, scope: OA_SYNC_SCOPE },
+    { email: agent.email, name: agent.name, role: agent.role, scope: OA_SYNC_SCOPE, authVersion: agent.authVersion ?? 0 },
     env.JWT_SECRET,
     { subject: agent.id, expiresIn: OA_SYNC_EXPIRES, algorithm: 'HS256' },
   );
@@ -63,18 +65,33 @@ export function signOaSyncToken(agent: Pick<AuthedAgent, 'id' | 'email' | 'name'
 // Same isolation story as the OA-sync token: a session-scoped token verifies ONLY where the
 // caller passes { scope: SESSION_SCOPE } — that's GET /api/auth/me and nothing else — and the
 // default verifyToken() every API route uses REJECTS it, so the long-lived cookie can never be
-// replayed as an Authorization bearer. Long TTL so staff log in once per device instead of
-// every 12 hours; /me re-issues the cookie on each bootstrap (rolling window), and access is
+// replayed as an Authorization bearer. Role-tiered TTL lets staff log in once per device;
+// /me re-issues the cookie on each bootstrap (rolling window), and access is
 // still re-read from the live Agent row per request, so removing/demoting an account revokes
 // a remembered device immediately despite the TTL. The bearer tokens apps hold stay 12h.
 export const SESSION_SCOPE = 'session';
-const SESSION_EXPIRES = '30d';
+export type SessionTier = 'manager' | 'employee';
+export const SESSION_MAX_AGE_SECONDS: Record<SessionTier, number> = {
+  manager: 30 * 24 * 60 * 60,
+  employee: 7 * 24 * 60 * 60,
+};
 
-export function signSessionToken(agent: Pick<AuthedAgent, 'id' | 'email' | 'name' | 'role'>): string {
+export function sessionTierForRole(role: Role): SessionTier {
+  return role === 'supervisor' || role === 'gm' ? 'manager' : 'employee';
+}
+
+export function signSessionToken(agent: TokenAgent, sessionTier: SessionTier): string {
   return jwt.sign(
-    { email: agent.email, name: agent.name, role: agent.role, scope: SESSION_SCOPE },
+    {
+      email: agent.email,
+      name: agent.name,
+      role: agent.role,
+      scope: SESSION_SCOPE,
+      sessionTier,
+      authVersion: agent.authVersion ?? 0,
+    },
     env.JWT_SECRET,
-    { subject: agent.id, expiresIn: SESSION_EXPIRES, algorithm: 'HS256' },
+    { subject: agent.id, expiresIn: SESSION_MAX_AGE_SECONDS[sessionTier], algorithm: 'HS256' },
   );
 }
 
@@ -89,18 +106,23 @@ export function signSessionToken(agent: Pick<AuthedAgent, 'id' | 'email' | 'name
 export function verifyToken(
   token: string,
   opts?: { scope?: string },
-): { id: string; email: string; name: string; role: TokenRole } | null {
+): { id: string; email: string; name: string; role: TokenRole; scope?: string; sessionTier?: SessionTier; authVersion: number } | null {
   try {
     // Pin the accepted algorithm so verification can't drift to another scheme.
     const p = jwt.verify(token, env.JWT_SECRET, { algorithms: ['HS256'] }) as jwt.JwtPayload;
     if (!p.sub || !TOKEN_ROLES.includes(p.role)) return null;
     const scope = typeof p.scope === 'string' ? p.scope : undefined;
     if (scope && scope !== opts?.scope) return null; // scoped token: only valid on a matching-scope path
+    const sessionTier = p.sessionTier === 'manager' || p.sessionTier === 'employee' ? p.sessionTier : undefined;
+    const authVersion = Number.isInteger(p.authVersion) && Number(p.authVersion) >= 0 ? Number(p.authVersion) : 0;
     return {
       id: String(p.sub),
       email: String(p.email ?? ''),
       name: String(p.name ?? ''),
       role: p.role,
+      scope,
+      sessionTier,
+      authVersion,
     };
   } catch {
     return null;
