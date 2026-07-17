@@ -281,3 +281,45 @@ export function acctPartyBackfillApply(): Promise<{ started: boolean; busy?: boo
 export function acctPartyStatus(): Promise<BackfillStatus> {
   return acctFetch<BackfillStatus>('/api/jupiter/acct/parties/status');
 }
+
+// ─── AI cost (token usage) — supervisor-only, GET /api/jupiter/token-usage ───────────
+// Suite-wide king's-eye view of AI spend: how much, and what for. Mirrors the API's shape
+// exactly (api/src/routes/tokenUsage.ts) — one summary + four independent groupings.
+
+export interface TokenUsageSummary {
+  calls: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  estCostUsd: number;
+}
+// byApp / byFeature / byModel all share this shape — `key` is the app code, feature slug,
+// or model id depending on which list it's in.
+export interface TokenUsageGroup {
+  key: string;
+  calls: number;
+  inputTokens: number;
+  outputTokens: number;
+  estCostUsd: number;
+}
+export interface TokenUsageDay {
+  date: string; // YYYY-MM-DD
+  calls: number;
+  estCostUsd: number;
+}
+export interface TokenUsageResponse {
+  window: { from: string; to: string };
+  summary: TokenUsageSummary;
+  byApp: TokenUsageGroup[];
+  byFeature: TokenUsageGroup[];
+  byModel: TokenUsageGroup[];
+  byDay: TokenUsageDay[];
+}
+export function tokenUsage(params: { from?: string; to?: string } = {}): Promise<TokenUsageResponse> {
+  const qs = new URLSearchParams();
+  if (params.from) qs.set('from', params.from);
+  if (params.to) qs.set('to', params.to);
+  const q = qs.toString();
+  return acctFetch<TokenUsageResponse>(`/api/jupiter/token-usage${q ? `?${q}` : ''}`);
+}

@@ -22,6 +22,7 @@ const defaultDeps: CaptionStaffUploadDeps = {
     'ตอบเฉพาะคำบรรยายภาพภาษาไทยหนึ่งประโยค ไม่ต้องมีคำนำหรือเครื่องหมายคำพูด',
     image,
     120,
+    { app: 'minerva', feature: 'caption-image' },
   ),
   update: (messageId, aiCaption) => prisma.message.update({ where: { id: messageId }, data: { aiCaption } }),
 };

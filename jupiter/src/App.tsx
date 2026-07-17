@@ -58,5 +58,5 @@ export default function App() {
       </div>
     );
   }
-  return <Accounting onLogout={() => setAgent(null)} />;
+  return <Accounting agent={agent} onLogout={() => setAgent(null)} />;
 }

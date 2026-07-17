@@ -37,6 +37,8 @@ export async function distillKnowledge(question: string, answer: string): Promis
       `คำถามลูกค้า:\n"""\n${question}\n"""\n\nคำตอบที่พนักงานอนุมัติ:\n"""\n${answer}\n"""`,
       SYSTEM,
       700,
+      undefined,
+      { app: 'minerva', feature: 'kb-distill' },
     );
     const m = raw.match(/\{[\s\S]*\}/);
     if (!m) return null;

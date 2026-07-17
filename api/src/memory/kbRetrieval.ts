@@ -59,7 +59,7 @@ export async function selectRelevantKb(queries: string[]): Promise<KbEntry[]> {
     }
     // Per-question retrieval, unioned: one off-topic line in a burst can't push another
     // question's relevant fact below a single shared cutoff.
-    const vecs = await embed(qs, 'query');
+    const vecs = await embed(qs, 'query', undefined, { app: 'minerva', feature: 'kb-embed' });
     const idLists = await Promise.all(vecs.map((v) => retrieveRelevantKbIds(v, PER_QUERY_K)));
     const idSet = new Set(idLists.flat());
     if (idSet.size === 0) return allActive;

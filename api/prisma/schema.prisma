@@ -15,6 +15,24 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+model TokenUsage {
+  id               String   @id @default(cuid())
+  createdAt        DateTime @default(now())
+  app              String
+  feature          String
+  provider         String
+  model            String
+  inputTokens      Int      @default(0)
+  outputTokens     Int      @default(0)
+  cacheReadTokens  Int      @default(0)
+  cacheWriteTokens Int      @default(0)
+  estCostUsd       Float?
+
+  @@index([createdAt])
+  @@index([app, feature])
+  @@index([model])
+}
+
 model Customer {
   id                String          @id @default(cuid())
   lineUserId        String          @unique

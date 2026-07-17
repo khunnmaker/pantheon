@@ -158,7 +158,7 @@ export async function generateDraftForMessage(
   if (embeddingsAvailable()) {
     await embedMessage(message.id, message.text);
     try {
-      const qvec = await embedOne(questionText, 'query');
+      const qvec = await embedOne(questionText, 'query', { app: 'minerva', feature: 'msg-embed' });
       const excludeIds = [message.id, ...recentRows.map((m) => m.id)];
       const hits = await retrieveSimilarMessages(message.customerId, qvec, env.RETRIEVE_K, excludeIds, answeredThroughAt);
       if (hits.length) {
@@ -235,7 +235,7 @@ export async function generateDraftForMessage(
         existingCustomer,
         agentText: opts?.agentText,
       });
-      const raw = await callClaude(user, system);
+      const raw = await callClaude(user, system, undefined, undefined, { app: 'minerva', feature: 'line-draft' });
       result = parseDraft(raw);
     }
   } catch {
@@ -383,7 +383,7 @@ export async function generateStickerDraft(messageId: string): Promise<DraftOutc
       result = STICKER_FALLBACK;
     } else {
       const { system, user } = buildStickerPrompt({ meaning, recentWindow, summary });
-      const raw = await callClaude(user, system);
+      const raw = await callClaude(user, system, undefined, undefined, { app: 'minerva', feature: 'sticker-draft' });
       result = parseDraft(raw);
     }
   } catch {

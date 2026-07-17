@@ -40,7 +40,7 @@ export async function readSlipFromBuffer(buf: Buffer, contentType: string): Prom
     const raw = await callClaudeWithImage('อ่านสลิปนี้แล้วตอบ JSON ตามรูปแบบที่กำหนด', SLIP_SYSTEM, {
       base64: buf.toString('base64'),
       mediaType: contentType || 'image/jpeg',
-    });
+    }, undefined, { app: 'minerva', feature: 'slip-ocr' });
     const obj = JSON.parse(raw.replace(/```json/gi, '').replace(/```/g, '').trim()) as Record<string, unknown>;
     const s = (v: unknown) => (typeof v === 'string' ? v : typeof v === 'number' ? String(v) : '');
     return {
@@ -61,7 +61,7 @@ export async function readChequeFromBuffer(buf: Buffer, contentType: string): Pr
     const raw = await callClaudeWithImage('อ่านเช็คนี้แล้วตอบ JSON ตามรูปแบบที่กำหนด', CHEQUE_SYSTEM, {
       base64: buf.toString('base64'),
       mediaType: contentType || 'image/jpeg',
-    });
+    }, undefined, { app: 'juno', feature: 'cheque-ocr' });
     const obj = JSON.parse(raw.replace(/```json/gi, '').replace(/```/g, '').trim()) as Record<string, unknown>;
     const s = (v: unknown) => (typeof v === 'string' ? v : typeof v === 'number' ? String(v) : '');
     return {

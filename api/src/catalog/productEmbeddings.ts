@@ -93,7 +93,12 @@ async function runBackfill(): Promise<void> {
     for (let i = 0; i < stale.length; i += CHUNK) {
       const batch = stale.slice(i, i + CHUNK);
       try {
-        const vectors = await embed(batch.map((row) => row.doc), 'document');
+        const vectors = await embed(
+          batch.map((row) => row.doc),
+          'document',
+          undefined,
+          { app: 'diana', feature: 'product-embed' },
+        );
         const results = await Promise.allSettled(batch.map((row, j) => {
           if (!vectors[j]) return Promise.reject(new Error('no vector'));
           const literal = vectorLiteral(vectors[j]);
@@ -120,7 +125,7 @@ export const PRODUCT_DISTANCE_CUTOFF = 0.45;
 export async function semanticProductSkus(query: string, limit: number, signal?: AbortSignal): Promise<SemanticHit[]> {
   const take = Math.max(0, Math.min(Math.floor(limit), 1000));
   if (!take) return [];
-  const [vector] = await embed([query], 'query', signal);
+  const [vector] = await embed([query], 'query', signal, { app: 'diana', feature: 'search-embed' });
   if (!vector) return [];
   const literal = vectorLiteral(vector);
   // 0.45 is deliberately conservative for voyage-3 cosine distance: it retains close

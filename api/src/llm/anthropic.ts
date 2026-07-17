@@ -1,6 +1,8 @@
 import Anthropic from '@anthropic-ai/sdk';
 import type { TextBlockParam } from '@anthropic-ai/sdk/resources/messages';
+import { prisma } from '../db/prisma.js';
 import { env } from '../env.js';
+import { estimateCostUsd } from './pricing.js';
 
 // Drafting/summarizing model (spec §3/§7).
 const MODEL = 'claude-sonnet-4-6';
@@ -52,6 +54,11 @@ export function getLastCacheStats(): CacheStats | null {
   return lastCacheStats;
 }
 
+export interface LlmCallMeta {
+  app?: string;
+  feature?: string;
+}
+
 function recordUsage(usage: {
   input_tokens: number;
   output_tokens: number;
@@ -70,6 +77,43 @@ function recordUsage(usage: {
   );
 }
 
+function persistUsage(
+  model: string,
+  usage: {
+    input_tokens: number;
+    output_tokens: number;
+    cache_read_input_tokens?: number | null;
+    cache_creation_input_tokens?: number | null;
+  },
+  meta: LlmCallMeta,
+): void {
+  const tokens = {
+    inputTokens: usage.input_tokens,
+    outputTokens: usage.output_tokens,
+    cacheReadTokens: usage.cache_read_input_tokens ?? 0,
+    cacheWriteTokens: usage.cache_creation_input_tokens ?? 0,
+  };
+  try {
+    void prisma.tokenUsage.create({
+      data: {
+        app: meta.app ?? 'unknown',
+        feature: meta.feature ?? 'unknown',
+        provider: 'anthropic',
+        model,
+        ...tokens,
+        estCostUsd: estimateCostUsd(model, tokens),
+      },
+    }).catch((err) => {
+      // Usage telemetry is best-effort and must never affect an AI response.
+      // eslint-disable-next-line no-console
+      console.warn('[llm] token usage persistence failed', err);
+    });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn('[llm] token usage persistence failed', err);
+  }
+}
+
 // Single-shot completion. Optional system prompt keeps trusted rules separate
 // from untrusted user/customer content. Throws if no key or the API errors —
 // callers wrap in try/catch and safe-default to needs_human.
@@ -78,6 +122,7 @@ export async function callClaude(
   system?: SystemPrompt,
   maxTokens = MAX_TOKENS,
   model: string = MODEL, // optional override; defaults to the shared drafting model
+  meta: LlmCallMeta = {},
 ): Promise<string> {
   const c = getClient();
   if (!c) throw new Error('ANTHROPIC_API_KEY not configured');
@@ -90,6 +135,7 @@ export async function callClaude(
   });
 
   recordUsage(res.usage);
+  persistUsage(model, res.usage, meta);
   return res.content.map((b) => (b.type === 'text' ? b.text : '')).join('');
 }
 
@@ -102,8 +148,9 @@ export async function callClaudeWithImage(
   system: SystemPrompt,
   image: { base64: string; mediaType: string },
   maxTokens = MAX_TOKENS,
+  meta: LlmCallMeta = {},
 ): Promise<string> {
-  return callClaudeWithImages(userText, system, [image], maxTokens);
+  return callClaudeWithImages(userText, system, [image], maxTokens, meta);
 }
 
 // Vision completion with multiple images. Images stay in caller-provided order
@@ -113,6 +160,7 @@ export async function callClaudeWithImages(
   system: SystemPrompt,
   images: { base64: string; mediaType: string }[],
   maxTokens = MAX_TOKENS,
+  meta: LlmCallMeta = {},
 ): Promise<string> {
   const c = getClient();
   if (!c) throw new Error('ANTHROPIC_API_KEY not configured');
@@ -158,5 +206,6 @@ export async function callClaudeWithImages(
   });
 
   recordUsage(res.usage);
+  persistUsage(MODEL, res.usage, meta);
   return res.content.map((b) => (b.type === 'text' ? b.text : '')).join('');
 }

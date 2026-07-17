@@ -233,7 +233,13 @@ export async function buildCard(
   // Default caller runs on `modelId` (Haiku for cards — a one-sentence restate needs no more)
   // with a tight token cap; tests inject their own caller. maxTokens 256 comfortably fits 1–2
   // Thai sentences and caps the cost/latency of a full-base run.
-  caller: (user: string, system: string) => Promise<string> = (user, system) => callClaude(user, system, 256, modelId),
+  caller: (user: string, system: string) => Promise<string> = (user, system) => callClaude(
+    user,
+    system,
+    256,
+    modelId,
+    { app: 'venus', feature: 'venus-card' },
+  ),
 ): Promise<CardBuildResult | null> {
   const signals = activeSignals(stats);
   if (signals.length === 0) return null;
