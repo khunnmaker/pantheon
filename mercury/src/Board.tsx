@@ -5,6 +5,7 @@ import ReorderQueue from './views/ReorderQueue';
 import Items from './views/Items';
 import Requests from './views/Requests';
 import { getRequests, logout as logoutSuite, type Agent } from './lib/api';
+import { useHashTab } from '@pantheon/ui';
 
 type Tab = 'reorder' | 'items' | 'requests';
 
@@ -13,9 +14,12 @@ const TABS: { id: Tab; label: string; icon: typeof ShoppingCart }[] = [
   { id: 'items', label: 'รายการสินค้า', icon: PackagePlus },
   { id: 'requests', label: 'คำขอสั่งซื้อ', icon: ClipboardList },
 ];
+// No per-role split within this board (mercury cloud is a single flat tab bar) — every tab is
+// always valid.
+const BOARD_TABS: Tab[] = TABS.map((t) => t.id);
 
 export default function Board({ agent, onLogout }: { agent: Agent; onLogout: () => void }) {
-  const [tab, setTab] = useState<Tab>('reorder');
+  const [tab, setTab] = useHashTab<Tab>(BOARD_TABS, 'reorder');
   const [pendingCount, setPendingCount] = useState<number | null>(null);
   const [loadingCount, setLoadingCount] = useState(false);
 

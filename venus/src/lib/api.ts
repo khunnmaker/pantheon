@@ -3,6 +3,8 @@
 // Venus is track-and-tell only; Stage C (this app) wires login + the customer-master
 // screens Stage A+B already built. Sales/analytics are not wired yet (Phase 1/2).
 
+import { fetchWithSessionRenewal, renewSuiteSessionOnce } from '@pantheon/ui';
+
 export const API_URL: string = import.meta.env.VITE_API_URL ?? 'http://localhost:3000';
 
 // Access to Venus is per-grant, enforced server-side via requireApp('venus') (see
@@ -250,15 +252,11 @@ let onForbidden: (() => void) | null = null;
 export function setOnForbidden(fn: (() => void) | null): void { onForbidden = fn; }
 
 async function authed<T>(path: string, init?: RequestInit): Promise<T> {
-  const token = getToken();
-  const res = await fetch(`${API_URL}${path}`, {
-    ...init,
-    headers: {
-      'content-type': 'application/json',
-      ...(token ? { authorization: `Bearer ${token}` } : {}),
-      ...(init?.headers ?? {}),
-    },
-  });
+  const res = await fetchWithSessionRenewal<Agent>(
+    `${API_URL}${path}`,
+    { ...init, headers: { 'content-type': 'application/json', ...(init?.headers ?? {}) } },
+    { apiUrl: API_URL, getToken, setSession },
+  );
   if (res.status === 401) {
     clearSession();
     onUnauthorized?.();
@@ -289,19 +287,23 @@ export async function login(email: string, password: string): Promise<{ token: s
 
 export async function bootstrap(): Promise<Agent | null> {
   try {
-    const res = await fetch(`${API_URL}/api/auth/me`, { credentials: 'include' });
-    if (!res.ok) return null;
-    const { agent, token } = await res.json() as { agent: Agent; token: string };
-    setSession(token, agent);
-    return agent;
+    const session = await renewSuiteSessionOnce<Agent>(API_URL);
+    if (!session) return null;
+    setSession(session.token, session.agent);
+    return session.agent;
   } catch {
     return null;
   }
 }
 
 export async function logout(): Promise<void> {
+  const token = getToken();
   try {
-    await fetch(`${API_URL}/api/auth/logout`, { method: 'POST', credentials: 'include' });
+    await fetch(`${API_URL}/api/auth/logout`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: token ? { authorization: `Bearer ${token}` } : {},
+    });
   } catch {
     // Best-effort server logout; local cleanup must always happen.
   } finally {

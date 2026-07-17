@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, BarChart3, CalendarCheck, CalendarDays, CheckSquare, Clock, Kanban, List, LogOut, Plus, Settings, SlidersHorizontal, Users } from 'lucide-react';
+import { useHashTab } from '@pantheon/ui';
 import AppSwitcher from './AppSwitcher';
 import TaskModal from './TaskModal';
 import TaskCard from './TaskCard';
@@ -15,7 +16,14 @@ const PROJECT_COLORS = ['#4f46e5', '#0ea5e9', '#10b981', '#f59e0b', '#ef4444', '
 
 export default function Workspace({ agent, onLogout }: { agent: Agent; onLogout: () => void }) {
   const isManager = agent.role === 'supervisor' || agent.role === 'gm';
-  const [view, setView] = useState<View>(isManager ? 'board' : 'mine'); const [projects, setProjects] = useState<Project[]>([]);
+  // Nav keys this agent can actually reach — only 'dashboard' is manager-gated (mirrors the
+  // `manager` flag on the nav array below). Feeds useHashTab so a shared #dashboard link opened
+  // by a non-manager falls back to their own default instead of landing on a view with no nav
+  // entry to reach it from.
+  const workspaceViewKeys: View[] = isManager
+    ? ['board', 'list', 'mine', 'calendar', 'dashboard', 'settings']
+    : ['board', 'list', 'mine', 'calendar', 'settings'];
+  const [view, setView] = useHashTab<View>(workspaceViewKeys, isManager ? 'board' : 'mine'); const [projects, setProjects] = useState<Project[]>([]);
   const [agents, setAgents] = useState<Person[]>([]); const [projectId, setProjectId] = useState(''); const [project, setProject] = useState<Project | null>(null);
   const [loading, setLoading] = useState(true); const [modalOpen, setModalOpen] = useState(!!deepTaskId()); const [taskId, setTaskId] = useState<string | null>(deepTaskId());
   const [newTaskStatus, setNewTaskStatus] = useState<string | null>(null); const [newProjectOpen, setNewProjectOpen] = useState(false);

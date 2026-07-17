@@ -9,7 +9,7 @@ export const API_URL: string = import.meta.env.VITE_API_URL ?? 'http://localhost
 // grant (`apps`), exactly as the server gates it (see hasAppAccess in apps.ts). supervisor →
 // everything; gm → Ceres + Minerva + Juno + Apollo; agm/employee → their own `apps` list.
 export type Role = 'supervisor' | 'gm' | 'agm' | 'employee';
-import type { AppName } from '@pantheon/ui';
+import { fetchWithSessionRenewal, renewSuiteSessionOnce, type AppName } from '@pantheon/ui';
 export type { AppName };
 export interface Agent {
   id: string;
@@ -83,11 +83,10 @@ export async function login(email: string, password: string): Promise<{ token: s
 // Never throws — a missing/invalid cookie just yields null (→ show Login).
 export async function bootstrap(): Promise<Agent | null> {
   try {
-    const res = await fetch(`${API_URL}/api/auth/me`, { credentials: 'include' });
-    if (!res.ok) return null;
-    const { agent, token } = (await res.json()) as { agent: Agent; token: string };
-    setSession(token, agent);
-    return agent;
+    const session = await renewSuiteSessionOnce<Agent>(API_URL);
+    if (!session) return null;
+    setSession(session.token, session.agent);
+    return session.agent;
   } catch {
     return null;
   }
@@ -97,8 +96,13 @@ export async function bootstrap(): Promise<Agent | null> {
 // app's local session. Used by the user-facing "log out" action so logging out here
 // propagates across the suite.
 export async function logout(): Promise<void> {
+  const token = getToken();
   try {
-    await fetch(`${API_URL}/api/auth/logout`, { method: 'POST', credentials: 'include' });
+    await fetch(`${API_URL}/api/auth/logout`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: token ? { authorization: `Bearer ${token}` } : {},
+    });
   } catch {
     // Network failure clearing the cookie shouldn't block local logout.
   }
@@ -188,15 +192,14 @@ export interface ProposedTxn {
 
 // Shared authed-fetch: attaches the bearer token, handles 401 → logout, parses JSON.
 async function acctFetch<T>(path: string, init?: RequestInit): Promise<T> {
-  const token = getToken();
-  const res = await fetch(`${API_URL}${path}`, {
-    ...init,
-    headers: {
-      ...(init?.body ? { 'content-type': 'application/json' } : {}),
-      ...(token ? { authorization: `Bearer ${token}` } : {}),
-      ...(init?.headers ?? {}),
+  const res = await fetchWithSessionRenewal<Agent>(
+    `${API_URL}${path}`,
+    {
+      ...init,
+      headers: { ...(init?.body ? { 'content-type': 'application/json' } : {}), ...(init?.headers ?? {}) },
     },
-  });
+    { apiUrl: API_URL, getToken, setSession },
+  );
   if (res.status === 401) {
     clearSession();
     onUnauthorized?.();

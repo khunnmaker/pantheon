@@ -1,5 +1,5 @@
 import type { FastifyReply, FastifyRequest, preHandlerHookHandler } from 'fastify';
-import { verifyToken, ALL_ROLES, hasAppAccess, type AuthedAgent, type Role, type AppName } from './jwt.js';
+import { verifyToken, OA_SYNC_SCOPE, ALL_ROLES, hasAppAccess, type AuthedAgent, type Role, type AppName } from './jwt.js';
 import { prisma } from '../db/prisma.js';
 
 // Make request.agent available everywhere, typed.
@@ -38,10 +38,20 @@ export async function authedAgentFromToken(
   if (!claims) return null;
   const live = await prisma.agent.findUnique({
     where: { id: claims.id },
-    select: { id: true, email: true, name: true, role: true, apps: true },
+    select: { id: true, email: true, name: true, role: true, apps: true, authVersion: true },
   });
   if (!live || !LIVE_ROLES.includes(live.role as Role) || !allowed.includes(live.role as Role)) return null;
-  return { id: live.id, email: live.email, name: live.name, role: live.role as Role, apps: live.apps };
+  // OA-sync is deliberately disconnected from suite logout. A normal console bearer used on
+  // the scoped route still gets the version gate; only the actual scoped 180d token is exempt.
+  if (claims.scope !== OA_SYNC_SCOPE && live.authVersion !== claims.authVersion) return null;
+  return {
+    id: live.id,
+    email: live.email,
+    name: live.name,
+    role: live.role as Role,
+    apps: live.apps,
+    authVersion: live.authVersion,
+  };
 }
 
 // preHandler: require a valid token backed by a live account (any of the four roles); attaches request.agent.

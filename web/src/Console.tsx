@@ -9,7 +9,7 @@ import {
 import {
   getQueue, getCustomers, getCustomer, searchCustomers, logout as logoutSuite, regenerateDraft, rewriteText, sendReply, setNickname, setCategory, setStage, STAGES,
   pinCustomer, unpinCustomer,
-  uploadAttachment, getLearned, getLearnedMetrics, promoteLearned, rejectLearned, endSession, API_URL, flatSku, getToken,
+  uploadAttachment, getLearned, getLearnedMetrics, promoteLearned, rejectLearned, flagLearned, resolveLearned, endSession, API_URL, flatSku, getToken,
   getFinanceAudits, resolveFinanceAudit, type FinanceAudit,
   getQuickReplies, addQuickReply, deleteQuickReply, sendQuickReply, sendMessage, sendPhotoNow, searchCatalog, addProductToDraft, readSlip, sendToFinance,
   draftNow, clearDrafts,
@@ -658,6 +658,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
   const [error, setError] = useState('');
 
   const [learned, setLearned] = useState<LearnedAnswer[]>([]);
+  const [flaggedLearned, setFlaggedLearned] = useState<LearnedAnswer[]>([]);
   const [audits, setAudits] = useState<FinanceAudit[]>([]);
   const [promotingId, setPromotingId] = useState<string | null>(null);
   const [learnNotice, setLearnNotice] = useState<{ kind: 'warn' | 'error'; text: string } | null>(null);
@@ -718,8 +719,9 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
   }, []);
 
   const refreshLearned = useCallback(async () => {
-    const { learned: l } = await getLearned('pending');
-    setLearned(l);
+    const [pending, flagged] = await Promise.all([getLearned('pending'), getLearned('flagged')]);
+    setLearned(pending.learned);
+    setFlaggedLearned(flagged.learned);
   }, []);
 
   const refreshAudits = useCallback(async () => {
@@ -1340,7 +1342,14 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
       }
       await refreshLearned();
       if (res?.skipped) {
-        flashToast('คำตอบนี้เฉพาะลูกค้ารายนี้ — ไม่ได้เพิ่มเป็นความรู้ทั่วไป');
+        if (res.reason === 'price_content') {
+          setLearnNotice({
+            kind: 'error',
+            text: 'ข้อความที่สรุปยังมีราคา — ยังไม่เพิ่มเข้า KB และรายการยังอยู่ในคิว กรุณาแก้หรือส่งให้เจ้าของตรวจค่ะ',
+          });
+        } else {
+          flashToast('คำตอบนี้เฉพาะลูกค้ารายนี้ — ไม่ได้เพิ่มเป็นความรู้ทั่วไป');
+        }
       } else if (res?.kb?.answer) {
         if (res.similarTo) {
           setLearnNotice({
@@ -1363,6 +1372,40 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
   async function reject(id: string) {
     await rejectLearned(id).catch(() => undefined);
     await refreshLearned();
+  }
+  async function flag(id: string) {
+    const note = window.prompt('หมายเหตุให้เจ้าของ (ไม่บังคับ)', '');
+    if (note === null) return;
+    setPromotingId(id);
+    try {
+      await flagLearned(id, note.trim() || undefined);
+      await refreshLearned();
+      flashToast('ย้ายไปรอเจ้าของตัดสินแล้ว 🚩');
+    } catch {
+      setLearnNotice({ kind: 'error', text: 'ย้ายรายการไม่สำเร็จ — กรุณาลองใหม่ค่ะ' });
+    } finally {
+      setPromotingId(null);
+    }
+  }
+  async function resolve(id: string, action: 'promote' | 'reject', kbText?: string) {
+    setPromotingId(id);
+    try {
+      const res = await resolveLearned(id, action === 'promote' ? { action, kbText: kbText ?? '' } : { action });
+      if ('priceContent' in res) {
+        setLearnNotice({ kind: 'error', text: 'ข้อความ KB ยังมีราคา — ลบราคา/ยอดโปรโมชั่นก่อนอนุมัติค่ะ' });
+        return;
+      }
+      if ('conflict' in res) {
+        flashToast('รายการนี้ถูกดำเนินการไปแล้ว');
+      } else {
+        flashToast(action === 'promote' ? 'เพิ่มข้อความที่เจ้าของอนุมัติเข้า KB แล้ว' : 'ปฏิเสธรายการแล้ว');
+      }
+      await refreshLearned();
+    } catch {
+      setLearnNotice({ kind: 'error', text: 'ดำเนินการรายการรอเจ้าของไม่สำเร็จ — กรุณาลองใหม่ค่ะ' });
+    } finally {
+      setPromotingId(null);
+    }
   }
 
   const draft = detail?.pendingDraft ?? null;
@@ -1464,7 +1507,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                 <span className="absolute -bottom-1 -left-1 bg-white rounded-full p-0.5 text-sky-600 flex shadow-sm">
                   {view === 'learning' ? <MessageSquare size={10} /> : <GraduationCap size={10} />}
                 </span>
-                {learned.length > 0 && <span className="absolute -top-0.5 -right-0.5 text-[10px] bg-amber-400 text-white rounded-full px-1 leading-tight">{learned.length}</span>}
+                {learned.length + flaggedLearned.length > 0 && <span className="absolute -top-0.5 -right-0.5 text-[10px] bg-amber-400 text-white rounded-full px-1 leading-tight">{learned.length + flaggedLearned.length}</span>}
               </button>
               <div className="flex-1" />
               <button type="button"
@@ -1559,9 +1602,12 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
             ) : view === 'learning' ? (
               <LearningView
                 learned={learned}
+                flagged={flaggedLearned}
                 isSupervisor={agent.role === 'supervisor'}
                 onPromote={promote}
                 onReject={reject}
+                onFlag={flag}
+                onResolve={resolve}
                 promotingId={promotingId}
                 notice={learnNotice}
                 onDismissNotice={() => setLearnNotice(null)}
@@ -2147,16 +2193,22 @@ function LearningMetrics() {
   );
 }
 
-function LearningView({ learned, isSupervisor, onPromote, onReject, promotingId, notice, onDismissNotice }: {
+function LearningView({ learned, flagged, isSupervisor, onPromote, onReject, onFlag, onResolve, promotingId, notice, onDismissNotice }: {
   learned: LearnedAnswer[];
+  flagged: LearnedAnswer[];
   isSupervisor: boolean;
   onPromote: (id: string) => void;
   onReject: (id: string) => void;
+  onFlag: (id: string) => void;
+  onResolve: (id: string, action: 'promote' | 'reject', kbText?: string) => void;
   promotingId: string | null;
   notice: { kind: 'warn' | 'error'; text: string } | null;
   onDismissNotice: () => void;
 }) {
+  const [filter, setFilter] = useState<'pending' | 'flagged'>('pending');
+  const [resolutionText, setResolutionText] = useState<Record<string, string>>({});
   const busy = promotingId !== null;
+  const records = filter === 'pending' ? learned : flagged;
   return (
     <div className="space-y-3">
       {notice && (
@@ -2175,24 +2227,48 @@ function LearningView({ learned, isSupervisor, onPromote, onReject, promotingId,
       <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-4">
         <div className="flex items-center justify-between mb-3">
           <span className="font-bold text-slate-700 flex items-center gap-2"><Brain size={18} className="text-sky-600" /> คลังการเรียนรู้ — คำตอบที่พนักงานแก้</span>
-          <span className="text-xs text-slate-500">รออนุมัติ: <b className="text-sky-700">{learned.length}</b></span>
+          <span className="text-xs text-slate-500">ทั้งหมดที่รอตรวจ: <b className="text-sky-700">{learned.length + flagged.length}</b></span>
+        </div>
+        <div className="flex gap-1 mb-3 border-b border-slate-200">
+          <button
+            type="button"
+            onClick={() => setFilter('pending')}
+            className={`px-3 py-2 text-xs font-medium border-b-2 ${filter === 'pending' ? 'border-sky-600 text-sky-700' : 'border-transparent text-slate-400 hover:text-slate-600'}`}
+          >
+            รออนุมัติ ({learned.length})
+          </button>
+          <button
+            type="button"
+            onClick={() => setFilter('flagged')}
+            className={`px-3 py-2 text-xs font-medium border-b-2 ${filter === 'flagged' ? 'border-amber-500 text-amber-700' : 'border-transparent text-slate-400 hover:text-slate-600'}`}
+          >
+            🚩 รอเจ้าของ ({flagged.length})
+          </button>
         </div>
         {!isSupervisor && <div className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-lg p-2 mb-3">เฉพาะหัวหน้าเท่านั้นที่อนุมัติเข้า KB ได้ (คุณดูได้อย่างเดียว)</div>}
-        {learned.length === 0 ? (
-          <p className="text-sm text-slate-400 py-6 text-center">ยังไม่มี — เมื่อพนักงานแก้ร่างของ AI แล้วส่ง ระบบจะเก็บคำตอบไว้ที่นี่เพื่อให้หัวหน้าอนุมัติเข้า KB</p>
+        {records.length === 0 ? (
+          <p className="text-sm text-slate-400 py-6 text-center">
+            {filter === 'pending' ? 'ยังไม่มีรายการรออนุมัติ' : 'ยังไม่มีรายการที่รอเจ้าของตัดสิน'}
+          </p>
         ) : (
           <div className="space-y-2">
-            {learned.map((rec) => {
+            {records.map((rec) => {
               const isPromoting = promotingId === rec.id;
+              const kbText = resolutionText[rec.id] ?? rec.finalAnswer;
               return (
-                <div key={rec.id} className="border border-slate-200 rounded-xl p-3 text-sm">
+                <div key={rec.id} className={`border rounded-xl p-3 text-sm ${filter === 'flagged' ? 'border-amber-200 bg-amber-50/30' : 'border-slate-200'}`}>
                   <div className="text-slate-500 text-xs mb-2">ถาม: <span className="text-slate-700">{rec.customerQuestion}</span></div>
                   <div className="grid sm:grid-cols-2 gap-2 mb-2">
                     <div className="bg-slate-50 rounded-lg p-2 text-xs text-slate-500"><b className="text-slate-400">ร่างเดิมของ AI:</b><br />{rec.aiDraft || '—'}</div>
                     <div className="bg-sky-50 rounded-lg p-2 text-xs text-sky-800"><b className="text-sky-600">คำตอบที่พนักงานปรับ:</b><br />{rec.finalAnswer}</div>
                   </div>
-                  {isSupervisor && (
-                    <div className="flex gap-2">
+                  {filter === 'flagged' && rec.flagNote && (
+                    <div className="mb-2 rounded-lg border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800">
+                      <b>เหตุผลที่ส่งให้เจ้าของ:</b> {rec.flagNote}
+                    </div>
+                  )}
+                  {isSupervisor && filter === 'pending' && (
+                    <div className="flex flex-wrap gap-2">
                       <button
                         onClick={() => onPromote(rec.id)}
                         disabled={busy}
@@ -2201,12 +2277,48 @@ function LearningView({ learned, isSupervisor, onPromote, onReject, promotingId,
                         {isPromoting ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} เพิ่มเข้า KB (สอน AI)
                       </button>
                       <button
+                        onClick={() => onFlag(rec.id)}
+                        disabled={busy}
+                        className={`text-xs px-3 py-1.5 rounded-lg bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-700 ${busy ? 'opacity-50 cursor-not-allowed' : ''}`}
+                      >
+                        🚩 ส่งให้เจ้าของตัดสิน
+                      </button>
+                      <button
                         onClick={() => onReject(rec.id)}
                         disabled={busy}
                         className={`text-xs px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 ${busy ? 'opacity-50 cursor-not-allowed' : ''}`}
                       >
                         ไม่ใช้
                       </button>
+                    </div>
+                  )}
+                  {isSupervisor && filter === 'flagged' && (
+                    <div className="space-y-2">
+                      <label className="block text-xs font-medium text-slate-600">
+                        ข้อความที่จะบันทึกเข้า KB (แก้เป็นถ้อยคำที่เจ้าของอนุมัติ)
+                        <textarea
+                          value={kbText}
+                          onChange={(event) => setResolutionText((current) => ({ ...current, [rec.id]: event.target.value }))}
+                          rows={3}
+                          className="mt-1 w-full rounded-lg border border-slate-200 bg-white p-2 text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-sky-400"
+                        />
+                      </label>
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          onClick={() => onResolve(rec.id, 'promote', kbText)}
+                          disabled={busy || !kbText.trim()}
+                          className={`text-xs px-3 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-700 text-white flex items-center gap-1 ${busy || !kbText.trim() ? 'opacity-50 cursor-not-allowed' : ''}`}
+                        >
+                          {isPromoting ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} เพิ่ม KB ด้วยข้อความนี้
+                        </button>
+                        <button
+                          onClick={() => onResolve(rec.id, 'reject')}
+                          disabled={busy}
+                          className={`text-xs px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 ${busy ? 'opacity-50 cursor-not-allowed' : ''}`}
+                        >
+                          ปฏิเสธรายการ
+                        </button>
+                      </div>
                     </div>
                   )}
                 </div>

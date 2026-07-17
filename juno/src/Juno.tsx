@@ -23,6 +23,7 @@ import Discrepancies, { PaymentDiscrepancyBlock } from './Discrepancies';
 import Audit from './Audit';
 import Bills from './Bills';
 import AppSwitcher from './AppSwitcher';
+import { useHashTab } from '@pantheon/ui';
 
 // No ใบกำกับภาษี tab: Prominent issues a tax invoice on EVERY sale (in Express, as part of
 // recording), so a "requested" queue would contain everything and filter nothing. The invoice
@@ -130,12 +131,24 @@ export default function Juno({ agent, onLogout }: { agent: Agent; onLogout: () =
   // Owner 2026-07-15: employees (FIN) see the บิลมือ tab READ-ONLY — ledger + print, no
   // issue/edit/void (server already 403s their bill mutations; buttons hidden in Bills.tsx).
   const scope = agent.role === 'supervisor' ? 'full' : agent.role === 'gm' ? 'billsOnly' : 'readBills';
-  const [view, setView] = useState<View>(scope === 'billsOnly' ? 'bills' : 'inbox');
-  const [summary, setSummary] = useState<Summary | null>(null);
   // CEO-only actions (mirrors the server's supervisor gate in api/src/routes/juno.ts): reports,
   // CSV export, bank-file import, clearing a flag, and hard delete. gm never reaches these
   // views because its scope is billsOnly; employees retain the non-CEO finance controls.
   const isCeo = agent.role === 'supervisor';
+  // Keys THIS agent's tab bar actually renders — mirrors the role filters in tabGroups below
+  // (minus the count-only bits, which don't affect which keys exist). Feeds useHashTab so a
+  // shared link to a tab this role can't see (e.g. FIN opening a #receive or #reports link)
+  // falls back silently to their own default instead of pointing at a tab that never renders.
+  const validViewKeys: View[] = scope === 'billsOnly'
+    ? ['bills']
+    : [
+        'inbox', 'bills',
+        ...(isCeo ? (['receive'] as const) : []),
+        'recon', 'reRecon', 'flags', 'disc', 'audit', 'wht',
+        ...(isCeo ? (['reports'] as const) : []),
+      ];
+  const [view, setView] = useHashTab<View>(validViewKeys, scope === 'billsOnly' ? 'bills' : 'inbox');
+  const [summary, setSummary] = useState<Summary | null>(null);
   // ลบถาวร (permanent delete) is the CEO-only override — even gm, who can now open Juno,
   // cannot delete. Mirrors the server's `req.agent?.role !== 'supervisor'` gate exactly.
   const canDelete = isCeo;

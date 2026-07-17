@@ -1,4 +1,4 @@
-import type { AppName } from '@pantheon/ui';
+import { fetchWithSessionRenewal, renewSuiteSessionOnce, type AppName } from '@pantheon/ui';
 import type { Agent, ApolloEvent, Attachment, CalendarEvent, CalendarTask, Comment, EventInput, Person, Project, Task, TaskInput } from '../types';
 export type { AppName };
 
@@ -13,8 +13,7 @@ export function clearSession() { localStorage.removeItem(TOKEN_KEY); localStorag
 export function hasAppAccess(agent: Agent, app: AppName) { if (agent.role === 'supervisor') return true; if (agent.role === 'gm') return ['ceres', 'minerva', 'juno', 'apollo'].includes(app); return (agent.apps ?? []).includes(app); }
 
 async function authed<T>(path: string, init?: RequestInit): Promise<T> {
-  const token = getToken();
-  const res = await fetch(`${API_URL}${path}`, { ...init, headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}), ...(init?.headers ?? {}) } });
+  const res = await fetchWithSessionRenewal<Agent>(`${API_URL}${path}`, { ...init, headers: { 'content-type': 'application/json', ...(init?.headers ?? {}) } }, { apiUrl: API_URL, getToken, setSession });
   if (res.status === 401) { clearSession(); location.reload(); throw new Error('unauthorized'); }
   const body = res.headers.get('content-type')?.includes('json') ? await res.json().catch(() => null) : null;
   if (!res.ok) throw new Error((body as { error?: string } | null)?.error ?? `HTTP ${res.status}`);
@@ -22,8 +21,8 @@ async function authed<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export async function login(email: string, password: string) { const res = await fetch(`${API_URL}/api/auth/login`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email, password }), credentials: 'include' }); if (!res.ok) throw new Error('invalid_credentials'); return res.json() as Promise<{ token: string; agent: Agent }>; }
-export async function bootstrap(): Promise<Agent | null> { try { const res = await fetch(`${API_URL}/api/auth/me`, { credentials: 'include' }); if (!res.ok) return null; const out = await res.json() as { token: string; agent: Agent }; setSession(out.token, out.agent); return out.agent; } catch { return null; } }
-export async function logout() { try { await fetch(`${API_URL}/api/auth/logout`, { method: 'POST', credentials: 'include' }); } catch { /* best effort */ } clearSession(); }
+export async function bootstrap(): Promise<Agent | null> { try { const session = await renewSuiteSessionOnce<Agent>(API_URL); if (!session) return null; setSession(session.token, session.agent); return session.agent; } catch { return null; } }
+export async function logout() { const token = getToken(); try { await fetch(`${API_URL}/api/auth/logout`, { method: 'POST', credentials: 'include', headers: token ? { authorization: `Bearer ${token}` } : {} }); } catch { /* best effort */ } clearSession(); }
 export async function getLogins() { const res = await fetch(`${API_URL}/api/auth/logins?app=apollo`); if (!res.ok) throw new Error('load_failed'); return res.json() as Promise<{ email: string; name: string; kind: 'password' | 'pin'; group: string; gender: 'male' | 'female' }[]>; }
 
 export const getAgents = () => authed<{ agents: Person[] }>('/api/apollo/agents');
@@ -43,7 +42,7 @@ export const addComment = (id: string, body: string) => authed<Comment>(`/api/ap
 export const deleteComment = (id: string) => authed(`/api/apollo/comments/${id}`, { method: 'DELETE' });
 export const uploadAttachment = (id: string, body: { dataB64: string; fileName: string; contentType: string }) => authed<Attachment>(`/api/apollo/tasks/${id}/attachments`, { method: 'POST', body: JSON.stringify(body) });
 export const deleteAttachment = (id: string) => authed(`/api/apollo/attachments/${id}`, { method: 'DELETE' });
-export async function downloadAttachment(a: Attachment) { const res = await fetch(`${API_URL}/api/apollo/attachments/${a.id}/content`, { headers: { authorization: `Bearer ${getToken()}` } }); if (!res.ok) throw new Error('download_failed'); const url = URL.createObjectURL(await res.blob()); const link = document.createElement('a'); link.href = url; link.download = a.fileName; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); }
+export async function downloadAttachment(a: Attachment) { const res = await fetchWithSessionRenewal<Agent>(`${API_URL}/api/apollo/attachments/${a.id}/content`, undefined, { apiUrl: API_URL, getToken, setSession }); if (res.status === 401) { clearSession(); location.reload(); throw new Error('unauthorized'); } if (!res.ok) throw new Error('download_failed'); const url = URL.createObjectURL(await res.blob()); const link = document.createElement('a'); link.href = url; link.download = a.fileName; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); }
 export const getMyTasks = () => authed<{ overdue: Task[]; today: Task[]; upcoming: Task[] }>('/api/apollo/my-tasks');
 export const getCalendar = (from: string, to: string, assignee?: string) => authed<{ tasks: CalendarTask[]; events: CalendarEvent[] }>(`/api/apollo/calendar?${new URLSearchParams({ from, to, ...(assignee ? { assignee } : {}) }).toString()}`);
 export const addEvent = (body: EventInput) => authed<ApolloEvent>('/api/apollo/events', { method: 'POST', body: JSON.stringify(body) });

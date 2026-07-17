@@ -128,6 +128,7 @@ model Agent {
   name         String
   passwordHash String
   role         String   @default("agent") // agent | supervisor
+  authVersion  Int      @default(0)
   createdAt    DateTime @default(now())
   // Per-person app grants ('minerva'|'vesta'|'juno'|'ceres'|'apollo'); supervisor/gm access is
   // implicit by role, this list matters only for role 'employee'. Edited later by Jupiter's
@@ -280,7 +281,8 @@ model LearnedAnswer {
   finalAnswer      String
   agentId          String
   edited           Boolean  @default(true)
-  status           String   @default("pending") // pending | approved | rejected
+  status           String   @default("pending") // pending | flagged | promoting | resolving | approved | rejected
+  flagNote         String?
   promotedKbId     String?
   createdAt        DateTime @default(now())
 }

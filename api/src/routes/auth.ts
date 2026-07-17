@@ -2,7 +2,18 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { prisma } from '../db/prisma.js';
 import { verifyPassword, DUMMY_HASH } from '../auth/password.js';
-import { signToken, signSessionToken, SESSION_SCOPE, APP_NAMES, type Role, type AppName } from '../auth/jwt.js';
+import {
+  signToken,
+  signSessionToken,
+  verifyToken,
+  sessionTierForRole,
+  SESSION_MAX_AGE_SECONDS,
+  SESSION_SCOPE,
+  APP_NAMES,
+  type Role,
+  type AppName,
+  type SessionTier,
+} from '../auth/jwt.js';
 import { authedAgentFromToken } from '../auth/middleware.js';
 import { buildLoginCards } from '../auth/loginCards.js';
 import { sessionSetCookie, sessionClearCookie, readSessionToken } from '../auth/cookies.js';
@@ -71,13 +82,18 @@ export async function authRoutes(app: FastifyInstance) {
         name: agent.name,
         role: agent.role as Role,
         apps: agent.apps,
+        authVersion: agent.authVersion,
       };
       const token = signToken(identity);
       // Also drop the suite SSO cookie (parent-domain, httpOnly) so opening any OTHER
       // *.prominentdental.com app recognises this login without re-entering credentials. The
       // cookie only ever authenticates GET /api/auth/me (below) — never a state change — and
-      // carries the 30d session-SCOPED token ("remember this computer"), not the 12h bearer.
-      reply.header('set-cookie', sessionSetCookie(signSessionToken(identity)));
+      // carries a role-tiered session-SCOPED token ("remember this computer"), not the 12h bearer.
+      const sessionTier = sessionTierForRole(identity.role);
+      reply.header(
+        'set-cookie',
+        sessionSetCookie(signSessionToken(identity, sessionTier), SESSION_MAX_AGE_SECONDS[sessionTier]),
+      );
       return { token, agent: identity };
     },
   );
@@ -91,24 +107,45 @@ export async function authRoutes(app: FastifyInstance) {
   app.get('/api/auth/me', async (req, reply) => {
     const header = req.headers.authorization;
     const bearer = header?.startsWith('Bearer ') ? header.slice('Bearer '.length).trim() : '';
+    const sessionToken = readSessionToken(req);
+    const sessionClaims = sessionToken ? verifyToken(sessionToken, { scope: SESSION_SCOPE }) : null;
     // A bearer verifies as a normal (unscoped) token; the cookie path passes SESSION_SCOPE so
-    // the 30d device-session token verifies HERE and nowhere else. A pre-rollout cookie (which
+    // the device-session token verifies HERE and nowhere else. A pre-rollout cookie (which
     // carried an unscoped 12h bearer) still passes — unscoped tokens verify on any path — so
     // nobody is force-logged-out by this deploy; those cookies simply age out within 12h.
     const agent = bearer
       ? await authedAgentFromToken(bearer)
-      : await authedAgentFromToken(readSessionToken(req), undefined, { scope: SESSION_SCOPE });
+      : await authedAgentFromToken(sessionToken, undefined, { scope: SESSION_SCOPE });
     if (!agent) return reply.code(401).send({ error: 'unauthorized' });
     // Rolling renewal: every successful bootstrap re-issues the device-session cookie, so a
-    // computer in active use stays remembered indefinitely; only ~30d of idleness lapses it.
-    reply.header('set-cookie', sessionSetCookie(signSessionToken(agent)));
+    // computer in active use stays remembered indefinitely; the original 7d/30d idle tier
+    // determines when it lapses.
+    // Pre-tier cookies were all 30d, so a missing claim preserves that legacy lifetime. New
+    // cookies always carry the tier and therefore never upgrade an employee during renewal.
+    const sessionTier: SessionTier = sessionClaims?.id === agent.id
+      ? sessionClaims.sessionTier ?? 'manager'
+      : sessionTierForRole(agent.role);
+    reply.header(
+      'set-cookie',
+      sessionSetCookie(signSessionToken(agent, sessionTier), SESSION_MAX_AGE_SECONDS[sessionTier]),
+    );
     return { agent, token: signToken(agent) };
   });
 
-  // POST /api/auth/logout — clear the shared SSO cookie (idempotent; needs no token, since
-  // clearing your own session is not a CSRF concern). Apps also clear their own local token
-  // client-side; this call makes SSO logout propagate to every *.prominentdental.com app.
-  app.post('/api/auth/logout', async (_req, reply) => {
+  // POST /api/auth/logout — identify the Agent from bearer OR cookie, revoke all of that
+  // Agent's suite tokens, and clear the shared SSO cookie. With neither credential it remains
+  // an idempotent cookie clear. Apps also clear their own local token client-side.
+  app.post('/api/auth/logout', async (req, reply) => {
+    const header = req.headers.authorization;
+    const bearer = header?.startsWith('Bearer ') ? header.slice('Bearer '.length).trim() : '';
+    const agent = (bearer ? await authedAgentFromToken(bearer) : null)
+      ?? await authedAgentFromToken(readSessionToken(req), undefined, { scope: SESSION_SCOPE });
+    if (agent) {
+      await prisma.agent.update({
+        where: { id: agent.id },
+        data: { authVersion: { increment: 1 } },
+      });
+    }
     reply.header('set-cookie', sessionClearCookie());
     return { ok: true };
   });

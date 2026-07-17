@@ -1,6 +1,8 @@
 // Tiny typed API client for the Minerva console. Talks to the Fastify backend;
 // never calls the LLM directly (that moves server-side in M2).
 
+import { fetchWithSessionRenewal, renewSuiteSessionOnce } from '@pantheon/ui';
+
 export const API_URL: string = import.meta.env.VITE_API_URL ?? 'http://localhost:3000';
 
 // Display product codes bare (no dashes) for easy reading/typing — "07-10-09" → "071009".
@@ -115,7 +117,8 @@ export interface LearnedAnswer {
   aiDraft: string;
   finalAnswer: string;
   agentId: string;
-  status: 'pending' | 'approved' | 'rejected';
+  status: 'pending' | 'flagged' | 'promoting' | 'resolving' | 'approved' | 'rejected';
+  flagNote: string | null;
   promotedKbId: string | null;
   createdAt: string;
 }
@@ -147,20 +150,21 @@ export function clearSession(): void {
   localStorage.removeItem(AGENT_KEY);
 }
 
-async function authed<T>(path: string, init?: RequestInit): Promise<T> {
-  const token = getToken();
-  const res = await fetch(`${API_URL}${path}`, {
-    ...init,
-    headers: {
-      'content-type': 'application/json',
-      ...(token ? { authorization: `Bearer ${token}` } : {}),
-      ...(init?.headers ?? {}),
-    },
-  });
+async function authedResponse(path: string, init?: RequestInit): Promise<Response> {
+  const res = await fetchWithSessionRenewal<Agent>(
+    `${API_URL}${path}`,
+    { ...init, headers: { 'content-type': 'application/json', ...(init?.headers ?? {}) } },
+    { apiUrl: API_URL, getToken, setSession },
+  );
   if (res.status === 401) {
     clearSession();
     throw new Error('unauthorized');
   }
+  return res;
+}
+
+async function authed<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await authedResponse(path, init);
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json() as Promise<T>;
 }
@@ -184,11 +188,10 @@ export async function login(email: string, password: string): Promise<{ token: s
 // Never throws — a missing/invalid cookie just yields null (→ show Login).
 export async function bootstrap(): Promise<Agent | null> {
   try {
-    const res = await fetch(`${API_URL}/api/auth/me`, { credentials: 'include' });
-    if (!res.ok) return null;
-    const { agent, token } = (await res.json()) as { agent: Agent; token: string };
-    setSession(token, agent);
-    return agent;
+    const session = await renewSuiteSessionOnce<Agent>(API_URL);
+    if (!session) return null;
+    setSession(session.token, session.agent);
+    return session.agent;
   } catch {
     return null;
   }
@@ -198,8 +201,13 @@ export async function bootstrap(): Promise<Agent | null> {
 // app's local session. Used by the user-facing "log out" action so logging out here
 // propagates across the suite.
 export async function logout(): Promise<void> {
+  const token = getToken();
   try {
-    await fetch(`${API_URL}/api/auth/logout`, { method: 'POST', credentials: 'include' });
+    await fetch(`${API_URL}/api/auth/logout`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: token ? { authorization: `Bearer ${token}` } : {},
+    });
   } catch {
     // Network failure clearing the cookie shouldn't block local logout.
   }
@@ -230,15 +238,9 @@ export const getCustomer = (id: string) => authed<CustomerDetail>(`/api/customer
 export async function draftNow(customerId: string): Promise<
   { queued: true } | { generating: true } | { noPending: true }
 > {
-  const token = getToken();
-  const res = await fetch(`${API_URL}/api/customers/${customerId}/draft-now`, {
+  const res = await authedResponse(`/api/customers/${customerId}/draft-now`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
   });
-  if (res.status === 401) {
-    clearSession();
-    throw new Error('unauthorized');
-  }
   if (res.status === 409) return { noPending: true };
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json() as Promise<{ queued: true } | { generating: true }>;
@@ -312,10 +314,8 @@ export async function sendReply(
   uploadId?: string,
   replyToMessageId?: string, // our Message.id to LINE-quote in this reply
 ): Promise<ReplyResult | { needsConfirm: true } | { alreadyReplied: true }> {
-  const token = getToken();
-  const res = await fetch(`${API_URL}/api/messages/${messageId}/reply`, {
+  const res = await authedResponse(`/api/messages/${messageId}/reply`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
     body: JSON.stringify({ finalText, confirmNumbers, attachProductSkus, uploadId, replyToMessageId }),
   });
   if (res.status === 428) return { needsConfirm: true }; // reply has a price; staff must confirm
@@ -360,10 +360,8 @@ export async function sendQuickReply(
   confirmNumbers?: boolean,
   replyToMessageId?: string, // our Message.id to LINE-quote
 ): Promise<{ ok: boolean; message: Message; dryRun: boolean } | { needsConfirm: true }> {
-  const token = getToken();
-  const res = await fetch(`${API_URL}/api/customers/${customerId}/quick-reply`, {
+  const res = await authedResponse(`/api/customers/${customerId}/quick-reply`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
     body: JSON.stringify({ quickReplyId, confirmNumbers, replyToMessageId }),
   });
   if (res.status === 428) return { needsConfirm: true }; // template has a price; staff must confirm
@@ -389,10 +387,8 @@ export async function sendMessage(
   attachProductSkus?: string[],
   replyToMessageId?: string, // our Message.id to LINE-quote
 ): Promise<{ message: Message; dryRun: boolean } | { needsConfirm: true }> {
-  const token = getToken();
-  const res = await fetch(`${API_URL}/api/customers/${customerId}/message`, {
+  const res = await authedResponse(`/api/customers/${customerId}/message`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
     body: JSON.stringify({ text, uploadId, confirmNumbers, attachProductSkus, replyToMessageId }),
   });
   if (res.status === 428) return { needsConfirm: true }; // message has a price; staff must confirm
@@ -410,10 +406,8 @@ export async function sendToFinance(
   messageId: string,
   fields: { amount: string; bank: string; transferAt: string; ref: string; nickname: string; realName: string; taxInvoice?: string; note?: string },
 ): Promise<{ ok: boolean; error?: string; financeSentAt?: string; corrected?: boolean; alreadySent?: boolean }> {
-  const token = getToken();
-  const res = await fetch(`${API_URL}/api/messages/${messageId}/to-finance`, {
+  const res = await authedResponse(`/api/messages/${messageId}/to-finance`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
     body: JSON.stringify(fields),
   });
   if (res.status === 409) return { ok: false, alreadySent: true };
@@ -461,10 +455,8 @@ export async function promoteLearned(id: string): Promise<
   | { unavailable: true }
   | { conflict: true }
 > {
-  const token = getToken();
-  const res = await fetch(`${API_URL}/api/learned/${id}/promote`, {
+  const res = await authedResponse(`/api/learned/${id}/promote`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
   });
   if (res.status === 503) return { unavailable: true }; // LLM distill unavailable — retry later
   if (res.status === 409) return { conflict: true }; // already promoted or a promote is in flight
@@ -474,6 +466,33 @@ export async function promoteLearned(id: string): Promise<
 
 export const rejectLearned = (id: string) =>
   authed<{ ok: boolean }>(`/api/learned/${id}/reject`, { method: 'POST' });
+
+export const flagLearned = (id: string, note?: string) =>
+  authed<{ ok: boolean }>(`/api/learned/${id}/flag`, {
+    method: 'POST',
+    body: JSON.stringify(note ? { note } : {}),
+  });
+
+export async function resolveLearned(
+  id: string,
+  resolution: { action: 'promote'; kbText: string } | { action: 'reject' },
+): Promise<
+  | { ok: boolean; kb?: { answer: string } | null }
+  | { priceContent: true }
+  | { conflict: true }
+> {
+  const res = await authedResponse(`/api/learned/${id}/resolve`, {
+    method: 'POST',
+    body: JSON.stringify(resolution),
+  });
+  if (res.status === 400) {
+    const body = await res.json().catch(() => null) as { error?: string } | null;
+    if (body?.error === 'price_content') return { priceContent: true };
+  }
+  if (res.status === 409) return { conflict: true };
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
 
 // AI-accuracy metrics (supervisor only) — Stage-1 learning dashboard.
 export interface MetricsBucket {

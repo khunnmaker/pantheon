@@ -12,6 +12,7 @@ import {
   Scale,
   Crown,
 } from 'lucide-react';
+import { useHashTab } from '@pantheon/ui';
 import { useCeres } from './lib/bootstrapContext';
 import { logout as logoutSuite } from './lib/api';
 import MdBoard from './MdBoard';
@@ -42,11 +43,15 @@ const BASE_TABS: { key: Tab; label: string; icon: React.ReactNode }[] = [
 
 export default function MdApp() {
   const { agent, bootstrap, onLogout } = useCeres();
-  const [tab, setTab] = useState<Tab>('board');
+  const isCeo = bootstrap.role === 'ceo';
+  // Tab keys this agent can reach — 'ceo' is CEO-only (mirrors the TABS list below). Feeds
+  // useHashTab so a shared #ceo link opened by a GM falls back to กระดาน instead of a tab
+  // that never renders for them.
+  const mdTabKeys: Tab[] = isCeo ? [...BASE_TABS.map((t) => t.key), 'ceo'] : BASE_TABS.map((t) => t.key);
+  const [tab, setTab] = useHashTab<Tab>(mdTabKeys, 'board');
   const [requestPrefill, setRequestPrefill] = useState<RequestPrefill | null>(null);
   const [approvalPrefill, setApprovalPrefill] = useState<ApprovalPrefill | null>(null);
 
-  const isCeo = bootstrap.role === 'ceo';
   const TABS: { key: Tab; label: string; icon: React.ReactNode }[] = isCeo
     ? [...BASE_TABS, { key: 'ceo', label: 'CEO', icon: <Crown size={20} /> }]
     : BASE_TABS;

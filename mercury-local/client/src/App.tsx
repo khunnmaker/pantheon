@@ -1,9 +1,9 @@
-import { useState } from 'react';
 import { Building2, Boxes, FileText, Lock, RefreshCw } from 'lucide-react';
 import Vendors from './views/Vendors';
 import Items from './views/Items';
 import PurchaseOrders from './views/PurchaseOrders';
 import Sync from './views/Sync';
+import { useHashTab } from './useHashTab';
 
 type Tab = 'items' | 'vendors' | 'sync' | 'pos';
 
@@ -13,9 +13,11 @@ const TABS: { key: Tab; label: string; icon: typeof Boxes }[] = [
   { key: 'sync', label: 'ซิงค์ / สร้าง PO', icon: RefreshCw },
   { key: 'pos', label: 'ใบสั่งซื้อ', icon: FileText },
 ];
+// Single flat tab bar, no per-role split — every tab is always valid.
+const APP_TABS: Tab[] = TABS.map((t) => t.key);
 
 export default function App() {
-  const [tab, setTab] = useState<Tab>('items');
+  const [tab, setTab] = useHashTab<Tab>(APP_TABS, 'items');
 
   return (
     <div className="min-h-screen bg-orange-50/40 text-slate-800">
