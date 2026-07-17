@@ -11,6 +11,10 @@ import {
   Unlink,
   FileEdit,
   Search,
+  Landmark,
+  Banknote,
+  ShoppingCart,
+  Undo2,
 } from 'lucide-react';
 import {
   getStatementSummary,
@@ -24,6 +28,7 @@ import {
   setStatementLineRef,
   listRequests,
   listMovements,
+  getTransferReconciliation,
   baht,
   ApiError,
   type StatementSummary,
@@ -33,6 +38,8 @@ import {
   type MatchStatus,
   type PaymentRequest,
   type Movement,
+  type TransferReconciliationEvent,
+  type TransferReconciliationBankLine,
 } from './lib/api';
 import { todayStr } from './MdRequests';
 
@@ -117,6 +124,9 @@ export default function MdRecon() {
     <div>
       <h2 className="text-lg font-bold mb-3">กระทบยอด</h2>
 
+      <TransferReconciliationPanel refreshKey={refreshKey} onChanged={bump} />
+
+      <div className="text-sm font-semibold text-slate-500 mb-2 mt-5">กระทบยอดแบบเดิม (คำขอจ่ายเงิน / เงินเข้า-เติมเงิน)</div>
       <SummaryCards
         summary={summary}
         loading={summaryLoading}
@@ -210,6 +220,268 @@ export default function MdRecon() {
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+// The Phase 3 transfer reconciliation workspace: every transfer money event (payment /
+// purchase / refund / reversal on the transfer lane) next to its matched bank line (or
+// lack of one), slip status, and manual match/unmatch. Reversal exceptions stay visible
+// as unmatched until their real compensating bank line shows up. See
+// GET /api/ceres/transfers/reconciliation + docs/CERES_REVAMP_PLAN.md "Phase 3".
+function TransferReconciliationPanel({ refreshKey, onChanged }: { refreshKey: number; onChanged: () => void }) {
+  const [events, setEvents] = useState<TransferReconciliationEvent[]>([]);
+  const [bankLines, setBankLines] = useState<TransferReconciliationBankLine[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [matchingEventId, setMatchingEventId] = useState('');
+  const [showMatched, setShowMatched] = useState(false);
+
+  const load = useCallback(() => {
+    setLoading(true);
+    setError('');
+    getTransferReconciliation()
+      .then((r) => {
+        setEvents(r.transferEvents);
+        setBankLines(r.unmatchedBankLines);
+      })
+      .catch(() => setError('โหลดข้อมูลกระทบยอดเงินโอนไม่สำเร็จ'))
+      .finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load, refreshKey]);
+
+  const unmatchedCount = events.filter((e) => e.reconciliationState === 'unmatched').length;
+  const reversalExceptionCount = events.filter((e) => e.reversalException).length;
+  const visibleEvents = showMatched ? events : events.filter((e) => e.reconciliationState === 'unmatched');
+
+  async function handleUnmatch(bankLineId: string) {
+    try {
+      await unmatchStatementLine(bankLineId);
+      load();
+      onChanged();
+    } catch {
+      setError('ยกเลิกจับคู่ไม่สำเร็จ');
+    }
+  }
+
+  return (
+    <div className="mb-2">
+      <div className="flex items-center justify-between gap-2 mb-2">
+        <h3 className="font-bold text-base flex items-center gap-1.5">
+          <Landmark size={17} className="text-amber-700" /> กระทบยอดเงินโอน
+        </h3>
+        <button
+          onClick={load}
+          disabled={loading}
+          aria-label="โหลดใหม่"
+          className="p-2 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-white disabled:opacity-50"
+        >
+          <RefreshCw size={15} className={loading ? 'animate-spin' : ''} />
+        </button>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3 mb-3">
+        <div className="bg-white rounded-xl border border-slate-200 p-3">
+          <div className="text-xs text-slate-400">ยังไม่จับคู่กับสเตทเมนท์</div>
+          <div className="text-lg font-bold text-rose-600">{unmatchedCount}</div>
+        </div>
+        <div className="bg-white rounded-xl border border-slate-200 p-3">
+          <div className="text-xs text-slate-400">รายการย้อนกลับที่ยังไม่พบในสเตทเมนท์</div>
+          <div className="text-lg font-bold text-amber-600">{reversalExceptionCount}</div>
+        </div>
+      </div>
+
+      {error && (
+        <div className="flex items-center gap-1 text-rose-600 text-sm py-3 justify-center">
+          <AlertTriangle size={14} /> {error}
+        </div>
+      )}
+
+      {!loading && !error && (
+        <button
+          onClick={() => setShowMatched((v) => !v)}
+          className="text-xs text-slate-500 underline underline-offset-2 hover:text-slate-700 mb-2"
+        >
+          {showMatched ? 'ซ่อนรายการที่จับคู่แล้ว' : `แสดงรายการที่จับคู่แล้วด้วย (${events.length - unmatchedCount})`}
+        </button>
+      )}
+
+      {loading ? (
+        <div className="py-8 flex justify-center text-slate-400">
+          <Loader2 className="animate-spin" size={20} />
+        </div>
+      ) : visibleEvents.length === 0 ? (
+        <div className="text-center text-slate-400 text-sm py-6 bg-white rounded-xl border border-slate-200">
+          ไม่มีรายการเงินโอนที่ต้องกระทบยอด
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {visibleEvents.map((ev) => (
+            <div key={ev.id} className="bg-white rounded-xl border border-slate-200 p-3">
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-1.5 text-sm font-medium">
+                    {ev.requestType === 'purchase' ? <ShoppingCart size={13} className="text-slate-400" /> : <Banknote size={13} className="text-slate-400" />}
+                    {ev.requester || '—'}
+                    {ev.kind === 'reversal' && <Undo2 size={13} className="text-rose-500" />}
+                  </div>
+                  <div className="text-xs text-slate-400">
+                    {ev.entity} · {ev.kind === 'reversal' ? 'ย้อนกลับ' : ev.direction === 'in' ? 'เงินเข้า' : 'เงินออก'} · {fmtDateTime(ev.createdAt)}
+                  </div>
+                </div>
+                <span className={`font-bold shrink-0 ${ev.direction === 'in' ? 'text-emerald-600' : 'text-rose-600'}`}>
+                  {ev.direction === 'in' ? '+' : '-'}
+                  {baht(Number(ev.amount))}
+                </span>
+              </div>
+
+              <div className="flex flex-wrap gap-1.5 mt-2">
+                {ev.slipRequired && (
+                  <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${ev.slipPresent ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'}`}>
+                    {ev.slipPresent ? 'มีสลิป' : 'ไม่มีสลิป'}
+                  </span>
+                )}
+                {ev.requestType === 'purchase' && (
+                  <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${ev.purchaseReceiptPresent ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'}`}>
+                    {ev.purchaseReceiptPresent ? 'มีใบเสร็จ' : 'ไม่มีใบเสร็จ'}
+                  </span>
+                )}
+                <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${ev.reconciliationState === 'matched' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-600'}`}>
+                  {ev.reconciliationState === 'matched' ? 'จับคู่แล้ว' : 'ยังไม่จับคู่'}
+                </span>
+                {ev.reversalException && (
+                  <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-100 text-amber-700">ยังไม่พบในสเตทเมนท์</span>
+                )}
+              </div>
+
+              {ev.reconciliationState === 'matched' && ev.bankLine ? (
+                <div className="mt-2 pt-2 border-t border-slate-100 flex items-center justify-between gap-2">
+                  <div className="text-xs text-slate-500 truncate">
+                    จับคู่กับ: {fmtDateTime(ev.bankLine.txnAt)} · {ev.bankLine.details || 'รายการธนาคาร'}
+                  </div>
+                  <button
+                    onClick={() => handleUnmatch(ev.bankLine!.id)}
+                    className="shrink-0 flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-rose-300 text-rose-600 text-xs font-semibold hover:bg-rose-50"
+                  >
+                    <Unlink size={12} /> ยกเลิกจับคู่
+                  </button>
+                </div>
+              ) : (
+                <div className="mt-2 pt-2 border-t border-slate-100">
+                  <button
+                    onClick={() => setMatchingEventId(ev.id)}
+                    className="w-full min-h-[38px] rounded-lg bg-sky-600 hover:bg-sky-700 text-white text-xs font-semibold flex items-center justify-center gap-1"
+                  >
+                    <Link2 size={13} /> จับคู่กับรายการธนาคาร
+                  </button>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {matchingEventId && (
+        <TransferMatchDialog
+          event={events.find((e) => e.id === matchingEventId)!}
+          bankLines={bankLines}
+          onClose={() => setMatchingEventId('')}
+          onMatched={() => {
+            setMatchingEventId('');
+            load();
+            onChanged();
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function TransferMatchDialog({
+  event,
+  bankLines,
+  onClose,
+  onMatched,
+}: {
+  event: TransferReconciliationEvent;
+  bankLines: TransferReconciliationBankLine[];
+  onClose: () => void;
+  onMatched: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  // Same direction is the only hard filter — amounts can legitimately differ (partial
+  // matches aren't a thing here, but Nee still needs to see near-misses to catch typos).
+  const candidates = [...bankLines]
+    .filter((l) => l.direction === event.direction)
+    .sort((a, b) => {
+      const aExact = Number(a.amount) === Number(event.amount) ? 0 : 1;
+      const bExact = Number(b.amount) === Number(event.amount) ? 0 : 1;
+      if (aExact !== bExact) return aExact - bExact;
+      return a.txnAt < b.txnAt ? 1 : -1;
+    });
+
+  async function pick(bankLineId: string) {
+    setBusy(true);
+    setError('');
+    try {
+      await matchStatementLine(bankLineId, 'requestMoneyEvent', event.id);
+      onMatched();
+    } catch {
+      setError('จับคู่ไม่สำเร็จ');
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-40 bg-black/40 flex items-end sm:items-center justify-center p-0 sm:p-4">
+      <div className="bg-white rounded-t-2xl sm:rounded-2xl w-full sm:max-w-md max-h-[85vh] overflow-y-auto p-4">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="font-bold text-base">เลือกรายการธนาคาร</h3>
+          <button onClick={onClose} className="p-1 text-slate-400 hover:text-slate-600">
+            <X size={18} />
+          </button>
+        </div>
+        <div className="text-xs text-slate-500 mb-3">
+          {event.requester} · {baht(Number(event.amount))} · {event.direction === 'in' ? 'เงินเข้า' : 'เงินออก'}
+        </div>
+
+        {error && (
+          <div className="flex items-center gap-1 text-rose-600 text-xs mb-2">
+            <AlertTriangle size={12} /> {error}
+          </div>
+        )}
+
+        {candidates.length === 0 ? (
+          <div className="text-center text-slate-400 text-sm py-8">ไม่พบรายการธนาคารที่ยังไม่จับคู่ในทิศทางเดียวกัน</div>
+        ) : (
+          <div className="space-y-1.5">
+            {candidates.map((l) => {
+              const exact = Number(l.amount) === Number(event.amount);
+              return (
+                <button
+                  key={l.id}
+                  onClick={() => pick(l.id)}
+                  disabled={busy}
+                  className={`w-full flex items-center justify-between gap-2 px-3 py-2.5 rounded-lg border text-left text-sm disabled:opacity-50 ${
+                    exact ? 'border-emerald-300 bg-emerald-50 hover:bg-emerald-100' : 'border-slate-200 hover:bg-slate-50'
+                  }`}
+                >
+                  <div className="min-w-0">
+                    <div className="font-medium truncate">{l.payerName || l.details || l.channel}</div>
+                    <div className="text-xs text-slate-400">{fmtDateTime(l.txnAt)}</div>
+                  </div>
+                  <span className="font-semibold shrink-0">{baht(Number(l.amount))}</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

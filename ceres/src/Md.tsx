@@ -12,6 +12,7 @@ import {
   Scale,
   Crown,
   HandCoins,
+  CircleDollarSign,
 } from 'lucide-react';
 import { useHashTab } from '@pantheon/ui';
 import { useCeres } from './lib/bootstrapContext';
@@ -26,13 +27,26 @@ import MdTemplates from './MdTemplates';
 import MdRecon from './MdRecon';
 import CeoOverview from './CeoOverview';
 import NeeApprovalQueue from './NeeApprovalQueue';
+import NeeFulfillmentQueue from './NeeFulfillmentQueue';
 
 // Portal-back link uses the canonical Pantheon domain unless build-time env overrides it.
 const PORTAL_URL: string = import.meta.env.VITE_PORTAL_URL ?? 'https://pantheon.prominentdental.com';
 
-type Tab = 'request-approval' | 'board' | 'approval' | 'money' | 'close' | 'expenses' | 'requests' | 'templates' | 'recon' | 'ceo';
+type Tab =
+  | 'request-approval'
+  | 'fulfill'
+  | 'board'
+  | 'approval'
+  | 'money'
+  | 'close'
+  | 'expenses'
+  | 'requests'
+  | 'templates'
+  | 'recon'
+  | 'ceo';
 
 const BASE_TABS: { key: Tab; label: string; icon: React.ReactNode }[] = [
+  { key: 'fulfill', label: 'จ่าย/ซื้อ', icon: <CircleDollarSign size={20} /> },
   { key: 'board', label: 'กระดาน', icon: <LayoutDashboard size={20} /> },
   { key: 'approval', label: 'รอตรวจ', icon: <ClipboardCheck size={20} /> },
   { key: 'money', label: 'เบิก/คืน', icon: <ArrowLeftRight size={20} /> },
@@ -113,6 +127,7 @@ export default function MdApp() {
 
       <main className="max-w-5xl mx-auto p-4">
         {tab === 'request-approval' && !isCeo && <NeeApprovalQueue />}
+        {tab === 'fulfill' && <NeeFulfillmentQueue />}
         {tab === 'board' && <MdBoard onViewPendingParty={goToApprovalWithPrefill} />}
         {tab === 'approval' && (
           <MdApproval prefill={approvalPrefill} onConsumePrefill={() => setApprovalPrefill(null)} />

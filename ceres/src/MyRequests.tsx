@@ -4,6 +4,7 @@ import {
   Ban,
   ChevronDown,
   ChevronUp,
+  Eye,
   Loader2,
   Pencil,
   RefreshCw,
@@ -12,6 +13,7 @@ import {
   baht,
   cancelStaffRequest,
   listStaffRequests,
+  type FulfillmentStatus,
   type StaffRequest,
 } from './lib/api';
 import { MediaThumb } from './lib/media';
@@ -22,11 +24,26 @@ const TYPE_LABEL: Record<StaffRequest['requestType'], string> = {
   purchase: 'ขอให้ซื้อ',
 };
 
+// Once a request is approved, its fulfillment status (paid/bought/settling/settled) is
+// more useful to the requester than the flat "อนุมัติแล้ว" — Phase 3 (cash/transfer
+// fulfillment + advance liquidation) surfaces those states here.
+const FULFILLMENT_META: Partial<Record<FulfillmentStatus, { label: string; cls: string }>> = {
+  unfulfilled: { label: 'อนุมัติแล้ว รอจ่าย', cls: 'bg-emerald-100 text-emerald-700' },
+  paid: { label: 'จ่ายแล้ว', cls: 'bg-sky-100 text-sky-700' },
+  bought: { label: 'ซื้อแล้ว', cls: 'bg-sky-100 text-sky-700' },
+  settling: { label: 'กำลังปิดยอดเบิก', cls: 'bg-amber-100 text-amber-700' },
+  settled: { label: 'ปิดยอดแล้ว', cls: 'bg-emerald-100 text-emerald-700' },
+  reversed: { label: 'ย้อนกลับแล้ว', cls: 'bg-rose-100 text-rose-700' },
+};
+
 function statusMeta(request: StaffRequest): { label: string; cls: string } {
   if (request.approvalStatus === 'pending_nee') {
     return request.aiScreenStatus === 'pending'
       ? { label: 'รอตรวจ', cls: 'bg-sky-100 text-sky-700' }
       : { label: 'รอ GM', cls: 'bg-amber-100 text-amber-700' };
+  }
+  if (request.approvalStatus === 'approved') {
+    return FULFILLMENT_META[request.fulfillmentStatus] ?? { label: 'อนุมัติแล้ว', cls: 'bg-emerald-100 text-emerald-700' };
   }
   const statuses: Record<StaffRequest['approvalStatus'], { label: string; cls: string }> = {
     legacy: { label: 'รอตรวจ', cls: 'bg-slate-100 text-slate-600' },
@@ -48,9 +65,11 @@ function rejectionReason(request: StaffRequest): string {
 export default function MyRequests({
   reloadKey,
   onEdit,
+  onOpenDetail,
 }: {
   reloadKey: number;
   onEdit: (request: StaffRequest) => void;
+  onOpenDetail: (request: StaffRequest) => void;
 }) {
   const [rows, setRows] = useState<StaffRequest[]>([]);
   const [loading, setLoading] = useState(true);
@@ -152,6 +171,13 @@ export default function MyRequests({
                       <dt className="text-slate-400">วันที่ส่ง</dt>
                       <dd>{new Date(request.createdAt).toLocaleString('th-TH', { dateStyle: 'medium', timeStyle: 'short' })}</dd>
                     </dl>
+
+                    <button
+                      onClick={() => onOpenDetail(request)}
+                      className="w-full mt-3 min-h-[42px] rounded-lg border border-slate-300 text-slate-600 text-sm font-semibold flex items-center justify-center gap-1 hover:bg-slate-50"
+                    >
+                      <Eye size={14} /> ดูรายละเอียด / ประวัติ
+                    </button>
 
                     {editable && (
                       <div className="flex gap-2 mt-3 pt-3 border-t border-slate-100">

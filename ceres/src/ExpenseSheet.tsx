@@ -9,22 +9,34 @@ const AMOUNT_RE = /^\d+(\.\d{1,2})?$/;
 export default function ExpenseSheet({
   editing,
   partyId,
+  advanceRequestId,
+  defaultEntity,
+  defaultCategory,
   onClose,
   onSaved,
 }: {
   editing: Expense | null;
   partyId?: string; // required for gm/ceo creating on behalf of a party
+  // Set when this entry LIQUIDATES a paid advance request (Ceres revamp Phase 3) — the
+  // receipt becomes mandatory (no "no receipt" escape hatch) and the server links the
+  // expense back to the advance via CeresExpense.advanceRequestId. See
+  // api/src/routes/ceres/p1.ts POST /api/ceres/expenses.
+  advanceRequestId?: string;
+  defaultEntity?: string;
+  defaultCategory?: string;
   onClose: () => void;
   onSaved: () => void;
 }) {
   const { bootstrap } = useCeres();
   const entities = bootstrap.entities.length ? bootstrap.entities : ['PROM', 'TONR', 'DENC', 'DENL', 'KPKF'];
   const categories = [...bootstrap.categories].filter((c) => c.active).sort((a, b) => a.sortOrder - b.sortOrder);
+  const isLiquidation = !!advanceRequestId;
 
-  const [entity, setEntity] = useState(editing?.entity || entities[0] || 'PROM');
+  const [entity, setEntity] = useState(editing?.entity || defaultEntity || entities[0] || 'PROM');
   const [categoryId, setCategoryId] = useState(() => {
-    if (!editing) return '';
-    const match = categories.find((c) => c.name === editing.category);
+    const wantName = editing?.category || defaultCategory;
+    if (!wantName) return '';
+    const match = categories.find((c) => c.name === wantName);
     return match?.id ?? '';
   });
   const [customerNote, setCustomerNote] = useState(editing?.customerNote || '');
@@ -37,7 +49,7 @@ export default function ExpenseSheet({
   const [ocr, setOcr] = useState<OcrResult | null>(null);
   const [duplicate, setDuplicate] = useState<DuplicateReceipt | null>(null);
   const [noReceiptConfirming, setNoReceiptConfirming] = useState(false);
-  const [noReceipt, setNoReceipt] = useState(!!editing && !editing.receiptUploadId);
+  const [noReceipt, setNoReceipt] = useState(!isLiquidation && !!editing && !editing.receiptUploadId);
   const [uploadBusy, setUploadBusy] = useState(false);
   const [uploadError, setUploadError] = useState('');
 
@@ -87,7 +99,7 @@ export default function ExpenseSheet({
     if (!AMOUNT_RE.test(amount.trim()) || Number(amount) <= 0) return 'invalid_amount';
     if (!selectedCategory) return 'invalid_category';
     if (selectedCategory.needsCustomerNote && !customerNote.trim()) return 'missing_customer_note';
-    if (!noReceipt && !receiptUploadId) return 'missing_receipt';
+    if (!receiptUploadId && (isLiquidation || !noReceipt)) return 'missing_receipt';
     return '';
   }
 
@@ -107,7 +119,9 @@ export default function ExpenseSheet({
           : problem === 'missing_customer_note'
             ? 'กรุณากรอกชื่อลูกค้า'
             : problem === 'missing_receipt'
-              ? 'กรุณาถ่ายรูปใบเสร็จ หรือยืนยันว่าไม่มีใบเสร็จ'
+              ? isLiquidation
+                ? 'กรุณาถ่ายรูปใบเสร็จ (จำเป็นสำหรับรายการหักเงินเบิก)'
+                : 'กรุณาถ่ายรูปใบเสร็จ หรือยืนยันว่าไม่มีใบเสร็จ'
               : 'กรอกจำนวนเงินให้ถูกต้อง',
       );
       return;
@@ -124,6 +138,7 @@ export default function ExpenseSheet({
         receiptUploadId: receiptUploadId ?? undefined,
         note: note.trim() || undefined,
         ...(partyId ? { partyId } : {}),
+        ...(advanceRequestId ? { advanceRequestId } : {}),
       };
       if (editing) {
         await updateExpense(editing.id, body);
@@ -147,13 +162,20 @@ export default function ExpenseSheet({
     <div className="fixed inset-0 z-50 bg-slate-900/40 flex items-end sm:items-center justify-center">
       <div className="bg-white w-full sm:max-w-md sm:rounded-2xl rounded-t-2xl max-h-[92vh] overflow-y-auto">
         <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100 sticky top-0 bg-white z-10">
-          <div className="font-semibold text-base">{editing ? 'แก้ไขค่าใช้จ่าย' : 'บันทึกค่าใช้จ่าย'}</div>
+          <div className="font-semibold text-base">
+            {editing ? 'แก้ไขค่าใช้จ่าย' : isLiquidation ? 'เพิ่มค่าใช้จ่ายเบิก' : 'บันทึกค่าใช้จ่าย'}
+          </div>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600 p-1">
             <X size={20} />
           </button>
         </div>
 
         <div className="p-4 space-y-4">
+          {isLiquidation && (
+            <div className="px-3 py-2.5 rounded-xl bg-sky-50 border border-sky-200 text-sky-900 text-xs">
+              รายการนี้จะหักออกจากยอดเงินเบิกล่วงหน้าที่ค้างอยู่ — ต้องแนบใบเสร็จทุกครั้ง
+            </div>
+          )}
           {/* Photo step */}
           <div>
             <div className="text-xs font-semibold text-slate-500 mb-1.5">ใบเสร็จ</div>
@@ -224,7 +246,7 @@ export default function ExpenseSheet({
               </div>
             )}
 
-            {!receiptPreview && !noReceipt && (
+            {!receiptPreview && !noReceipt && !isLiquidation && (
               noReceiptConfirming ? (
                 <button
                   onClick={() => setNoReceipt(true)}

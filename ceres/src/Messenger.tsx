@@ -12,6 +12,7 @@ import {
 import { useCeres } from './lib/bootstrapContext';
 import MyRequests from './MyRequests';
 import RequestSheet from './RequestSheet';
+import RequestDetail from './RequestDetail';
 
 // Portal-back link uses the canonical Pantheon domain unless build-time env overrides it.
 const PORTAL_URL: string = import.meta.env.VITE_PORTAL_URL ?? 'https://pantheon.prominentdental.com';
@@ -48,6 +49,7 @@ export default function MessengerHome() {
   const [requestSheetOpen, setRequestSheetOpen] = useState(false);
   const [editingRequest, setEditingRequest] = useState<StaffRequest | null>(null);
   const [requestReloadKey, setRequestReloadKey] = useState(0);
+  const [detailRequestId, setDetailRequestId] = useState<string | null>(null);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -122,6 +124,7 @@ export default function MessengerHome() {
             setEditingRequest(request);
             setRequestSheetOpen(true);
           }}
+          onOpenDetail={(request) => setDetailRequestId(request.id)}
         />
 
         <div className="flex items-center justify-between mb-3 gap-2">
@@ -256,6 +259,14 @@ export default function MessengerHome() {
             setSuccessMsg(editingRequest ? 'แก้ไขคำขอเรียบร้อย' : 'ส่งคำขอแล้ว กำลังรอตรวจ');
             setRequestReloadKey((key) => key + 1);
           }}
+        />
+      )}
+
+      {detailRequestId && (
+        <RequestDetail
+          requestId={detailRequestId}
+          onClose={() => setDetailRequestId(null)}
+          onChanged={() => setRequestReloadKey((key) => key + 1)}
         />
       )}
     </div>

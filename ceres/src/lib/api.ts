@@ -227,6 +227,8 @@ export interface Expense {
   voidedAt: string | null;
   voidReason: string;
   settlementId: string | null;
+  advanceRequestId: string | null;
+  fundingLane: string; // cash | transfer | self_funded
   aiVerdict: string;
   note: string;
   createdAt: string;
@@ -240,6 +242,7 @@ export const createExpense = (body: {
   receiptUploadId?: string;
   note?: string;
   partyId?: string;
+  advanceRequestId?: string;
 }) => authed<{ expense: Expense }>('/api/ceres/expenses', { method: 'POST', body: JSON.stringify(body) });
 
 export const listExpenses = (q: {
@@ -326,6 +329,18 @@ export interface SettlementLine {
   refunds: string;
   outstanding: string;
 }
+// A snapshot row of one cash-lane request money event (payment/purchase/refund/reversal)
+// captured at close time — see CeresSettlementRequestLine / POST /api/ceres/close.
+// Old UI versions that don't read this field simply ignore it (additive).
+export interface SettlementRequestLine {
+  id: string;
+  requestId: string;
+  moneyEventId: string;
+  kind: string; // payment | purchase | refund | reversal
+  partyName: string;
+  amount: string;
+  createdAt: string;
+}
 export interface Settlement {
   id: string;
   dayKey: string;
@@ -335,6 +350,7 @@ export interface Settlement {
   note: string;
   createdAt: string;
   lines: SettlementLine[];
+  requestLines: SettlementRequestLine[];
 }
 export const listSettlements = (limit?: number) =>
   authed<{ settlements: Settlement[] }>(`/api/ceres/settlements${limit ? `?limit=${limit}` : ''}`);
@@ -577,7 +593,11 @@ export interface StatementLine {
 export const listStatementLines = (q: { status?: MatchStatus; dir?: 'in' | 'out'; from?: string; to?: string; q?: string; limit?: number }) =>
   authed<{ lines: StatementLine[] }>(`/api/ceres/statements/lines${queryString(q)}`);
 
-export const matchStatementLine = (id: string, type: 'paymentRequest' | 'cashMovement', targetId: string) =>
+export const matchStatementLine = (
+  id: string,
+  type: 'paymentRequest' | 'cashMovement' | 'requestMoneyEvent',
+  targetId: string,
+) =>
   authed<{ line: StatementLine }>(`/api/ceres/statements/lines/${id}/match`, {
     method: 'POST',
     body: JSON.stringify({ type, id: targetId }),
@@ -733,7 +753,9 @@ export const listStaffRequests = (scope: StaffRequestScope, limit?: number) =>
   authed<{ requests: StaffRequest[] }>(`/api/ceres/requests${queryString({ workflow: 2, scope, limit })}`);
 
 export const getStaffRequest = (id: string) =>
-  authed<{ request: StaffRequest; events: RequestEvent[]; revisions: Revision[] }>(`/api/ceres/requests/${id}`);
+  authed<{ request: StaffRequest; events: RequestEvent[]; revisions: Revision[]; moneyEvents: RequestMoneyEvent[] }>(
+    `/api/ceres/requests/${id}`,
+  );
 
 export const editStaffRequest = (
   id: string,
@@ -764,3 +786,179 @@ export const ceoDecisionV2 = (id: string, decision: 'approve' | 'reject', note?:
     method: 'POST',
     body: JSON.stringify({ decision, note }),
   });
+
+// ---------------------------------------------------------------------------
+// P3 — cash/transfer fulfillment, advance liquidation, transfer reconciliation.
+// See api/src/ceres/requestMoney.ts + api/src/routes/ceres/requests.ts,statements.ts.
+// ---------------------------------------------------------------------------
+
+export type RequestMoneyLane = 'cash' | 'transfer';
+export type RequestMoneyKind = 'payment' | 'purchase' | 'refund' | 'reversal';
+
+export interface RequestMoneyEvent {
+  id: string;
+  requestId: string;
+  kind: RequestMoneyKind;
+  lane: RequestMoneyLane;
+  amount: string;
+  transferSlipUploadId: string | null;
+  purchaseReceiptUploadId: string | null;
+  cashMovementId: string | null;
+  reversesEventId: string | null;
+  createdById: string | null;
+  createdByName: string;
+  note: string;
+  createdAt: string;
+}
+
+// A small helper for generating client-side idempotency keys on money-moving actions
+// (fulfill/refund/reverse) — a retried tap after a flaky network response replays the
+// SAME event instead of creating a second one (see requestMoney.ts's idempotencyKey).
+export function newIdempotencyKey(): string {
+  return typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
+}
+
+export const fulfillStaffRequest = (
+  id: string,
+  body: {
+    lane: RequestMoneyLane;
+    transferSlipUploadId?: string;
+    purchaseReceiptUploadId?: string;
+    note?: string;
+    idempotencyKey?: string;
+  },
+) =>
+  authed<{ request: StaffRequest; moneyEvent: RequestMoneyEvent }>(`/api/ceres/requests/${id}/fulfill`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+
+export interface LiquidationExpense {
+  id: string;
+  partyId: string | null;
+  partyName: string;
+  entity: string;
+  category: string;
+  customerNote: string;
+  amount: string;
+  status: ExpenseStatus;
+  receiptUploadId: string | null;
+  note: string;
+  spentAt: string;
+  createdAt: string;
+}
+
+// The raw request snapshot returned inside getAdvanceLiquidation() — NOT run through
+// toStaffRequestRow (see api/src/ceres/requestMoney.ts's getAdvanceLiquidation), so it
+// carries the DB column names directly. Only the fields the UI actually reads are typed.
+export interface LiquidationRequestSummary {
+  id: string;
+  amount: string;
+  entity: string;
+  category: string;
+  detail: string;
+  requestType: V2RequestType;
+  requestedById: string | null;
+  requestedByName: string;
+  requesterPartyId: string | null;
+  fulfillmentStatus: FulfillmentStatus;
+  approvalStatus: ApprovalStatus;
+  createdAt: string;
+}
+
+export interface AdvanceLiquidation {
+  request: LiquidationRequestSummary;
+  fundingLane: RequestMoneyLane;
+  advanceAmount: string;
+  approvedExpenses: LiquidationExpense[];
+  returns: RequestMoneyEvent[];
+  totals: {
+    approvedExpenses: string;
+    returned: string;
+    remainingOutstanding: string;
+    settled: boolean;
+  };
+}
+
+export const refundAdvance = (
+  id: string,
+  body: { lane: RequestMoneyLane; amount: string; transferSlipUploadId?: string; note?: string; idempotencyKey?: string },
+) =>
+  authed<{ moneyEvent: RequestMoneyEvent; liquidation: AdvanceLiquidation }>(`/api/ceres/requests/${id}/refund`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+
+export const reverseRequestMoneyEvent = (eventId: string, reason: string, idempotencyKey?: string) =>
+  authed<{ moneyEvent: RequestMoneyEvent }>(`/api/ceres/request-money-events/${eventId}/reverse`, {
+    method: 'POST',
+    body: JSON.stringify({ reason, idempotencyKey }),
+  });
+
+export const getRequestLiquidation = (id: string) =>
+  authed<{ liquidation: AdvanceLiquidation }>(`/api/ceres/requests/${id}/liquidation`);
+
+export interface TransferReconciliationEvent {
+  id: string;
+  requestId: string;
+  requestType: string;
+  requester: string;
+  entity: string;
+  kind: RequestMoneyKind;
+  direction: 'in' | 'out' | null;
+  amount: string;
+  createdAt: string;
+  slipRequired: boolean;
+  slipPresent: boolean;
+  purchaseReceiptPresent: boolean;
+  reversesEventId: string | null;
+  reversedByEventId: string | null;
+  reconciliationState: 'matched' | 'unmatched';
+  reversalException: boolean;
+  bankLine: {
+    id: string;
+    txnAt: string;
+    direction: 'in' | 'out';
+    amount: string;
+    details: string;
+    reconciledById: string | null;
+    reconciledAt: string | null;
+  } | null;
+}
+export interface TransferReconciliationBankLine {
+  id: string;
+  txnAt: string;
+  direction: 'in' | 'out';
+  amount: string;
+  channel: string;
+  description: string;
+  details: string;
+  payerName: string;
+}
+export const getTransferReconciliation = () =>
+  authed<{ transferEvents: TransferReconciliationEvent[]; unmatchedBankLines: TransferReconciliationBankLine[] }>(
+    '/api/ceres/transfers/reconciliation',
+  );
+
+// Thai-language mapping for the money-movement error codes (see RequestMoneyError /
+// CashLedgerError in api/src/ceres/requestMoney.ts) — shared by every fulfill/refund/
+// reverse call site so the same code always reads the same way to Nee/CEO.
+const MONEY_ERROR_TH: Record<string, string> = {
+  not_found: 'ไม่พบรายการ',
+  not_approved: 'คำขอนี้ยังไม่อนุมัติ ทำรายการไม่ได้',
+  already_fulfilled: 'คำขอนี้จ่าย/ซื้อไปแล้ว',
+  invalid_evidence: 'ต้องแนบหลักฐาน (สลิปโอน/ใบเสร็จซื้อ) ก่อนบันทึก',
+  invalid_request_type: 'ประเภทคำขอไม่ตรงกับการทำรายการนี้',
+  not_paid_advance: 'ยังไม่มีการจ่ายเงินเบิกล่วงหน้าของคำขอนี้',
+  refund_exceeds_outstanding: 'จำนวนคืนเกินยอดค้างชำระ',
+  insufficient_cash: 'เงินสดในกล่องไม่พอ',
+  invalid_amount: 'จำนวนเงินไม่ถูกต้อง',
+  media_not_owned: 'ไฟล์แนบใช้ไม่ได้ ลองอัปโหลดใหม่',
+};
+export function describeMoneyError(err: unknown): string {
+  if (err instanceof ApiError && err.body && typeof err.body === 'object' && 'error' in err.body) {
+    const code = String((err.body as { error: unknown }).error);
+    return MONEY_ERROR_TH[code] ?? 'ทำรายการไม่สำเร็จ ลองใหม่อีกครั้ง';
+  }
+  return 'ทำรายการไม่สำเร็จ ลองใหม่อีกครั้ง';
+}

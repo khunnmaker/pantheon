@@ -192,34 +192,72 @@ export default function MdClose() {
   );
 }
 
+const REQUEST_LINE_KIND_LABEL: Record<string, string> = {
+  payment: 'จ่ายเงิน (คำขอ)',
+  purchase: 'ซื้อของ (คำขอ)',
+  refund: 'คืนเงิน (คำขอ)',
+  reversal: 'ย้อนกลับ (คำขอ)',
+};
+
 function SettlementLines({ settlement }: { settlement: Settlement }) {
-  if (settlement.lines.length === 0) {
+  const requestLines = settlement.requestLines ?? [];
+  if (settlement.lines.length === 0 && requestLines.length === 0) {
     return <div className="text-xs text-slate-400">ไม่มีรายการเคลื่อนไหว</div>;
   }
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-xs">
-        <thead className="text-slate-400">
-          <tr>
-            <th className="text-left font-medium py-1 pr-2">ชื่อ</th>
-            <th className="text-right font-medium py-1 px-2">เบิก</th>
-            <th className="text-right font-medium py-1 px-2">ใช้ไป</th>
-            <th className="text-right font-medium py-1 px-2">คืน</th>
-            <th className="text-right font-medium py-1 pl-2">ค้าง</th>
-          </tr>
-        </thead>
-        <tbody>
-          {settlement.lines.map((l, i) => (
-            <tr key={i} className="border-t border-slate-100">
-              <td className="py-1 pr-2 font-medium">{l.partyName}</td>
-              <td className="py-1 px-2 text-right">{baht(Number(l.advances))}</td>
-              <td className="py-1 px-2 text-right">{baht(Number(l.expenses))}</td>
-              <td className="py-1 px-2 text-right">{baht(Number(l.refunds))}</td>
-              <td className="py-1 pl-2 text-right font-semibold">{baht(Number(l.outstanding))}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+    <div className="space-y-3">
+      {settlement.lines.length > 0 && (
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead className="text-slate-400">
+              <tr>
+                <th className="text-left font-medium py-1 pr-2">ชื่อ</th>
+                <th className="text-right font-medium py-1 px-2">เบิก</th>
+                <th className="text-right font-medium py-1 px-2">ใช้ไป</th>
+                <th className="text-right font-medium py-1 px-2">คืน</th>
+                <th className="text-right font-medium py-1 pl-2">ค้าง</th>
+              </tr>
+            </thead>
+            <tbody>
+              {settlement.lines.map((l, i) => (
+                <tr key={i} className="border-t border-slate-100">
+                  <td className="py-1 pr-2 font-medium">{l.partyName}</td>
+                  <td className="py-1 px-2 text-right">{baht(Number(l.advances))}</td>
+                  <td className="py-1 px-2 text-right">{baht(Number(l.expenses))}</td>
+                  <td className="py-1 px-2 text-right">{baht(Number(l.refunds))}</td>
+                  <td className="py-1 pl-2 text-right font-semibold">{baht(Number(l.outstanding))}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {requestLines.length > 0 && (
+        <div>
+          <div className="text-xs font-semibold text-slate-500 mb-1">รายการเงินสดจากคำขอที่รวมในยอดปิดนี้</div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead className="text-slate-400">
+                <tr>
+                  <th className="text-left font-medium py-1 pr-2">ประเภท</th>
+                  <th className="text-left font-medium py-1 px-2">ชื่อ</th>
+                  <th className="text-right font-medium py-1 pl-2">จำนวนเงิน</th>
+                </tr>
+              </thead>
+              <tbody>
+                {requestLines.map((l) => (
+                  <tr key={l.id} className="border-t border-slate-100">
+                    <td className="py-1 pr-2">{REQUEST_LINE_KIND_LABEL[l.kind] ?? l.kind}</td>
+                    <td className="py-1 px-2 font-medium">{l.partyName || '—'}</td>
+                    <td className="py-1 pl-2 text-right font-semibold">{baht(Number(l.amount))}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
