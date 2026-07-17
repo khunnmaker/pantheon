@@ -4,6 +4,7 @@ import { LOW_STOCK_WHERE } from '../db/lowStock.js';
 import { requireAnyAuth } from '../auth/middleware.js';
 import { hasAppAccess, type AppName } from '../auth/jwt.js';
 import { ceresRole } from '../ceres/auth.js';
+import { ageStuckAIReviews } from '../ceres/requestService.js';
 
 // Pantheon — the portal's badges endpoint. Returns pending-work counts ONLY for the
 // apps the caller may actually enter (never leak a count for an app they can't open).
@@ -89,17 +90,37 @@ async function mercuryPending(): Promise<number> {
 //     (still editable/deletable) and rejected (needs fixing/resubmit), scoped to their own
 //     party. Per-user.
 async function ceresCeoAwaiting(): Promise<number> {
-  return prisma.ceresPaymentRequest.count({ where: { status: 'escalated' } });
+  await ageStuckAIReviews();
+  return prisma.ceresPaymentRequest.count({
+    where: {
+      OR: [
+        { workflowVersion: 1, status: 'escalated' },
+        { workflowVersion: 2, approvalStatus: 'pending_ceo' },
+      ],
+    },
+  });
 }
 async function ceresMdAwaiting(): Promise<number> {
-  return prisma.ceresExpense.count({ where: { status: 'pending' } });
+  await ageStuckAIReviews();
+  const [expenses, requests] = await Promise.all([
+    prisma.ceresExpense.count({ where: { status: 'pending' } }),
+    prisma.ceresPaymentRequest.count({ where: { workflowVersion: 2, approvalStatus: 'pending_nee' } }),
+  ]);
+  return expenses + requests;
 }
-async function ceresMessengerAwaiting(agentEmail: string): Promise<number> {
+async function ceresMessengerAwaiting(agentId: string, agentEmail: string): Promise<number> {
   // A messenger's expenses are keyed by their own CeresParty (the login→party link).
   // No party ⇒ nothing to act on. Count only rows this messenger can still act on.
   const party = await prisma.ceresParty.findFirst({ where: { agentEmail }, select: { id: true } });
-  if (!party) return 0;
-  return prisma.ceresExpense.count({ where: { partyId: party.id, status: { in: ['pending', 'rejected'] } } });
+  const [expenses, requests] = await Promise.all([
+    party
+      ? prisma.ceresExpense.count({ where: { partyId: party.id, status: { in: ['pending', 'rejected'] } } })
+      : Promise.resolve(0),
+    prisma.ceresPaymentRequest.count({
+      where: { workflowVersion: 2, requestedById: agentId, approvalStatus: 'rejected' },
+    }),
+  ]);
+  return expenses + requests;
 }
 
 async function badgesHandler(req: FastifyRequest): Promise<BadgeBucket> {
@@ -121,7 +142,7 @@ async function badgesHandler(req: FastifyRequest): Promise<BadgeBucket> {
         ? ceresCeoAwaiting()
         : cRole === 'gm'
           ? ceresMdAwaiting()
-          : ceresMessengerAwaiting(agent.email);
+          : ceresMessengerAwaiting(agent.id, agent.email);
 
     // Compute ONLY the badges this caller may see; an app they can't enter is never queried.
     const [pending, lowStock, toVerify, awaitingAction, mercuryPend] = await Promise.all([

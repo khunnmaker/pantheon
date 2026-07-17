@@ -3,6 +3,25 @@ import { env } from '../env.js';
 import { sendLineText } from '../line/send.js';
 import { computeBoard, num, thaiDayKey, thaiDayRange } from '../routes/ceres/common.js';
 import { computeTemplateDue } from '../routes/ceres/requests.js';
+import { ageStuckAIReviews } from './requestService.js';
+
+async function countV2AiEscalations(createdAt: { gte?: Date; lte?: Date }): Promise<number> {
+  const reviews = await prisma.ceresAIReview.findMany({
+    where: { subjectType: 'paymentRequest', createdAt },
+    orderBy: [{ subjectId: 'asc' }, { createdAt: 'desc' }],
+    select: { subjectId: true, verdict: true },
+  });
+  const seen = new Set<string>();
+  const escalatedRequestIds = reviews.flatMap((review) => {
+    if (seen.has(review.subjectId)) return [];
+    seen.add(review.subjectId);
+    return review.verdict === 'escalate' ? [review.subjectId] : [];
+  });
+  if (escalatedRequestIds.length === 0) return 0;
+  return prisma.ceresPaymentRequest.count({
+    where: { id: { in: escalatedRequestIds }, workflowVersion: 2 },
+  });
+}
 
 // Nightly CEO digest — a once-a-day LINE push (see startCeresDigestScheduler) that gives
 // the CEO the same signal Ceres shows live: what's waiting on him, what the AI flagged,
@@ -14,14 +33,25 @@ export async function buildCeresDigest(): Promise<string> {
   // thaiDayKey always yields a "YYYY-MM-DD" thaiDayRange can parse, so this is never
   // null in practice; the `?? {}` is only a type-safe fallback (no createdAt filter).
   const todayRange = thaiDayRange(todayKey, todayKey) ?? {};
+  await ageStuckAIReviews(now);
 
-  const [escalatedRows, flaggedCount, board, templateDue, settlementToday, pendingCount] = await Promise.all([
-    prisma.ceresPaymentRequest.findMany({ where: { status: 'escalated' }, select: { amount: true } }),
+  const [escalatedRows, flaggedCount, board, templateDue, settlementToday, pendingCount, pendingNeeCount, v2AiEscalatedCount] = await Promise.all([
+    prisma.ceresPaymentRequest.findMany({
+      where: {
+        OR: [
+          { workflowVersion: 1, status: 'escalated' },
+          { workflowVersion: 2, approvalStatus: 'pending_ceo' },
+        ],
+      },
+      select: { amount: true },
+    }),
     prisma.ceresExpense.count({ where: { aiVerdict: 'flagged', createdAt: todayRange } }),
     computeBoard(),
     computeTemplateDue(),
     prisma.ceresSettlement.findUnique({ where: { dayKey: todayKey } }),
     prisma.ceresExpense.count({ where: { status: 'pending' } }),
+    prisma.ceresPaymentRequest.count({ where: { workflowVersion: 2, approvalStatus: 'pending_nee' } }),
+    countV2AiEscalations(todayRange),
   ]);
 
   const escalatedCount = escalatedRows.length;
@@ -42,7 +72,8 @@ export async function buildCeresDigest(): Promise<string> {
   return [
     `🌙 Ceres สรุปประจำวัน ${dateStr}`,
     `รออนุมัติจากคุณ: ${escalatedCount} รายการ (฿${escalatedSum.toFixed(2)})`,
-    `รายการติดธง AI วันนี้: ${flaggedCount}`,
+    `รอนีตรวจคำขอใหม่: ${pendingNeeCount} รายการ`,
+    `รายการติดธง AI วันนี้: ${flaggedCount + v2AiEscalatedCount}`,
     boxLine,
     `บิลเลยกำหนด: ${overdueCount}`,
     closeLine,

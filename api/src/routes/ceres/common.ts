@@ -29,6 +29,63 @@ export function isValidAmount(s: string): boolean {
   return AMOUNT_RE.test(s) && num(s) > 0;
 }
 
+// Workflow-v2 projection. Keep this separate from the legacy mapper in requests.ts:
+// old clients continue to read `status`, while v2 clients read the split approval,
+// fulfillment, and AI-screen fields below.
+export function toStaffRequestRow(
+  r: {
+    id: string; requestedById: string | null; requestedByName: string; requesterPartyId: string | null;
+    entity: string; payee: string; category: string; amount: string; detail: string;
+    requestType: string; approvalStatus: string; fulfillmentStatus: string;
+    requestPhotoUploadId: string | null; ocrAmount: string; ocrVendor: string; ocrDate: string;
+    aiScreenStatus: string; aiReviewId: string | null; neeDecidedById: string | null;
+    neeDecidedByName: string; neeDecidedAt: Date | null; neeDecisionNote: string;
+    decidedById: string | null; decidedAt: Date | null; decisionNote: string;
+    rowVersion: number; createdAt: Date; updatedAt: Date;
+  },
+  review?: { verdict: string; reasoning: string; createdAt: Date } | null,
+) {
+  return {
+    id: r.id,
+    workflowVersion: 2,
+    requestType: r.requestType,
+    requestedById: r.requestedById,
+    requestedByName: r.requestedByName,
+    requesterPartyId: r.requesterPartyId,
+    entity: r.entity,
+    payee: r.payee,
+    category: r.category,
+    amount: r.amount,
+    amountNum: num(r.amount),
+    reason: r.detail,
+    requestPhotoUploadId: r.requestPhotoUploadId,
+    ocr: { amount: r.ocrAmount, vendor: r.ocrVendor, date: r.ocrDate },
+    aiScreenStatus: r.aiScreenStatus,
+    aiReviewId: r.aiReviewId,
+    aiReview: review ? {
+      verdict: review.verdict,
+      reasoning: review.reasoning,
+      createdAt: review.createdAt.toISOString(),
+    } : null,
+    approvalStatus: r.approvalStatus,
+    fulfillmentStatus: r.fulfillmentStatus,
+    neeDecision: r.neeDecidedAt ? {
+      byId: r.neeDecidedById,
+      byName: r.neeDecidedByName,
+      at: r.neeDecidedAt.toISOString(),
+      note: r.neeDecisionNote,
+    } : null,
+    ceoDecision: r.decidedAt ? {
+      byId: r.decidedById,
+      at: r.decidedAt.toISOString(),
+      note: r.decisionNote,
+    } : null,
+    rowVersion: r.rowVersion,
+    createdAt: r.createdAt.toISOString(),
+    updatedAt: r.updatedAt.toISOString(),
+  };
+}
+
 // The row shape the Ceres UI consumes for an expense (the stored CeresExpense plus
 // a derived numeric amount + tokenized receipt url when a receipt is attached).
 export function toExpenseRow(

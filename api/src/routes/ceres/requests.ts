@@ -1,10 +1,21 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { prisma } from '../../db/prisma.js';
-import { requireCeresRole } from '../../ceres/auth.js';
+import { ceresRole, requireCeresRole } from '../../ceres/auth.js';
 import { reviewPaymentRequest } from '../../ceres/aiReview.js';
 import { notifyCeoEscalation } from '../../ceres/notifyCeo.js';
-import { isValidAmount, num, thaiDayKey, thaiDayRange } from './common.js';
+import {
+  cancelStaffRequest,
+  CeresRequestError,
+  createStaffRequest,
+  decideStaffRequestByCeo,
+  decideStaffRequestByNee,
+  editStaffRequest,
+  getStaffRequest,
+  listStaffRequests,
+  V2_REQUEST_TYPES,
+} from '../../ceres/requestService.js';
+import { isValidAmount, num, thaiDayKey, thaiDayRange, toStaffRequestRow } from './common.js';
 import { GROUP_COMPANY_CODES } from '../../jupiter/companies.js';
 
 const ENTITIES = GROUP_COMPANY_CODES; // 5 group companies (SSOT: jupiter/companies.ts)
@@ -65,6 +76,15 @@ async function loadReviewsByIds(ids: (string | null)[]): Promise<Map<string, { v
   if (set.length === 0) return new Map();
   const reviews = await prisma.ceresAIReview.findMany({ where: { id: { in: set } } });
   return new Map(reviews.map((r) => [r.id, r]));
+}
+
+function requestError(reply: { code: (status: number) => { send: (body: unknown) => unknown } }, err: unknown) {
+  if (!(err instanceof CeresRequestError)) throw err;
+  const status = err.code === 'not_found' ? 404
+    : err.code === 'forbidden' || err.code === 'no_party' || err.code === 'media_not_owned' ? 403
+      : ['not_editable', 'not_cancellable', 'not_pending_nee', 'not_pending_ceo', 'conflict'].includes(err.code) ? 409
+        : 400;
+  return reply.code(status).send({ error: err.code });
 }
 
 // Last day of the given month (1-indexed month, in the Thai/local calendar sense —
@@ -166,6 +186,15 @@ export async function computeTemplateDue(): Promise<TemplateDue[]> {
 // P2/P3 routes — GM's pre-approval payment requests + recurring templates. Mounted
 // inside the requireCeresAuth scope (see routes/ceres/index.ts).
 export function requestsRoutes(app: FastifyInstance) {
+  const v2CreateBody = z.object({
+    requestType: z.enum(V2_REQUEST_TYPES),
+    entity: z.enum(ENTITIES),
+    category: z.string().min(1).max(200),
+    amount: z.string().refine(isValidAmount, 'invalid_amount'),
+    reason: z.string().min(1).max(600),
+    requestPhotoUploadId: z.string().min(1).nullable().optional(),
+  }).strict();
+
   // POST /api/ceres/requests — GM submits a payment for pre-approval (P2/P3 step 1).
   // The AI gate runs SYNCHRONOUSLY: the GM needs the answer now, before paying.
   const createBody = z.object({
@@ -177,7 +206,30 @@ export function requestsRoutes(app: FastifyInstance) {
     recurringTemplateId: z.string().optional(),
     billPeriod: z.string().max(20).optional(),
   });
-  app.post('/api/ceres/requests', { preHandler: requireCeresRole('gm', 'ceo') }, async (req, reply) => {
+  app.post('/api/ceres/requests', { preHandler: requireCeresRole('messenger', 'gm', 'ceo') }, async (req, reply) => {
+    const discriminator = req.body && typeof req.body === 'object' && 'requestType' in req.body
+      ? (req.body as { requestType?: unknown }).requestType
+      : undefined;
+    if (typeof discriminator === 'string' && (V2_REQUEST_TYPES as readonly string[]).includes(discriminator)) {
+      const parsed = v2CreateBody.safeParse(req.body);
+      if (!parsed.success) {
+        const amountIssue = parsed.error.issues.some((i) => i.message === 'invalid_amount');
+        return reply.code(400).send({ error: amountIssue ? 'invalid_amount' : 'invalid_body' });
+      }
+      try {
+        const request = await createStaffRequest(parsed.data, req.agent!);
+        const review = request.aiReviewId
+          ? await prisma.ceresAIReview.findUnique({ where: { id: request.aiReviewId } })
+          : null;
+        return { request: toStaffRequestRow(request, review) };
+      } catch (err) {
+        return requestError(reply, err);
+      }
+    }
+
+    if (discriminator !== undefined) return reply.code(400).send({ error: 'invalid_body' });
+
+    if (ceresRole(req.agent!) === 'messenger') return reply.code(403).send({ error: 'forbidden' });
     const parsed = createBody.safeParse(req.body);
     if (!parsed.success) {
       const amountIssue = parsed.error.issues.some((i) => i.message === 'invalid_amount');
@@ -220,18 +272,34 @@ export function requestsRoutes(app: FastifyInstance) {
 
   // GET /api/ceres/requests?status=&from=&to=&q=&limit=
   const listQuery = z.object({
+    workflow: z.coerce.number().int().optional(),
+    scope: z.enum(['mine', 'queue', 'all']).optional(),
     status: z.enum(['requested', 'ai_approved', 'escalated', 'ceo_approved', 'rejected', 'cancelled', 'paid']).optional(),
     from: z.string().optional(),
     to: z.string().optional(),
     q: z.string().optional(),
     limit: z.coerce.number().int().min(1).max(500).optional(),
   });
-  app.get('/api/ceres/requests', { preHandler: requireCeresRole('gm', 'ceo') }, async (req, reply) => {
+  app.get('/api/ceres/requests', { preHandler: requireCeresRole('messenger', 'gm', 'ceo') }, async (req, reply) => {
     const parsed = listQuery.safeParse(req.query ?? {});
     if (!parsed.success) return reply.code(400).send({ error: 'invalid_query' });
     const q = parsed.data;
 
-    const where: Record<string, unknown> = {};
+    if (q.workflow === 2) {
+      try {
+        const rows = await listStaffRequests(req.agent!, q.scope ?? 'mine', q.limit ?? 200);
+        const reviewMap = await loadReviewsByIds(rows.map((r) => r.aiReviewId));
+        return {
+          requests: rows.map((r) => toStaffRequestRow(r, r.aiReviewId ? reviewMap.get(r.aiReviewId) ?? null : null)),
+        };
+      } catch (err) {
+        return requestError(reply, err);
+      }
+    }
+
+    if (ceresRole(req.agent!) === 'messenger') return reply.code(403).send({ error: 'forbidden' });
+
+    const where: Record<string, unknown> = { workflowVersion: 1 };
     if (q.status) where.status = q.status;
     const range = thaiDayRange(q.from, q.to);
     if (range) where.createdAt = range;
@@ -257,12 +325,60 @@ export function requestsRoutes(app: FastifyInstance) {
   // GET /api/ceres/requests/:id
   app.get<{ Params: { id: string } }>(
     '/api/ceres/requests/:id',
-    { preHandler: requireCeresRole('gm', 'ceo') },
+    { preHandler: requireCeresRole('messenger', 'gm', 'ceo') },
     async (req, reply) => {
       const existing = await prisma.ceresPaymentRequest.findUnique({ where: { id: req.params.id } });
       if (!existing) return reply.code(404).send({ error: 'not_found' });
+      if (existing.workflowVersion === 2) {
+        try {
+          const request = await getStaffRequest(existing.id, req.agent!);
+          const review = request.aiReviewId
+            ? await prisma.ceresAIReview.findUnique({ where: { id: request.aiReviewId } })
+            : null;
+          const [events, revisions] = await Promise.all([
+            prisma.ceresRequestEvent.findMany({ where: { requestId: request.id }, orderBy: { createdAt: 'asc' } }),
+            prisma.ceresRevision.findMany({
+              where: { subjectType: 'paymentRequest', subjectId: request.id },
+              orderBy: { createdAt: 'asc' },
+            }),
+          ]);
+          return { request: toStaffRequestRow(request, review), events, revisions };
+        } catch (err) {
+          return requestError(reply, err);
+        }
+      }
+      if (ceresRole(req.agent!) === 'messenger') return reply.code(404).send({ error: 'not_found' });
       const review = existing.aiReviewId ? await prisma.ceresAIReview.findUnique({ where: { id: existing.aiReviewId } }) : null;
       return { request: toRequestRow(existing, review) };
+    },
+  );
+
+  const v2PatchBody = z.object({
+    requestType: z.enum(V2_REQUEST_TYPES).optional(),
+    entity: z.enum(ENTITIES).optional(),
+    category: z.string().min(1).max(200).optional(),
+    amount: z.string().refine(isValidAmount, 'invalid_amount').optional(),
+    reason: z.string().min(1).max(600).optional(),
+    requestPhotoUploadId: z.string().min(1).nullable().optional(),
+  }).strict().refine((value) => Object.keys(value).length > 0);
+  app.patch<{ Params: { id: string } }>(
+    '/api/ceres/requests/:id',
+    { preHandler: requireCeresRole('messenger', 'gm', 'ceo') },
+    async (req, reply) => {
+      const parsed = v2PatchBody.safeParse(req.body);
+      if (!parsed.success) {
+        const amountIssue = parsed.error.issues.some((i) => i.message === 'invalid_amount');
+        return reply.code(400).send({ error: amountIssue ? 'invalid_amount' : 'invalid_body' });
+      }
+      try {
+        const request = await editStaffRequest(req.params.id, parsed.data, req.agent!);
+        const review = request.aiReviewId
+          ? await prisma.ceresAIReview.findUnique({ where: { id: request.aiReviewId } })
+          : null;
+        return { request: toStaffRequestRow(request, review) };
+      } catch (err) {
+        return requestError(reply, err);
+      }
     },
   );
 
@@ -276,6 +392,7 @@ export function requestsRoutes(app: FastifyInstance) {
       if (!parsed.success) return reply.code(400).send({ error: 'invalid_body' });
       const existing = await prisma.ceresPaymentRequest.findUnique({ where: { id: req.params.id } });
       if (!existing) return reply.code(404).send({ error: 'not_found' });
+      if (existing.workflowVersion !== 1) return reply.code(409).send({ error: 'legacy_only' });
       if (existing.status !== 'escalated') return reply.code(409).send({ error: 'not_escalated' });
 
       const updated = await prisma.ceresPaymentRequest.update({
@@ -293,6 +410,42 @@ export function requestsRoutes(app: FastifyInstance) {
   );
 
   // POST /api/ceres/requests/:id/paid — THE GATE: only ai_approved/ceo_approved may pay.
+  app.post<{ Params: { id: string } }>(
+    '/api/ceres/requests/:id/nee-decision',
+    { preHandler: requireCeresRole('gm') },
+    async (req, reply) => {
+      const parsed = decideBody.safeParse(req.body);
+      if (!parsed.success) return reply.code(400).send({ error: 'invalid_body' });
+      try {
+        const request = await decideStaffRequestByNee(req.params.id, parsed.data.decision, parsed.data.note ?? '', req.agent!);
+        const review = request.aiReviewId
+          ? await prisma.ceresAIReview.findUnique({ where: { id: request.aiReviewId } })
+          : null;
+        return { request: toStaffRequestRow(request, review) };
+      } catch (err) {
+        return requestError(reply, err);
+      }
+    },
+  );
+
+  app.post<{ Params: { id: string } }>(
+    '/api/ceres/requests/:id/ceo-decision',
+    { preHandler: requireCeresRole('ceo') },
+    async (req, reply) => {
+      const parsed = decideBody.safeParse(req.body);
+      if (!parsed.success) return reply.code(400).send({ error: 'invalid_body' });
+      try {
+        const request = await decideStaffRequestByCeo(req.params.id, parsed.data.decision, parsed.data.note ?? '', req.agent!);
+        const review = request.aiReviewId
+          ? await prisma.ceresAIReview.findUnique({ where: { id: request.aiReviewId } })
+          : null;
+        return { request: toStaffRequestRow(request, review) };
+      } catch (err) {
+        return requestError(reply, err);
+      }
+    },
+  );
+
   const paidBody = z.object({ paidRef: z.string().max(120).optional() });
   app.post<{ Params: { id: string } }>(
     '/api/ceres/requests/:id/paid',
@@ -302,7 +455,7 @@ export function requestsRoutes(app: FastifyInstance) {
       if (!parsed.success) return reply.code(400).send({ error: 'invalid_body' });
       const existing = await prisma.ceresPaymentRequest.findUnique({ where: { id: req.params.id } });
       if (!existing) return reply.code(404).send({ error: 'not_found' });
-      if (!['ai_approved', 'ceo_approved'].includes(existing.status)) {
+      if (existing.workflowVersion !== 1 || !['ai_approved', 'ceo_approved'].includes(existing.status)) {
         return reply.code(409).send({ error: 'not_approved' });
       }
       const updated = await prisma.ceresPaymentRequest.update({
@@ -317,10 +470,24 @@ export function requestsRoutes(app: FastifyInstance) {
   // POST /api/ceres/requests/:id/cancel — requested/escalated only.
   app.post<{ Params: { id: string } }>(
     '/api/ceres/requests/:id/cancel',
-    { preHandler: requireCeresRole('gm', 'ceo') },
+    { preHandler: requireCeresRole('messenger', 'gm', 'ceo') },
     async (req, reply) => {
       const existing = await prisma.ceresPaymentRequest.findUnique({ where: { id: req.params.id } });
       if (!existing) return reply.code(404).send({ error: 'not_found' });
+      if (existing.workflowVersion === 2) {
+        const parsed = z.object({ note: z.string().max(600).optional() }).safeParse(req.body ?? {});
+        if (!parsed.success) return reply.code(400).send({ error: 'invalid_body' });
+        try {
+          const request = await cancelStaffRequest(existing.id, parsed.data.note ?? '', req.agent!);
+          const review = request.aiReviewId
+            ? await prisma.ceresAIReview.findUnique({ where: { id: request.aiReviewId } })
+            : null;
+          return { request: toStaffRequestRow(request, review) };
+        } catch (err) {
+          return requestError(reply, err);
+        }
+      }
+      if (ceresRole(req.agent!) === 'messenger') return reply.code(403).send({ error: 'forbidden' });
       if (!['requested', 'escalated'].includes(existing.status)) {
         return reply.code(409).send({ error: 'not_cancellable' });
       }

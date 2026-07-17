@@ -2,7 +2,8 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { prisma } from '../../db/prisma.js';
 import { requireCeresRole } from '../../ceres/auth.js';
-import { computeBoard, num, thaiDayKey, thaiDayRange, toExpenseRow } from './common.js';
+import { ageStuckAIReviews } from '../../ceres/requestService.js';
+import { computeBoard, num, thaiDayKey, thaiDayRange, toExpenseRow, toStaffRequestRow } from './common.js';
 import { computeTemplateDue } from './requests.js';
 
 function reqBase(req: { headers: Record<string, unknown> }): string {
@@ -23,15 +24,33 @@ export function ceoRoutes(app: FastifyInstance) {
     if (!range) return reply.code(400).send({ error: 'invalid_date' });
 
     const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 3600 * 1000);
+    await ageStuckAIReviews();
 
-    const [escalatedRows, aiReviewRows, flaggedExpenseRows, board, templateDue, settlement, statusCounts] = await Promise.all([
-      prisma.ceresPaymentRequest.findMany({ where: { status: 'escalated' }, orderBy: { createdAt: 'asc' } }),
+    const [escalatedRows, aiReviewRows, flaggedExpenseRows, board, templateDue, settlement, statusCounts, v2ApprovalCounts] = await Promise.all([
+      prisma.ceresPaymentRequest.findMany({
+        where: {
+          OR: [
+            { workflowVersion: 1, status: 'escalated' },
+            { workflowVersion: 2, approvalStatus: 'pending_ceo' },
+          ],
+        },
+        orderBy: { createdAt: 'asc' },
+      }),
       prisma.ceresAIReview.findMany({ where: { createdAt: range }, orderBy: { createdAt: 'desc' } }),
       prisma.ceresExpense.findMany({ where: { aiVerdict: 'flagged', createdAt: { gte: sevenDaysAgo } }, orderBy: { createdAt: 'desc' } }),
       computeBoard(),
       computeTemplateDue(),
       prisma.ceresSettlement.findUnique({ where: { dayKey }, include: { lines: true } }),
-      prisma.ceresPaymentRequest.groupBy({ by: ['status'], where: { createdAt: range }, _count: { _all: true } }),
+      prisma.ceresPaymentRequest.groupBy({
+        by: ['status'],
+        where: { workflowVersion: 1, createdAt: range },
+        _count: { _all: true },
+      }),
+      prisma.ceresPaymentRequest.groupBy({
+        by: ['approvalStatus'],
+        where: { workflowVersion: 2, createdAt: range },
+        _count: { _all: true },
+      }),
     ]);
 
     // Escalation review ids are already loaded above only for THIS day's reviews; the
@@ -43,6 +62,7 @@ export function ceoRoutes(app: FastifyInstance) {
 
     const escalations = escalatedRows.map((r) => {
       const review = r.aiReviewId ? escReviews.get(r.aiReviewId) : undefined;
+      if (r.workflowVersion === 2) return toStaffRequestRow(r, review);
       return {
         id: r.id,
         requestedById: r.requestedById,
@@ -77,11 +97,19 @@ export function ceoRoutes(app: FastifyInstance) {
         ? prisma.ceresExpense.findMany({ where: { id: { in: expenseIds } }, select: { id: true, partyName: true, amount: true, category: true } })
         : Promise.resolve([]),
       requestIds.length
-        ? prisma.ceresPaymentRequest.findMany({ where: { id: { in: requestIds } }, select: { id: true, payee: true, amount: true, status: true } })
+        ? prisma.ceresPaymentRequest.findMany({
+          where: { id: { in: requestIds } },
+          select: { id: true, payee: true, amount: true, status: true, workflowVersion: true, approvalStatus: true },
+        })
         : Promise.resolve([]),
     ]);
     const expenseSubjectMap = new Map(expenseSubjects.map((e) => [e.id, { partyName: e.partyName, amount: e.amount, category: e.category }]));
-    const requestSubjectMap = new Map(requestSubjects.map((r) => [r.id, { payee: r.payee, amount: r.amount, status: r.status }]));
+    const requestSubjectMap = new Map(requestSubjects.map((r) => [r.id, {
+      payee: r.payee,
+      amount: r.amount,
+      workflowVersion: r.workflowVersion,
+      status: r.workflowVersion === 2 ? r.approvalStatus : r.status,
+    }]));
 
     const aiReviews = aiReviewRows.map((r) => ({
       id: r.id,
@@ -110,6 +138,10 @@ export function ceoRoutes(app: FastifyInstance) {
     for (const row of statusCounts) {
       requestCounts[row.status] = row._count._all;
     }
+    const v2RequestCounts: Record<string, number> = {};
+    for (const row of v2ApprovalCounts) {
+      v2RequestCounts[row.approvalStatus] = row._count._all;
+    }
 
     return {
       dayKey,
@@ -120,6 +152,7 @@ export function ceoRoutes(app: FastifyInstance) {
       missedBills,
       settlementToday: settlement ?? null,
       requestCounts,
+      v2RequestCounts,
     };
   });
 
