@@ -110,7 +110,7 @@ export default function CeoOverview({ onGoExpenses }: { onGoExpenses?: () => voi
   );
 }
 
-function SectionCard({ title, children }: { title: string; children: React.ReactNode }) {
+export function SectionCard({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div>
       <div className="text-sm font-semibold text-slate-500 mb-2">{title}</div>
@@ -119,7 +119,9 @@ function SectionCard({ title, children }: { title: string; children: React.React
   );
 }
 
-function EscalationsSection({ escalations, onDecided }: { escalations: CeoOverviewData['escalations']; onDecided: () => void }) {
+// Exported so CeoHome.tsx (Phase 4 CEO front door) can reuse these section renderers
+// verbatim instead of re-implementing escalation/cash/flag/settlement cards.
+export function EscalationsSection({ escalations, onDecided }: { escalations: CeoOverviewData['escalations']; onDecided: () => void }) {
   return (
     <SectionCard title="รออนุมัติ">
       {escalations.length === 0 ? (
@@ -249,7 +251,7 @@ function EscalationCard({ r, onDecided }: { r: CeoOverviewData['escalations'][nu
   );
 }
 
-function CashSection({ cash, onTopupDone }: { cash: CeoOverviewData['cash']; onTopupDone: () => void }) {
+export function CashSection({ cash, onTopupDone }: { cash: CeoOverviewData['cash']; onTopupDone: () => void }) {
   const [confirming, setConfirming] = useState(false);
   const [amount, setAmount] = useState(String(cash.box.suggestedTopup));
   const [busy, setBusy] = useState(false);
@@ -382,7 +384,7 @@ function AiReviewsSection({ aiReviews }: { aiReviews: CeoOverviewData['aiReviews
   );
 }
 
-function FlaggedExpensesSection({ flaggedExpenses, onGoExpenses }: { flaggedExpenses: CeoOverviewData['flaggedExpenses']; onGoExpenses?: () => void }) {
+export function FlaggedExpensesSection({ flaggedExpenses, onGoExpenses }: { flaggedExpenses: CeoOverviewData['flaggedExpenses']; onGoExpenses?: () => void }) {
   return (
     <SectionCard title="รายการติดธง">
       {flaggedExpenses.length === 0 ? (
@@ -442,7 +444,7 @@ function MissedBillsSection({ missedBills }: { missedBills: CeoOverviewData['mis
   );
 }
 
-function SettlementSection({ settlementToday }: { settlementToday: CeoOverviewData['settlementToday'] }) {
+export function SettlementSection({ settlementToday }: { settlementToday: CeoOverviewData['settlementToday'] }) {
   return (
     <SectionCard title="ปิดยอดวันนี้">
       {!settlementToday ? (
@@ -497,7 +499,7 @@ const CSV_BUTTONS: { key: string; label: string; fn: (from: string, to: string) 
   { key: 'statement-lines', label: 'รายการสเตทเมนท์', fn: downloadStatementLinesCsv },
 ];
 
-function WeeklyPackSection() {
+export function WeeklyPackSection() {
   const [from, setFrom] = useState(daysAgoStr(6));
   const [to, setTo] = useState(todayStr());
   const [busyKey, setBusyKey] = useState('');

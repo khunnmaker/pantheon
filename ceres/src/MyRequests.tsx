@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import {
   AlertTriangle,
   Ban,
+  Bell,
   ChevronDown,
   ChevronUp,
   Eye,
@@ -12,6 +13,7 @@ import {
 import {
   baht,
   cancelStaffRequest,
+  getLineBind,
   listStaffRequests,
   type FulfillmentStatus,
   type StaffRequest,
@@ -66,10 +68,25 @@ export default function MyRequests({
   reloadKey,
   onEdit,
   onOpenDetail,
+  limit,
+  filterText,
+  onOpenSettings,
+  title = 'คำขอของฉัน',
 }: {
   reloadKey: number;
   onEdit: (request: StaffRequest) => void;
   onOpenDetail: (request: StaffRequest) => void;
+  /** Cap the number of rows shown (e.g. a "recent requests" home-screen preview). */
+  limit?: number;
+  /** Client-side search over reason/category/amount — powers a "searchable history" tab. */
+  filterText?: string;
+  /**
+   * Non-blocking "รับแจ้งเตือนผ่าน LINE" invitation shown when this account isn't LINE-bound
+   * yet (see Settings.tsx / api/src/line/staffBind.ts). Only fetched/shown when a handler is
+   * given, so nested/secondary usages of this list don't pay for an extra bind-status call.
+   */
+  onOpenSettings?: () => void;
+  title?: string;
 }) {
   const [rows, setRows] = useState<StaffRequest[]>([]);
   const [loading, setLoading] = useState(true);
@@ -77,6 +94,7 @@ export default function MyRequests({
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [confirmCancelId, setConfirmCancelId] = useState<string | null>(null);
   const [cancelBusyId, setCancelBusyId] = useState('');
+  const [lineUnbound, setLineUnbound] = useState(false);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -90,6 +108,25 @@ export default function MyRequests({
   useEffect(() => {
     load();
   }, [load, reloadKey]);
+
+  useEffect(() => {
+    if (!onOpenSettings) return;
+    getLineBind()
+      .then((state) => setLineUnbound(!state.bound))
+      .catch(() => {});
+  }, [onOpenSettings]);
+
+  const visibleRows = (() => {
+    const q = filterText?.trim().toLowerCase();
+    const filtered = q
+      ? rows.filter((r) =>
+          [r.reason, r.category, r.entity, TYPE_LABEL[r.requestType], String(r.amountNum)].some((field) =>
+            field.toLowerCase().includes(q),
+          ),
+        )
+      : rows;
+    return typeof limit === 'number' ? filtered.slice(0, limit) : filtered;
+  })();
 
   async function cancel(request: StaffRequest) {
     setCancelBusyId(request.id);
@@ -108,7 +145,7 @@ export default function MyRequests({
   return (
     <section className="mb-6">
       <div className="flex items-center justify-between mb-2">
-        <h2 className="font-bold text-base">คำขอของฉัน</h2>
+        <h2 className="font-bold text-base">{title}</h2>
         <button
           onClick={load}
           disabled={loading}
@@ -118,6 +155,16 @@ export default function MyRequests({
           <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
         </button>
       </div>
+
+      {onOpenSettings && lineUnbound && (
+        <button
+          onClick={onOpenSettings}
+          className="w-full mb-3 flex items-center gap-2 px-3 py-2.5 rounded-xl border border-sky-200 bg-sky-50 text-sky-800 text-xs text-left hover:bg-sky-100"
+        >
+          <Bell size={15} className="shrink-0" />
+          <span className="flex-1">รับแจ้งเตือนผ่าน LINE เมื่อคำขอมีความคืบหน้า — ผูก LINE ได้ในตั้งค่า</span>
+        </button>
+      )}
 
       {error && (
         <div className="flex items-center gap-1 text-rose-600 text-sm mb-2">
@@ -129,13 +176,13 @@ export default function MyRequests({
         <div className="py-8 flex justify-center text-slate-400">
           <Loader2 className="animate-spin" size={21} />
         </div>
-      ) : rows.length === 0 ? (
+      ) : visibleRows.length === 0 ? (
         <div className="bg-white border border-slate-200 rounded-xl py-7 text-center text-sm text-slate-400">
-          ยังไม่มีคำขอ
+          {filterText?.trim() ? 'ไม่พบคำขอที่ค้นหา' : 'ยังไม่มีคำขอ'}
         </div>
       ) : (
         <div className="space-y-2">
-          {rows.map((request) => {
+          {visibleRows.map((request) => {
             const status = statusMeta(request);
             const expanded = expandedId === request.id;
             const editable = request.approvalStatus === 'pending_nee';

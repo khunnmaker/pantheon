@@ -499,6 +499,15 @@ export interface AIReviewRow {
   subject: { partyName?: string; payee?: string; amount: string; category?: string; status?: string } | null;
 }
 
+// One lane×requestType bucket of today's request-money outflow (P4 CEO home "daily
+// outflow by lane/type" — see api/src/ceres/nightlyDigest.ts's dailyOutflowSummary).
+export interface DailyOutflowBucket {
+  lane: string; // cash | transfer
+  requestType: string; // advance | reimbursement | purchase | unknown
+  count: number;
+  amount: string;
+}
+
 export interface CeoOverview {
   dayKey: string;
   escalations: (PaymentRequest | StaffRequest)[];
@@ -509,6 +518,8 @@ export interface CeoOverview {
   settlementToday: Settlement | null;
   requestCounts: Record<string, number>;
   v2RequestCounts: Record<string, number>;
+  transferReconciliation: { unmatched: number; reversalExceptions: number };
+  dailyOutflow: DailyOutflowBucket[];
 }
 
 export const getCeoOverview = (date?: string) => authed<CeoOverview>(`/api/ceres/ceo/overview${queryString({ date })}`);
@@ -962,3 +973,17 @@ export function describeMoneyError(err: unknown): string {
   }
   return 'ทำรายการไม่สำเร็จ ลองใหม่อีกครั้ง';
 }
+
+// ---------------------------------------------------------------------------
+// P4 — shared Agent LINE binding (suite-wide; see api/src/line/staffBind.ts,
+// api/src/routes/staffLine.ts). Apollo's existing /api/apollo/line-bind writes the
+// same Agent.lineUserId/lineBindCode fields — a code generated here or in Apollo both
+// work, and the OA accepts either an "APOLLO-XXXXXXXX" or "CERES-XXXXXXXX" message.
+// ---------------------------------------------------------------------------
+
+export interface LineBindState {
+  bound: boolean;
+  code: string | null;
+}
+export const getLineBind = () => authed<LineBindState>('/api/staff/line-bind');
+export const generateLineBind = () => authed<{ bound: false; code: string }>('/api/staff/line-bind', { method: 'POST' });

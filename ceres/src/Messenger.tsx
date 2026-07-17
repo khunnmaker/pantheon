@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { LogOut, Loader2, AlertTriangle, Plus, Pencil, Trash2, CheckCircle2, Crown, Send } from 'lucide-react';
+import { LogOut, Loader2, AlertTriangle, ChevronLeft, Plus, Pencil, Trash2, CheckCircle2, Crown, Send } from 'lucide-react';
 import {
   listExpenses,
   deleteExpense,
@@ -35,7 +35,12 @@ function daysAgoStr(n: number): string {
   return d.toLocaleDateString('sv-SE');
 }
 
-export default function MessengerHome() {
+// `embedded` — used by StaffHome.tsx's "More" screen (Phase 4) to reuse this legacy
+// receipt/advance flow without also duplicating the "ส่งคำขอเงิน" primary action and the
+// คำขอของฉัน list, both of which now live on StaffHome's own Home/My-requests tabs.
+// `onBack`, given, renders a back chevron in the header instead of relying on the
+// caller to unmount this screen from outside.
+export default function MessengerHome({ onBack, embedded = false }: { onBack?: () => void; embedded?: boolean } = {}) {
   const { bootstrap, onLogout } = useCeres();
   const [wideRange, setWideRange] = useState(false);
   const [rows, setRows] = useState<Expense[]>([]);
@@ -91,22 +96,33 @@ export default function MessengerHome() {
     <div className="min-h-screen bg-slate-100 font-sans text-slate-800 pb-28">
       <header className="bg-white border-b border-slate-200 sticky top-0 z-20">
         <div className="max-w-md mx-auto px-4 h-14 flex items-center justify-between">
-          <div className="font-bold text-base text-amber-700">{bootstrap.party?.name || bootstrap.agent.name}</div>
-          <div className="flex items-center gap-3">
-            {PORTAL_URL && (
+          <div className="flex items-center gap-2 min-w-0">
+            {onBack && (
+              <button onClick={onBack} aria-label="กลับ" className="text-slate-400 hover:text-slate-600 p-1 -ml-1 shrink-0">
+                <ChevronLeft size={20} />
+              </button>
+            )}
+            <div className="font-bold text-base text-amber-700 truncate">
+              {embedded ? 'ค่าใช้จ่ายเงินเบิกเดิม' : bootstrap.party?.name || bootstrap.agent.name}
+            </div>
+          </div>
+          <div className="flex items-center gap-3 shrink-0">
+            {!embedded && PORTAL_URL && (
               <a href={PORTAL_URL} title="กลับพอร์ทัล Pantheon" className="flex items-center gap-1 text-sm text-slate-500 hover:text-violet-600">
                 <Crown size={15} /> <span className="hidden sm:inline">พอร์ทัล</span>
               </a>
             )}
-            <button
-              onClick={() => {
-                void logoutSuite();
-                onLogout();
-              }}
-              className="flex items-center gap-1 text-sm text-slate-500 hover:text-rose-600"
-            >
-              <LogOut size={15} /> ออก
-            </button>
+            {!embedded && (
+              <button
+                onClick={() => {
+                  void logoutSuite();
+                  onLogout();
+                }}
+                className="flex items-center gap-1 text-sm text-slate-500 hover:text-rose-600"
+              >
+                <LogOut size={15} /> ออก
+              </button>
+            )}
           </div>
         </div>
       </header>
@@ -118,14 +134,16 @@ export default function MessengerHome() {
           </div>
         )}
 
-        <MyRequests
-          reloadKey={requestReloadKey}
-          onEdit={(request) => {
-            setEditingRequest(request);
-            setRequestSheetOpen(true);
-          }}
-          onOpenDetail={(request) => setDetailRequestId(request.id)}
-        />
+        {!embedded && (
+          <MyRequests
+            reloadKey={requestReloadKey}
+            onEdit={(request) => {
+              setEditingRequest(request);
+              setRequestSheetOpen(true);
+            }}
+            onOpenDetail={(request) => setDetailRequestId(request.id)}
+          />
+        )}
 
         <div className="flex items-center justify-between mb-3 gap-2">
           <div>
@@ -228,17 +246,19 @@ export default function MessengerHome() {
         )}
       </main>
 
-      <div className="fixed bottom-0 inset-x-0 p-4 bg-gradient-to-t from-slate-100 via-slate-100 z-10">
-        <button
-          onClick={() => {
-            setEditingRequest(null);
-            setRequestSheetOpen(true);
-          }}
-          className="max-w-md mx-auto w-full min-h-[56px] rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-base font-semibold flex items-center justify-center gap-2 shadow-lg"
-        >
-          <Send size={20} /> ส่งคำขอเงิน
-        </button>
-      </div>
+      {!embedded && (
+        <div className="fixed bottom-0 inset-x-0 p-4 bg-gradient-to-t from-slate-100 via-slate-100 z-10">
+          <button
+            onClick={() => {
+              setEditingRequest(null);
+              setRequestSheetOpen(true);
+            }}
+            className="max-w-md mx-auto w-full min-h-[56px] rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-base font-semibold flex items-center justify-center gap-2 shadow-lg"
+          >
+            <Send size={20} /> ส่งคำขอเงิน
+          </button>
+        </div>
+      )}
 
       {sheetOpen && (
         <ExpenseSheet
@@ -251,7 +271,7 @@ export default function MessengerHome() {
         />
       )}
 
-      {requestSheetOpen && (
+      {!embedded && requestSheetOpen && (
         <RequestSheet
           editing={editingRequest}
           onClose={() => setRequestSheetOpen(false)}

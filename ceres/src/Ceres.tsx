@@ -2,8 +2,8 @@ import { useCallback, useEffect, useState } from 'react';
 import { Loader2, AlertTriangle, RefreshCw } from 'lucide-react';
 import { getBootstrap, logout as logoutSuite, type Agent, type Bootstrap } from './lib/api';
 import { CeresContext } from './lib/bootstrapContext';
-import MessengerHome from './Messenger';
-import MdApp from './Md';
+import StaffHome from './StaffHome';
+import { CeoApp, NeeApp } from './Md';
 
 export default function Ceres({ agent, onLogout }: { agent: Agent; onLogout: () => void }) {
   const [bootstrap, setBootstrap] = useState<Bootstrap | null>(null);
@@ -58,7 +58,9 @@ export default function Ceres({ agent, onLogout }: { agent: Agent; onLogout: () 
 
   return (
     <CeresContext.Provider value={{ agent, bootstrap, onLogout, refreshBootstrap }}>
-      {bootstrap.role === 'messenger' ? <MessengerHome /> : <MdApp />}
+      {bootstrap.role === 'messenger' && <StaffHome />}
+      {bootstrap.role === 'gm' && <NeeApp />}
+      {bootstrap.role === 'ceo' && <CeoApp />}
     </CeresContext.Provider>
   );
 }
