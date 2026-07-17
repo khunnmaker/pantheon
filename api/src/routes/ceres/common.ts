@@ -97,6 +97,7 @@ export function toExpenseRow(
     approvedById: string | null; approvedAt: Date | null; rejectReason: string;
     voidedById: string | null; voidedAt: Date | null; voidReason: string;
     settlementId: string | null; aiVerdict: string; note: string; createdAt: Date;
+    advanceRequestId: string | null; fundingLane: string;
   },
   base: string,
   // Whether another (non-rejected/void) expense shares this one's receiptSha — batch-computed
@@ -132,6 +133,8 @@ export function toExpenseRow(
     voidedAt: e.voidedAt ? e.voidedAt.toISOString() : null,
     voidReason: e.voidReason,
     settlementId: e.settlementId,
+    advanceRequestId: e.advanceRequestId,
+    fundingLane: e.fundingLane,
     aiVerdict: e.aiVerdict,
     note: e.note,
     createdAt: e.createdAt.toISOString(),
@@ -144,6 +147,22 @@ export { ceresReceiptUrl } from '../../ceres/receiptLink.js';
 
 export async function lastSettlement() {
   return prisma.ceresSettlement.findFirst({ orderBy: { createdAt: 'desc' } });
+}
+
+export async function transferReconciliationStats(): Promise<{ unmatched: number; reversalExceptions: number }> {
+  const [events, links] = await Promise.all([
+    prisma.ceresRequestMoneyEvent.findMany({ where: { lane: 'transfer' }, select: { id: true, kind: true } }),
+    prisma.ceresStatementLine.findMany({
+      where: { matchedType: 'requestMoneyEvent', matchedId: { not: '' } },
+      select: { matchedId: true },
+    }),
+  ]);
+  const linkedIds = new Set(links.map((link) => link.matchedId));
+  const unmatched = events.filter((event) => !linkedIds.has(event.id));
+  return {
+    unmatched: unmatched.length,
+    reversalExceptions: unmatched.filter((event) => event.kind === 'reversal').length,
+  };
 }
 
 export interface PartyBoard {
@@ -198,10 +217,28 @@ export async function computeBoard(opts?: { tx?: Db; cutoff?: Date }): Promise<{
       settlement
         ? db.ceresSettlementLine.findMany({ where: { settlementId: settlement.id } })
         : Promise.resolve([] as Awaited<ReturnType<typeof prisma.ceresSettlementLine.findMany>>),
-      db.cashMovement.findMany({ where: { type: 'advance', accountId: 'pettyCash', ...sinceWindow } }),
-      db.cashMovement.findMany({ where: { type: 'refund', accountId: 'pettyCash', ...sinceWindow } }),
-      db.ceresExpense.findMany({ where: { status: 'approved', settlementId: null } }),
-      db.ceresExpense.findMany({ where: { status: 'pending' } }),
+      db.cashMovement.findMany({
+        where: {
+          accountId: 'pettyCash',
+          ...sinceWindow,
+          OR: [
+            { type: 'advance' },
+            { type: 'reversal', direction: 'out', partyId: { not: null } },
+          ],
+        },
+      }),
+      db.cashMovement.findMany({
+        where: {
+          accountId: 'pettyCash',
+          ...sinceWindow,
+          OR: [
+            { type: { in: ['refund', 'request_refund'] } },
+            { type: 'reversal', direction: 'in', partyId: { not: null } },
+          ],
+        },
+      }),
+      db.ceresExpense.findMany({ where: { status: 'approved', settlementId: null, fundingLane: { not: 'transfer' } } }),
+      db.ceresExpense.findMany({ where: { status: 'pending', fundingLane: { not: 'transfer' } } }),
       db.cashMovement.findMany({
         where: { accountId: 'pettyCash', ...allTimeWindow },
         select: { amount: true, direction: true, type: true },

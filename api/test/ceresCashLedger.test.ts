@@ -10,6 +10,9 @@ const mocks = vi.hoisted(() => ({
   findFirstMoneyEvent: vi.fn(),
   findManyMoneyEvents: vi.fn(),
   createMoneyEvent: vi.fn(),
+  updateRequest: vi.fn(),
+  createRequestEvent: vi.fn(),
+  findExpenses: vi.fn(),
 }));
 
 vi.mock('../src/db/prisma.js', () => ({
@@ -28,7 +31,9 @@ function tx() {
   return {
     $queryRaw: mocks.queryRaw,
     cashMovement: { findMany: mocks.findMovements, create: mocks.createMovement },
-    ceresPaymentRequest: { findUnique: mocks.findRequest },
+    ceresPaymentRequest: { findUnique: mocks.findRequest, update: mocks.updateRequest },
+    ceresExpense: { findMany: mocks.findExpenses },
+    ceresRequestEvent: { create: mocks.createRequestEvent },
     ceresRequestMoneyEvent: {
       findUnique: mocks.findMoneyEvent,
       findFirst: mocks.findFirstMoneyEvent,
@@ -45,6 +50,9 @@ beforeEach(() => {
   mocks.findFirstMoneyEvent.mockResolvedValue(null);
   mocks.findManyMoneyEvents.mockResolvedValue([]);
   mocks.createMoneyEvent.mockImplementation(async ({ data }) => data);
+  mocks.updateRequest.mockResolvedValue({});
+  mocks.createRequestEvent.mockResolvedValue({ id: 'request-event-1' });
+  mocks.findExpenses.mockResolvedValue([]);
   mocks.transaction.mockImplementation(async (callback) => callback(tx()));
 });
 
@@ -138,7 +146,10 @@ describe('Ceres cash ledger safety', () => {
 
   it('allows at most one unreversed initial request fulfillment', async () => {
     const events: Array<Record<string, unknown>> = [];
-    mocks.findRequest.mockResolvedValue({ id: 'request-1', workflowVersion: 2, approvalStatus: 'approved' });
+    mocks.findRequest.mockResolvedValue({
+      id: 'request-1', workflowVersion: 2, approvalStatus: 'approved', requestType: 'advance',
+      requesterPartyId: 'party-1', requestedByName: 'Staff', entity: 'PROM', fulfillmentStatus: 'unfulfilled', amount: '10.00',
+    });
     mocks.findMovements.mockResolvedValue([{ type: 'deposit', direction: 'in', amount: '100.00' }]);
     mocks.findManyMoneyEvents.mockImplementation(async ({ where }) => {
       if (where.kind === 'reversal') return [];
@@ -151,7 +162,7 @@ describe('Ceres cash ledger safety', () => {
 
     await recordRequestMoneyEvent({ requestId: 'request-1', kind: 'payment', lane: 'cash', amount: '10.00' });
     await expect(recordRequestMoneyEvent({
-      requestId: 'request-1', kind: 'purchase', lane: 'cash', amount: '5.00', purchaseReceiptUploadId: 'receipt-1',
+      requestId: 'request-1', kind: 'payment', lane: 'cash', amount: '5.00',
     })).rejects.toMatchObject({ code: 'already_fulfilled' });
     expect(mocks.createMoneyEvent).toHaveBeenCalledTimes(1);
     expect(mocks.createMovement).toHaveBeenCalledTimes(1);
@@ -159,7 +170,10 @@ describe('Ceres cash ledger safety', () => {
 
   it('reverses a cash fulfillment with a compensating movement', async () => {
     const events = new Map<string, Record<string, unknown>>();
-    mocks.findRequest.mockResolvedValue({ id: 'request-1', workflowVersion: 2, approvalStatus: 'approved' });
+    mocks.findRequest.mockResolvedValue({
+      id: 'request-1', workflowVersion: 2, approvalStatus: 'approved', requestType: 'advance',
+      requesterPartyId: 'party-1', requestedByName: 'Staff', entity: 'PROM', fulfillmentStatus: 'unfulfilled', amount: '25.00',
+    });
     mocks.findMovements.mockResolvedValue([{ type: 'deposit', direction: 'in', amount: '100.00' }]);
     mocks.findMoneyEvent.mockImplementation(async ({ where }) => {
       if (where.id) return events.get(where.id) ?? null;
@@ -186,7 +200,10 @@ describe('Ceres cash ledger safety', () => {
   });
 
   it('rejects a cash request payment above the box balance and writes nothing', async () => {
-    mocks.findRequest.mockResolvedValue({ id: 'request-1', workflowVersion: 2, approvalStatus: 'approved' });
+    mocks.findRequest.mockResolvedValue({
+      id: 'request-1', workflowVersion: 2, approvalStatus: 'approved', requestType: 'advance',
+      requesterPartyId: 'party-1', requestedByName: 'Staff', entity: 'PROM', fulfillmentStatus: 'unfulfilled', amount: '20.01',
+    });
     mocks.findMovements.mockResolvedValue([{ type: 'deposit', direction: 'in', amount: '20.00' }]);
 
     await expect(recordRequestMoneyEvent({

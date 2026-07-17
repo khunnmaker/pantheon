@@ -11,7 +11,12 @@ import {
   type CeresMediaPurpose,
 } from '../../ceres/mediaAccess.js';
 import { ceresReceiptExpiry } from '../../ceres/receiptLink.js';
-import { CashLedgerError, createLegacyAdvance, lockPettyCash } from '../../ceres/requestMoney.js';
+import {
+  CashLedgerError,
+  createLegacyAdvance,
+  lockPettyCash,
+  syncAdvanceLiquidationProjection,
+} from '../../ceres/requestMoney.js';
 import { readReceiptImage } from '../../llm/readReceipt.js';
 import { reviewExpensePostHoc } from '../../ceres/aiReview.js';
 import { ceresReceiptUrl, isValidAmount, thaiDayKey, thaiDayRange, toExpenseRow, computeBoard } from './common.js';
@@ -33,6 +38,8 @@ class CloseGuard extends Error {
     super(code);
   }
 }
+
+class AdvanceGuard extends Error {}
 
 // P1 (petty cash) routes — messenger self-entry, Nee approval, expected-change
 // board, manual daily close. Mounted under the requireCeresAuth scope (see
@@ -151,6 +158,7 @@ export function p1Routes(app: FastifyInstance) {
     ocrDate: z.string().max(80).optional(),
     note: z.string().max(600).optional(),
     partyId: z.string().optional(),
+    advanceRequestId: z.string().min(1).optional(),
   });
   app.post('/api/ceres/expenses', { preHandler: requireCeresRole('messenger', 'gm', 'ceo') }, async (req, reply) => {
     const parsed = expenseBody.safeParse(req.body);
@@ -181,35 +189,102 @@ export function p1Routes(app: FastifyInstance) {
       partyName = p.name;
     }
 
+    let fundingLane: 'cash' | 'transfer' = 'cash';
+    if (b.advanceRequestId) {
+      const advance = await prisma.ceresPaymentRequest.findUnique({ where: { id: b.advanceRequestId } });
+      if (!advance || advance.workflowVersion !== 2 || advance.requestType !== 'advance') {
+        return reply.code(400).send({ error: 'invalid_advance' });
+      }
+      if (role === 'messenger') {
+        if (advance.requestedById !== agent.id || advance.requesterPartyId !== partyId) {
+          return reply.code(403).send({ error: 'not_yours' });
+        }
+      } else if (advance.requesterPartyId !== partyId) {
+        return reply.code(400).send({ error: 'advance_party_mismatch' });
+      }
+      const events = await prisma.ceresRequestMoneyEvent.findMany({
+        where: { requestId: advance.id },
+        orderBy: { createdAt: 'asc' },
+      });
+      const reversedIds = new Set(
+        events.filter((event) => event.kind === 'reversal' && event.reversesEventId).map((event) => event.reversesEventId),
+      );
+      const payment = events.find((event) => event.kind === 'payment' && !reversedIds.has(event.id));
+      if (!payment) return reply.code(409).send({ error: 'advance_not_paid' });
+      fundingLane = payment.lane === 'transfer' ? 'transfer' : 'cash';
+      if (!b.receiptUploadId) return reply.code(400).send({ error: 'receipt_required' });
+    }
+
     let receiptSha = '';
     let receiptMeta: Awaited<ReturnType<typeof readCeresReceiptMeta>> = null;
     if (b.receiptUploadId) {
-      const media = await mediaCanBeAttachedBy(b.receiptUploadId, agent, ['legacy_receipt']);
+      const media = await mediaCanBeAttachedBy(
+        b.receiptUploadId,
+        agent,
+        b.advanceRequestId ? ['reimbursement_receipt'] : ['legacy_receipt'],
+      );
       if (!media) return reply.code(403).send({ error: 'media_not_owned' });
       receiptMeta = await readCeresReceiptMeta(b.receiptUploadId);
       receiptSha = media.sha256;
     }
 
-    const expense = await prisma.ceresExpense.create({
-      data: {
-        partyId,
-        partyName,
-        enteredById: agent.id,
-        enteredByName: agent.name,
-        entity: b.entity,
-        category: b.category,
-        customerNote: b.customerNote ?? '',
-        amount: b.amount,
-        spentAt: b.spentAt ? new Date(b.spentAt) : new Date(),
-        receiptUploadId: b.receiptUploadId ?? null,
-        receiptSha,
-        ocrAmount: b.ocrAmount ?? receiptMeta?.ocrAmount ?? '',
-        ocrVendor: b.ocrVendor ?? receiptMeta?.ocrVendor ?? '',
-        ocrDate: b.ocrDate ?? receiptMeta?.ocrDate ?? '',
-        note: b.note ?? '',
-        status: 'pending',
-      },
-    });
+    let expense;
+    try {
+      expense = await prisma.$transaction(async (tx) => {
+        if (b.advanceRequestId) {
+          await tx.$queryRaw<Array<{ id: string }>>`
+            SELECT "id" FROM "CeresPaymentRequest" WHERE "id" = ${b.advanceRequestId} FOR UPDATE
+          `;
+          const lockedEvents = await tx.ceresRequestMoneyEvent.findMany({
+            where: { requestId: b.advanceRequestId },
+            orderBy: { createdAt: 'asc' },
+          });
+          const lockedReversedIds = new Set(
+            lockedEvents.filter((event) => event.kind === 'reversal' && event.reversesEventId).map((event) => event.reversesEventId),
+          );
+          const lockedPayment = lockedEvents.find((event) => event.kind === 'payment' && !lockedReversedIds.has(event.id));
+          if (!lockedPayment) throw new AdvanceGuard('advance_not_paid');
+          fundingLane = lockedPayment.lane === 'transfer' ? 'transfer' : 'cash';
+        }
+        const created = await tx.ceresExpense.create({
+          data: {
+            partyId,
+            partyName,
+            enteredById: agent.id,
+            enteredByName: agent.name,
+            entity: b.entity,
+            category: b.category,
+            customerNote: b.customerNote ?? '',
+            amount: b.amount,
+            spentAt: b.spentAt ? new Date(b.spentAt) : new Date(),
+            receiptUploadId: b.receiptUploadId ?? null,
+            receiptSha,
+            ocrAmount: b.ocrAmount ?? receiptMeta?.ocrAmount ?? '',
+            ocrVendor: b.ocrVendor ?? receiptMeta?.ocrVendor ?? '',
+            ocrDate: b.ocrDate ?? receiptMeta?.ocrDate ?? '',
+            note: b.note ?? '',
+            status: 'pending',
+            advanceRequestId: b.advanceRequestId ?? null,
+            fundingLane,
+          },
+        });
+        if (b.advanceRequestId) {
+          await tx.ceresRequestEvent.create({
+            data: {
+              requestId: b.advanceRequestId,
+              kind: 'liquidation_added',
+              actorId: agent.id,
+              actorName: agent.name,
+              payload: { expenseId: created.id, amount: created.amount, fundingLane },
+            },
+          });
+        }
+        return created;
+      });
+    } catch (err) {
+      if (err instanceof AdvanceGuard) return reply.code(409).send({ error: err.message });
+      throw err;
+    }
     return { expense: toExpenseRow(expense, reqBase(req)) };
   });
 
@@ -322,7 +397,11 @@ export function p1Routes(app: FastifyInstance) {
       // would keep keying off the OLD image's hash. Empty when the meta is missing.
       if ('receiptUploadId' in changed) {
         const uploadId = changed.receiptUploadId as string;
-        const media = await mediaCanBeAttachedBy(uploadId, agent, ['legacy_receipt']);
+        const media = await mediaCanBeAttachedBy(
+          uploadId,
+          agent,
+          existing.advanceRequestId ? ['reimbursement_receipt'] : ['legacy_receipt'],
+        );
         if (!media) return reply.code(403).send({ error: 'media_not_owned' });
         const meta = await readCeresReceiptMeta(uploadId);
         changed.receiptSha = media.sha256;
@@ -339,27 +418,33 @@ export function p1Routes(app: FastifyInstance) {
         before[k] = (existing as Record<string, unknown>)[k];
       }
 
-      const [updated] = await prisma.$transaction([
-        prisma.ceresExpense.update({ where: { id: existing.id }, data: changed }),
-        ...(needsRevision
-          ? [
-              prisma.ceresRevision.create({
-                data: {
-                  subjectType: 'expense',
-                  subjectId: existing.id,
-                  changedById: agent.id,
-                  changedByName: agent.name,
-                  // JSON round-trip: `changed`/`before` can hold Date values (e.g. spentAt),
-                  // which aren't valid Prisma JSON input on their own — stringify first so
-                  // the stored revision is plain JSON-safe (dates become ISO strings).
-                  before: JSON.parse(JSON.stringify(before)),
-                  after: JSON.parse(JSON.stringify(changed)),
-                  reason: reason ?? '',
-                },
-              }),
-            ]
-          : []),
-      ]);
+      const updated = await prisma.$transaction(async (tx) => {
+        const row = await tx.ceresExpense.update({ where: { id: existing.id }, data: changed });
+        if (needsRevision) {
+          await tx.ceresRevision.create({
+            data: {
+              subjectType: 'expense',
+              subjectId: existing.id,
+              changedById: agent.id,
+              changedByName: agent.name,
+              // JSON round-trip: `changed`/`before` can hold Date values (e.g. spentAt),
+              // which aren't valid Prisma JSON input on their own — stringify first so
+              // the stored revision is plain JSON-safe (dates become ISO strings).
+              before: JSON.parse(JSON.stringify(before)),
+              after: JSON.parse(JSON.stringify(changed)),
+              reason: reason ?? '',
+            },
+          });
+        }
+        if (row.advanceRequestId && ['approved', 'settled'].includes(row.status)) {
+          await tx.$queryRaw<Array<{ id: string }>>`
+            SELECT "id" FROM "CeresPaymentRequest" WHERE "id" = ${row.advanceRequestId} FOR UPDATE
+          `;
+          const advance = await tx.ceresPaymentRequest.findUnique({ where: { id: row.advanceRequestId } });
+          if (advance) await syncAdvanceLiquidationProjection(tx, advance, { id: agent.id, name: agent.name });
+        }
+        return row;
+      });
       return { expense: toExpenseRow(updated, reqBase(req)) };
     },
   );
@@ -374,6 +459,7 @@ export function p1Routes(app: FastifyInstance) {
       const existing = await prisma.ceresExpense.findUnique({ where: { id: req.params.id } });
       if (!existing) return reply.code(404).send({ error: 'not_found' });
       if (existing.status !== 'pending') return reply.code(409).send({ error: 'not_pending' });
+      if (existing.advanceRequestId) return reply.code(409).send({ error: 'linked_expense_locked' });
 
       if (role === 'messenger') {
         const own = await prisma.ceresParty.findFirst({ where: { agentEmail: agent.email } });
@@ -401,12 +487,12 @@ export function p1Routes(app: FastifyInstance) {
       if (!existing) return reply.code(404).send({ error: 'not_found' });
       if (existing.status === 'void') return reply.code(409).send({ error: 'already_void' });
       const agent = req.agent!;
-      const [updated] = await prisma.$transaction([
-        prisma.ceresExpense.update({
+      const updated = await prisma.$transaction(async (tx) => {
+        const row = await tx.ceresExpense.update({
           where: { id: existing.id },
           data: { status: 'void', voidedById: agent.id, voidedAt: new Date(), voidReason: body.data.reason },
-        }),
-        prisma.ceresRevision.create({
+        });
+        await tx.ceresRevision.create({
           data: {
             subjectType: 'expense',
             subjectId: existing.id,
@@ -416,8 +502,16 @@ export function p1Routes(app: FastifyInstance) {
             after: { status: 'void', voidReason: body.data.reason },
             reason: body.data.reason,
           },
-        }),
-      ]);
+        });
+        if (row.advanceRequestId && ['approved', 'settled'].includes(existing.status)) {
+          await tx.$queryRaw<Array<{ id: string }>>`
+            SELECT "id" FROM "CeresPaymentRequest" WHERE "id" = ${row.advanceRequestId} FOR UPDATE
+          `;
+          const advance = await tx.ceresPaymentRequest.findUnique({ where: { id: row.advanceRequestId } });
+          if (advance) await syncAdvanceLiquidationProjection(tx, advance, { id: agent.id, name: agent.name });
+        }
+        return row;
+      });
       return { expense: toExpenseRow(updated, reqBase(req)) };
     },
   );
@@ -430,9 +524,21 @@ export function p1Routes(app: FastifyInstance) {
       const existing = await prisma.ceresExpense.findUnique({ where: { id: req.params.id } });
       if (!existing) return reply.code(404).send({ error: 'not_found' });
       if (existing.status !== 'pending') return reply.code(409).send({ error: 'not_pending' });
-      const updated = await prisma.ceresExpense.update({
-        where: { id: existing.id },
-        data: { status: 'approved', approvedById: req.agent!.id, approvedAt: new Date() },
+      const updated = await prisma.$transaction(async (tx) => {
+        const approved = await tx.ceresExpense.update({
+          where: { id: existing.id },
+          data: { status: 'approved', approvedById: req.agent!.id, approvedAt: new Date() },
+        });
+        if (approved.advanceRequestId) {
+          await tx.$queryRaw<Array<{ id: string }>>`
+            SELECT "id" FROM "CeresPaymentRequest" WHERE "id" = ${approved.advanceRequestId} FOR UPDATE
+          `;
+          const advance = await tx.ceresPaymentRequest.findUnique({ where: { id: approved.advanceRequestId } });
+          if (advance) {
+            await syncAdvanceLiquidationProjection(tx, advance, { id: req.agent!.id, name: req.agent!.name });
+          }
+        }
+        return approved;
       });
       void reviewExpensePostHoc(updated.id).catch((err) => req.log.error({ err }, 'ceres post-hoc review failed'));
       return { expense: toExpenseRow(updated, reqBase(req)) };
@@ -603,14 +709,38 @@ export function p1Routes(app: FastifyInstance) {
         const already = await tx.ceresSettlement.findUnique({ where: { dayKey } });
         if (already) throw new CloseGuard('already_closed_today');
 
-        const pendingCount = await tx.ceresExpense.count({ where: { status: 'pending' } });
+        const pendingCount = await tx.ceresExpense.count({
+          where: { status: 'pending', fundingLane: { not: 'transfer' } },
+        });
         if (pendingCount > 0) throw new CloseGuard('pending_exist', pendingCount);
 
         const { parties, box } = await computeBoard({ tx, cutoff });
         if (box.balance < 0) throw new CloseGuard('negative_box_balance');
         const approvedIds = (
-          await tx.ceresExpense.findMany({ where: { status: 'approved', settlementId: null }, select: { id: true } })
+          await tx.ceresExpense.findMany({
+            where: { status: 'approved', settlementId: null, fundingLane: { not: 'transfer' } },
+            select: { id: true },
+          })
         ).map((e) => e.id);
+        const snapshotted = await tx.ceresSettlementRequestLine.findMany({ select: { moneyEventId: true } });
+        const cashEvents = await tx.ceresRequestMoneyEvent.findMany({
+          where: {
+            lane: 'cash',
+            createdAt: { lte: cutoff },
+            ...(snapshotted.length > 0
+              ? { id: { notIn: snapshotted.map((line) => line.moneyEventId) } }
+              : {}),
+          },
+          orderBy: { createdAt: 'asc' },
+        });
+        const cashRequestIds = [...new Set(cashEvents.map((event) => event.requestId))];
+        const cashRequests = cashRequestIds.length > 0
+          ? await tx.ceresPaymentRequest.findMany({
+              where: { id: { in: cashRequestIds } },
+              select: { id: true, requestedByName: true },
+            })
+          : [];
+        const cashRequestNames = new Map(cashRequests.map((request) => [request.id, request.requestedByName]));
 
         const created = await tx.ceresSettlement.create({
           data: {
@@ -640,6 +770,19 @@ export function p1Routes(app: FastifyInstance) {
             },
           });
         }
+        for (const event of cashEvents) {
+          await tx.ceresSettlementRequestLine.create({
+            data: {
+              settlementId: created.id,
+              requestId: event.requestId,
+              moneyEventId: event.id,
+              kind: event.kind,
+              partyName: cashRequestNames.get(event.requestId) ?? '',
+              amount: event.amount,
+              createdAt: cutoff,
+            },
+          });
+        }
         if (approvedIds.length > 0) {
           await tx.ceresExpense.updateMany({
             where: { id: { in: approvedIds } },
@@ -657,8 +800,11 @@ export function p1Routes(app: FastifyInstance) {
       throw err;
     }
 
-    const lines = await prisma.ceresSettlementLine.findMany({ where: { settlementId: settlement.id } });
-    return { settlement: { ...settlement, lines } };
+    const [lines, requestLines] = await Promise.all([
+      prisma.ceresSettlementLine.findMany({ where: { settlementId: settlement.id } }),
+      prisma.ceresSettlementRequestLine.findMany({ where: { settlementId: settlement.id } }),
+    ]);
+    return { settlement: { ...settlement, lines, requestLines } };
   });
 
   // GET /api/ceres/settlements?limit=
@@ -668,7 +814,7 @@ export function p1Routes(app: FastifyInstance) {
     const settlements = await prisma.ceresSettlement.findMany({
       orderBy: { createdAt: 'desc' },
       take: parsed.data.limit ?? 30,
-      include: { lines: true },
+      include: { lines: true, requestLines: true },
     });
     return { settlements };
   });

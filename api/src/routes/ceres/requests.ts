@@ -3,7 +3,17 @@ import { z } from 'zod';
 import { prisma } from '../../db/prisma.js';
 import { ceresRole, requireCeresRole } from '../../ceres/auth.js';
 import { reviewPaymentRequest } from '../../ceres/aiReview.js';
+import { mediaCanBeAttachedBy } from '../../ceres/mediaAccess.js';
 import { notifyCeoEscalation } from '../../ceres/notifyCeo.js';
+import {
+  CashLedgerError,
+  fulfillRequest,
+  getAdvanceLiquidation,
+  refundAdvance,
+  RequestMoneyError,
+  requestMoneyLaneSchema,
+  reverseRequestMoneyEvent,
+} from '../../ceres/requestMoney.js';
 import {
   cancelStaffRequest,
   CeresRequestError,
@@ -84,6 +94,17 @@ function requestError(reply: { code: (status: number) => { send: (body: unknown)
     : err.code === 'forbidden' || err.code === 'no_party' || err.code === 'media_not_owned' ? 403
       : ['not_editable', 'not_cancellable', 'not_pending_nee', 'not_pending_ceo', 'conflict'].includes(err.code) ? 409
         : 400;
+  return reply.code(status).send({ error: err.code });
+}
+
+function moneyError(reply: { code: (status: number) => { send: (body: unknown) => unknown } }, err: unknown) {
+  if (err instanceof CashLedgerError) {
+    return reply.code(409).send({ error: err.code, balance: err.balance.toFixed(2) });
+  }
+  if (!(err instanceof RequestMoneyError)) throw err;
+  const status = err.code === 'not_found' ? 404
+    : ['not_approved', 'already_fulfilled', 'not_paid_advance', 'refund_exceeds_outstanding'].includes(err.code) ? 409
+      : 400;
   return reply.code(status).send({ error: err.code });
 }
 
@@ -335,14 +356,15 @@ export function requestsRoutes(app: FastifyInstance) {
           const review = request.aiReviewId
             ? await prisma.ceresAIReview.findUnique({ where: { id: request.aiReviewId } })
             : null;
-          const [events, revisions] = await Promise.all([
+          const [events, revisions, moneyEvents] = await Promise.all([
             prisma.ceresRequestEvent.findMany({ where: { requestId: request.id }, orderBy: { createdAt: 'asc' } }),
             prisma.ceresRevision.findMany({
               where: { subjectType: 'paymentRequest', subjectId: request.id },
               orderBy: { createdAt: 'asc' },
             }),
+            prisma.ceresRequestMoneyEvent.findMany({ where: { requestId: request.id }, orderBy: { createdAt: 'asc' } }),
           ]);
-          return { request: toStaffRequestRow(request, review), events, revisions };
+          return { request: toStaffRequestRow(request, review), events, revisions, moneyEvents };
         } catch (err) {
           return requestError(reply, err);
         }
@@ -464,6 +486,121 @@ export function requestsRoutes(app: FastifyInstance) {
       });
       const review = updated.aiReviewId ? await prisma.ceresAIReview.findUnique({ where: { id: updated.aiReviewId } }) : null;
       return { request: toRequestRow(updated, review) };
+    },
+  );
+
+  const fulfillmentBody = z.object({
+    lane: requestMoneyLaneSchema,
+    transferSlipUploadId: z.string().min(1).optional(),
+    purchaseReceiptUploadId: z.string().min(1).optional(),
+    note: z.string().max(600).optional(),
+    idempotencyKey: z.string().min(1).max(160).optional(),
+  }).strict();
+  app.post<{ Params: { id: string } }>(
+    '/api/ceres/requests/:id/fulfill',
+    { preHandler: requireCeresRole('gm', 'ceo') },
+    async (req, reply) => {
+      const parsed = fulfillmentBody.safeParse(req.body);
+      if (!parsed.success) return reply.code(400).send({ error: 'invalid_body' });
+      const body = parsed.data;
+      if (body.transferSlipUploadId) {
+        const media = await mediaCanBeAttachedBy(body.transferSlipUploadId, req.agent!, ['transfer_slip']);
+        if (!media) return reply.code(403).send({ error: 'media_not_owned' });
+      }
+      if (body.purchaseReceiptUploadId) {
+        const media = await mediaCanBeAttachedBy(body.purchaseReceiptUploadId, req.agent!, ['purchase_receipt']);
+        if (!media) return reply.code(403).send({ error: 'media_not_owned' });
+      }
+      try {
+        const moneyEvent = await fulfillRequest({
+          requestId: req.params.id,
+          ...body,
+          createdById: req.agent!.id,
+          createdByName: req.agent!.name,
+        });
+        const request = await prisma.ceresPaymentRequest.findUniqueOrThrow({ where: { id: req.params.id } });
+        return { request: toStaffRequestRow(request), moneyEvent };
+      } catch (err) {
+        return moneyError(reply, err);
+      }
+    },
+  );
+
+  const refundBody = z.object({
+    lane: requestMoneyLaneSchema,
+    amount: z.string().refine(isValidAmount, 'invalid_amount'),
+    transferSlipUploadId: z.string().min(1).optional(),
+    note: z.string().max(600).optional(),
+    idempotencyKey: z.string().min(1).max(160).optional(),
+  }).strict();
+  app.post<{ Params: { id: string } }>(
+    '/api/ceres/requests/:id/refund',
+    { preHandler: requireCeresRole('gm', 'ceo') },
+    async (req, reply) => {
+      const parsed = refundBody.safeParse(req.body);
+      if (!parsed.success) {
+        const amountIssue = parsed.error.issues.some((issue) => issue.message === 'invalid_amount');
+        return reply.code(400).send({ error: amountIssue ? 'invalid_amount' : 'invalid_body' });
+      }
+      const body = parsed.data;
+      if (body.transferSlipUploadId) {
+        const media = await mediaCanBeAttachedBy(body.transferSlipUploadId, req.agent!, ['refund_slip']);
+        if (!media) return reply.code(403).send({ error: 'media_not_owned' });
+      }
+      try {
+        const moneyEvent = await refundAdvance({
+          requestId: req.params.id,
+          ...body,
+          createdById: req.agent!.id,
+          createdByName: req.agent!.name,
+        });
+        const liquidation = await getAdvanceLiquidation(req.params.id);
+        return { moneyEvent, liquidation };
+      } catch (err) {
+        return moneyError(reply, err);
+      }
+    },
+  );
+
+  const reverseBody = z.object({
+    reason: z.string().min(1).max(600),
+    idempotencyKey: z.string().min(1).max(160).optional(),
+  }).strict();
+  app.post<{ Params: { id: string } }>(
+    '/api/ceres/request-money-events/:id/reverse',
+    { preHandler: requireCeresRole('gm', 'ceo') },
+    async (req, reply) => {
+      const parsed = reverseBody.safeParse(req.body);
+      if (!parsed.success) return reply.code(400).send({ error: 'invalid_body' });
+      try {
+        const moneyEvent = await reverseRequestMoneyEvent({
+          eventId: req.params.id,
+          reason: parsed.data.reason,
+          idempotencyKey: parsed.data.idempotencyKey,
+          createdById: req.agent!.id,
+          createdByName: req.agent!.name,
+        });
+        return { moneyEvent };
+      } catch (err) {
+        return moneyError(reply, err);
+      }
+    },
+  );
+
+  app.get<{ Params: { id: string } }>(
+    '/api/ceres/requests/:id/liquidation',
+    { preHandler: requireCeresRole('messenger', 'gm', 'ceo') },
+    async (req, reply) => {
+      const request = await prisma.ceresPaymentRequest.findUnique({ where: { id: req.params.id } });
+      if (!request) return reply.code(404).send({ error: 'not_found' });
+      if (ceresRole(req.agent!) === 'messenger' && request.requestedById !== req.agent!.id) {
+        return reply.code(404).send({ error: 'not_found' });
+      }
+      try {
+        return { liquidation: await getAdvanceLiquidation(request.id) };
+      } catch (err) {
+        return moneyError(reply, err);
+      }
     },
   );
 

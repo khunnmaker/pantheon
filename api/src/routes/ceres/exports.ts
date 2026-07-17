@@ -45,11 +45,13 @@ export function exportsRoutes(app: FastifyInstance) {
     const rows = await prisma.ceresExpense.findMany({ where, orderBy: { createdAt: 'desc' } });
     const headers = [
       'createdAt (UTC+7)', 'party', 'enteredBy', 'entity', 'category', 'customerNote',
-      'amount', 'ocrAmount', 'status', 'aiVerdict', 'approvedAt', 'settlementId', 'note',
+      'amount', 'ocrAmount', 'status', 'aiVerdict', 'approvedAt', 'settlementId',
+      'advanceRequestId', 'fundingLane', 'receiptPresent', 'note',
     ];
     const data = rows.map((e) => [
       fmtDate(e.createdAt), e.partyName, e.enteredByName, e.entity, e.category, e.customerNote,
-      e.amount, e.ocrAmount, e.status, e.aiVerdict, e.approvedAt ? fmtDate(e.approvedAt) : '', e.settlementId ?? '', e.note,
+      e.amount, e.ocrAmount, e.status, e.aiVerdict, e.approvedAt ? fmtDate(e.approvedAt) : '', e.settlementId ?? '',
+      e.advanceRequestId ?? '', e.fundingLane, e.receiptUploadId ? 'yes' : 'no', e.note,
     ]);
     return sendCsv(reply, 'ceres-expenses', headers, data);
   });
@@ -75,14 +77,48 @@ export function exportsRoutes(app: FastifyInstance) {
     const where = range ? { createdAt: range } : {};
 
     const rows = await prisma.ceresPaymentRequest.findMany({ where, orderBy: { createdAt: 'desc' } });
+    const requestIds = rows.map((row) => row.id);
+    const moneyEvents = requestIds.length > 0
+      ? await prisma.ceresRequestMoneyEvent.findMany({ where: { requestId: { in: requestIds } }, orderBy: { createdAt: 'asc' } })
+      : [];
+    const eventIds = moneyEvents.map((event) => event.id);
+    const matchedLines = eventIds.length > 0
+      ? await prisma.ceresStatementLine.findMany({
+          where: { matchedType: 'requestMoneyEvent', matchedId: { in: eventIds } },
+          select: { matchedId: true },
+        })
+      : [];
+    const matchedEventIds = new Set(matchedLines.map((line) => line.matchedId));
+    const eventsByRequest = new Map<string, typeof moneyEvents>();
+    for (const event of moneyEvents) {
+      const events = eventsByRequest.get(event.requestId) ?? [];
+      events.push(event);
+      eventsByRequest.set(event.requestId, events);
+    }
     const headers = [
-      'createdAt (UTC+7)', 'payee', 'entity', 'category', 'amount', 'billPeriod', 'status',
-      'requestedBy', 'decidedAt', 'decisionNote', 'paidAt', 'paidRef',
+      'createdAt (UTC+7)', 'requestType', 'payee', 'entity', 'category', 'amount', 'billPeriod',
+      'legacyStatus', 'approvalStatus', 'fulfillmentStatus', 'requestedBy', 'neeApprovedBy',
+      'ceoApprovedById', 'decidedAt', 'decisionNote', 'paidAt', 'paidRef', 'lane',
+      'transferSlipPresent', 'purchaseReceiptPresent', 'moneyEvents', 'reversalState', 'reconciliationState',
     ];
-    const data = rows.map((r) => [
-      fmtDate(r.createdAt), r.payee, r.entity, r.category, r.amount, r.billPeriod, r.status,
-      r.requestedByName, r.decidedAt ? fmtDate(r.decidedAt) : '', r.decisionNote, r.paidAt ? fmtDate(r.paidAt) : '', r.paidRef,
-    ]);
+    const data = rows.map((r) => {
+      const events = eventsByRequest.get(r.id) ?? [];
+      const lanes = [...new Set(events.map((event) => event.lane))].join('|');
+      const hasReversal = events.some((event) => event.kind === 'reversal');
+      const reconciliation = events.length === 0
+        ? 'not_applicable'
+        : events.every((event) => event.lane === 'cash' || matchedEventIds.has(event.id)) ? 'matched' : 'unmatched';
+      return [
+        fmtDate(r.createdAt), r.requestType, r.payee, r.entity, r.category, r.amount, r.billPeriod,
+        r.status, r.approvalStatus, r.fulfillmentStatus, r.requestedByName, r.neeDecidedByName,
+        r.decidedById ?? '', r.decidedAt ? fmtDate(r.decidedAt) : '', r.decisionNote,
+        r.paidAt ? fmtDate(r.paidAt) : '', r.paidRef, lanes,
+        events.some((event) => !!event.transferSlipUploadId) ? 'yes' : 'no',
+        events.some((event) => !!event.purchaseReceiptUploadId) ? 'yes' : 'no',
+        events.map((event) => `${event.kind}:${event.lane}:${event.amount}`).join('|'),
+        hasReversal ? 'reversed_or_compensated' : 'active', reconciliation,
+      ];
+    });
     return sendCsv(reply, 'ceres-requests', headers, data);
   });
 

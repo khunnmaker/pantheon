@@ -1,7 +1,7 @@
 import { prisma } from '../db/prisma.js';
 import { env } from '../env.js';
 import { sendLineText } from '../line/send.js';
-import { computeBoard, num, thaiDayKey, thaiDayRange } from '../routes/ceres/common.js';
+import { computeBoard, num, thaiDayKey, thaiDayRange, transferReconciliationStats } from '../routes/ceres/common.js';
 import { computeTemplateDue } from '../routes/ceres/requests.js';
 import { ageStuckAIReviews } from './requestService.js';
 
@@ -35,7 +35,7 @@ export async function buildCeresDigest(): Promise<string> {
   const todayRange = thaiDayRange(todayKey, todayKey) ?? {};
   await ageStuckAIReviews(now);
 
-  const [escalatedRows, flaggedCount, board, templateDue, settlementToday, pendingCount, pendingNeeCount, v2AiEscalatedCount] = await Promise.all([
+  const [escalatedRows, flaggedCount, board, templateDue, settlementToday, pendingCount, pendingNeeCount, v2AiEscalatedCount, transferRecon] = await Promise.all([
     prisma.ceresPaymentRequest.findMany({
       where: {
         OR: [
@@ -52,6 +52,7 @@ export async function buildCeresDigest(): Promise<string> {
     prisma.ceresExpense.count({ where: { status: 'pending' } }),
     prisma.ceresPaymentRequest.count({ where: { workflowVersion: 2, approvalStatus: 'pending_nee' } }),
     countV2AiEscalations(todayRange),
+    transferReconciliationStats(),
   ]);
 
   const escalatedCount = escalatedRows.length;
@@ -74,6 +75,7 @@ export async function buildCeresDigest(): Promise<string> {
     `รออนุมัติจากคุณ: ${escalatedCount} รายการ (฿${escalatedSum.toFixed(2)})`,
     `รอนีตรวจคำขอใหม่: ${pendingNeeCount} รายการ`,
     `รายการติดธง AI วันนี้: ${flaggedCount + v2AiEscalatedCount}`,
+    `Transfer reconciliation exceptions: ${transferRecon.unmatched} (reversals ${transferRecon.reversalExceptions})`,
     boxLine,
     `บิลเลยกำหนด: ${overdueCount}`,
     closeLine,

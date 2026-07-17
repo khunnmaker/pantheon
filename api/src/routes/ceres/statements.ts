@@ -54,10 +54,111 @@ function makeDedupeKeys(rows: ParsedBankRow[]): string[] {
 
 const DAY_MS = 24 * 3600 * 1000;
 
+function isUniqueViolation(error: unknown): boolean {
+  return !!error && typeof error === 'object' && 'code' in error && error.code === 'P2002';
+}
+
+type TransferEvent = Awaited<ReturnType<typeof prisma.ceresRequestMoneyEvent.findMany>>[number];
+
+function transferEventDirection(event: TransferEvent, byId: ReadonlyMap<string, TransferEvent>): 'in' | 'out' | null {
+  if (event.kind === 'payment' || event.kind === 'purchase') return 'out';
+  if (event.kind === 'refund') return 'in';
+  if (event.kind !== 'reversal' || !event.reversesEventId) return null;
+  const reversed = byId.get(event.reversesEventId);
+  if (!reversed) return null;
+  const original = transferEventDirection(reversed, byId);
+  return original === 'out' ? 'in' : original === 'in' ? 'out' : null;
+}
+
+async function autoMatchTransferEvents(lineIds?: string[]): Promise<number> {
+  const allLines = await prisma.ceresStatementLine.findMany({
+    where: { matchStatus: 'unmatched', refText: '', direction: { in: ['in', 'out'] } },
+  });
+  if (allLines.length === 0) return 0;
+  const scope = lineIds ? new Set(lineIds) : null;
+  const scopedLines = scope ? allLines.filter((line) => scope.has(line.id)) : allLines;
+  if (scopedLines.length === 0) return 0;
+
+  const events = await prisma.ceresRequestMoneyEvent.findMany({
+    where: { lane: 'transfer' },
+    orderBy: { createdAt: 'asc' },
+  });
+  const eventMap = new Map(events.map((event) => [event.id, event]));
+  const alreadyLinked = await prisma.ceresStatementLine.findMany({
+    where: { matchedType: 'requestMoneyEvent', matchedId: { not: '' } },
+    select: { matchedId: true },
+  });
+  const unavailable = new Set(alreadyLinked.map((line) => line.matchedId));
+  const [legacyRequests, cashTargets, linkedLegacyRequests, linkedCashTargets] = await Promise.all([
+    prisma.ceresPaymentRequest.findMany({ where: { workflowVersion: 1, status: 'paid' } }),
+    prisma.cashMovement.findMany({ where: { type: { in: ['topup', 'deposit'] } } }),
+    prisma.ceresStatementLine.findMany({
+      where: { matchedType: 'paymentRequest', matchedId: { not: '' } },
+      select: { matchedId: true },
+    }),
+    prisma.ceresStatementLine.findMany({
+      where: { matchedType: 'cashMovement', matchedId: { not: '' } },
+      select: { matchedId: true },
+    }),
+  ]);
+  const linkedLegacyIds = new Set(linkedLegacyRequests.map((line) => line.matchedId));
+  const linkedCashIds = new Set(linkedCashTargets.map((line) => line.matchedId));
+  let linked = 0;
+
+  for (const line of scopedLines) {
+    const hasLegacyCandidate = line.direction === 'out'
+      ? legacyRequests.some((request) =>
+          !linkedLegacyIds.has(request.id) && request.paidAt && num(request.amount) === num(line.amount) &&
+          Math.abs(line.txnAt.getTime() - request.paidAt.getTime()) <= 3 * DAY_MS,
+        )
+      : cashTargets.some((movement) =>
+          !linkedCashIds.has(movement.id) && num(movement.amount) === num(line.amount) &&
+          Math.abs(line.txnAt.getTime() - movement.createdAt.getTime()) <= 3 * DAY_MS,
+        );
+    if (hasLegacyCandidate) continue;
+    const candidates = events.filter((event) =>
+      !unavailable.has(event.id) &&
+      transferEventDirection(event, eventMap) === line.direction &&
+      num(event.amount) === num(line.amount) &&
+      Math.abs(line.txnAt.getTime() - event.createdAt.getTime()) <= 3 * DAY_MS,
+    );
+    if (candidates.length !== 1) continue;
+    const candidate = candidates[0];
+    const reverseCandidates = allLines.filter((other) =>
+      other.direction === line.direction &&
+      num(other.amount) === num(candidate.amount) &&
+      Math.abs(other.txnAt.getTime() - candidate.createdAt.getTime()) <= 3 * DAY_MS,
+    );
+    if (reverseCandidates.length !== 1 || reverseCandidates[0].id !== line.id) continue;
+
+    let updated;
+    try {
+      updated = await prisma.ceresStatementLine.updateMany({
+        where: { id: line.id, matchStatus: 'unmatched', matchedId: '' },
+        data: {
+          matchedType: 'requestMoneyEvent',
+          matchedId: candidate.id,
+          matchStatus: 'matched',
+          reconciledById: null,
+          reconciledAt: new Date(),
+        },
+      });
+    } catch (error) {
+      if (isUniqueViolation(error)) continue;
+      throw error;
+    }
+    if (updated.count === 1) {
+      unavailable.add(candidate.id);
+      linked++;
+    }
+  }
+  return linked;
+}
+
 // Shared internal auto-matcher — used by both POST /apply (over just-inserted lines)
 // and POST /automatch (over every currently-unmatched line). See CERES_BRIEF §2 P5.
 async function autoMatchLines(lineIds?: string[]): Promise<number> {
-  let linked = 0;
+  let linked = await autoMatchTransferEvents(lineIds);
 
   // ── 'out' lines <-> CeresPaymentRequest (status='paid'), unambiguous both ways ──
   {
@@ -79,8 +180,18 @@ async function autoMatchLines(lineIds?: string[]): Promise<number> {
       });
       const linkedRequestIds = new Set(alreadyLinked.map((l) => l.matchedId));
       const availableRequests = paidRequests.filter((r) => !linkedRequestIds.has(r.id) && r.paidAt);
+      const transferEvents = await prisma.ceresRequestMoneyEvent.findMany({ where: { lane: 'transfer' } });
+      const transferMap = new Map(transferEvents.map((event) => [event.id, event]));
+      const linkedTransferIds = new Set((await prisma.ceresStatementLine.findMany({
+        where: { matchedType: 'requestMoneyEvent', matchedId: { not: '' } },
+        select: { matchedId: true },
+      })).map((linkedLine) => linkedLine.matchedId));
 
       for (const line of outLines) {
+        if (transferEvents.some((event) =>
+          !linkedTransferIds.has(event.id) && transferEventDirection(event, transferMap) === 'out' &&
+          num(event.amount) === num(line.amount) && Math.abs(line.txnAt.getTime() - event.createdAt.getTime()) <= 3 * DAY_MS,
+        )) continue;
         const lineCandidates = availableRequests.filter(
           (r) => num(r.amount) === num(line.amount) && r.paidAt && Math.abs(line.txnAt.getTime() - r.paidAt.getTime()) <= 3 * DAY_MS,
         );
@@ -127,8 +238,18 @@ async function autoMatchLines(lineIds?: string[]): Promise<number> {
       });
       const linkedMovementIds = new Set(alreadyLinked.map((l) => l.matchedId));
       const availableMovements = movements.filter((m) => !linkedMovementIds.has(m.id));
+      const transferEvents = await prisma.ceresRequestMoneyEvent.findMany({ where: { lane: 'transfer' } });
+      const transferMap = new Map(transferEvents.map((event) => [event.id, event]));
+      const linkedTransferIds = new Set((await prisma.ceresStatementLine.findMany({
+        where: { matchedType: 'requestMoneyEvent', matchedId: { not: '' } },
+        select: { matchedId: true },
+      })).map((linkedLine) => linkedLine.matchedId));
 
       for (const line of inLines) {
+        if (transferEvents.some((event) =>
+          !linkedTransferIds.has(event.id) && transferEventDirection(event, transferMap) === 'in' &&
+          num(event.amount) === num(line.amount) && Math.abs(line.txnAt.getTime() - event.createdAt.getTime()) <= 3 * DAY_MS,
+        )) continue;
         const lineCandidates = availableMovements.filter(
           (m) => num(m.amount) === num(line.amount) && Math.abs(line.txnAt.getTime() - m.createdAt.getTime()) <= 3 * DAY_MS,
         );
@@ -343,12 +464,15 @@ export function statementsRoutes(app: FastifyInstance) {
 
     const requestIds = [...new Set(lines.filter((l) => l.matchedType === 'paymentRequest' && l.matchedId).map((l) => l.matchedId))];
     const movementIds = [...new Set(lines.filter((l) => l.matchedType === 'cashMovement' && l.matchedId).map((l) => l.matchedId))];
-    const [requests, movements] = await Promise.all([
+    const moneyEventIds = [...new Set(lines.filter((l) => l.matchedType === 'requestMoneyEvent' && l.matchedId).map((l) => l.matchedId))];
+    const [requests, movements, moneyEvents] = await Promise.all([
       requestIds.length ? prisma.ceresPaymentRequest.findMany({ where: { id: { in: requestIds } } }) : Promise.resolve([]),
       movementIds.length ? prisma.cashMovement.findMany({ where: { id: { in: movementIds } } }) : Promise.resolve([]),
+      moneyEventIds.length ? prisma.ceresRequestMoneyEvent.findMany({ where: { id: { in: moneyEventIds } } }) : Promise.resolve([]),
     ]);
     const requestMap = new Map(requests.map((r) => [r.id, r]));
     const movementMap = new Map(movements.map((m) => [m.id, m]));
+    const moneyEventMap = new Map(moneyEvents.map((event) => [event.id, event]));
 
     return {
       lines: lines.map((l) => {
@@ -359,6 +483,9 @@ export function statementsRoutes(app: FastifyInstance) {
         } else if (l.matchedType === 'cashMovement' && l.matchedId) {
           const m = movementMap.get(l.matchedId);
           if (m) matched = { type: 'cashMovement', summary: `${m.type} ฿${m.amount} ${m.partyName || ''}`.trim() };
+        } else if (l.matchedType === 'requestMoneyEvent' && l.matchedId) {
+          const event = moneyEventMap.get(l.matchedId);
+          if (event) matched = { type: 'requestMoneyEvent', summary: `${event.kind} ${event.amount} (${event.lane})` };
         }
         return {
           id: l.id,
@@ -385,7 +512,7 @@ export function statementsRoutes(app: FastifyInstance) {
   });
 
   // POST /api/ceres/statements/lines/:id/match { type, id } — manual link.
-  const matchBody = z.object({ type: z.enum(['paymentRequest', 'cashMovement']), id: z.string().min(1) });
+  const matchBody = z.object({ type: z.enum(['paymentRequest', 'cashMovement', 'requestMoneyEvent']), id: z.string().min(1) });
   app.post<{ Params: { id: string } }>(
     '/api/ceres/statements/lines/:id/match',
     { preHandler: requireCeresRole('gm', 'ceo') },
@@ -395,24 +522,50 @@ export function statementsRoutes(app: FastifyInstance) {
       const line = await prisma.ceresStatementLine.findUnique({ where: { id: req.params.id } });
       if (!line) return reply.code(404).send({ error: 'not_found' });
 
-      const target =
-        parsed.data.type === 'paymentRequest'
-          ? await prisma.ceresPaymentRequest.findUnique({ where: { id: parsed.data.id } })
-          : await prisma.cashMovement.findUnique({ where: { id: parsed.data.id } });
+      const target = parsed.data.type === 'paymentRequest'
+        ? await prisma.ceresPaymentRequest.findUnique({ where: { id: parsed.data.id } })
+        : parsed.data.type === 'cashMovement'
+          ? await prisma.cashMovement.findUnique({ where: { id: parsed.data.id } })
+          : await prisma.ceresRequestMoneyEvent.findUnique({ where: { id: parsed.data.id } });
       if (!target) return reply.code(404).send({ error: 'not_found' });
 
       if (line.matchedId) return reply.code(409).send({ error: 'already_matched' });
-
-      const updated = await prisma.ceresStatementLine.update({
-        where: { id: line.id },
-        data: {
-          matchedType: parsed.data.type,
-          matchedId: parsed.data.id,
-          matchStatus: 'matched',
-          reconciledById: req.agent!.id,
-          reconciledAt: new Date(),
-        },
+      const targetLinked = await prisma.ceresStatementLine.findFirst({
+        where: { matchedType: parsed.data.type, matchedId: parsed.data.id },
+        select: { id: true },
       });
+      if (targetLinked) return reply.code(409).send({ error: 'target_already_matched' });
+      if (parsed.data.type === 'requestMoneyEvent') {
+        const event = target as TransferEvent;
+        if (event.lane !== 'transfer') return reply.code(400).send({ error: 'invalid_target' });
+        const related = event.reversesEventId
+          ? await prisma.ceresRequestMoneyEvent.findUnique({ where: { id: event.reversesEventId } })
+          : null;
+        const eventMap = new Map<string, TransferEvent>([[event.id, event]]);
+        if (related) eventMap.set(related.id, related);
+        if (transferEventDirection(event, eventMap) !== line.direction || num(event.amount) !== num(line.amount)) {
+          return reply.code(400).send({ error: 'target_mismatch' });
+        }
+      }
+
+      let result;
+      try {
+        result = await prisma.ceresStatementLine.updateMany({
+          where: { id: line.id, matchStatus: 'unmatched', matchedId: '' },
+          data: {
+            matchedType: parsed.data.type,
+            matchedId: parsed.data.id,
+            matchStatus: 'matched',
+            reconciledById: req.agent!.id,
+            reconciledAt: new Date(),
+          },
+        });
+      } catch (error) {
+        if (isUniqueViolation(error)) return reply.code(409).send({ error: 'target_already_matched' });
+        throw error;
+      }
+      if (result.count !== 1) return reply.code(409).send({ error: 'already_matched' });
+      const updated = await prisma.ceresStatementLine.findUniqueOrThrow({ where: { id: line.id } });
       return { ok: true, line: updated };
     },
   );
@@ -485,6 +638,17 @@ export function statementsRoutes(app: FastifyInstance) {
     );
     const paidRequests = await prisma.ceresPaymentRequest.findMany({ where: { status: 'paid' } });
     const unreconciledPaid = paidRequests.filter((r) => !linkedRequestIds.has(r.id));
+    const transferEvents = await prisma.ceresRequestMoneyEvent.findMany({ where: { lane: 'transfer' } });
+    const linkedMoneyEventIds = new Set(
+      (
+        await prisma.ceresStatementLine.findMany({
+          where: { matchedType: 'requestMoneyEvent', matchedId: { not: '' } },
+          select: { matchedId: true },
+        })
+      ).map((line) => line.matchedId),
+    );
+    const unreconciledTransferEvents = transferEvents.filter((event) => !linkedMoneyEventIds.has(event.id));
+    const reversalExceptions = unreconciledTransferEvents.filter((event) => event.kind === 'reversal');
 
     const oldestDays =
       unreconciledPaid.length > 0
@@ -503,7 +667,86 @@ export function statementsRoutes(app: FastifyInstance) {
         sum: unreconciledPaid.reduce((s, r) => s + num(r.amount), 0),
         oldestDays,
       },
+      transferEventsUnreconciled: {
+        count: unreconciledTransferEvents.length,
+        sum: unreconciledTransferEvents.reduce((sum, event) => sum + num(event.amount), 0),
+      },
+      transferReversalExceptions: {
+        count: reversalExceptions.length,
+        sum: reversalExceptions.reduce((sum, event) => sum + num(event.amount), 0),
+      },
       lastImport: lastImport ? { importedAt: lastImport.importedAt.toISOString(), fileName: lastImport.fileName } : null,
+    };
+  });
+
+  // Dedicated outgoing/incoming transfer workspace. Reversal rows remain visible as
+  // exceptions until their real compensating bank line is linked.
+  app.get('/api/ceres/transfers/reconciliation', { preHandler: requireCeresRole('gm', 'ceo') }, async () => {
+    const [events, matchedLines, unmatchedBankLines] = await Promise.all([
+      prisma.ceresRequestMoneyEvent.findMany({ where: { lane: 'transfer' }, orderBy: { createdAt: 'desc' } }),
+      prisma.ceresStatementLine.findMany({
+        where: { matchedType: 'requestMoneyEvent', matchedId: { not: '' } },
+        orderBy: { txnAt: 'desc' },
+      }),
+      prisma.ceresStatementLine.findMany({
+        where: { matchStatus: 'unmatched', direction: { in: ['in', 'out'] } },
+        orderBy: { txnAt: 'desc' },
+        take: 500,
+      }),
+    ]);
+    const requestIds = [...new Set(events.map((event) => event.requestId))];
+    const requests = requestIds.length > 0
+      ? await prisma.ceresPaymentRequest.findMany({ where: { id: { in: requestIds } } })
+      : [];
+    const requestMap = new Map(requests.map((request) => [request.id, request]));
+    const eventMap = new Map(events.map((event) => [event.id, event]));
+    const matchedLineMap = new Map(matchedLines.map((line) => [line.matchedId, line]));
+    const reversedBy = new Map<string, string>();
+    for (const event of events) if (event.kind === 'reversal' && event.reversesEventId) reversedBy.set(event.reversesEventId, event.id);
+
+    return {
+      transferEvents: events.map((event) => {
+        const request = requestMap.get(event.requestId);
+        const line = matchedLineMap.get(event.id);
+        const direction = transferEventDirection(event, eventMap);
+        return {
+          id: event.id,
+          requestId: event.requestId,
+          requestType: request?.requestType ?? '',
+          requester: request?.requestedByName ?? '',
+          entity: request?.entity ?? '',
+          kind: event.kind,
+          direction,
+          amount: event.amount,
+          createdAt: event.createdAt.toISOString(),
+          slipRequired: event.kind !== 'reversal',
+          slipPresent: !!event.transferSlipUploadId,
+          purchaseReceiptPresent: !!event.purchaseReceiptUploadId,
+          reversesEventId: event.reversesEventId,
+          reversedByEventId: reversedBy.get(event.id) ?? null,
+          reconciliationState: line ? 'matched' : 'unmatched',
+          reversalException: event.kind === 'reversal' && !line,
+          bankLine: line ? {
+            id: line.id,
+            txnAt: line.txnAt.toISOString(),
+            direction: line.direction,
+            amount: line.amount,
+            details: line.details,
+            reconciledById: line.reconciledById,
+            reconciledAt: line.reconciledAt?.toISOString() ?? null,
+          } : null,
+        };
+      }),
+      unmatchedBankLines: unmatchedBankLines.map((line) => ({
+        id: line.id,
+        txnAt: line.txnAt.toISOString(),
+        direction: line.direction,
+        amount: line.amount,
+        channel: line.channel,
+        description: line.description,
+        details: line.details,
+        payerName: line.payerName,
+      })),
     };
   });
 }

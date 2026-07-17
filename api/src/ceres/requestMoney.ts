@@ -123,14 +123,106 @@ export interface RecordRequestMoneyInput {
 }
 
 export class RequestMoneyError extends Error {
-  constructor(public readonly code: 'not_found' | 'not_approved' | 'already_fulfilled' | 'invalid_evidence') {
+  constructor(public readonly code:
+    | 'not_found'
+    | 'not_approved'
+    | 'already_fulfilled'
+    | 'invalid_evidence'
+    | 'invalid_request_type'
+    | 'not_paid_advance'
+    | 'refund_exceeds_outstanding') {
     super(code);
   }
 }
 
-// Phase-1 service foundation. No route calls this yet; Phase 3 will add projection
-// updates and UI endpoints. The append-only event + movement are nevertheless fully
-// atomic and cash events share the same singleton lock as legacy advances/closes.
+type MoneyEventRow = {
+  id: string;
+  requestId: string;
+  kind: string;
+  lane: string;
+  amount: string;
+  cashMovementId: string | null;
+  reversesEventId: string | null;
+  createdAt: Date;
+};
+
+function activeEvents(events: readonly MoneyEventRow[]): MoneyEventRow[] {
+  const reversed = new Set(events.filter((event) => event.kind === 'reversal' && event.reversesEventId).map((event) => event.reversesEventId));
+  return events.filter((event) => event.kind !== 'reversal' && !reversed.has(event.id));
+}
+
+function liquidationSatang(
+  advanceAmount: string,
+  events: readonly MoneyEventRow[],
+  expenses: readonly { amount: string }[],
+): { returned: number; spent: number; remaining: number } {
+  const active = activeEvents(events);
+  const returned = active.filter((event) => event.kind === 'refund').reduce((sum, event) => sum + amountToSatang(event.amount), 0);
+  const spent = expenses.reduce((sum, expense) => sum + amountToSatang(expense.amount), 0);
+  return { returned, spent, remaining: amountToSatang(advanceAmount) - returned - spent };
+}
+
+export async function syncAdvanceLiquidationProjection(tx: CeresTx, request: {
+  id: string;
+  amount: string;
+  fulfillmentStatus: string;
+}, actor: { id?: string | null; name?: string } = {}): Promise<void> {
+  const [events, expenses] = await Promise.all([
+    tx.ceresRequestMoneyEvent.findMany({ where: { requestId: request.id }, orderBy: { createdAt: 'asc' } }),
+    tx.ceresExpense.findMany({
+      where: { advanceRequestId: request.id, status: { in: ['approved', 'settled'] } },
+      select: { amount: true },
+    }),
+  ]);
+  const initial = activeEvents(events).find((event) => event.kind === 'payment');
+  if (!initial) {
+    if (request.fulfillmentStatus !== 'reversed') {
+      await tx.ceresPaymentRequest.update({
+        where: { id: request.id },
+        data: { fulfillmentStatus: 'reversed', rowVersion: { increment: 1 } },
+      });
+    }
+    return;
+  }
+  const totals = liquidationSatang(request.amount, events, expenses);
+  const nextStatus = totals.remaining === 0 ? 'settled' : (totals.returned > 0 || totals.spent > 0 ? 'settling' : 'paid');
+  if (request.fulfillmentStatus !== nextStatus) {
+    await tx.ceresPaymentRequest.update({
+      where: { id: request.id },
+      data: { fulfillmentStatus: nextStatus, rowVersion: { increment: 1 } },
+    });
+    if (request.fulfillmentStatus === 'settled' && nextStatus !== 'settled') {
+      await tx.ceresRequestEvent.create({
+        data: {
+          requestId: request.id,
+          kind: 'liquidation_reopened',
+          actorId: actor.id ?? null,
+          actorName: actor.name ?? '',
+          payload: { remainingOutstanding: (totals.remaining / 100).toFixed(2) },
+        },
+      });
+    }
+    if (nextStatus === 'settled') {
+      await tx.ceresRequestEvent.create({
+        data: {
+          requestId: request.id,
+          kind: 'settled',
+          actorId: actor.id ?? null,
+          actorName: actor.name ?? '',
+          payload: {
+            advanceAmount: request.amount,
+            approvedExpenses: (totals.spent / 100).toFixed(2),
+            returned: (totals.returned / 100).toFixed(2),
+          },
+        },
+      });
+    }
+  }
+}
+
+// Append-only event, cash movement, request timeline, and request projection are one
+// transaction. The request-row lock makes a double tap safe even without an explicit
+// idempotency key; a supplied key additionally turns retries into a replay.
 export async function recordRequestMoneyEvent(input: RecordRequestMoneyInput) {
   if (!/^\d+(\.\d{1,2})?$/.test(input.amount) || amountToSatang(input.amount) <= 0) {
     throw new RequestMoneyError('invalid_evidence');
@@ -150,6 +242,11 @@ export async function recordRequestMoneyEvent(input: RecordRequestMoneyInput) {
     if (request.workflowVersion !== 2 || request.approvalStatus !== 'approved') {
       throw new RequestMoneyError('not_approved');
     }
+    if ((input.kind === 'payment' && !['advance', 'reimbursement'].includes(request.requestType)) ||
+        (input.kind === 'purchase' && request.requestType !== 'purchase') ||
+        (input.kind === 'refund' && request.requestType !== 'advance')) {
+      throw new RequestMoneyError('invalid_request_type');
+    }
 
     if (input.kind !== 'refund' && input.kind !== 'reversal') {
       const initialEvents = await tx.ceresRequestMoneyEvent.findMany({
@@ -167,9 +264,25 @@ export async function recordRequestMoneyEvent(input: RecordRequestMoneyInput) {
         }
       }
     }
-    if ((input.lane === 'transfer' && !input.transferSlipUploadId) ||
+    if ((input.lane === 'transfer' && input.kind !== 'reversal' && !input.transferSlipUploadId) ||
         (input.kind === 'purchase' && !input.purchaseReceiptUploadId)) {
       throw new RequestMoneyError('invalid_evidence');
+    }
+
+    if (input.kind === 'refund') {
+      const [events, expenses] = await Promise.all([
+        tx.ceresRequestMoneyEvent.findMany({ where: { requestId: request.id }, orderBy: { createdAt: 'asc' } }),
+        tx.ceresExpense.findMany({
+          where: { advanceRequestId: request.id, status: { in: ['approved', 'settled'] } },
+          select: { amount: true },
+        }),
+      ]);
+      if (!activeEvents(events).some((event) => event.kind === 'payment')) {
+        throw new RequestMoneyError('not_paid_advance');
+      }
+      if (amountToSatang(input.amount) > liquidationSatang(request.amount, events, expenses).remaining) {
+        throw new RequestMoneyError('refund_exceeds_outstanding');
+      }
     }
 
     const reversed = input.kind === 'reversal' && input.reversesEventId
@@ -205,6 +318,11 @@ export async function recordRequestMoneyEvent(input: RecordRequestMoneyInput) {
 
     const eventId = randomUUID();
     const movementId = direction ? randomUUID() : null;
+    const isAdvance = request.requestType === 'advance';
+    const partyId = isAdvance && (input.kind === 'payment' || input.kind === 'refund' || input.kind === 'reversal')
+      ? request.requesterPartyId
+      : null;
+    const partyName = partyId ? request.requestedByName : '';
     const event = await tx.ceresRequestMoneyEvent.create({
       data: {
         id: eventId,
@@ -227,8 +345,15 @@ export async function recordRequestMoneyEvent(input: RecordRequestMoneyInput) {
         data: {
           id: movementId,
           accountId: 'pettyCash',
-          type: input.kind === 'refund' ? 'request_refund' : input.kind === 'reversal' ? 'reversal' : 'request_payment',
+          type: input.kind === 'refund'
+            ? 'request_refund'
+            : input.kind === 'reversal'
+              ? 'reversal'
+              : isAdvance ? 'advance' : 'request_payment',
           direction,
+          partyId,
+          partyName,
+          entity: request.entity,
           amount: input.amount,
           requestId: request.id,
           requestMoneyEventId: event.id,
@@ -239,6 +364,134 @@ export async function recordRequestMoneyEvent(input: RecordRequestMoneyInput) {
         },
       });
     }
+
+    if (input.kind === 'payment' || input.kind === 'purchase') {
+      const fulfillmentStatus = input.kind === 'purchase' ? 'bought' : 'paid';
+      await tx.ceresPaymentRequest.update({
+        where: { id: request.id },
+        data: {
+          fulfillmentStatus,
+          paidById: input.createdById ?? null,
+          paidAt: event.createdAt,
+          rowVersion: { increment: 1 },
+        },
+      });
+      await tx.ceresRequestEvent.create({
+        data: {
+          requestId: request.id,
+          kind: fulfillmentStatus,
+          actorId: input.createdById ?? null,
+          actorName: input.createdByName ?? '',
+          note: input.note ?? '',
+          payload: { moneyEventId: event.id, lane: input.lane, amount: input.amount },
+          idempotencyKey: input.idempotencyKey ? `request:${input.idempotencyKey}` : null,
+        },
+      });
+    } else {
+      await tx.ceresRequestEvent.create({
+        data: {
+          requestId: request.id,
+          kind: input.kind === 'refund' ? 'refund_recorded' : 'reversed',
+          actorId: input.createdById ?? null,
+          actorName: input.createdByName ?? '',
+          note: input.note ?? '',
+          payload: {
+            moneyEventId: event.id,
+            lane: input.lane,
+            amount: input.amount,
+            ...(input.reversesEventId ? { reversesEventId: input.reversesEventId } : {}),
+          },
+          idempotencyKey: input.idempotencyKey ? `request:${input.idempotencyKey}` : null,
+        },
+      });
+      if (request.requestType === 'advance') {
+        await syncAdvanceLiquidationProjection(tx, request, { id: input.createdById, name: input.createdByName });
+      } else if (input.kind === 'reversal') {
+        await tx.ceresPaymentRequest.update({
+          where: { id: request.id },
+          data: { fulfillmentStatus: 'reversed', rowVersion: { increment: 1 } },
+        });
+      }
+    }
     return event;
   });
+}
+
+export async function fulfillRequest(input: {
+  requestId: string;
+  lane: z.infer<typeof requestMoneyLaneSchema>;
+  transferSlipUploadId?: string;
+  purchaseReceiptUploadId?: string;
+  createdById?: string | null;
+  createdByName?: string;
+  note?: string;
+  idempotencyKey?: string;
+}) {
+  const request = await prisma.ceresPaymentRequest.findUnique({ where: { id: input.requestId } });
+  if (!request) throw new RequestMoneyError('not_found');
+  if (!['advance', 'reimbursement', 'purchase'].includes(request.requestType)) {
+    throw new RequestMoneyError('invalid_request_type');
+  }
+  return recordRequestMoneyEvent({
+    ...input,
+    amount: request.amount,
+    kind: request.requestType === 'purchase' ? 'purchase' : 'payment',
+  });
+}
+
+export async function refundAdvance(input: Omit<RecordRequestMoneyInput, 'kind'>) {
+  return recordRequestMoneyEvent({ ...input, kind: 'refund' });
+}
+
+export async function reverseRequestMoneyEvent(input: {
+  eventId: string;
+  reason: string;
+  createdById?: string | null;
+  createdByName?: string;
+  idempotencyKey?: string;
+}) {
+  const event = await prisma.ceresRequestMoneyEvent.findUnique({ where: { id: input.eventId } });
+  if (!event) throw new RequestMoneyError('not_found');
+  return recordRequestMoneyEvent({
+    requestId: event.requestId,
+    kind: 'reversal',
+    lane: requestMoneyLaneSchema.parse(event.lane),
+    amount: event.amount,
+    reversesEventId: event.id,
+    createdById: input.createdById,
+    createdByName: input.createdByName,
+    note: input.reason,
+    idempotencyKey: input.idempotencyKey,
+  });
+}
+
+export async function getAdvanceLiquidation(requestId: string) {
+  const request = await prisma.ceresPaymentRequest.findUnique({ where: { id: requestId } });
+  if (!request) throw new RequestMoneyError('not_found');
+  if (request.workflowVersion !== 2 || request.requestType !== 'advance') {
+    throw new RequestMoneyError('invalid_request_type');
+  }
+  const [events, expenses] = await Promise.all([
+    prisma.ceresRequestMoneyEvent.findMany({ where: { requestId }, orderBy: { createdAt: 'asc' } }),
+    prisma.ceresExpense.findMany({
+      where: { advanceRequestId: requestId, status: { in: ['approved', 'settled'] } },
+      orderBy: { createdAt: 'asc' },
+    }),
+  ]);
+  const initial = activeEvents(events).find((event) => event.kind === 'payment');
+  if (!initial) throw new RequestMoneyError('not_paid_advance');
+  const totals = liquidationSatang(request.amount, events, expenses);
+  return {
+    request,
+    fundingLane: initial.lane,
+    advanceAmount: request.amount,
+    approvedExpenses: expenses,
+    returns: activeEvents(events).filter((event) => event.kind === 'refund'),
+    totals: {
+      approvedExpenses: (totals.spent / 100).toFixed(2),
+      returned: (totals.returned / 100).toFixed(2),
+      remainingOutstanding: (totals.remaining / 100).toFixed(2),
+      settled: totals.remaining === 0,
+    },
+  };
 }
