@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { Prisma } from '@prisma/client';
 import { z } from 'zod';
@@ -10,6 +10,7 @@ import { notifyApolloAssignment, thaiDateKey } from '../apollo/notify.js';
 import { deleteApolloAttachment, readApolloAttachment, saveApolloAttachment } from '../apollo/attachmentStore.js';
 import { EMPLOYEES, TIER_ACCOUNTS, employeeEmail } from '../db/ensureSeeded.js';
 import { isApolloManager } from '../apollo/access.js';
+import { createStaffLineBindCode, staffLineBindStatus } from '../line/staffBind.js';
 
 // Roster email → display gender (see ensureSeeded.ts) — UI-only metadata for the board's avatar
 // polish (§0 of the Apollo UI spec). Built once from the static roster consts.
@@ -463,23 +464,10 @@ export async function apolloRoutes(app: FastifyInstance) {
   });
 
   app.get('/api/apollo/line-bind', async (req) => {
-    const agent = await prisma.agent.findUnique({ where: { id: req.agent!.id }, select: { lineUserId: true, lineBindCode: true } });
-    return { bound: !!agent?.lineUserId, code: agent?.lineBindCode ?? null };
+    return staffLineBindStatus(req.agent!.id);
   });
 
-  // 32-char unambiguous alphabet (no I/O/0/1): 256 % 32 === 0, so bytes map uniformly —
-  // every position carries full randomness (base64url stripping left deterministic filler).
-  const BIND_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   app.post('/api/apollo/line-bind', async (req) => {
-    for (let attempt = 0; attempt < 5; attempt += 1) {
-      const code = Array.from(randomBytes(8), (b) => BIND_ALPHABET[b % BIND_ALPHABET.length]).join('');
-      try {
-        await prisma.agent.update({ where: { id: req.agent!.id }, data: { lineBindCode: code } });
-        return { bound: false, code };
-      } catch (err) {
-        if (!(err instanceof Prisma.PrismaClientKnownRequestError) || err.code !== 'P2002') throw err;
-      }
-    }
-    throw new Error('unable_to_generate_line_bind_code');
+    return createStaffLineBindCode(req.agent!.id);
   });
 }

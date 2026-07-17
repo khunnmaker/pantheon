@@ -78,18 +78,9 @@ async function mercuryPending(): Promise<number> {
   return prisma.mercuryRequest.count({ where: { status: 'pending' } });
 }
 
-// Ceres "awaiting action" — computed per the CALLER's Ceres persona so the badge matches
-// exactly what THAT person can act on (never a queue they can't touch). Field names verified
-// against api/prisma/schema.prisma (CeresExpense.status/partyId, CeresPaymentRequest.status,
-// CeresParty.agentEmail).
-//   - ceo (supervisor): escalated payment requests — the only queue the CEO alone clears
-//     (requests/:id/decide is requireCeresRole('ceo')). Indexed on status.
-//   - gm              : pending expenses awaiting approve/reject (global, not party-
-//     scoped — the GM approves ANY pending expense). Indexed on status.
-//   - messenger (an employee with the ceres grant): their OWN drafts + rejections — pending
-//     (still editable/deletable) and rejected (needs fixing/resubmit), scoped to their own
-//     party. Per-user.
-async function ceresCeoAwaiting(): Promise<number> {
+// Ceres "awaiting action" is role-specific: CEO decisions; Nee decisions plus approved
+// requests awaiting fulfillment; or the staff member's own rejected/open-liquidation work.
+export async function ceresCeoAwaiting(): Promise<number> {
   await ageStuckAIReviews();
   return prisma.ceresPaymentRequest.count({
     where: {
@@ -100,24 +91,37 @@ async function ceresCeoAwaiting(): Promise<number> {
     },
   });
 }
-async function ceresMdAwaiting(): Promise<number> {
+export async function ceresMdAwaiting(): Promise<number> {
   await ageStuckAIReviews();
   const [expenses, requests] = await Promise.all([
     prisma.ceresExpense.count({ where: { status: 'pending' } }),
-    prisma.ceresPaymentRequest.count({ where: { workflowVersion: 2, approvalStatus: 'pending_nee' } }),
+    prisma.ceresPaymentRequest.count({
+      where: {
+        workflowVersion: 2,
+        OR: [
+          { approvalStatus: 'pending_nee' },
+          { approvalStatus: 'approved', fulfillmentStatus: 'unfulfilled' },
+        ],
+      },
+    }),
   ]);
   return expenses + requests;
 }
-async function ceresMessengerAwaiting(agentId: string, agentEmail: string): Promise<number> {
-  // A messenger's expenses are keyed by their own CeresParty (the login→party link).
-  // No party ⇒ nothing to act on. Count only rows this messenger can still act on.
+export async function ceresMessengerAwaiting(agentId: string, agentEmail: string): Promise<number> {
   const party = await prisma.ceresParty.findFirst({ where: { agentEmail }, select: { id: true } });
   const [expenses, requests] = await Promise.all([
     party
       ? prisma.ceresExpense.count({ where: { partyId: party.id, status: { in: ['pending', 'rejected'] } } })
       : Promise.resolve(0),
     prisma.ceresPaymentRequest.count({
-      where: { workflowVersion: 2, requestedById: agentId, approvalStatus: 'rejected' },
+      where: {
+        workflowVersion: 2,
+        requestedById: agentId,
+        OR: [
+          { approvalStatus: 'rejected' },
+          { approvalStatus: 'approved', requestType: 'advance', fulfillmentStatus: { in: ['paid', 'settling'] } },
+        ],
+      },
     }),
   ]);
   return expenses + requests;

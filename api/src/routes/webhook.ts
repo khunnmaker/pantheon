@@ -5,7 +5,7 @@ import { saveLineContent } from '../line/contentStore.js';
 import { scheduleDraft, nonTextNeedsHuman, KIND_LABEL } from '../llm/draftQueue.js';
 import { prisma } from '../db/prisma.js';
 import { pushToConsole } from '../ws/io.js';
-import { sendLineText } from '../line/send.js';
+import { handleStaffBindCommand } from '../line/staffBind.js';
 
 // Cap events processed per webhook request (LINE batches are normally small).
 const MAX_EVENTS = 50;
@@ -65,25 +65,13 @@ export async function webhookRoutes(app: FastifyInstance) {
       try {
         if (ev.type !== 'message' || !ev.message) continue;
 
-        // Apollo LINE binding is deliberately intercepted before dedup/customer ingestion.
+        // Suite-level staff LINE binding is deliberately intercepted before dedup/customer ingestion.
         // ONLY the exact one-time command, sent 1-on-1 by a user, is consumed; everything
         // else — including a code-shaped message in a group — follows the existing customer
         // pipeline byte-for-byte unchanged below.
-        const apolloBind = ev.message.type === 'text'
-          ? /^APOLLO-([A-Z0-9]{8})$/.exec(ev.message.text ?? '')
-          : null;
         const staffLineUserId = ev.source?.type === 'user' ? ev.source.userId : undefined;
-        if (apolloBind && staffLineUserId) {
-          const agent = await prisma.agent.findUnique({ where: { lineBindCode: apolloBind[1] }, select: { id: true, name: true } });
-          const already = await prisma.agent.findUnique({ where: { lineUserId: staffLineUserId }, select: { id: true } });
-          if (!agent) {
-            await sendLineText(staffLineUserId, 'รหัสผูก Apollo ไม่ถูกต้องหรือหมดอายุแล้ว');
-          } else if (already && already.id !== agent.id) {
-            await sendLineText(staffLineUserId, 'LINE นี้ผูกกับบัญชี Apollo อื่นแล้ว กรุณาติดต่อหัวหน้า');
-          } else {
-            await prisma.agent.update({ where: { id: agent.id }, data: { lineUserId: staffLineUserId, lineBindCode: null } });
-            await sendLineText(staffLineUserId, `ผูก LINE กับ Apollo สำเร็จแล้ว (${agent.name})`);
-          }
+        if (ev.message.type === 'text' && staffLineUserId &&
+            await handleStaffBindCommand(ev.message.text ?? '', staffLineUserId)) {
           continue;
         }
         // Conversation target = the GROUP/ROOM when the message came from one, else the 1-on-1

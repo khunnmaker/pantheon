@@ -5,6 +5,7 @@ import { requireCeresRole } from '../../ceres/auth.js';
 import { ageStuckAIReviews } from '../../ceres/requestService.js';
 import { computeBoard, num, thaiDayKey, thaiDayRange, toExpenseRow, toStaffRequestRow, transferReconciliationStats } from './common.js';
 import { computeTemplateDue } from './requests.js';
+import { dailyOutflowSummary } from '../../ceres/nightlyDigest.js';
 
 function reqBase(req: { headers: Record<string, unknown> }): string {
   const proto = (req.headers['x-forwarded-proto'] as string) || 'http';
@@ -26,7 +27,7 @@ export function ceoRoutes(app: FastifyInstance) {
     const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 3600 * 1000);
     await ageStuckAIReviews();
 
-    const [escalatedRows, aiReviewRows, flaggedExpenseRows, board, templateDue, settlement, statusCounts, v2ApprovalCounts, transferReconciliation] = await Promise.all([
+    const [escalatedRows, aiReviewRows, flaggedExpenseRows, board, templateDue, settlement, statusCounts, v2ApprovalCounts, transferReconciliation, dailyOutflow] = await Promise.all([
       prisma.ceresPaymentRequest.findMany({
         where: {
           OR: [
@@ -52,6 +53,7 @@ export function ceoRoutes(app: FastifyInstance) {
         _count: { _all: true },
       }),
       transferReconciliationStats(),
+      dailyOutflowSummary(range),
     ]);
 
     // Escalation review ids are already loaded above only for THIS day's reviews; the
@@ -155,6 +157,7 @@ export function ceoRoutes(app: FastifyInstance) {
       requestCounts,
       v2RequestCounts,
       transferReconciliation,
+      dailyOutflow,
     };
   });
 

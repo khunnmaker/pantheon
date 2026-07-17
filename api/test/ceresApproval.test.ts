@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   findRequest: vi.fn(), findCategory: vi.fn(), transaction: vi.fn(), updateMany: vi.fn(), txFindRequest: vi.fn(),
   createRevision: vi.fn(), createEvent: vi.fn(), reviewStaffRequest: vi.fn(), findReview: vi.fn(),
+  notifyRequester: vi.fn(),
 }));
 
 vi.mock('../src/env.js', () => ({ env: { CERES_CEO_THRESHOLD: 5000, CERES_FLOOR: 3000 } }));
@@ -14,6 +15,10 @@ vi.mock('../src/ceres/aiReview.js', () => ({
   AI_MODEL: 'test-model', POLICY_VERSION: 'test-policy', reviewStaffRequest: mocks.reviewStaffRequest,
 }));
 vi.mock('../src/ceres/notifyCeo.js', () => ({ notifyCeoEscalation: vi.fn() }));
+vi.mock('../src/ceres/notifyRequester.js', () => ({
+  notifyRequesterForEvent: mocks.notifyRequester,
+  notifyRequesterForMoneyEvent: vi.fn(),
+}));
 vi.mock('../src/ceres/mediaAccess.js', () => ({ mediaCanBeAttachedBy: vi.fn() }));
 vi.mock('../src/ceres/receiptStore.js', () => ({ readCeresReceiptMeta: vi.fn() }));
 vi.mock('../src/db/prisma.js', () => ({
@@ -70,6 +75,8 @@ describe('Ceres v2 approval binding', () => {
     })));
     expect(responses.map((response) => response.statusCode).sort()).toEqual([200, 409]);
     expect(responses.find((response) => response.statusCode === 409)?.json()).toEqual({ error: 'conflict' });
+    expect(mocks.notifyRequester).toHaveBeenCalledOnce();
+    expect(mocks.notifyRequester).toHaveBeenCalledWith('event-1');
     await app.close();
   });
 

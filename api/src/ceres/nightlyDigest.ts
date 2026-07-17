@@ -5,6 +5,46 @@ import { computeBoard, num, thaiDayKey, thaiDayRange, transferReconciliationStat
 import { computeTemplateDue } from '../routes/ceres/requests.js';
 import { ageStuckAIReviews } from './requestService.js';
 
+export interface DailyOutflowBucket {
+  lane: string;
+  requestType: string;
+  count: number;
+  amount: string;
+}
+
+export async function dailyOutflowSummary(createdAt: { gte?: Date; lte?: Date }): Promise<DailyOutflowBucket[]> {
+  const events = await prisma.ceresRequestMoneyEvent.findMany({
+    where: { kind: { in: ['payment', 'purchase'] }, createdAt },
+    select: { id: true, requestId: true, lane: true, amount: true },
+  });
+  if (events.length === 0) return [];
+  const [reversals, requests] = await Promise.all([
+    prisma.ceresRequestMoneyEvent.findMany({
+      where: { kind: 'reversal', reversesEventId: { in: events.map((event) => event.id) } },
+      select: { reversesEventId: true },
+    }),
+    prisma.ceresPaymentRequest.findMany({
+      where: { id: { in: [...new Set(events.map((event) => event.requestId))] } },
+      select: { id: true, requestType: true },
+    }),
+  ]);
+  const reversed = new Set(reversals.map((event) => event.reversesEventId));
+  const requestTypes = new Map(requests.map((request) => [request.id, request.requestType]));
+  const buckets = new Map<string, { lane: string; requestType: string; count: number; amount: number }>();
+  for (const event of events) {
+    if (reversed.has(event.id)) continue;
+    const requestType = requestTypes.get(event.requestId) ?? 'unknown';
+    const key = `${event.lane}:${requestType}`;
+    const bucket = buckets.get(key) ?? { lane: event.lane, requestType, count: 0, amount: 0 };
+    bucket.count += 1;
+    bucket.amount += num(event.amount);
+    buckets.set(key, bucket);
+  }
+  return [...buckets.values()]
+    .sort((a, b) => a.lane.localeCompare(b.lane) || a.requestType.localeCompare(b.requestType))
+    .map((bucket) => ({ ...bucket, amount: bucket.amount.toFixed(2) }));
+}
+
 async function countV2AiEscalations(createdAt: { gte?: Date; lte?: Date }): Promise<number> {
   const reviews = await prisma.ceresAIReview.findMany({
     where: { subjectType: 'paymentRequest', createdAt },
@@ -35,7 +75,7 @@ export async function buildCeresDigest(): Promise<string> {
   const todayRange = thaiDayRange(todayKey, todayKey) ?? {};
   await ageStuckAIReviews(now);
 
-  const [escalatedRows, flaggedCount, board, templateDue, settlementToday, pendingCount, pendingNeeCount, v2AiEscalatedCount, transferRecon] = await Promise.all([
+  const [escalatedRows, flaggedCount, board, templateDue, settlementToday, pendingCount, pendingNeeCount, v2AiEscalatedCount, transferRecon, dailyOutflow] = await Promise.all([
     prisma.ceresPaymentRequest.findMany({
       where: {
         OR: [
@@ -53,6 +93,7 @@ export async function buildCeresDigest(): Promise<string> {
     prisma.ceresPaymentRequest.count({ where: { workflowVersion: 2, approvalStatus: 'pending_nee' } }),
     countV2AiEscalations(todayRange),
     transferReconciliationStats(),
+    dailyOutflowSummary(todayRange),
   ]);
 
   const escalatedCount = escalatedRows.length;
@@ -70,12 +111,19 @@ export async function buildCeresDigest(): Promise<string> {
     ? 'ปิดยอดวันนี้: ✅ ปิดแล้ว'
     : `ปิดยอดวันนี้: ⚠️ ยังไม่ปิด (ค้างตรวจ ${pendingCount})`;
 
+  const laneLabels: Record<string, string> = { cash: 'เงินสด', transfer: 'โอน' };
+  const typeLabels: Record<string, string> = { advance: 'ทดรอง', reimbursement: 'เบิกคืน', purchase: 'จัดซื้อ' };
+  const outflowLine = dailyOutflow.length
+    ? `รายจ่ายวันนี้: ${dailyOutflow.map((bucket) => `${laneLabels[bucket.lane] ?? bucket.lane}/${typeLabels[bucket.requestType] ?? bucket.requestType} ฿${bucket.amount} (${bucket.count})`).join(' · ')}`
+    : 'รายจ่ายวันนี้: ไม่มี';
+
   return [
     `🌙 Ceres สรุปประจำวัน ${dateStr}`,
     `รออนุมัติจากคุณ: ${escalatedCount} รายการ (฿${escalatedSum.toFixed(2)})`,
     `รอนีตรวจคำขอใหม่: ${pendingNeeCount} รายการ`,
     `รายการติดธง AI วันนี้: ${flaggedCount + v2AiEscalatedCount}`,
     `Transfer reconciliation exceptions: ${transferRecon.unmatched} (reversals ${transferRecon.reversalExceptions})`,
+    outflowLine,
     boxLine,
     `บิลเลยกำหนด: ${overdueCount}`,
     closeLine,

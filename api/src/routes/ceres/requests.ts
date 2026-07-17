@@ -25,6 +25,7 @@ import {
   listStaffRequests,
   V2_REQUEST_TYPES,
 } from '../../ceres/requestService.js';
+import { notifyRequesterForMoneyEvent } from '../../ceres/notifyRequester.js';
 import { isValidAmount, num, thaiDayKey, thaiDayRange, toStaffRequestRow } from './common.js';
 import { GROUP_COMPANY_CODES } from '../../jupiter/companies.js';
 
@@ -518,6 +519,7 @@ export function requestsRoutes(app: FastifyInstance) {
           createdById: req.agent!.id,
           createdByName: req.agent!.name,
         });
+        await notifyRequesterForMoneyEvent(moneyEvent.id);
         const request = await prisma.ceresPaymentRequest.findUniqueOrThrow({ where: { id: req.params.id } });
         return { request: toStaffRequestRow(request), moneyEvent };
       } catch (err) {

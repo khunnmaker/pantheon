@@ -13,6 +13,7 @@ import {
 import { ceresRole } from './auth.js';
 import { notifyCeoEscalation } from './notifyCeo.js';
 import { num } from '../routes/ceres/common.js';
+import { notifyRequesterForEvent } from './notifyRequester.js';
 
 export const V2_REQUEST_TYPES = ['advance', 'reimbursement', 'purchase'] as const;
 export type V2RequestType = (typeof V2_REQUEST_TYPES)[number];
@@ -251,7 +252,7 @@ export async function decideStaffRequestByNee(
   if (!existing || existing.workflowVersion !== 2) throw new CeresRequestError('not_found');
   if (existing.approvalStatus !== 'pending_nee') throw new CeresRequestError('not_pending_nee');
   const next = decision === 'reject' ? 'rejected' : neeApprovalTarget(existing);
-  const updated = await prisma.$transaction(async (tx) => {
+  const result = await prisma.$transaction(async (tx) => {
     const changed = await tx.ceresPaymentRequest.updateMany({
       where: { id: existing.id, approvalStatus: 'pending_nee', rowVersion: existing.rowVersion },
       data: {
@@ -264,7 +265,7 @@ export async function decideStaffRequestByNee(
       },
     });
     if (changed.count !== 1) throw new CeresRequestError('conflict');
-    await tx.ceresRequestEvent.create({
+    const event = await tx.ceresRequestEvent.create({
       data: {
         requestId: existing.id,
         kind: decision === 'approve' ? 'nee_approved' : 'nee_rejected',
@@ -274,8 +275,12 @@ export async function decideStaffRequestByNee(
         payload: { approvalStatus: next },
       },
     });
-    return tx.ceresPaymentRequest.findUniqueOrThrow({ where: { id: existing.id } });
+    const request = await tx.ceresPaymentRequest.findUniqueOrThrow({ where: { id: existing.id } });
+    return { request, eventId: event.id };
   });
+
+  const updated = result.request;
+  await notifyRequesterForEvent(result.eventId);
 
   // Notifications are deliberately after commit and best-effort inside notifyCeoEscalation.
   if (updated.approvalStatus === 'pending_ceo') {
@@ -300,7 +305,7 @@ export async function decideStaffRequestByCeo(
   if (!existing || existing.workflowVersion !== 2) throw new CeresRequestError('not_found');
   if (existing.approvalStatus !== 'pending_ceo') throw new CeresRequestError('not_pending_ceo');
   const next = decision === 'approve' ? 'approved' : 'rejected';
-  return prisma.$transaction(async (tx) => {
+  const result = await prisma.$transaction(async (tx) => {
     const changed = await tx.ceresPaymentRequest.updateMany({
       where: { id: existing.id, approvalStatus: 'pending_ceo', rowVersion: existing.rowVersion },
       data: {
@@ -312,7 +317,7 @@ export async function decideStaffRequestByCeo(
       },
     });
     if (changed.count !== 1) throw new CeresRequestError('conflict');
-    await tx.ceresRequestEvent.create({
+    const event = await tx.ceresRequestEvent.create({
       data: {
         requestId: existing.id,
         kind: decision === 'approve' ? 'ceo_approved' : 'ceo_rejected',
@@ -322,8 +327,11 @@ export async function decideStaffRequestByCeo(
         payload: { approvalStatus: next },
       },
     });
-    return tx.ceresPaymentRequest.findUniqueOrThrow({ where: { id: existing.id } });
+    const request = await tx.ceresPaymentRequest.findUniqueOrThrow({ where: { id: existing.id } });
+    return { request, eventId: event.id };
   });
+  await notifyRequesterForEvent(result.eventId);
+  return result.request;
 }
 
 export async function cancelStaffRequest(requestId: string, note: string, agent: AuthedAgent) {
