@@ -2,6 +2,11 @@ import { APPS, type AppDef } from './apps';
 
 // Venus is confidential and deliberately has no portal tile, but its login still uses the
 // portal, so it belongs in the redirect allowlist.
+//
+// Olympus arrives via ...APPS carrying its supervisorOnly flag: resolveRedirect only RESOLVES
+// the target (so the login screen can name it); whether the redirect actually COMPLETES is
+// decided in App.tsx via canOpen(), which requires the live supervisor role for supervisorOnly
+// apps — staff never finish an Olympus redirect regardless of Agent.apps grants.
 export const REDIRECT_TARGETS: AppDef[] = [
   ...APPS,
   {

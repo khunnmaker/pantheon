@@ -1,19 +1,17 @@
 {
-  "name": "pantheon",
+  "name": "minerva-olympus",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "The Pantheon — team portal for the Prominent app suite",
+  "description": "Olympus — the owner's private home (Hestia: goals, habits, journal)",
   "scripts": {
-    "dev": "vite --host --port 5179",
+    "dev": "vite --host --port 5181",
     "build": "tsc -b && vite build",
-    "preview": "vite preview --host --port 5179",
+    "preview": "vite preview --host --port 5181",
     "typecheck": "tsc -b"
   },
   "dependencies": {
     "@pantheon/ui": "*",
-    "@dicebear/collection": "^9.4.2",
-    "@dicebear/core": "^9.4.2",
     "lucide-react": "^0.454.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"

@@ -2,8 +2,8 @@ import { useEffect, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import Login from './Login';
 import Portal from './Portal';
-import { bootstrap, getStoredAgent, getToken, hasAppAccess, setOnUnauthorized, type Agent } from './lib/api';
-import type { AppDef } from './lib/apps';
+import { bootstrap, getStoredAgent, getToken, setOnUnauthorized, type Agent } from './lib/api';
+import { canOpen, type AppDef } from './lib/apps';
 import { resolveRedirect } from './lib/redirect';
 
 export default function App() {
@@ -17,7 +17,10 @@ export default function App() {
       setAgent(a);
       return false;
     }
-    if (hasAppAccess(a, target.app.key)) {
+    // canOpen (not hasAppAccess): supervisorOnly targets like Olympus complete their redirect
+    // ONLY for the live supervisor role — a staff account (even one with an accidental
+    // 'olympus' grant in Agent.apps) stays here in Pantheon with the denied banner.
+    if (canOpen(a, target.app)) {
       location.replace(target.url.href);
       return true;
     }

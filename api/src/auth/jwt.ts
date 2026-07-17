@@ -19,7 +19,7 @@ type TokenRole = (typeof TOKEN_ROLES)[number];
 // The suite's app names — the SINGLE source of truth (runtime tuple + type). requireApp,
 // loginCards, and the badges route all derive from this; adding a future god (mars/neptune/
 // vulcan) is a one-line edit here that both the type and the runtime checks pick up.
-export const APP_NAMES = ['minerva', 'vesta', 'juno', 'jupiter', 'ceres', 'mercury', 'venus', 'diana', 'apollo'] as const;
+export const APP_NAMES = ['minerva', 'vesta', 'juno', 'jupiter', 'ceres', 'mercury', 'venus', 'diana', 'apollo', 'olympus'] as const;
 export type AppName = (typeof APP_NAMES)[number];
 
 // What we put inside the signed token (and hydrate onto each request).

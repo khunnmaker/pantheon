@@ -26,6 +26,9 @@ describe('unified auth roles', () => {
   it('gives gm the implicit GM_APPS set', () => {
     for (const app of auth.GM_APPS) expect(auth.hasAppAccess(agent('gm'), app)).toBe(true);
     expect(auth.hasAppAccess(agent('gm'), 'venus')).toBe(false);
+    expect(auth.GM_APPS).toEqual(['ceres', 'minerva', 'juno', 'apollo']);
+    expect(auth.GM_APPS).not.toContain('olympus');
+    expect(auth.APP_NAMES).toContain('olympus');
   });
 
   it('gives agm access only through Agent.apps', () => {

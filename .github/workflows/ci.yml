@@ -1,8 +1,10 @@
 name: CI
 
-# First automated CI for the Minerva monorepo. Scoped to the `api` package (Punch #6):
-# typecheck + the vitest money-lane regression tests. Deterministic — no DB/network,
-# fixtures only.
+# Monorepo CI. Install ALWAYS runs `npm ci` at the repo root (workspaces — never inside a
+# workspace dir) and every command targets its workspace with `npm -w ...`. api = typecheck +
+# the vitest regression tests (deterministic — no DB/network, fixtures only). frontends =
+# typecheck + production build for the workspaces wired into the suite portal (olympus +
+# pantheon).
 on:
   push:
   pull_request:
@@ -11,9 +13,6 @@ jobs:
   api:
     name: api — typecheck + tests
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: api
     steps:
       - uses: actions/checkout@v4
 
@@ -21,19 +20,46 @@ jobs:
         with:
           node-version: '20'
           cache: npm
-          cache-dependency-path: api/package-lock.json
+          cache-dependency-path: package-lock.json
 
-      - name: Install dependencies
+      - name: Install dependencies (repo root)
         run: npm ci
 
       - name: Generate Prisma client
-        run: npx prisma generate
+        run: npm -w api exec prisma generate
 
       - name: Typecheck
-        run: npm run typecheck
+        run: npm -w api run typecheck
 
       - name: Test
-        run: npm test
+        run: npm -w api test
+
+  frontends:
+    name: olympus + pantheon — typecheck + build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies (repo root)
+        run: npm ci
+
+      - name: Olympus typecheck
+        run: npm -w olympus run typecheck
+
+      - name: Olympus build
+        run: npm -w olympus run build
+
+      - name: Pantheon typecheck
+        run: npm -w pantheon run typecheck
+
+      - name: Pantheon build
+        run: npm -w pantheon run build
 
   shared-drift:
     name: shared frontend files — drift guard

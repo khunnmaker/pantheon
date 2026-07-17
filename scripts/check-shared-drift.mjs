@@ -52,7 +52,7 @@ const serverApps = (() => {
   return m ? m[1].split(',').map((s) => s.trim().replace(/['"]/g, '')).filter(Boolean) : null;
 })();
 const APPNAME_RE = /export type AppName =\s*([^;]+);/;
-for (const a of ['web', 'juno', 'vesta', 'pantheon', 'jupiter', 'mercury', 'ceres', 'diana', 'venus']) {
+for (const a of ['web', 'juno', 'vesta', 'pantheon', 'jupiter', 'mercury', 'ceres', 'diana', 'venus', 'apollo', 'olympus']) {
   const src = read(`${a}/src/lib/api.ts`);
   const m = src && src.match(APPNAME_RE);
   if (!m || !serverApps) continue; // app doesn't define AppName locally — fine

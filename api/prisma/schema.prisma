@@ -162,9 +162,113 @@ model Agent {
   apolloComments           ApolloComment[]
   apolloAttachments        ApolloAttachment[]
   apolloEvents             ApolloEvent[]
+  hestiaGoals              HestiaGoal[]
+  hestiaHabits             HestiaHabit[]
+  hestiaCheckIns           HestiaCheckIn[]
+  hestiaHabitStreaks       HestiaHabitStreak[]
+  hestiaJournalEntries     HestiaJournalEntry[]
 }
 
 // ─── Apollo: employee work management ──────────────────────────────────────
+
+model HestiaGoal {
+  id          String        @id @default(cuid())
+  ownerId     String
+  owner       Agent         @relation(fields: [ownerId], references: [id])
+  year        Int
+  code        String
+  title       String
+  description String        @default("")
+  status      String        @default("active")
+  color       String        @default("#b45309")
+  sortOrder   Int           @default(0)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  habits      HestiaHabit[]
+
+  @@unique([ownerId, year, code])
+  @@index([ownerId, year, status])
+}
+
+model HestiaHabit {
+  id           String             @id @default(cuid())
+  ownerId      String
+  owner        Agent              @relation(fields: [ownerId], references: [id])
+  goalId       String
+  goal         HestiaGoal         @relation(fields: [goalId], references: [id], onDelete: Restrict)
+  code         String
+  title        String
+  description  String             @default("")
+  cadence      String             @default("daily")
+  scheduleDays Int[]              @default([0, 1, 2, 3, 4, 5, 6])
+  targetCount  Int                @default(1)
+  startDate    DateTime           @db.Date
+  endDate      DateTime?          @db.Date
+  active       Boolean            @default(true)
+  sortOrder    Int                @default(0)
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+  checkIns     HestiaCheckIn[]
+  streak       HestiaHabitStreak?
+
+  @@unique([ownerId, goalId, code])
+  @@index([ownerId, active])
+  @@index([goalId, sortOrder])
+}
+
+model HestiaCheckIn {
+  id          String      @id @default(cuid())
+  ownerId     String
+  owner       Agent       @relation(fields: [ownerId], references: [id])
+  habitId     String
+  habit       HestiaHabit @relation(fields: [habitId], references: [id], onDelete: Cascade)
+  checkDate   DateTime    @db.Date
+  count       Int         @default(1)
+  note        String      @default("")
+  completedAt DateTime    @default(now())
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  @@unique([habitId, checkDate])
+  @@index([ownerId, checkDate])
+  @@index([habitId, checkDate])
+}
+
+model HestiaHabitStreak {
+  habitId         String      @id
+  habit           HestiaHabit @relation(fields: [habitId], references: [id], onDelete: Cascade)
+  ownerId         String
+  owner           Agent       @relation(fields: [ownerId], references: [id])
+  currentStreak   Int         @default(0)
+  longestStreak   Int         @default(0)
+  lastCompletedOn DateTime?   @db.Date
+  calculatedOn   DateTime     @db.Date
+  updatedAt       DateTime     @updatedAt
+
+  @@index([ownerId])
+}
+
+model HestiaJournalEntry {
+  id              String   @id @default(cuid())
+  ownerId         String
+  owner           Agent    @relation(fields: [ownerId], references: [id])
+  entryDate       DateTime @db.Date
+  title           String   @default("")
+  bodyMarkdown    String
+  mood            Int?
+  tags            String[] @default([])
+  source          String   @default("manual")
+  externalId      String?
+  externalUrl     String?
+  sourceUpdatedAt DateTime?
+  importedAt      DateTime?
+  sourceMetadata  Json?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([ownerId, source, externalId])
+  @@index([ownerId, entryDate])
+}
 
 model ApolloProject {
   id          String                @id @default(cuid())

@@ -27,6 +27,18 @@ export interface AppDef {
   url: string | undefined;
   accent: string;        // tailwind text color for the tile icon/name
   badge: (b: Badges) => number | null;   // pending-work count from the badges payload
+  // The owner's private apps (Olympus). Gated on the LIVE role being exactly 'supervisor' —
+  // NEVER on Agent.apps grants (an accidental 'olympus' grant must not surface a tile) and NEVER
+  // a manager()-style helper (GM must not qualify). canOpen() below is the single enforcement
+  // point for both tiles (tilesFor) and login redirects (App.tsx).
+  supervisorOnly?: true;
+}
+
+// The ONE portal-side answer to "can this account open this app?": a supervisorOnly app requires
+// the supervisor role itself, everything else follows the per-person grant (hasAppAccess).
+export function canOpen(agent: Agent, app: AppDef): boolean {
+  if (app.supervisorOnly) return agent.role === 'supervisor';
+  return hasAppAccess(agent, app.key);
 }
 
 const env = import.meta.env;
@@ -88,18 +100,28 @@ export const APPS: AppDef[] = [
     accent: 'text-blue-600',
     badge: () => null,
   },
+  {
+    key: 'olympus',
+    name: 'Olympus',
+    job: 'พื้นที่ส่วนตัว · Hestia',
+    url: env.VITE_OLYMPUS_URL || 'https://olympus.prominentdental.com',
+    accent: 'text-amber-700',
+    badge: () => null,
+    supervisorOnly: true,
+  },
 ];
 
 // Most-used-first display order. The supervisor's day starts in finance (verify slips) then
 // the console, stock, expenses; other accounts see whichever of these they're granted, in the
 // same relative order. Any app missing here sorts last (defensive; all four are listed).
-const ORDER: AppKey[] = ['juno', 'apollo', 'jupiter', 'minerva', 'vesta', 'ceres', 'mercury'];
+const ORDER: AppKey[] = ['juno', 'apollo', 'jupiter', 'minerva', 'vesta', 'ceres', 'mercury', 'olympus'];
 
-// The tiles this account should see: GRANTED (hasAppAccess) AND has a configured URL, in
-// most-used order. Grant-gated so tiles match the person's badges exactly.
+// The tiles this account should see: openable (canOpen — per-person grant, or the supervisor
+// role itself for supervisorOnly apps) AND has a configured URL, in most-used order. Gated so
+// tiles match exactly what the person can open; staff never see an Olympus tile.
 export function tilesFor(agent: Agent): AppDef[] {
   const rank = new Map(ORDER.map((k, i) => [k, i]));
   return APPS
-    .filter((a) => hasAppAccess(agent, a.key) && !!a.url)
+    .filter((a) => canOpen(agent, a) && !!a.url)
     .sort((a, b) => ((rank.get(a.key) ?? ORDER.length) - (rank.get(b.key) ?? ORDER.length)));
 }
