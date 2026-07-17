@@ -485,13 +485,14 @@ export interface AIReviewRow {
 
 export interface CeoOverview {
   dayKey: string;
-  escalations: PaymentRequest[];
+  escalations: (PaymentRequest | StaffRequest)[];
   aiReviews: AIReviewRow[];
   flaggedExpenses: Expense[];
   cash: { box: { balance: number; floor: number; belowFloor: boolean; suggestedTopup: number }; outstandingTotal: number };
   missedBills: TemplateDue[];
   settlementToday: Settlement | null;
   requestCounts: Record<string, number>;
+  v2RequestCounts: Record<string, number>;
 }
 
 export const getCeoOverview = (date?: string) => authed<CeoOverview>(`/api/ceres/ceo/overview${queryString({ date })}`);
@@ -640,3 +641,126 @@ export const downloadStatementLinesCsv = (from: string, to: string) =>
 // Baht formatting for display.
 export const baht = (n: number): string =>
   `฿${n.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+// ---------------------------------------------------------------------------
+// P2 v2 — staff request front door (advance / reimbursement / purchase) +
+// unified Nee/CEO approval queue. See api/src/ceres/requestService.ts and
+// api/src/routes/ceres/requests.ts for the server-side contract.
+// ---------------------------------------------------------------------------
+
+export type MediaPurpose =
+  | 'legacy_receipt'
+  | 'request_photo'
+  | 'reimbursement_receipt'
+  | 'purchase_receipt'
+  | 'transfer_slip'
+  | 'refund_slip';
+
+// Generic authenticated media upload (declares its purpose up front) — the v2
+// counterpart of uploadReceipt(), which stays as the legacy_receipt-only alias.
+export const uploadMedia = (dataB64: string, contentType: string, purpose: MediaPurpose) =>
+  authed<{ uploadId: string; url: string; ocr: OcrResult; duplicate: DuplicateReceipt | null }>('/api/ceres/media', {
+    method: 'POST',
+    body: JSON.stringify({ dataB64, contentType, purpose }),
+  });
+
+// Short-lived signed URL for an already-uploaded media id — use as an <img>/<a> target
+// only; never render the URL string itself (media links must stay non-user-visible text).
+export const getMediaUrl = (id: string) => authed<{ url: string; expiresAt: string }>(`/api/ceres/media/${id}/url`);
+
+export type V2RequestType = 'advance' | 'reimbursement' | 'purchase';
+export type ApprovalStatus =
+  | 'legacy'
+  | 'pending_nee'
+  | 'pending_ceo'
+  | 'approved'
+  | 'rejected'
+  | 'cancelled'
+  | 'void';
+export type FulfillmentStatus = 'legacy' | 'unfulfilled' | 'paid' | 'bought' | 'settling' | 'settled' | 'reversed';
+export type AiScreenStatus = 'legacy' | 'pending' | 'clear' | 'escalate';
+
+export interface StaffRequest {
+  id: string;
+  workflowVersion: 2;
+  requestType: V2RequestType;
+  requestedById: string | null;
+  requestedByName: string;
+  requesterPartyId: string | null;
+  entity: string;
+  payee: string;
+  category: string;
+  amount: string;
+  amountNum: number;
+  reason: string;
+  requestPhotoUploadId: string | null;
+  ocr: { amount: string; vendor: string; date: string };
+  aiScreenStatus: AiScreenStatus;
+  aiReviewId: string | null;
+  aiReview: AIReviewBrief | null;
+  approvalStatus: ApprovalStatus;
+  fulfillmentStatus: FulfillmentStatus;
+  neeDecision: { byId: string | null; byName: string; at: string; note: string } | null;
+  ceoDecision: { byId: string | null; at: string; note: string } | null;
+  rowVersion: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RequestEvent {
+  id: string;
+  requestId: string;
+  kind: string;
+  actorId: string | null;
+  actorName: string;
+  note: string;
+  payload: unknown;
+  createdAt: string;
+}
+
+export const createStaffRequest = (body: {
+  requestType: V2RequestType;
+  entity: string;
+  category: string;
+  amount: string;
+  reason: string;
+  requestPhotoUploadId?: string | null;
+}) => authed<{ request: StaffRequest }>('/api/ceres/requests', { method: 'POST', body: JSON.stringify(body) });
+
+export type StaffRequestScope = 'mine' | 'queue' | 'all';
+
+export const listStaffRequests = (scope: StaffRequestScope, limit?: number) =>
+  authed<{ requests: StaffRequest[] }>(`/api/ceres/requests${queryString({ workflow: 2, scope, limit })}`);
+
+export const getStaffRequest = (id: string) =>
+  authed<{ request: StaffRequest; events: RequestEvent[]; revisions: Revision[] }>(`/api/ceres/requests/${id}`);
+
+export const editStaffRequest = (
+  id: string,
+  patch: Partial<{
+    requestType: V2RequestType;
+    entity: string;
+    category: string;
+    amount: string;
+    reason: string;
+    requestPhotoUploadId: string | null;
+  }>,
+) => authed<{ request: StaffRequest }>(`/api/ceres/requests/${id}`, { method: 'PATCH', body: JSON.stringify(patch) });
+
+export const cancelStaffRequest = (id: string, note?: string) =>
+  authed<{ request: StaffRequest }>(`/api/ceres/requests/${id}/cancel`, {
+    method: 'POST',
+    body: JSON.stringify({ note }),
+  });
+
+export const neeDecision = (id: string, decision: 'approve' | 'reject', note?: string) =>
+  authed<{ request: StaffRequest }>(`/api/ceres/requests/${id}/nee-decision`, {
+    method: 'POST',
+    body: JSON.stringify({ decision, note }),
+  });
+
+export const ceoDecisionV2 = (id: string, decision: 'approve' | 'reject', note?: string) =>
+  authed<{ request: StaffRequest }>(`/api/ceres/requests/${id}/ceo-decision`, {
+    method: 'POST',
+    body: JSON.stringify({ decision, note }),
+  });

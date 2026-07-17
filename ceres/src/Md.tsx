@@ -11,6 +11,7 @@ import {
   Repeat,
   Scale,
   Crown,
+  HandCoins,
 } from 'lucide-react';
 import { useHashTab } from '@pantheon/ui';
 import { useCeres } from './lib/bootstrapContext';
@@ -24,11 +25,12 @@ import MdRequests, { type RequestPrefill } from './MdRequests';
 import MdTemplates from './MdTemplates';
 import MdRecon from './MdRecon';
 import CeoOverview from './CeoOverview';
+import NeeApprovalQueue from './NeeApprovalQueue';
 
 // Portal-back link uses the canonical Pantheon domain unless build-time env overrides it.
 const PORTAL_URL: string = import.meta.env.VITE_PORTAL_URL ?? 'https://pantheon.prominentdental.com';
 
-type Tab = 'board' | 'approval' | 'money' | 'close' | 'expenses' | 'requests' | 'templates' | 'recon' | 'ceo';
+type Tab = 'request-approval' | 'board' | 'approval' | 'money' | 'close' | 'expenses' | 'requests' | 'templates' | 'recon' | 'ceo';
 
 const BASE_TABS: { key: Tab; label: string; icon: React.ReactNode }[] = [
   { key: 'board', label: 'กระดาน', icon: <LayoutDashboard size={20} /> },
@@ -44,17 +46,15 @@ const BASE_TABS: { key: Tab; label: string; icon: React.ReactNode }[] = [
 export default function MdApp() {
   const { agent, bootstrap, onLogout } = useCeres();
   const isCeo = bootstrap.role === 'ceo';
-  // Tab keys this agent can reach — 'ceo' is CEO-only (mirrors the TABS list below). Feeds
-  // useHashTab so a shared #ceo link opened by a GM falls back to กระดาน instead of a tab
-  // that never renders for them.
-  const mdTabKeys: Tab[] = isCeo ? [...BASE_TABS.map((t) => t.key), 'ceo'] : BASE_TABS.map((t) => t.key);
-  const [tab, setTab] = useHashTab<Tab>(mdTabKeys, 'board');
-  const [requestPrefill, setRequestPrefill] = useState<RequestPrefill | null>(null);
-  const [approvalPrefill, setApprovalPrefill] = useState<ApprovalPrefill | null>(null);
-
   const TABS: { key: Tab; label: string; icon: React.ReactNode }[] = isCeo
     ? [...BASE_TABS, { key: 'ceo', label: 'CEO', icon: <Crown size={20} /> }]
-    : BASE_TABS;
+    : [{ key: 'request-approval', label: 'อนุมัติคำขอ', icon: <HandCoins size={20} /> }, ...BASE_TABS];
+  // The v2 request queue is the GM landing view. CEO keeps the existing cash-board
+  // landing and handles only Nee-approved requests from the CEO overview.
+  const mdTabKeys = TABS.map((t) => t.key);
+  const [tab, setTab] = useHashTab<Tab>(mdTabKeys, isCeo ? 'board' : 'request-approval');
+  const [requestPrefill, setRequestPrefill] = useState<RequestPrefill | null>(null);
+  const [approvalPrefill, setApprovalPrefill] = useState<ApprovalPrefill | null>(null);
 
   function goToRequestsWithPrefill(prefill: RequestPrefill) {
     setRequestPrefill(prefill);
@@ -112,6 +112,7 @@ export default function MdApp() {
       </header>
 
       <main className="max-w-5xl mx-auto p-4">
+        {tab === 'request-approval' && !isCeo && <NeeApprovalQueue />}
         {tab === 'board' && <MdBoard onViewPendingParty={goToApprovalWithPrefill} />}
         {tab === 'approval' && (
           <MdApproval prefill={approvalPrefill} onConsumePrefill={() => setApprovalPrefill(null)} />

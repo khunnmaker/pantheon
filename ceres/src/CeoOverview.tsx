@@ -13,6 +13,7 @@ import {
 import {
   getCeoOverview,
   decideRequest,
+  ceoDecisionV2,
   createMovement,
   downloadExpensesCsv,
   downloadMovementsCsv,
@@ -21,8 +22,10 @@ import {
   downloadStatementLinesCsv,
   baht,
   type CeoOverview as CeoOverviewData,
+  type StaffRequest,
 } from './lib/api';
 import { todayStr } from './MdRequests';
+import { MediaThumb } from './lib/media';
 
 function daysAgoStr(n: number): string {
   const d = new Date();
@@ -38,7 +41,21 @@ const REQUEST_STATUS_LABEL: Record<string, string> = {
   rejected: 'ปฏิเสธ',
   cancelled: 'ยกเลิก',
   paid: 'จ่ายแล้ว',
+  pending_nee: 'รอ GM',
+  pending_ceo: 'รอ CEO',
+  approved: 'อนุมัติแล้ว',
+  void: 'ยกเลิก',
 };
+
+const V2_TYPE_LABEL: Record<StaffRequest['requestType'], string> = {
+  advance: 'เบิกล่วงหน้า',
+  reimbursement: 'สำรองจ่าย-ขอคืน',
+  purchase: 'ขอให้ซื้อ',
+};
+
+function isStaffRequest(request: CeoOverviewData['escalations'][number]): request is StaffRequest {
+  return 'workflowVersion' in request && request.workflowVersion === 2;
+}
 
 export default function CeoOverview({ onGoExpenses }: { onGoExpenses?: () => void }) {
   const [date, setDate] = useState(todayStr());
@@ -85,7 +102,7 @@ export default function CeoOverview({ onGoExpenses }: { onGoExpenses?: () => voi
           <FlaggedExpensesSection flaggedExpenses={data.flaggedExpenses} onGoExpenses={onGoExpenses} />
           <MissedBillsSection missedBills={data.missedBills} />
           <SettlementSection settlementToday={data.settlementToday} />
-          <RequestCountsSection requestCounts={data.requestCounts} />
+          <RequestCountsSection requestCounts={data.requestCounts} v2RequestCounts={data.v2RequestCounts} />
           <WeeklyPackSection />
         </div>
       )}
@@ -123,13 +140,18 @@ function EscalationCard({ r, onDecided }: { r: CeoOverviewData['escalations'][nu
   const [error, setError] = useState('');
   const [rejecting, setRejecting] = useState(false);
   const [note, setNote] = useState('');
+  const v2 = isStaffRequest(r);
+  const detail = v2 ? r.reason : r.detail;
+  const ocrMismatch = v2 && !!r.ocr.amount && Number(r.ocr.amount) !== r.amountNum;
+  const duplicate = v2 && /รูปเดียวกัน|หลักฐาน.*ซ้ำ|ใบเสร็จซ้ำ/.test(r.aiReview?.reasoning ?? '');
 
   async function decide(decision: 'approve' | 'reject') {
     if (decision === 'reject' && !note.trim()) return setError('กรอกเหตุผลที่ปฏิเสธ');
     setBusy(true);
     setError('');
     try {
-      await decideRequest(r.id, decision, note.trim() || undefined);
+      if (v2) await ceoDecisionV2(r.id, decision, note.trim() || undefined);
+      else await decideRequest(r.id, decision, note.trim() || undefined);
       onDecided();
     } catch {
       setError('บันทึกไม่สำเร็จ ลองใหม่อีกครั้ง');
@@ -140,18 +162,41 @@ function EscalationCard({ r, onDecided }: { r: CeoOverviewData['escalations'][nu
 
   return (
     <div className="bg-white rounded-xl border border-amber-200 p-3">
-      <div className="flex items-center justify-between gap-2">
-        <span className="font-semibold text-sm">{r.payee}</span>
-        <span className="font-bold">{baht(r.amountNum)}</span>
+      <div className="flex items-start gap-3">
+        {v2 && <MediaThumb id={r.requestPhotoUploadId} size={64} alt="หลักฐานคำขอ" rounded="rounded-xl" />}
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center justify-between gap-2">
+            <span className="font-semibold text-sm">{v2 ? r.requestedByName : r.payee}</span>
+            <span className="font-bold">{baht(r.amountNum)}</span>
+          </div>
+          {v2 && <div className="text-xs text-slate-500">{V2_TYPE_LABEL[r.requestType]} · GM อนุมัติแล้ว</div>}
+          <div className="flex flex-wrap gap-1.5 mt-1">
+            <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 text-xs">{r.entity}</span>
+            <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 text-xs">{r.category}</span>
+            {!v2 && <span className="text-xs text-slate-400">โดย {r.requestedByName}</span>}
+          </div>
+        </div>
       </div>
-      <div className="flex flex-wrap gap-1.5 mt-1">
-        <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 text-xs">{r.entity}</span>
-        <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 text-xs">{r.category}</span>
-        <span className="text-xs text-slate-400">โดย {r.requestedByName}</span>
-      </div>
-      {r.detail && <div className="text-xs text-slate-500 mt-1">{r.detail}</div>}
+      {detail && <div className="text-sm text-slate-600 mt-2 break-words">{detail}</div>}
+      {(ocrMismatch || duplicate) && (
+        <div className="flex flex-wrap gap-1.5 mt-2">
+          {duplicate && (
+            <span className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-rose-100 text-rose-700 text-xs">
+              <AlertTriangle size={11} /> พบหลักฐานซ้ำ
+            </span>
+          )}
+          {ocrMismatch && v2 && (
+            <span className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-amber-100 text-amber-700 text-xs">
+              <AlertTriangle size={11} /> OCR อ่านยอดได้ ฿{r.ocr.amount}
+            </span>
+          )}
+        </div>
+      )}
       {r.aiReview && (
-        <div className="mt-2 px-3 py-2 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-800">{r.aiReview.reasoning}</div>
+        <div className="mt-2 px-3 py-2 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-800">
+          <div className="font-semibold mb-0.5">เหตุผลจาก AI</div>
+          {r.aiReview.reasoning}
+        </div>
       )}
 
       {error && (
@@ -189,7 +234,7 @@ function EscalationCard({ r, onDecided }: { r: CeoOverviewData['escalations'][nu
             disabled={busy}
             className="flex-1 min-h-[40px] rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold flex items-center justify-center gap-1 disabled:opacity-40"
           >
-            {busy ? <Loader2 size={14} className="animate-spin" /> : <ThumbsUp size={14} />} อนุมัติ
+            {busy ? <Loader2 size={14} className="animate-spin" /> : <ThumbsUp size={14} />} {v2 ? 'CEO อนุมัติ' : 'อนุมัติ'}
           </button>
           <button
             onClick={() => setRejecting(true)}
@@ -415,8 +460,18 @@ function SettlementSection({ settlementToday }: { settlementToday: CeoOverviewDa
   );
 }
 
-function RequestCountsSection({ requestCounts }: { requestCounts: CeoOverviewData['requestCounts'] }) {
-  const entries = Object.entries(requestCounts).filter(([, n]) => n > 0);
+function RequestCountsSection({
+  requestCounts,
+  v2RequestCounts,
+}: {
+  requestCounts: CeoOverviewData['requestCounts'];
+  v2RequestCounts: CeoOverviewData['v2RequestCounts'];
+}) {
+  const combined = new Map<string, number>();
+  for (const [status, count] of [...Object.entries(requestCounts), ...Object.entries(v2RequestCounts)]) {
+    combined.set(status, (combined.get(status) ?? 0) + count);
+  }
+  const entries = [...combined.entries()].filter(([, n]) => n > 0);
   return (
     <SectionCard title="สรุปคำขอจ่ายเงิน">
       {entries.length === 0 ? (

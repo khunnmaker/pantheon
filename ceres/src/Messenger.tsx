@@ -1,7 +1,17 @@
 import { useCallback, useEffect, useState } from 'react';
-import { LogOut, Loader2, AlertTriangle, Plus, Pencil, Trash2, CheckCircle2, Crown } from 'lucide-react';
-import { listExpenses, deleteExpense, logout as logoutSuite, type Expense, type ExpenseStatus, baht } from './lib/api';
+import { LogOut, Loader2, AlertTriangle, Plus, Pencil, Trash2, CheckCircle2, Crown, Send } from 'lucide-react';
+import {
+  listExpenses,
+  deleteExpense,
+  logout as logoutSuite,
+  type Expense,
+  type ExpenseStatus,
+  type StaffRequest,
+  baht,
+} from './lib/api';
 import { useCeres } from './lib/bootstrapContext';
+import MyRequests from './MyRequests';
+import RequestSheet from './RequestSheet';
 
 // Portal-back link uses the canonical Pantheon domain unless build-time env overrides it.
 const PORTAL_URL: string = import.meta.env.VITE_PORTAL_URL ?? 'https://pantheon.prominentdental.com';
@@ -35,6 +45,9 @@ export default function MessengerHome() {
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [successMsg, setSuccessMsg] = useState('');
+  const [requestSheetOpen, setRequestSheetOpen] = useState(false);
+  const [editingRequest, setEditingRequest] = useState<StaffRequest | null>(null);
+  const [requestReloadKey, setRequestReloadKey] = useState(0);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -102,6 +115,30 @@ export default function MessengerHome() {
             <CheckCircle2 size={15} /> {successMsg}
           </div>
         )}
+
+        <MyRequests
+          reloadKey={requestReloadKey}
+          onEdit={(request) => {
+            setEditingRequest(request);
+            setRequestSheetOpen(true);
+          }}
+        />
+
+        <div className="flex items-center justify-between mb-3 gap-2">
+          <div>
+            <h2 className="font-bold text-base">ค่าใช้จ่ายเงินเบิกเดิม</h2>
+            <p className="text-xs text-slate-400">บันทึกค่าใช้จ่ายหรือใบเสร็จจากเงินที่รับไปแล้ว</p>
+          </div>
+          <button
+            onClick={() => {
+              setEditing(null);
+              setSheetOpen(true);
+            }}
+            className="shrink-0 min-h-[42px] px-3 rounded-xl border border-amber-300 bg-white text-amber-700 text-sm font-semibold flex items-center gap-1 hover:bg-amber-50"
+          >
+            <Plus size={16} /> บันทึก
+          </button>
+        </div>
 
         <div className="flex items-center justify-between mb-3">
           <div className="text-sm font-semibold text-slate-500">{wideRange ? '7 วันที่ผ่านมา' : 'วันนี้'}</div>
@@ -191,12 +228,12 @@ export default function MessengerHome() {
       <div className="fixed bottom-0 inset-x-0 p-4 bg-gradient-to-t from-slate-100 via-slate-100 z-10">
         <button
           onClick={() => {
-            setEditing(null);
-            setSheetOpen(true);
+            setEditingRequest(null);
+            setRequestSheetOpen(true);
           }}
           className="max-w-md mx-auto w-full min-h-[56px] rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-base font-semibold flex items-center justify-center gap-2 shadow-lg"
         >
-          <Plus size={20} /> บันทึกค่าใช้จ่าย
+          <Send size={20} /> ส่งคำขอเงิน
         </button>
       </div>
 
@@ -207,6 +244,17 @@ export default function MessengerHome() {
           onSaved={() => {
             setSuccessMsg('บันทึกเรียบร้อย');
             load();
+          }}
+        />
+      )}
+
+      {requestSheetOpen && (
+        <RequestSheet
+          editing={editingRequest}
+          onClose={() => setRequestSheetOpen(false)}
+          onSaved={() => {
+            setSuccessMsg(editingRequest ? 'แก้ไขคำขอเรียบร้อย' : 'ส่งคำขอแล้ว กำลังรอตรวจ');
+            setRequestReloadKey((key) => key + 1);
           }}
         />
       )}

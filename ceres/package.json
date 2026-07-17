@@ -8,7 +8,7 @@
     "dev": "vite --host --port 5177",
     "build": "tsc -b && vite build",
     "preview": "vite preview --host --port 5177",
-    "typecheck": "tsc -b --noEmit"
+    "typecheck": "tsc -b"
   },
   "dependencies": {
     "@pantheon/ui": "*",
