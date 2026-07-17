@@ -3,6 +3,10 @@
 // unit-testable without a DB. notify.ts stays a thin shell: run the prisma queries (already
 // scoped to one agent's own rows), hand the results to buildDigestLines, and send whatever
 // comes back — null means nothing to send, so the caller skips the LINE push entirely.
+// (occursOn/parseRecurrenceRule below are pure too — this file still never touches a DB.)
+
+import { occursOn, type EventRecurrenceFields } from './calendarQuery.js';
+import { parseRecurrenceRule } from './recurrence.js';
 
 export const APOLLO_URL = 'https://apollo.prominentdental.com';
 
@@ -17,6 +21,18 @@ const EVENT_DISPLAY_CAP = 5;
 
 export interface DigestTask { id: string; title: string; dueDate: Date; priority: string }
 export interface DigestEvent { title: string; startTime: string | null; endTime: string | null; visibility: string }
+
+/**
+ * Keeps only the candidate events that actually fall on `todayKey`. Non-recurring rows pass
+ * straight through — the caller's DB query already scoped them to rows overlapping today (a
+ * multi-day span's middle days are NOT base-date occurrences, so occursOn must not judge them).
+ * Recurring rows are kept only when today is a real occurrence (right weekday/day-of-month with
+ * the month-end clamp, within recurrenceUntil, not in skipDates). The 🔒 prefix rule downstream
+ * is untouched — an occurrence row renders exactly like a plain event row.
+ */
+export function digestEventsForDay<T extends EventRecurrenceFields>(events: T[], todayKey: string): T[] {
+  return events.filter((e) => !parseRecurrenceRule(e.recurrenceRule) || occursOn(e, todayKey));
+}
 
 function dateKey(d: Date): string { return d.toISOString().slice(0, 10); }
 

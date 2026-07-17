@@ -51,6 +51,9 @@ export function agentAvatar(person: Pick<Person, 'id' | 'email'>, agents: Person
 // Short Thai weekday labels, Sunday-first — shared by the grid header and QuickCreate's
 // human-readable date summaries so the abbreviation never drifts between the two call sites.
 export const WEEKDAYS_SHORT = ['อา', 'จ', 'อ', 'พ', 'พฤ', 'ศ', 'ส'];
+// Full names for the recurrence summaries (ทุกสัปดาห์ในวันพฤหัส) — same list TaskModal's weekly
+// picker uses, hoisted here so QuickCreate and EventModal never drift from it.
+export const WEEKDAYS_FULL = ['อาทิตย์', 'จันทร์', 'อังคาร', 'พุธ', 'พฤหัส', 'ศุกร์', 'เสาร์'];
 
 // Calendar month math — manual y/m/d string building (never toISOString) so the grid and its
 // API range never drift a day off the browser's local timezone offset.

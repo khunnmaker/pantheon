@@ -1,7 +1,7 @@
 import { prisma } from '../db/prisma.js';
 import { sendLineText } from '../line/send.js';
-import { eventDateRangeWhere } from './calendarQuery.js';
-import { APOLLO_URL, buildDigestLines } from './digest.js';
+import { eventDateRangeWhere, recurringEventRangeWhere } from './calendarQuery.js';
+import { APOLLO_URL, buildDigestLines, digestEventsForDay } from './digest.js';
 
 export function thaiDateKey(date = new Date()): string {
   return new Date(date.getTime() + 7 * 3600_000).toISOString().slice(0, 10);
@@ -47,13 +47,15 @@ export async function sendApolloMorningDigests(): Promise<number> {
       // OWN events only: agentId is filtered directly in this query (never widened to other
       // agents' rows, never fetched-then-filtered). This digest is pushed to this agent's own
       // private LINE, so surfacing one of their own 'private' events here is not a visibility
-      // leak — the only reader is its owner, same as the calendar's own-event handling.
+      // leak — the only reader is its owner, same as the calendar's own-event handling. Candidates
+      // = non-recurring rows overlapping today OR a recurring series active today; the recurrence
+      // columns are selected so occursOn(today) can drop the days a series doesn't actually fall on.
       prisma.apolloEvent.findMany({
-        where: { agentId: agent.id, ...eventDateRangeWhere(todayDate, todayDate) },
-        select: { title: true, startTime: true, endTime: true, visibility: true },
+        where: { agentId: agent.id, OR: [eventDateRangeWhere(todayDate, todayDate), recurringEventRangeWhere(todayDate, todayDate)] },
+        select: { title: true, startTime: true, endTime: true, visibility: true, date: true, recurrenceRule: true, recurrenceUntil: true, skipDates: true },
       }),
     ]);
-    const lines = buildDigestLines(agent.name, agent.apolloAssignedTasks, events, today, totalOpenCount);
+    const lines = buildDigestLines(agent.name, agent.apolloAssignedTasks, digestEventsForDay(events, today), today, totalOpenCount);
     if (!lines) continue;
     await sendLineText(agent.lineUserId, lines.join('\n'));
     sent += 1;

@@ -33,17 +33,24 @@ export interface CalendarTask {
 // only for the owner, the CEO, or a 'public' event; every other viewer gets them genuinely
 // absent from the payload, not just blank — so `title !== undefined` (not `own`) is what the UI
 // branches on to render a real chip vs. the anonymous "ไม่ว่าง" block.
+// A recurring event arrives as one row PER OCCURRENCE (row `date` = the occurrence day, so all
+// per-day grouping just works); own/public rows additionally carry the rule, `seriesDate` (the
+// series' base date — what EventModal must seed its วันที่ from, NEVER `date`; see THE REBASE
+// TRAP comment there) and `recurrenceUntil`. Masked free/busy rows omit all three, like title.
 export interface CalendarEvent {
   id: string; agentId: string; date: string; endDate: string | null;
   startTime: string | null; endTime: string | null; own: boolean;
   title?: string; note?: string; visibility?: 'private' | 'public'; assignee?: Person;
+  recurrenceRule?: RecurrenceRule | null; seriesDate?: string; recurrenceUntil?: string | null;
 }
 // POST /api/apollo/events + PATCH /api/apollo/events/:id body — the same full shape for both
-// (the EventModal always submits the whole form; see apollo.ts's eventBody for why).
-export interface EventInput { title: string; note?: string; date: string; endDate?: string | null; startTime?: string | null; endTime?: string | null; visibility?: 'private' | 'public' }
+// (the EventModal always submits the whole form; see apollo.ts's eventBody for why). skipDates
+// is deliberately NOT here: only the skip route may touch it.
+export interface EventInput { title: string; note?: string; date: string; endDate?: string | null; startTime?: string | null; endTime?: string | null; visibility?: 'private' | 'public'; recurrenceRule?: RecurrenceRule | null; recurrenceUntil?: string | null }
 // Raw row returned by the CRUD endpoints themselves (always the owner's own event, so no
 // mask/own/assignee — distinct from the calendar's read-shaped CalendarEvent above).
 export interface ApolloEvent {
   id: string; agentId: string; title: string; note: string; date: string; endDate: string | null;
   startTime: string | null; endTime: string | null; createdAt: string; updatedAt: string;
+  recurrenceRule: RecurrenceRule | null; recurrenceUntil: string | null; skipDates: string[];
 }

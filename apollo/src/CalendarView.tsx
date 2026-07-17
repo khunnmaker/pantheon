@@ -3,9 +3,9 @@ import { CalendarDays, CalendarPlus, ChevronLeft, ChevronRight, Loader2, Lock, R
 import TaskCard from './TaskCard';
 import TaskModal from './TaskModal';
 import QuickCreate from './QuickCreate';
-import type { Agent, CalendarEvent, CalendarTask, EventInput, Person, Project, TaskInput } from './types';
-import { addEvent, deleteEvent, getCalendar, updateEvent } from './lib/api';
-import { agentAvatar, dateKey, daysInMonth, eventDayKeys, monthGrid, WEEKDAYS_SHORT, type CalendarCell } from './lib/ui';
+import type { Agent, CalendarEvent, CalendarTask, EventInput, Person, Project, RecurrenceRule, TaskInput } from './types';
+import { addEvent, deleteEvent, getCalendar, skipEventDate, updateEvent } from './lib/api';
+import { agentAvatar, dateKey, daysInMonth, eventDayKeys, monthGrid, WEEKDAYS_FULL, WEEKDAYS_SHORT, type CalendarCell } from './lib/ui';
 
 const CHIP = 'inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs';
 const CHIP_ON = 'border-transparent bg-blue-50 text-blue-700 ring-1 ring-blue-300';
@@ -204,15 +204,19 @@ function EventChip({ event, agents, onOpen, detailed }: { event: CalendarEvent; 
       <span className="flex items-center gap-1 truncate">
         <VisIcon size={10} className="shrink-0"/>
         <span className="truncate">{(event.startTime ? `${event.startTime} ` : '') + (event.title ?? '')}</span>
+        {event.recurrenceRule && <RefreshCw size={10} className="ml-auto shrink-0 opacity-70"/>}
       </span>
       {detailed && event.note && <span className="truncate text-slate-500">{event.note}</span>}
     </button>;
   }
   if (event.title !== undefined) {
+    // recurrenceRule is only ever present on own/public rows, and Lock only on the CEO-viewing-
+    // private case — the two suffixes can't co-occur, so both can claim ml-auto.
     return <div className="flex w-full flex-col gap-0.5 rounded-md bg-sky-50 px-1.5 py-0.5 text-[11px] text-sky-700">
       <span className="flex items-center gap-1 truncate">
         {event.assignee && <img src={agentAvatar(event.assignee, agents)} alt="" className="h-3 w-3 shrink-0 rounded-full"/>}
         <span className="truncate">{(event.startTime ? `${event.startTime} ` : '') + event.title}</span>
+        {event.recurrenceRule && <RefreshCw size={10} className="ml-auto shrink-0 opacity-70"/>}
         {event.visibility === 'private' && <Lock size={10} className="ml-auto shrink-0 opacity-70"/>}
       </span>
       {detailed && event.note && <span className="truncate text-slate-500">{event.note}</span>}
@@ -237,23 +241,38 @@ function Shell({ children, onClose }: { children: React.ReactNode; onClose: () =
 function EventModal({ date, event, initial, onClose, onChanged }: { date: string; event?: CalendarEvent; initial?: Partial<EventInput>; onClose: () => void; onChanged: () => void }) {
   const [title, setTitle] = useState(initial?.title ?? event?.title ?? '');
   const [note, setNote] = useState(initial?.note ?? event?.note ?? '');
-  const [eventDate, setEventDate] = useState(initial?.date ?? (event ? event.date.slice(0, 10) : date));
+  // THE REBASE TRAP: a recurring row's `date` is the clicked OCCURRENCE day, and PATCH submits
+  // this whole form — seeding วันที่ from it would silently rebase the whole series onto that
+  // occurrence the moment the owner presses บันทึก. Always seed from seriesDate (the base date).
+  const [eventDate, setEventDate] = useState(initial?.date ?? (event ? (event.seriesDate ?? event.date.slice(0, 10)) : date));
   const [endDate, setEndDate] = useState(initial?.endDate ?? (event?.endDate ? event.endDate.slice(0, 10) : ''));
   const [startTime, setStartTime] = useState(initial?.startTime ?? event?.startTime ?? '');
   const [endTime, setEndTime] = useState(initial?.endTime ?? event?.endTime ?? '');
   const [visibility, setVisibility] = useState<'private' | 'public'>(initial?.visibility ?? event?.visibility ?? 'public');
+  const [freq, setFreq] = useState<'none' | 'daily' | 'weekly' | 'monthly'>(initial?.recurrenceRule?.freq ?? event?.recurrenceRule?.freq ?? 'none');
+  const [until, setUntil] = useState(initial?.recurrenceUntil ?? event?.recurrenceUntil ?? '');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const eventDay = new Date(`${eventDate}T00:00:00`);
 
+  // Like QuickCreate, the rule's weekday/dayOfMonth are locked to the picked date (the server
+  // rejects a mismatch) — changing วันที่ re-anchors the rule automatically at save.
+  function eventRule(): RecurrenceRule | null {
+    if (freq === 'daily') return { freq: 'daily' };
+    if (freq === 'weekly') return { freq: 'weekly', weekday: eventDay.getDay() };
+    if (freq === 'monthly') return { freq: 'monthly', dayOfMonth: eventDay.getDate() };
+    return null;
+  }
   async function save() {
     if (!title.trim()) return;
     setBusy(true); setError('');
+    const rule = eventRule();
     const body: EventInput = {
       title: title.trim(), note, date: eventDate,
       endDate: endDate || null,
       startTime: startTime || null,
       endTime: startTime && endTime ? endTime : null,
-      visibility,
+      visibility, recurrenceRule: rule, recurrenceUntil: rule && until ? until : null,
     };
     try {
       if (event) await updateEvent(event.id, body); else await addEvent(body);
@@ -261,9 +280,20 @@ function EventModal({ date, event, initial, onClose, onChanged }: { date: string
     } catch (err) { setError(err instanceof Error ? err.message : 'บันทึกไม่สำเร็จ'); } finally { setBusy(false); }
   }
   async function remove() {
-    if (!event || !confirm('ลบกิจกรรมนี้หรือไม่?')) return;
+    if (!event || !confirm(event.recurrenceRule ? 'ลบกิจกรรมนี้ทั้งชุด (ทุกวันที่ทำซ้ำ) หรือไม่?' : 'ลบกิจกรรมนี้หรือไม่?')) return;
     setBusy(true);
     try { await deleteEvent(event.id); onChanged(); onClose(); } finally { setBusy(false); }
+  }
+  // ลบเฉพาะวันนี้ — skips ONLY the occurrence this modal was opened from: event.date IS the
+  // clicked row's occurrence day (never the วันที่ field, which holds the series base date).
+  async function skipThisDay() {
+    if (!event) return;
+    const occurrence = event.date.slice(0, 10);
+    if (!confirm(`ลบเฉพาะวันที่ ${new Date(`${occurrence}T00:00:00`).toLocaleDateString('th-TH', { day: 'numeric', month: 'short' })} หรือไม่?`)) return;
+    setBusy(true);
+    try { await skipEventDate(event.id, occurrence); onChanged(); onClose(); }
+    catch (err) { setError(err instanceof Error ? err.message : 'ลบไม่สำเร็จ'); }
+    finally { setBusy(false); }
   }
 
   return <Shell onClose={onClose}>
@@ -285,7 +315,8 @@ function EventModal({ date, event, initial, onClose, onChanged }: { date: string
         <div>
           <label className="label">ถึงวันที่</label>
           <div className="flex gap-1.5">
-            <input type="date" className="input" value={endDate} min={eventDate} onChange={(e) => setEndDate(e.target.value)}/>
+            {/* Rule + multi-day span can't combine (server rejects) — picking one drops the other. */}
+            <input type="date" className="input" value={endDate} min={eventDate} onChange={(e) => { setEndDate(e.target.value); if (e.target.value) setFreq('none'); }}/>
             {endDate && <button type="button" aria-label="ล้างถึงวันที่" onClick={() => setEndDate('')} className="rounded-lg p-2 text-slate-400 hover:bg-slate-100"><X size={16}/></button>}
           </div>
         </div>
@@ -306,11 +337,28 @@ function EventModal({ date, event, initial, onClose, onChanged }: { date: string
           <Users size={12}/>สาธารณะ
         </button>
       </div>
+      <div className="mt-4 rounded-xl border border-slate-200 p-3">
+        <label className="text-xs font-semibold text-slate-600">ทำซ้ำ</label>
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <select className="input max-w-56" value={freq} onChange={(e) => { const f = e.target.value as typeof freq; setFreq(f); if (f !== 'none') setEndDate(''); }}>
+            <option value="none">ไม่ทำซ้ำ</option>
+            <option value="daily">ทุกวัน</option>
+            <option value="weekly">ทุกสัปดาห์ในวัน{WEEKDAYS_FULL[eventDay.getDay()]}</option>
+            <option value="monthly">ทุกเดือนวันที่ {eventDay.getDate()}</option>
+          </select>
+          {freq !== 'none' && <><span className="text-xs text-slate-500">สิ้นสุด</span><input aria-label="สิ้นสุด" type="date" className="input max-w-44" value={until} min={eventDate} onChange={(e) => setUntil(e.target.value)}/></>}
+        </div>
+      </div>
       <label className="label">โน้ต</label>
       <textarea className="input min-h-24" value={note} onChange={(e) => setNote(e.target.value)}/>
       {error && <p className="mt-3 text-sm text-rose-600">{error}</p>}
       <div className="mt-5 flex flex-wrap gap-2">
-        {event && <button onClick={() => void remove()} disabled={busy} className="btn text-rose-600 hover:bg-rose-50"><Trash2 size={16}/> ลบ</button>}
+        {event && (event.recurrenceRule
+          ? <>
+            <button onClick={() => void remove()} disabled={busy} className="btn text-rose-600 hover:bg-rose-50"><Trash2 size={16}/> ลบทั้งชุด</button>
+            <button onClick={() => void skipThisDay()} disabled={busy} className="btn text-rose-600 hover:bg-rose-50">ลบเฉพาะวันนี้</button>
+          </>
+          : <button onClick={() => void remove()} disabled={busy} className="btn text-rose-600 hover:bg-rose-50"><Trash2 size={16}/> ลบ</button>)}
         <button onClick={() => void save()} disabled={busy || !title.trim()} className="btn-primary ml-auto">{busy && <Loader2 size={15} className="animate-spin"/>} บันทึก</button>
       </div>
     </div>

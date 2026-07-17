@@ -1,5 +1,6 @@
 import { z } from 'zod';
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
+import { parseRecurrenceRule, type ApolloRecurrenceRule } from './recurrence.js';
 
 // Pure logic for GET /api/apollo/calendar (+ the private-events endpoints it now also feeds) —
 // date-range validation, per-role scoping, and event validation/masking, split out from the
@@ -15,6 +16,14 @@ export const eventTimeSchema = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/);
 export function parseDate(value: string): Date | null {
   const d = new Date(`${value}T00:00:00.000Z`);
   return Number.isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== value ? null : d;
+}
+
+const pad2 = (n: number): string => String(n).padStart(2, '0');
+/** YYYY-MM-DD key of a Date read in UTC — the mirror of parseDate. @db.Date columns come back as
+ *  UTC-midnight Dates, so reading them in UTC (never toISOString, never local getters) is what
+ *  keeps occurrence keys from drifting a day off the stored calendar date. */
+export function toDateKey(d: Date): string {
+  return `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}`;
 }
 
 export const CALENDAR_MAX_RANGE_DAYS = 62;
@@ -95,12 +104,29 @@ export function validEventTimeRange(startTime: string | null, endTime: string | 
   return endTime > startTime;
 }
 
-export interface EventInput { title: string; note?: string; date: string; endDate?: string | null; startTime?: string | null; endTime?: string | null; visibility?: 'private' | 'public' }
-export interface EventData { title: string; note: string; date: Date; endDate: Date | null; startTime: string | null; endTime: string | null; visibility: 'private' | 'public' }
+export interface EventInput { title: string; note?: string; date: string; endDate?: string | null; startTime?: string | null; endTime?: string | null; visibility?: 'private' | 'public'; recurrenceRule?: ApolloRecurrenceRule | null; recurrenceUntil?: string | null }
+export interface EventData { title: string; note: string; date: Date; endDate: Date | null; startTime: string | null; endTime: string | null; visibility: 'private' | 'public'; recurrenceRule: ApolloRecurrenceRule | null; recurrenceUntil: Date | null }
+
+/**
+ * A recurrence rule is valid for a base date only when its periodic anchor equals that date's own
+ * — weekly's weekday === the base weekday, monthly's dayOfMonth === the base day-of-month (the UI
+ * derives the rule FROM the picked date Google-style, so a mismatch is a client bug, not a user
+ * choice). Daily has no anchor. Read in UTC to match the @db.Date base date.
+ */
+export function ruleMatchesBaseDate(rule: ApolloRecurrenceRule, date: Date): boolean {
+  if (rule.freq === 'weekly') return rule.weekday === date.getUTCDay();
+  if (rule.freq === 'monthly') return rule.dayOfMonth === date.getUTCDate();
+  return true; // daily
+}
 
 /**
  * Cross-field validation + parsing shared by POST /api/apollo/events and PATCH
  * /api/apollo/events/:id, so both route handlers stay thin wrappers that just 400 on null.
+ * Recurrence rules: rejected if malformed, if their weekday/dayOfMonth doesn't match the base
+ * date, or if combined with a multi-day endDate (a rule expands one day per occurrence, so the two
+ * are mutually exclusive). recurrenceUntil must be on/after the base date; it is dropped when
+ * there is no rule (harmless — nothing to bound). skipDates is deliberately absent here: it is
+ * managed only by the skip route, so a whole-series PATCH can never clobber it.
  */
 export function buildEventData(input: EventInput): EventData | null {
   const date = parseDate(input.date);
@@ -111,7 +137,16 @@ export function buildEventData(input: EventInput): EventData | null {
   const startTime = input.startTime ?? null;
   const endTime = input.endTime ?? null;
   if (!validEventTimeRange(startTime, endTime)) return null;
-  return { title: input.title, note: input.note ?? '', date, endDate, startTime, endTime, visibility: input.visibility ?? 'public' };
+  const rule = input.recurrenceRule == null ? null : parseRecurrenceRule(input.recurrenceRule);
+  if (input.recurrenceRule != null && !rule) return null; // provided but malformed
+  if (rule) {
+    if (endDate) return null; // rule + multi-day span cannot combine
+    if (!ruleMatchesBaseDate(rule, date)) return null;
+  }
+  const recurrenceUntil = rule && input.recurrenceUntil ? parseDate(input.recurrenceUntil) : null;
+  if (rule && input.recurrenceUntil && !recurrenceUntil) return null; // provided but malformed
+  if (recurrenceUntil && recurrenceUntil < date) return null; // until must be on/after the base date
+  return { title: input.title, note: input.note ?? '', date, endDate, startTime, endTime, visibility: input.visibility ?? 'public', recurrenceRule: rule, recurrenceUntil };
 }
 
 // ─── ApolloEvent: calendar-range query + masking ─────────────────────────
@@ -165,4 +200,111 @@ export function maskEvent(event: ApolloEventRow, viewerId: string, viewerIsCeo: 
   const { agent, title, note, visibility, ...rest } = event;
   const full = own || viewerIsCeo || visibility === 'public';
   return { ...rest, own, assignee: agent, ...(full ? { title, note, visibility: visibility as 'private' | 'public' } : {}) };
+}
+
+// ─── ApolloEvent: recurrence expansion ───────────────────────────────────
+// Events with a rule are stored as ONE row (rule + until + skipDates) and expanded here at read
+// time — never materialized as separate rows. All date math is UTC-key based (parseDate/toDateKey,
+// never toISOString on a local Date) so occurrence keys never drift off the stored @db.Date.
+
+/** The recurrence-bearing fields occursOn/expand need — satisfied by both a raw ApolloEvent row
+ *  and the digest's leaner projection. `recurrenceRule` is the raw Json column (parsed here). */
+export interface EventRecurrenceFields {
+  date: Date;
+  recurrenceRule: unknown;
+  recurrenceUntil: Date | null;
+  skipDates: string[];
+}
+
+/**
+ * Whether `event` has an occurrence on the given YYYY-MM-DD key. The base `date` is always the
+ * first occurrence. A rule-less event occurs only on its base date. Weekly matches the rule's
+ * weekday; monthly matches its dayOfMonth clamped to the month's length — IDENTICAL to
+ * recurrence.ts's nextOccurrenceDate (Math.min(dayOfMonth, lastDay)), so e.g. a day-31 rule lands
+ * on Feb 28/29 rather than skipping February (parity is asserted in the tests). Bounded above by
+ * recurrenceUntil (inclusive) and punctured by skipDates.
+ */
+export function occursOn(event: EventRecurrenceFields, dateKey: string): boolean {
+  const target = parseDate(dateKey);
+  if (!target) return false;
+  const baseKey = toDateKey(event.date);
+  if (dateKey < baseKey) return false; // before the series starts (lexical compare — keys are zero-padded)
+  if (event.recurrenceUntil && dateKey > toDateKey(event.recurrenceUntil)) return false;
+  if (event.skipDates.includes(dateKey)) return false;
+  const rule = parseRecurrenceRule(event.recurrenceRule);
+  if (!rule) return dateKey === baseKey; // non-recurring: base date only
+  if (rule.freq === 'daily') return true;
+  if (rule.freq === 'weekly') return target.getUTCDay() === rule.weekday;
+  const lastDay = new Date(Date.UTC(target.getUTCFullYear(), target.getUTCMonth() + 1, 0)).getUTCDate();
+  return target.getUTCDate() === Math.min(rule.dayOfMonth ?? 0, lastDay);
+}
+
+/**
+ * Every occurrence key of `event` within the closed [from, to] window, ascending. Iterates day by
+ * day (the calendar range is capped at CALENDAR_MAX_RANGE_DAYS, and a rule forbids a multi-day
+ * span, so this is at most ~62 cheap occursOn checks) — so expansion can never disagree with
+ * occursOn by construction. Clamped to the later of base/from and the earlier of to/until.
+ */
+export function expandEventOccurrences(event: EventRecurrenceFields, from: Date, to: Date): string[] {
+  const baseKey = toDateKey(event.date);
+  const fromKey = toDateKey(from);
+  let startKey = baseKey > fromKey ? baseKey : fromKey;
+  let endKey = toDateKey(to);
+  if (event.recurrenceUntil) { const untilKey = toDateKey(event.recurrenceUntil); if (untilKey < endKey) endKey = untilKey; }
+  const keys: string[] = [];
+  const start = parseDate(startKey);
+  const end = parseDate(endKey);
+  if (!start || !end) return keys;
+  for (let t = start.getTime(); t <= end.getTime(); t += 86_400_000) {
+    const key = toDateKey(new Date(t));
+    if (occursOn(event, key)) keys.push(key);
+  }
+  return keys;
+}
+
+/**
+ * Prisma where-fragment for recurring-series candidates active anywhere in [from, to]: a real rule
+ * (JSON non-null), base date on/before `to`, and the series not already ended before `from`
+ * (recurrenceUntil null = forever). This only narrows the DB fetch; exact per-day membership is
+ * still occursOn/expandEventOccurrences' job. OR this alongside eventDateRangeWhere (which catches
+ * the base-day and every non-recurring/multi-day row) to get the full candidate set.
+ */
+export function recurringEventRangeWhere(from: Date, to: Date): Prisma.ApolloEventWhereInput {
+  return {
+    recurrenceRule: { not: Prisma.AnyNull },
+    date: { lte: to },
+    OR: [{ recurrenceUntil: null }, { recurrenceUntil: { gte: from } }],
+  };
+}
+
+/** A calendar row: a masked event plus, for a recurring OWN/PUBLIC row only, the rule, the series
+ *  base date, and the until bound. seriesDate is what EventModal must seed its date field from
+ *  (never the occurrence `date`) — see THE REBASE TRAP in the build brief. recurrenceUntil rides
+ *  along for the same reason: the modal PATCHes the whole form, so without the current bound a
+ *  series edit would silently clear it. */
+export type CalendarEventRow = MaskedApolloEvent & { recurrenceRule?: ApolloRecurrenceRule | null; seriesDate?: string; recurrenceUntil?: string | null };
+/** Raw ApolloEvent row (calendarEventSelect) carrying the recurrence columns for expansion. */
+export type RawCalendarEvent = ApolloEventRow & EventRecurrenceFields;
+
+/**
+ * Masks each raw event, then expands recurring ones into one row per occurrence in [from, to] (row
+ * `date` = the occurrence, so the existing per-day grouping just works). A recurring row also
+ * carries `recurrenceRule` + `seriesDate` ONLY when it's the viewer's own event or a public one —
+ * masked free/busy rows stay stripped to who+when, so a rule/base-date can never leak. Non-recurring
+ * events pass through as their single masked row unchanged (multi-day spans still expand client-side).
+ */
+export function expandCalendarEvents(rawEvents: RawCalendarEvent[], viewerId: string, viewerIsCeo: boolean, from: Date, to: Date): CalendarEventRow[] {
+  return rawEvents.flatMap((raw): CalendarEventRow[] => {
+    const { recurrenceRule, recurrenceUntil, skipDates, ...forMask } = raw;
+    const masked = maskEvent(forMask, viewerId, viewerIsCeo);
+    const rule = parseRecurrenceRule(recurrenceRule);
+    if (!rule) return [masked];
+    const withSeries = masked.own || masked.visibility === 'public'; // own/public rows only
+    const recur: EventRecurrenceFields = { date: raw.date, recurrenceRule, recurrenceUntil, skipDates };
+    return expandEventOccurrences(recur, from, to).map((key): CalendarEventRow => ({
+      ...masked,
+      date: parseDate(key) as Date,
+      ...(withSeries ? { recurrenceRule: rule, seriesDate: toDateKey(raw.date), recurrenceUntil: recurrenceUntil ? toDateKey(recurrenceUntil) : null } : {}),
+    }));
+  });
 }

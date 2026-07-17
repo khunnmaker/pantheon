@@ -253,6 +253,15 @@ model ApolloEvent {
   startTime  String? // wall-clock "HH:MM", optional
   endTime    String? // wall-clock "HH:MM", optional — requires startTime, must be later
   visibility String    @default("public") // 'private' | 'public' — see calendarQuery.ts maskEvent
+  // Recurrence v1 — same rule vocabulary as ApolloTask (see recurrence.ts): expanded server-side
+  // in calendarQuery.ts, NOT stored as separate rows. `date` is the first occurrence; the rule's
+  // weekday/dayOfMonth must match it (enforced in buildEventData). A rule and endDate can't
+  // coexist (one-day-per-occurrence). recurrenceUntil is the last date an occurrence may fall on
+  // (inclusive; null = forever). skipDates holds 'YYYY-MM-DD' occurrences deleted individually via
+  // the skip route — never touched by PATCH (not in eventBody), so a whole-series edit keeps them.
+  recurrenceRule  Json?
+  recurrenceUntil DateTime? @db.Date
+  skipDates       String[]  @default([])
   createdAt  DateTime  @default(now())
   updatedAt  DateTime  @updatedAt
 

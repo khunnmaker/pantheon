@@ -1,8 +1,8 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { AlignLeft, ChevronDown, Clock, Folder, Loader2, Lock, User, Users, X, type LucideIcon } from 'lucide-react';
-import type { Agent, EventInput, Person, Project, TaskInput } from './types';
+import { AlignLeft, ChevronDown, Clock, Folder, Loader2, Lock, RefreshCw, User, Users, X, type LucideIcon } from 'lucide-react';
+import type { Agent, EventInput, Person, Project, RecurrenceRule, TaskInput } from './types';
 import { addEvent, createTask } from './lib/api';
-import { WEEKDAYS_SHORT, quickCreatePosition, shortDate } from './lib/ui';
+import { WEEKDAYS_FULL, WEEKDAYS_SHORT, quickCreatePosition, shortDate } from './lib/ui';
 
 const LAST_PROJECT_KEY = 'apollo_quick_project';
 // Verbatim copies of EventModal's disclosure copy (see CalendarView.tsx) — staff must be able to
@@ -46,6 +46,10 @@ export default function QuickCreate({ date, anchor, agents, me, scope, projects,
   const [endTime, setEndTime] = useState('');
   const [visibility, setVisibility] = useState<'private' | 'public'>('public'); // HARD RULE: defaults public, ส่วนตัว is an explicit opt-in
   const [note, setNote] = useState('');
+  // ทำซ้ำ — quick mode locks the rule's weekday/dayOfMonth to the picked date (Google-style
+  // "ทุกสัปดาห์ในวันพฤหัส"); no separate weekday picker here. Server rejects a mismatch anyway.
+  const [recurFreq, setRecurFreq] = useState<'none' | 'daily' | 'weekly' | 'monthly'>('none');
+  const [recurUntil, setRecurUntil] = useState('');
 
   // งาน fields.
   const [projectId, setProjectId] = useState(() => {
@@ -105,12 +109,20 @@ export default function QuickCreate({ date, anchor, agents, me, scope, projects,
     if (!title.trim() || busy || (tab === 'task' && !selectedProject)) return;
     if (tab === 'event') await saveEvent(); else await saveTask();
   }
+  function eventRule(): RecurrenceRule | null {
+    const d = new Date(`${eventDate}T00:00:00`);
+    if (recurFreq === 'daily') return { freq: 'daily' };
+    if (recurFreq === 'weekly') return { freq: 'weekly', weekday: d.getDay() };
+    if (recurFreq === 'monthly') return { freq: 'monthly', dayOfMonth: d.getDate() };
+    return null;
+  }
   async function saveEvent() {
     setBusy(true); setError('');
+    const rule = eventRule();
     const body: EventInput = {
       title: title.trim(), note, date: eventDate,
       endDate: endDate || null, startTime: startTime || null, endTime: startTime && endTime ? endTime : null,
-      visibility,
+      visibility, recurrenceRule: rule, recurrenceUntil: rule && recurUntil ? recurUntil : null,
     };
     try { await addEvent(body); onChanged(); onClose(); }
     catch (err) { setError(err instanceof Error ? err.message : 'บันทึกไม่สำเร็จ'); }
@@ -129,7 +141,7 @@ export default function QuickCreate({ date, anchor, agents, me, scope, projects,
   }
 
   function handleMoreOptions() {
-    if (tab === 'event') onMoreOptions({ kind: 'event', date: eventDate, initial: { title, note, date: eventDate, endDate, startTime, endTime, visibility } });
+    if (tab === 'event') onMoreOptions({ kind: 'event', date: eventDate, initial: { title, note, date: eventDate, endDate, startTime, endTime, visibility, recurrenceRule: eventRule(), recurrenceUntil: recurFreq !== 'none' && recurUntil ? recurUntil : null } });
     else if (selectedProject) onMoreOptions({ kind: 'task', project: selectedProject, initial: { title, notes, assigneeId, dueDate, priority: 'normal' } });
   }
 
@@ -137,6 +149,11 @@ export default function QuickCreate({ date, anchor, agents, me, scope, projects,
 
   const clockSummary = formatEventClock(eventDate, endDate, startTime, endTime);
   const dueSummary = `${WEEKDAYS_SHORT[new Date(`${dueDate}T00:00:00`).getDay()]} ${shortDate(dueDate)}`;
+  const eventDay = new Date(`${eventDate}T00:00:00`);
+  const recurSummary = recurFreq === 'none' ? 'ไม่ทำซ้ำ'
+    : recurFreq === 'daily' ? 'ทุกวัน'
+    : recurFreq === 'weekly' ? `ทุกสัปดาห์ในวัน${WEEKDAYS_FULL[eventDay.getDay()]}`
+    : `ทุกเดือนวันที่ ${eventDay.getDate()}`;
 
   return <div ref={popRef} onKeyDown={handleKeyDown} style={isMobile ? undefined : { top: pos.top, left: pos.left }}
     className={isMobile
@@ -160,7 +177,8 @@ export default function QuickCreate({ date, anchor, agents, me, scope, projects,
             <Field label="วันที่"><input type="date" className="input py-1.5 text-sm" value={eventDate} onChange={(e) => setEventDate(e.target.value)}/></Field>
             <Field label="ถึงวันที่">
               <div className="flex gap-1">
-                <input type="date" className="input py-1.5 text-sm" value={endDate} min={eventDate} onChange={(e) => setEndDate(e.target.value)}/>
+                {/* Rule + multi-day span can't combine (server rejects) — picking one drops the other. */}
+                <input type="date" className="input py-1.5 text-sm" value={endDate} min={eventDate} onChange={(e) => { setEndDate(e.target.value); if (e.target.value) setRecurFreq('none'); }}/>
                 {endDate && <button type="button" aria-label="ล้างถึงวันที่" onClick={() => setEndDate('')} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100"><X size={14}/></button>}
               </div>
             </Field>
@@ -181,6 +199,17 @@ export default function QuickCreate({ date, anchor, agents, me, scope, projects,
             </button>
           </div>
           <p className="mt-2 text-[11px] text-slate-500">{visibility === 'public' ? PUBLIC_HINT : PRIVATE_HINT}</p>
+        </Row>
+        <Row icon={RefreshCw} summary={recurSummary} expanded={expanded === 'recur'} onToggle={() => toggleRow('recur')}>
+          <div className="space-y-2">
+            <select className="input py-1.5 text-sm" value={recurFreq} onChange={(e) => { const f = e.target.value as typeof recurFreq; setRecurFreq(f); if (f !== 'none') setEndDate(''); }}>
+              <option value="none">ไม่ทำซ้ำ</option>
+              <option value="daily">ทุกวัน</option>
+              <option value="weekly">ทุกสัปดาห์ในวัน{WEEKDAYS_FULL[eventDay.getDay()]}</option>
+              <option value="monthly">ทุกเดือนวันที่ {eventDay.getDate()}</option>
+            </select>
+            {recurFreq !== 'none' && <Field label="สิ้นสุด (ไม่บังคับ)"><input type="date" className="input py-1.5 text-sm" value={recurUntil} min={eventDate} onChange={(e) => setRecurUntil(e.target.value)}/></Field>}
+          </div>
         </Row>
         <Row icon={AlignLeft} summary={note.split('\n')[0] || 'เพิ่มโน้ต'} expanded={expanded === 'note'} onToggle={() => toggleRow('note')}>
           <textarea className="input min-h-20 py-1.5 text-sm" value={note} onChange={(e) => setNote(e.target.value)} placeholder="โน้ต"/>

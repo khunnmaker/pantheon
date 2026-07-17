@@ -48,6 +48,7 @@ export const getCalendar = (from: string, to: string, assignee?: string) => auth
 export const addEvent = (body: EventInput) => authed<ApolloEvent>('/api/apollo/events', { method: 'POST', body: JSON.stringify(body) });
 export const updateEvent = (id: string, body: EventInput) => authed<ApolloEvent>(`/api/apollo/events/${id}`, { method: 'PATCH', body: JSON.stringify(body) });
 export const deleteEvent = (id: string) => authed(`/api/apollo/events/${id}`, { method: 'DELETE' });
+export const skipEventDate = (id: string, date: string) => authed<ApolloEvent>(`/api/apollo/events/${id}/skip`, { method: 'POST', body: JSON.stringify({ date }) });
 export const getDashboard = () => authed<{ people: (Person & { open: number; overdue: number })[]; projects: (Pick<Project, 'id' | 'name' | 'color' | 'columns'> & { statuses: Record<string, number> })[] }>('/api/apollo/dashboard');
 export const getLineBind = () => authed<{ bound: boolean; code: string | null }>('/api/apollo/line-bind');
 export const generateLineBind = () => authed<{ bound: boolean; code: string }>('/api/apollo/line-bind', { method: 'POST' });
