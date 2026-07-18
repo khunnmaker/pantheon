@@ -417,24 +417,25 @@ function ManagementApp({ isCeo }: { isCeo: boolean }) {
             no bottom bar, no "more". Every top-level destination is a tab here, no group
             captions or divider bars (2026-07-18 simplification). Mobile never renders this
             (hidden below lg:), so the existing role homes + MoreMenu are completely untouched
-            below lg:. Full-bleed dark band (2026-07-18 restyle, owner: strip read as "flat" and
-            left-stuck against the centered white header) — inner container matches the header
-            row's own max-w-5xl mx-auto px-4 so the tabs line up under the logo/logout row. */}
-        <div className="hidden lg:block bg-slate-900">
+            below lg:. Light Juno-styled strip (2026-07-18, owner preference over the dark-band
+            experiment: "i like how Juno does better") — tab/badge classes mirror juno/src/Juno.tsx
+            with amber standing in for Juno's emerald; inner container matches the header row's
+            own max-w-5xl mx-auto px-4 so the tabs line up under the logo/logout row. */}
+        <div className="hidden lg:block bg-white border-b border-slate-200">
           <div className="max-w-5xl mx-auto px-4 flex lg:flex-wrap gap-1">
             {desktopTabs.map((t) => (
               <button
                 key={t.key}
                 onClick={() => setView(t.key)}
-                className={`flex items-center gap-1.5 px-2.5 py-1.5 text-sm border-b-2 whitespace-nowrap ${
+                className={`flex items-center gap-1.5 px-2.5 py-1.5 text-sm font-medium border-b-2 whitespace-nowrap ${
                   activeView === t.key
-                    ? 'border-amber-400 text-amber-300 font-medium'
-                    : 'border-transparent text-slate-300 font-medium hover:text-white'
+                    ? 'border-amber-600 text-amber-700'
+                    : 'border-transparent text-slate-500 hover:text-slate-700'
                 }`}
               >
                 {t.icon} {t.label}
                 {typeof t.count === 'number' && t.count > 0 && (
-                  <span className="ml-1 px-1.5 rounded-full text-xs bg-rose-500 text-white ring-1 ring-rose-300/40">{t.count}</span>
+                  <span className="ml-1 px-1.5 rounded-full text-xs bg-rose-100 text-rose-700">{t.count}</span>
                 )}
               </button>
             ))}
