@@ -181,8 +181,8 @@ export default function Juno({ agent, onLogout }: { agent: Agent; onLogout: () =
   // ลบถาวร (permanent delete) is the CEO-only override — even gm, who can now open Juno,
   // cannot delete. Mirrors the server's `req.agent?.role !== 'supervisor'` gate exactly.
   const canDelete = isCeo;
-  // unmatched-in bank txn count — the badge on the กระทบยอด tab (phase B)
-  const [bankUnmatched, setBankUnmatched] = useState<number | undefined>(undefined);
+  // ใบเสร็จตรวจแล้ว ยังไม่พบเงินเข้า count — the badge on the ธนาคาร tab (owner 2026-07-18)
+  const [verifiedUnmatched, setVerifiedUnmatched] = useState<number | undefined>(undefined);
   // open FinanceAudit (ตรวจสอบยอด) count — employee/supervisor badge; gm skips this request.
   const [auditOpen, setAuditOpen] = useState<number | undefined>(undefined);
   const [billAlerts, setBillAlerts] = useState<number | undefined>(undefined);
@@ -196,9 +196,10 @@ export default function Juno({ agent, onLogout }: { agent: Agent; onLogout: () =
       return;
     }
     getSummary().then(setSummary).catch(() => setSummary(null));
-    // Badge = RECENT unmatched lines only (≤31d) — the full-history backlog count made the
-    // badge a meaningless 962 (owner report 2026-07-14). Falls back on a stale api.
-    getBankSummary().then((s) => setBankUnmatched(s.unmatchedInRecent?.count ?? s.unmatchedIn.count)).catch(() => setBankUnmatched(undefined));
+    // Badge = verified receipts still missing their bank credit (ใบเสร็จตรวจแล้ว ยังไม่พบเงินเข้า,
+    // owner 2026-07-18) — FIN's own follow-up queue, not the bank-line backlog (which is mostly
+    // receipt-less noise: K SHOP lumps, pre-Juno history; it replaced the ≤31d line count).
+    getBankSummary().then((s) => setVerifiedUnmatched(s.verifiedUnreconciled.count)).catch(() => setVerifiedUnmatched(undefined));
     getFinanceAudits('open').then((r) => setAuditOpen(r.audits.length)).catch(() => setAuditOpen(undefined));
     getManualBills().then((r) => handleBillCounts(r.counts)).catch(() => setBillAlerts(undefined));
   }, [handleBillCounts, scope]);
@@ -235,7 +236,7 @@ export default function Juno({ agent, onLogout }: { agent: Agent; onLogout: () =
             // เงินสด/เช็ค is CEO-only: it's where the CEO marks ได้รับเงินแล้ว (server 403s
             // POST /receive for non-supervisor). Badge = still awaiting that confirm.
             ...(isCeo ? [{ key: 'receive' as const, label: 'เงินสด/เช็ค', icon: <HandCoins size={16} />, count: summary?.awaitingReceive }] : []),
-            { key: 'recon' as const, label: 'ธนาคาร', icon: <Scale size={16} />, count: bankUnmatched },
+            { key: 'recon' as const, label: 'ธนาคาร', icon: <Scale size={16} />, count: verifiedUnmatched },
           ],
         },
         {
