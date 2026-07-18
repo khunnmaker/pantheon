@@ -1498,6 +1498,7 @@ model JupiterLedgerTax {
 model JupiterLedgerPartner {
   id          String   @id @default(cuid())
   displayName String
+  nameOriginal String?
   legalName   String   @default("")
   taxId       String   @default("")
   partnerType String   @default("other")
@@ -1527,7 +1528,9 @@ model JupiterJournalEntry {
   state             String    @default("draft")
   entryType         String    @default("general")
   ref               String    @default("")
+  refOriginal       String?
   memo              String    @default("")
+  memoOriginal      String?
   partnerId         String?
   documentNo        String    @default("")
   documentDate      DateTime? @db.Date
@@ -1576,6 +1579,7 @@ model JupiterJournalLine {
   accountId            String
   partnerId            String?
   label                String    @default("")
+  labelOriginal        String?
   debit                Decimal   @default(0) @db.Decimal(18, 2)
   credit               Decimal   @default(0) @db.Decimal(18, 2)
   amountCurrency       Decimal?  @db.Decimal(18, 2)

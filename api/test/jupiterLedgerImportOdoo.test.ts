@@ -5,8 +5,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   OdooImportError, accountClassFromOdooType, canonicalizeSourceObject, importOdooSnapshot,
-  importedEntryAction, many2oneId, seedImportedJournalSequences, sourceContentHash,
+  entryNameFields, importedEntryAction, lineNameFields, many2oneId, parseOdooNameMapping,
+  partnerNameFields, seedImportedJournalSequences, sourceContentHash, sourceMoney,
+  validateOdooNameMapping,
 } from '../src/jupiter/ledger/importOdoo.js';
+import { parseImportArgs } from '../src/scripts/importOdooRescue.js';
 
 const temporary: string[] = [];
 
@@ -21,10 +24,10 @@ async function syntheticSnapshot(companyId = 2, firstDebit: string | number = '1
     account_account: [{ id: 10, company_ids: [companyId], code: '00100', name: 'Synthetic cash', account_type: 'asset_cash', reconcile: false }],
     account_journal: [{ id: 20, company_id: [companyId, 'TONR'], code: 'GEN', name: 'Synthetic journal', type: 'general', default_account_id: [10, '00100'] }],
     account_tax: [{ id: 30, company_id: [companyId, 'TONR'], name: 'Synthetic tax', amount: '7.000000', type_tax_use: 'purchase' }],
-    account_move: [{ id: 40, company_id: [companyId, 'TONR'], journal_id: [20, 'GEN'], name: '/', date: '2026-07-18', state: 'draft' }],
+    account_move: [{ id: 40, company_id: [companyId, 'TONR'], journal_id: [20, 'GEN'], name: '/', date: '2026-07-18', state: 'draft', narration: 'Raw memo', ref: 'Raw ref' }],
     account_move_line: [
-      { id: 50, company_id: [companyId, 'TONR'], move_id: [40, '/'], journal_id: [20, 'GEN'], account_id: [10, '00100'], debit: firstDebit, credit: '0.00', parent_state: 'draft', tax_ids: [] },
-      { id: 51, company_id: [companyId, 'TONR'], move_id: [40, '/'], journal_id: [20, 'GEN'], account_id: [10, '00100'], debit: '0.00', credit: '10.00', parent_state: 'draft', tax_ids: [] },
+      { id: 50, company_id: [companyId, 'TONR'], move_id: [40, '/'], journal_id: [20, 'GEN'], account_id: [10, '00100'], name: 'Raw line', debit: firstDebit, credit: '0.00', parent_state: 'draft', tax_ids: [] },
+      { id: 51, company_id: [companyId, 'TONR'], move_id: [40, '/'], journal_id: [20, 'GEN'], account_id: [10, '00100'], name: 'Already clean', debit: '0.00', credit: '10.00', parent_state: 'draft', tax_ids: [] },
     ],
   };
   for (const [name, records] of Object.entries(rows)) {
@@ -70,6 +73,77 @@ describe('Odoo rescue importer', () => {
     expect(result).toMatchObject({ dryRun: true, partners: 1, companies: { TONR: { accounts: 1, moves: 1, lines: 2 } } });
   });
 
+  it('applies harmonized names, preserves changed originals, and leaves unchanged originals null', () => {
+    const mapping = parseOdooNameMapping({
+      partners: { 'res.partner:7': 'คู่ค้าทดสอบ' },
+      entries: { 'TONR:account.move:40': { memo: 'รายการทดสอบ', ref: 'Raw ref' } },
+      lines: { 'TONR:account.move.line:50': 'รายละเอียดทดสอบ', 'TONR:account.move.line:51': 'Already clean' },
+    });
+    expect(partnerNameFields({ id: 7, name: 'Synthetic Partner' }, mapping)).toEqual({
+      displayName: 'คู่ค้าทดสอบ', nameOriginal: 'Synthetic Partner',
+    });
+    expect(entryNameFields('TONR', { id: 40, narration: 'Raw memo', ref: 'Raw ref' }, mapping)).toEqual({
+      memo: 'รายการทดสอบ', memoOriginal: 'Raw memo', ref: 'Raw ref', refOriginal: null,
+    });
+    expect(lineNameFields('TONR', { id: 50, name: 'Raw line' }, mapping)).toEqual({
+      label: 'รายละเอียดทดสอบ', labelOriginal: 'Raw line',
+    });
+    expect(lineNameFields('TONR', { id: 51, name: 'Already clean' }, mapping)).toEqual({
+      label: 'Already clean', labelOriginal: null,
+    });
+  });
+
+  it('parses --names and rejects unknown mapping fields', () => {
+    expect(parseImportArgs([
+      '--snapshot', 'snapshot', '--companies', 'TONR,DENC', '--names', 'mapping.json', '--dry-run',
+    ])).toMatchObject({ snapshotPath: 'snapshot', companies: ['TONR', 'DENC'], namesPath: 'mapping.json', apply: false });
+    expect(() => parseOdooNameMapping({ partners: {}, entries: {}, lines: {}, accounts: {} })).toThrowError(
+      expect.objectContaining({ code: 'invalid_name_mapping' }),
+    );
+    expect(() => parseOdooNameMapping({
+      partners: {}, entries: { 'TONR:account.move:40': { label: 'wrong field' } }, lines: {},
+    })).toThrowError(expect.objectContaining({ code: 'invalid_name_mapping' }));
+  });
+
+  it('counts validated no-op mapping rows in the rename summary', () => {
+    const mapping = parseOdooNameMapping({
+      partners: {}, entries: {}, lines: { 'TONR:account.move.line:51': 'Already clean' },
+    });
+    const source = new Map([['TONR', { moves: [], lines: [{ id: 51, name: 'Already clean' }] }]]);
+    expect(validateOdooNameMapping(mapping, [], source as never)).toEqual({ partners: 0, entries: 0, lines: 1 });
+  });
+
+  it('keeps raw source hashes stable under --names and reports dry-run rename counts', async () => {
+    const root = await syntheticSnapshot();
+    const namesPath = join(root, 'names.json');
+    await writeFile(namesPath, JSON.stringify({
+      partners: { 'res.partner:7': 'คู่ค้าทดสอบ' },
+      entries: { 'TONR:account.move:40': { memo: 'รายการทดสอบ' } },
+      lines: { 'TONR:account.move.line:50': 'รายละเอียดทดสอบ' },
+    }));
+    const withoutNames = await importOdooSnapshot({ snapshotPath: root, companies: ['TONR'], apply: false });
+    const withNames = await importOdooSnapshot({ snapshotPath: root, companies: ['TONR'], apply: false, namesPath });
+    expect(withNames).toMatchObject({ renames: { partners: 1, entries: 1, lines: 1 } });
+    expect(withNames.companies).toEqual(withoutNames.companies);
+
+    const rawMove = { id: 40, narration: 'Raw memo', ref: 'Raw ref' };
+    const before = sourceContentHash(rawMove);
+    entryNameFields('TONR', rawMove, parseOdooNameMapping({
+      partners: {}, entries: { 'TONR:account.move:40': { memo: 'รายการทดสอบ' } }, lines: {},
+    }));
+    expect(sourceContentHash(rawMove)).toBe(before);
+  });
+
+  it('rejects unknown name mapping references loudly', async () => {
+    const root = await syntheticSnapshot();
+    const namesPath = join(root, 'names.json');
+    await writeFile(namesPath, JSON.stringify({ partners: {}, entries: {}, lines: { 'TONR:account.move.line:999': 'Unknown' } }));
+    await expect(importOdooSnapshot({ snapshotPath: root, companies: ['TONR'], apply: false, namesPath })).rejects.toMatchObject({
+      code: 'unknown_name_mapping_key',
+      message: expect.stringContaining('TONR:account.move.line:999'),
+    });
+  });
+
   it('rejects an account whose company_ids disagree with its folder mapping', async () => {
     const root = await syntheticSnapshot(3);
     await expect(importOdooSnapshot({ snapshotPath: root, companies: ['TONR'], apply: false })).rejects.toEqual(
@@ -77,13 +151,23 @@ describe('Odoo rescue importer', () => {
     );
   });
 
-  it('rejects numeric source amounts and names the offending record', async () => {
+  it('accepts exact two-decimal numeric source amounts', async () => {
     const root = await syntheticSnapshot(2, 10);
-    await expect(importOdooSnapshot({ snapshotPath: root, companies: ['TONR'], apply: false })).rejects.toMatchObject({
-      code: 'invalid_money',
-      message: expect.stringContaining('account.move.line:50 debit'),
+    await expect(importOdooSnapshot({ snapshotPath: root, companies: ['TONR'], apply: false })).resolves.toMatchObject({
+      dryRun: true,
     });
+    expect(sourceMoney(10.25).toFixed(2)).toBe('10.25');
   });
+
+  it.each([10.001, Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY, 1e13])(
+    'rejects unsafe numeric source amount %s and names the offending field',
+    (value) => {
+      expect(() => sourceMoney(value, 'account.move.line:50 debit')).toThrowError(expect.objectContaining({
+        code: 'invalid_money',
+        message: expect.stringContaining('account.move.line:50 debit'),
+      }));
+    },
+  );
 
   it('seeds each imported journal-year sequence past its maximum numeric suffix', async () => {
     const create = vi.fn(async () => ({}));

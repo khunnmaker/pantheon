@@ -15,6 +15,17 @@ type SourceRow = Record<string, unknown>;
 type ImportCompanyCode = (typeof ODOO_COMPANY_MAP)[keyof typeof ODOO_COMPANY_MAP];
 type LedgerTx = Prisma.TransactionClient;
 type LedgerReports = typeof import('./reports.js');
+type LoadedCompanySource = {
+  accounts: SourceRow[];
+  journals: SourceRow[];
+  taxes: SourceRow[];
+  moves: SourceRow[];
+  lines: SourceRow[];
+  trialBalanceClient: SourceRow[];
+  trialBalanceServer: SourceRow[];
+  partnerLedger: SourceRow[];
+  hashes: Record<string, string>;
+};
 
 export class OdooImportError extends Error {
   constructor(public readonly code: string, message: string) {
@@ -38,7 +49,131 @@ export interface ImportOdooOptions {
   snapshotPath: string;
   companies: ImportCompanyCode[];
   apply: boolean;
+  namesPath?: string;
   createdByName?: string;
+}
+
+export interface OdooNameMapping {
+  partners: Record<string, string>;
+  entries: Record<string, { memo?: string; ref?: string }>;
+  lines: Record<string, string>;
+}
+
+export interface OdooRenameCounts {
+  partners: number;
+  entries: number;
+  lines: number;
+}
+
+function isRecord(value: unknown): value is SourceRow {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+export function parseOdooNameMapping(value: unknown): OdooNameMapping {
+  if (!isRecord(value)) throw new OdooImportError('invalid_name_mapping', 'Name mapping must be a JSON object');
+  const allowedSections = new Set(['partners', 'entries', 'lines']);
+  const unknownSections = Object.keys(value).filter((key) => !allowedSections.has(key));
+  if (unknownSections.length) {
+    throw new OdooImportError('invalid_name_mapping', `Unknown name mapping section(s): ${unknownSections.join(', ')}`);
+  }
+  for (const section of allowedSections) {
+    if (!isRecord(value[section])) {
+      throw new OdooImportError('invalid_name_mapping', `Name mapping ${section} must be an object`);
+    }
+  }
+  const partners: Record<string, string> = {};
+  for (const [key, proposed] of Object.entries(value.partners as SourceRow)) {
+    if (typeof proposed !== 'string') throw new OdooImportError('invalid_name_mapping', `partners.${key} must be a string`);
+    partners[key] = proposed;
+  }
+  const entries: Record<string, { memo?: string; ref?: string }> = {};
+  for (const [key, proposed] of Object.entries(value.entries as SourceRow)) {
+    if (!isRecord(proposed)) throw new OdooImportError('invalid_name_mapping', `entries.${key} must be an object`);
+    const unknownFields = Object.keys(proposed).filter((field) => field !== 'memo' && field !== 'ref');
+    if (unknownFields.length) {
+      throw new OdooImportError('invalid_name_mapping', `Unknown field(s) for entries.${key}: ${unknownFields.join(', ')}`);
+    }
+    if (!Object.keys(proposed).length) throw new OdooImportError('invalid_name_mapping', `entries.${key} has no memo or ref`);
+    if (proposed.memo !== undefined && typeof proposed.memo !== 'string') {
+      throw new OdooImportError('invalid_name_mapping', `entries.${key}.memo must be a string`);
+    }
+    if (proposed.ref !== undefined && typeof proposed.ref !== 'string') {
+      throw new OdooImportError('invalid_name_mapping', `entries.${key}.ref must be a string`);
+    }
+    entries[key] = { memo: proposed.memo, ref: proposed.ref };
+  }
+  const lines: Record<string, string> = {};
+  for (const [key, proposed] of Object.entries(value.lines as SourceRow)) {
+    if (typeof proposed !== 'string') throw new OdooImportError('invalid_name_mapping', `lines.${key} must be a string`);
+    lines[key] = proposed;
+  }
+  return { partners, entries, lines };
+}
+
+function harmonizedField(original: string, proposed: string | undefined) {
+  return proposed !== undefined && proposed !== original
+    ? { value: proposed, original }
+    : { value: original, original: null };
+}
+
+export function partnerNameFields(row: SourceRow, mapping?: OdooNameMapping) {
+  const sourceRef = `res.partner:${requiredId(row, 'res.partner')}`;
+  const rawName = text(row.display_name ?? row.name);
+  const name = harmonizedField(rawName, mapping?.partners[sourceRef]);
+  return { displayName: name.value, nameOriginal: name.original };
+}
+
+export function entryNameFields(companyCode: ImportCompanyCode, row: SourceRow, mapping?: OdooNameMapping) {
+  const sourceRef = `${companyCode}:account.move:${requiredId(row, 'account.move')}`;
+  const proposed = mapping?.entries[sourceRef];
+  const memo = harmonizedField(text(row.narration), proposed?.memo);
+  const ref = harmonizedField(text(row.ref), proposed?.ref);
+  return { memo: memo.value, memoOriginal: memo.original, ref: ref.value, refOriginal: ref.original };
+}
+
+export function lineNameFields(companyCode: ImportCompanyCode, row: SourceRow, mapping?: OdooNameMapping) {
+  const sourceRef = `${companyCode}:account.move.line:${requiredId(row, 'account.move.line')}`;
+  const label = harmonizedField(text(row.name), mapping?.lines[sourceRef]);
+  return { label: label.value, labelOriginal: label.original };
+}
+
+async function readOdooNameMapping(path: string): Promise<OdooNameMapping> {
+  let raw: string;
+  try { raw = await readFile(resolve(path), 'utf8'); }
+  catch { throw new OdooImportError('name_mapping_not_found', `Name mapping file not found: ${resolve(path)}`); }
+  let parsed: unknown;
+  try { parsed = JSON.parse(raw.replace(/^\uFEFF/, '')); }
+  catch { throw new OdooImportError('invalid_name_mapping', `Name mapping is not valid JSON: ${resolve(path)}`); }
+  return parseOdooNameMapping(parsed);
+}
+
+export function validateOdooNameMapping(
+  mapping: OdooNameMapping,
+  partners: SourceRow[],
+  sourceByCompany: ReadonlyMap<ImportCompanyCode, Pick<LoadedCompanySource, 'moves' | 'lines'>>,
+): OdooRenameCounts {
+  const partnerRows = new Map(partners.map((row) => [`res.partner:${requiredId(row, 'res.partner')}`, row]));
+  const entryRows = new Map<string, SourceRow>();
+  const lineRows = new Map<string, SourceRow>();
+  for (const [company, rows] of sourceByCompany) {
+    for (const row of rows.moves) entryRows.set(`${company}:account.move:${requiredId(row, 'account.move')}`, row);
+    for (const row of rows.lines) lineRows.set(`${company}:account.move.line:${requiredId(row, 'account.move.line')}`, row);
+  }
+  for (const [section, proposed, available] of [
+    ['partners', mapping.partners, partnerRows],
+    ['entries', mapping.entries, entryRows],
+    ['lines', mapping.lines, lineRows],
+  ] as const) {
+    const unknown = Object.keys(proposed).filter((key) => !available.has(key));
+    if (unknown.length) {
+      throw new OdooImportError('unknown_name_mapping_key', `Unknown ${section} name mapping key(s): ${unknown.join(', ')}`);
+    }
+  }
+  return {
+    partners: Object.keys(mapping.partners).length,
+    entries: Object.keys(mapping.entries).length,
+    lines: Object.keys(mapping.lines).length,
+  };
 }
 
 function canonicalValue(value: unknown): unknown {
@@ -108,8 +243,17 @@ function optionalDate(value: unknown): Date | null {
   return date;
 }
 
-function sourceMoney(value: unknown, record = 'Odoo record', fallback = '0.00'): Prisma.Decimal {
+export function sourceMoney(value: unknown, record = 'Odoo record', fallback = '0.00'): Prisma.Decimal {
   if (value === false || value === null || value === undefined || value === '') return parseMoney(fallback);
+  if (typeof value === 'number') {
+    if (Number.isFinite(value) && Math.abs(value) < 1e13 && Number(value.toFixed(2)) === value) {
+      return parseMoney(value.toFixed(2));
+    }
+    throw new OdooImportError(
+      'invalid_money',
+      `${record} has an invalid numeric money value: ${String(value)}`,
+    );
+  }
   if (typeof value !== 'string') {
     throw new OdooImportError(
       'invalid_money',
@@ -493,13 +637,18 @@ function partnerType(row: SourceRow): string {
   return customer && vendor ? 'both' : customer ? 'customer' : vendor ? 'vendor' : 'other';
 }
 
-async function importPartners(tx: LedgerTx, rows: SourceRow[], counts: Record<string, number>) {
+async function importPartners(
+  tx: LedgerTx,
+  rows: SourceRow[],
+  counts: Record<string, number>,
+  nameMapping?: OdooNameMapping,
+) {
   for (const row of rows) {
     const id = requiredId(row, 'res.partner');
     const sourceRef = `res.partner:${id}`;
     const hash = sourceContentHash(row);
     const data = {
-      displayName: text(row.display_name ?? row.name), legalName: text(row.name), taxId: text(row.vat),
+      ...partnerNameFields(row, nameMapping), legalName: text(row.name), taxId: text(row.vat),
       partnerType: partnerType(row), address: text(row.contact_address_complete ?? row.contact_address),
       source: ODOO_IMPORT_SOURCE, sourceRef, contentHash: hash,
     };
@@ -637,6 +786,7 @@ async function importMoves(
   lines: SourceRow[],
   snapshotRef: string,
   counts: Record<string, number>,
+  nameMapping?: OdooNameMapping,
 ) {
   const linesByMove = new Map<number, SourceRow[]>();
   for (const line of lines) {
@@ -682,7 +832,7 @@ async function importMoves(
     const header = {
       companyCode, journalId: journal.id, entryNo: text(move.name) === '/' ? null : text(move.name) || null,
       entryDate: optionalDate(move.date) ?? (() => { throw new OdooImportError('invalid_source_row', `${sourceRef} has no date`); })(),
-      state: 'draft', entryType: text(move.move_type, 'general'), ref: text(move.ref), memo: text(move.narration),
+      state: 'draft', entryType: text(move.move_type, 'general'), ...entryNameFields(companyCode, move, nameMapping),
       partnerId: partner?.id ?? null, documentNo: text(move.invoice_origin), documentDate: optionalDate(move.invoice_date),
       dueDate: optionalDate(move.invoice_date_due), paymentReference: text(move.payment_reference), paymentState: text(move.payment_state),
       currencyCode: currencyCode(move.currency_id) ?? 'THB', source: ODOO_IMPORT_SOURCE, sourceRef,
@@ -712,7 +862,7 @@ async function importMoves(
       const linePartner = await resolvePartner(tx, line.partner_id);
       const createdLine = await tx.jupiterJournalLine.create({ data: {
         entryId, lineNo: index + 1, accountId: account.id, partnerId: linePartner?.id ?? null,
-        label: text(line.name),
+        ...lineNameFields(companyCode, line, nameMapping),
         debit: sourceMoney(line.debit, `account.move.line:${lineId} debit`),
         credit: sourceMoney(line.credit, `account.move.line:${lineId} credit`),
         amountCurrency: line.amount_currency === false || line.amount_currency == null
@@ -749,11 +899,7 @@ export async function importOdooSnapshot(options: ImportOdooOptions, client?: Pr
   }
   const preflight = await preflightOdooSnapshot(options.snapshotPath, companies);
   const partners = await readSourceRows(preflight.partnerFile);
-  const sourceByCompany = new Map<ImportCompanyCode, {
-    accounts: SourceRow[]; journals: SourceRow[]; taxes: SourceRow[]; moves: SourceRow[]; lines: SourceRow[];
-    trialBalanceClient: SourceRow[]; trialBalanceServer: SourceRow[]; partnerLedger: SourceRow[];
-    hashes: Record<string, string>;
-  }>();
+  const sourceByCompany = new Map<ImportCompanyCode, LoadedCompanySource>();
   for (const company of companies) {
     const files = preflight.companyFiles.get(company)!;
     sourceByCompany.set(company, {
@@ -767,6 +913,8 @@ export async function importOdooSnapshot(options: ImportOdooOptions, client?: Pr
   }
   const partnerIds = uniqueIds(partners, 'res.partner');
   for (const [company, rows] of sourceByCompany) validateSourceCompany(company, rows, partnerIds);
+  const nameMapping = options.namesPath ? await readOdooNameMapping(options.namesPath) : undefined;
+  const renames = nameMapping ? validateOdooNameMapping(nameMapping, partners, sourceByCompany) : undefined;
   const result: Record<string, unknown> = {
     dryRun: !options.apply,
     partners: partners.length,
@@ -775,6 +923,7 @@ export async function importOdooSnapshot(options: ImportOdooOptions, client?: Pr
       moves: rows.moves.length, lines: rows.lines.length, hashes: rows.hashes,
     }])),
   };
+  if (renames) result.renames = renames;
   // Mapping and balance validation happens in the same routines on apply. Dry-run performs all
   // deterministic source validations without opening a database transaction.
   if (!options.apply) {
@@ -793,7 +942,7 @@ export async function importOdooSnapshot(options: ImportOdooOptions, client?: Pr
   });
   try {
     const mutations = { inserted: 0, updated: 0, noop: 0 };
-    await applyClient.$transaction((tx) => importPartners(tx, partners, mutations));
+    await applyClient.$transaction((tx) => importPartners(tx, partners, mutations, nameMapping));
     for (const [company, rows] of sourceByCompany) {
       await applyClient.$transaction(async (tx) => {
         const current = await tx.jupiterCompany.findUnique({ where: { code: company } });
@@ -803,7 +952,7 @@ export async function importOdooSnapshot(options: ImportOdooOptions, client?: Pr
         }
         if (current.ledgerMode !== 'shadow') await tx.jupiterCompany.update({ where: { code: company }, data: { ledgerMode: 'shadow' } });
         await upsertCompanyMasters(tx, company, rows, mutations);
-        await importMoves(tx, company, rows.moves, rows.lines, preflight.snapshotRef, mutations);
+        await importMoves(tx, company, rows.moves, rows.lines, preflight.snapshotRef, mutations, nameMapping);
         await seedImportedJournalSequences(tx, company);
       }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
     }
