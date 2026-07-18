@@ -156,7 +156,7 @@ function ManagementApp({ isCeo }: { isCeo: boolean }) {
 
   // A copied or stale hash must never expose a role-inappropriate primary screen.
   const roleInappropriate = isCeo
-    ? view === 'approvals' || view === 'fulfillment' || view === 'my-submit' || view === 'my-requests'
+    ? view === 'approvals' || view === 'fulfillment'
     : view === 'ceo-history' || view === 'legacy-fulfillment' || view === 'ceo-queue';
   // Desktop gm has no big-button home (owner spec, 2026-07-18 desktop nav) — NeeHome's four
   // cards are a mobile-only front door, so a gm landing on (or hash-linking to) 'home' on a
@@ -280,6 +280,14 @@ function ManagementApp({ isCeo }: { isCeo: boolean }) {
   // is just CeoHome/CeoOverview's own EscalationsSection given a dedicated tab. See
   // GROUPING.md at the repo root for the full mapping + rationale.
   type Tab = { key: View; label: string; icon: React.ReactNode; count?: number };
+  // Shared by both role tab strips (gm and ceo alike get their own money requests) — kept as
+  // one literal so the two strips can never drift out of sync on label/icon/position.
+  const myRequestsGroup: { caption: string; tabs: Tab[] } = {
+    caption: 'ของฉัน', tabs: [
+      { key: 'my-submit', label: 'ส่งคำขอ', icon: <Send size={16} /> },
+      { key: 'my-requests', label: 'คำขอของฉัน', icon: <ListChecks size={16} /> },
+    ],
+  };
   const gmTabGroups: { caption: string; tabs: Tab[] }[] = [
     { caption: 'ขั้น 1 · คำขอ', tabs: [
       { key: 'approvals', label: 'อนุมัติ', icon: <ClipboardCheck size={16} />, count: gmCounts.approvals },
@@ -299,10 +307,7 @@ function ManagementApp({ isCeo }: { isCeo: boolean }) {
       { key: 'requests', label: 'คำขอจ่ายเงินเดิม', icon: <Banknote size={16} /> },
       { key: 'templates', label: 'รายการประจำ', icon: <Repeat size={16} /> },
     ] },
-    { caption: 'ของฉัน', tabs: [
-      { key: 'my-submit', label: 'ส่งคำขอ', icon: <Send size={16} /> },
-      { key: 'my-requests', label: 'คำขอของฉัน', icon: <ListChecks size={16} /> },
-    ] },
+    myRequestsGroup,
     { caption: 'สรุป', tabs: [
       { key: 'exports', label: 'ส่งออกข้อมูล', icon: <Download size={16} /> },
       { key: 'settings', label: 'ตั้งค่า LINE', icon: <SettingsIcon size={16} /> },
@@ -331,6 +336,7 @@ function ManagementApp({ isCeo }: { isCeo: boolean }) {
       { key: 'requests', label: 'คำขอจ่ายเงินเดิม', icon: <Banknote size={16} /> },
       { key: 'templates', label: 'รายการประจำ', icon: <Repeat size={16} /> },
     ] },
+    myRequestsGroup,
     { caption: 'สรุป', tabs: [
       { key: 'exports', label: 'ส่งออกข้อมูล', icon: <Download size={16} /> },
       { key: 'settings', label: 'ตั้งค่า LINE', icon: <SettingsIcon size={16} /> },
@@ -409,7 +415,7 @@ function ManagementApp({ isCeo }: { isCeo: boolean }) {
         )}
 
         {activeView === 'home' && (isCeo ? (
-          <CeoHome />
+          <CeoHome onGoOwnRequest={() => setView('my-submit')} />
         ) : (
           <NeeHome
             onGoApprovals={() => setView('approvals')}
@@ -438,7 +444,7 @@ function ManagementApp({ isCeo }: { isCeo: boolean }) {
         {activeView === 'ceo-history' && isCeo && <CeoOverview onGoExpenses={() => setView('expenses')} />}
         {activeView === 'legacy-fulfillment' && isCeo && <NeeFulfillmentQueue />}
         {activeView === 'settings' && <Settings />}
-        {activeView === 'my-submit' && !isCeo && (
+        {activeView === 'my-submit' && (
           <StaffHome
             key="my-submit"
             embeddedView="home"
@@ -447,7 +453,7 @@ function ManagementApp({ isCeo }: { isCeo: boolean }) {
             onOpenSettings={() => setView('settings')}
           />
         )}
-        {activeView === 'my-requests' && !isCeo && (
+        {activeView === 'my-requests' && (
           <StaffHome key="my-requests" embeddedView="mine" onOpenSettings={() => setView('settings')} />
         )}
         {activeView === 'ceo-queue' && isCeo && (

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { AlertTriangle, Loader2, Scale } from 'lucide-react';
+import { AlertTriangle, Loader2, Scale, Send } from 'lucide-react';
 import { baht, getCeoOverview, type CeoOverview as CeoOverviewData } from './lib/api';
 import { todayStr } from './MdRequests';
 import { CashSection, EscalationsSection, FlaggedExpensesSection, SectionCard, SettlementSection } from './CeoOverview';
@@ -12,7 +12,7 @@ import { CashSection, EscalationsSection, FlaggedExpensesSection, SectionCard, S
 const LANE_LABEL: Record<string, string> = { cash: 'เงินสด', transfer: 'โอน' };
 const TYPE_LABEL: Record<string, string> = { advance: 'เบิกล่วงหน้า', reimbursement: 'สำรองจ่าย-ขอคืน', purchase: 'ขอให้ซื้อ', unknown: 'อื่นๆ' };
 
-export default function CeoHome() {
+export default function CeoHome({ onGoOwnRequest }: { onGoOwnRequest: () => void }) {
   const [data, setData] = useState<CeoOverviewData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -47,6 +47,18 @@ export default function CeoHome() {
 
   return (
     <div className="space-y-4">
+      <button
+        onClick={onGoOwnRequest}
+        className="w-full bg-amber-50 rounded-xl border border-amber-200 px-4 py-3 flex items-center gap-3 text-left text-amber-800 hover:bg-amber-100"
+      >
+        <div className="shrink-0 w-9 h-9 rounded-full bg-amber-100 text-amber-700 flex items-center justify-center">
+          <Send size={18} />
+        </div>
+        <div>
+          <div className="text-sm font-bold">ส่งคำขอเงิน</div>
+          <div className="text-xs text-amber-700">ส่งคำขอสำหรับตัวเอง</div>
+        </div>
+      </button>
       <EscalationsSection escalations={data.escalations} onDecided={bump} />
       <CashSection cash={data.cash} onTopupDone={bump} />
 
