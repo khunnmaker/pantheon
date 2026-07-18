@@ -16,6 +16,25 @@ export interface Agent {
   email: string;
   name: string;
   role: Role;
+  // Per-person app grants (from the login response) — always present on the wire (see
+  // api/src/routes/auth.ts), just unused by Ceres until the desktop app switcher (2026-07-18).
+  // Drives hasAppAccess below, mirroring juno/vesta/apollo's own copy of this same pattern.
+  apps: string[];
+}
+
+// Suite apps the switcher can link to. The canonical list lives in the shared package
+// (@pantheon/ui, mirroring the server SSOT api/src/auth/jwt.ts APP_NAMES). Imported for local
+// use below AND re-exported so consumers can `import type { AppName } from './lib/api'`.
+import type { AppName } from '@pantheon/ui';
+export type { AppName };
+
+// Mirror of the server's hasAppAccess (api/src/auth/jwt.ts): supervisor → everything;
+// gm → Ceres + Minerva + Juno + Apollo (GM_APPS); agm/employee → their own per-person
+// Agent.apps grant list. Same copy every suite app's AppSwitcher.tsx carries locally.
+export function hasAppAccess(agent: Agent, app: AppName): boolean {
+  if (agent.role === 'supervisor') return true;
+  if (agent.role === 'gm') return app === 'ceres' || app === 'minerva' || app === 'juno' || app === 'apollo';
+  return (agent.apps ?? []).includes(app);
 }
 
 const TOKEN_KEY = 'ceres_token';

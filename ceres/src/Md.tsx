@@ -1,10 +1,13 @@
-import { useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
+  AlertTriangle,
   ArrowLeft,
   ArrowLeftRight,
   Banknote,
+  Bell,
   CircleDollarSign,
   ClipboardCheck,
+  ClipboardList,
   Crown,
   Download,
   FileCheck2,
@@ -12,25 +15,33 @@ import {
   Home,
   LayoutDashboard,
   ListChecks,
+  Loader2,
   LogOut,
   MoreHorizontal,
+  PiggyBank,
   Repeat,
   Scale,
   Settings as SettingsIcon,
-  Wallet,
 } from 'lucide-react';
 import { useHashTab } from '@pantheon/ui';
 import { useCeres } from './lib/bootstrapContext';
-import { logout as logoutSuite } from './lib/api';
+import {
+  getTransferReconciliation,
+  getCeoOverview,
+  listStaffRequests,
+  logout as logoutSuite,
+  type CeoOverview as CeoOverviewData,
+} from './lib/api';
+import AppSwitcher from './AppSwitcher';
 import MdBoard from './MdBoard';
 import MdApproval, { type ApprovalPrefill } from './MdApproval';
 import MdMoney from './MdMoney';
 import MdClose from './MdClose';
 import MdExpenses from './MdExpenses';
-import MdRequests, { type RequestPrefill } from './MdRequests';
+import MdRequests, { todayStr, type RequestPrefill } from './MdRequests';
 import MdTemplates from './MdTemplates';
 import MdRecon from './MdRecon';
-import CeoOverview, { WeeklyPackSection } from './CeoOverview';
+import CeoOverview, { EscalationsSection, WeeklyPackSection } from './CeoOverview';
 import CeoHome from './CeoHome';
 import MoreMenu, { type MoreMenuGroup } from './MoreMenu';
 import NeeApprovalQueue from './NeeApprovalQueue';
@@ -56,7 +67,13 @@ type View =
   | 'exports'
   | 'ceo-history'
   | 'legacy-fulfillment'
-  | 'settings';
+  | 'settings'
+  // Desktop-only (≥1024px) CEO escalation queue — a focused single-purpose screen around the
+  // same EscalationsSection CeoHome/CeoOverview already render, so the leading tab in the CEO's
+  // desktop strip (ceoTabGroups, inside ManagementApp below) has somewhere dedicated to point.
+  // Never reachable on mobile (not in moreGroups, not in SECONDARY_VIEWS) and gm never gets it
+  // (roleInappropriate, below).
+  | 'ceo-queue';
 
 const VIEW_KEYS: View[] = [
   'home',
@@ -75,6 +92,7 @@ const VIEW_KEYS: View[] = [
   'ceo-history',
   'legacy-fulfillment',
   'settings',
+  'ceo-queue',
 ];
 
 const SECONDARY_VIEWS = new Set<View>([
@@ -91,6 +109,22 @@ const SECONDARY_VIEWS = new Set<View>([
   'legacy-fulfillment',
   'settings',
 ]);
+
+// Tracks Tailwind's own `lg:` breakpoint (min-width: 1024px) in JS, for the few nav decisions
+// that are about WHICH CONTENT renders (not just which markup is visually hidden) — e.g. gm's
+// desktop home→approvals redirect below. The two nav trees themselves (mobile bottom bar vs
+// desktop tab strip) are still plain CSS (hidden/lg:flex), so this hook only gates state logic.
+function useIsDesktop(): boolean {
+  const query = '(min-width: 1024px)';
+  const [isDesktop, setIsDesktop] = useState<boolean>(() => (typeof window !== 'undefined' ? window.matchMedia(query).matches : false));
+  useEffect(() => {
+    const mql = window.matchMedia(query);
+    const onChange = () => setIsDesktop(mql.matches);
+    mql.addEventListener('change', onChange);
+    return () => mql.removeEventListener('change', onChange);
+  }, []);
+  return isDesktop;
+}
 
 export default function MdApp() {
   const { bootstrap } = useCeres();
@@ -110,12 +144,75 @@ function ManagementApp({ isCeo }: { isCeo: boolean }) {
   const [view, setView] = useHashTab<View>(VIEW_KEYS, 'home');
   const [requestPrefill, setRequestPrefill] = useState<RequestPrefill | null>(null);
   const [approvalPrefill, setApprovalPrefill] = useState<ApprovalPrefill | null>(null);
+  const isDesktop = useIsDesktop();
 
   // A copied or stale hash must never expose a role-inappropriate primary screen.
   const roleInappropriate = isCeo
     ? view === 'approvals' || view === 'fulfillment'
-    : view === 'ceo-history' || view === 'legacy-fulfillment';
-  const activeView = roleInappropriate ? 'home' : view;
+    : view === 'ceo-history' || view === 'legacy-fulfillment' || view === 'ceo-queue';
+  // Desktop gm has no big-button home (owner spec, 2026-07-18 desktop nav) — NeeHome's four
+  // cards are a mobile-only front door, so a gm landing on (or hash-linking to) 'home' on a
+  // ≥1024px viewport is redirected to their desktop default, the approval queue. CEO's 'home'
+  // stays put: CeoHome IS the desktop "oversight" tab (see ceoTabGroups below).
+  const desktopGmHomeRedirect = isDesktop && !isCeo && view === 'home';
+  const activeView = roleInappropriate ? 'home' : desktopGmHomeRedirect ? 'approvals' : view;
+
+  // ── Desktop-only (≥1024px) tab-strip badge counts — gated on isDesktop so mobile never
+  // pays for the extra requests (mobile's NeeHome/CeoHome already fetch their own numbers for
+  // their own cards; this is a separate, desktop-nav-only fetch, refreshed on every tab switch
+  // for a reasonably "live" count without inventing a push channel). ─────────────────────────
+  const [gmCounts, setGmCounts] = useState<{ approvals?: number; fulfillment?: number; recon?: number }>({});
+  useEffect(() => {
+    if (!isDesktop || isCeo) return;
+    let cancelled = false;
+    listStaffRequests('queue', 200)
+      .then((r) => { if (!cancelled) setGmCounts((c) => ({ ...c, approvals: r.requests.length })); })
+      .catch(() => {});
+    listStaffRequests('all', 300)
+      .then((r) => {
+        if (cancelled) return;
+        const n = r.requests.filter((x) => x.approvalStatus === 'approved' && x.fulfillmentStatus === 'unfulfilled').length;
+        setGmCounts((c) => ({ ...c, fulfillment: n }));
+      })
+      .catch(() => {});
+    getTransferReconciliation()
+      .then((r) => {
+        if (cancelled) return;
+        const n = r.transferEvents.filter((e) => e.reconciliationState === 'unmatched').length;
+        setGmCounts((c) => ({ ...c, recon: n }));
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [isDesktop, isCeo, view]);
+
+  const [ceoBadges, setCeoBadges] = useState<{ queue?: number; fulfillment?: number; recon?: number }>({});
+  const [ceoEscalations, setCeoEscalations] = useState<CeoOverviewData['escalations']>([]);
+  const [ceoQueueLoading, setCeoQueueLoading] = useState(true);
+  const [ceoQueueError, setCeoQueueError] = useState('');
+  const loadCeoQueue = useCallback(() => {
+    setCeoQueueLoading(true);
+    setCeoQueueError('');
+    getCeoOverview(todayStr())
+      .then((d) => {
+        setCeoEscalations(d.escalations);
+        setCeoBadges((c) => ({ ...c, queue: d.escalations.length, recon: d.transferReconciliation.unmatched }));
+      })
+      .catch(() => setCeoQueueError('โหลดข้อมูลไม่สำเร็จ'))
+      .finally(() => setCeoQueueLoading(false));
+  }, []);
+  useEffect(() => {
+    // Also fires for a bare #ceo-queue deep link on a narrow viewport (not reachable from any
+    // mobile UI, but a manually-typed/shared hash shouldn't spin forever) — everywhere else
+    // this is a desktop-only fetch.
+    if (!isCeo || !(isDesktop || view === 'ceo-queue')) return;
+    loadCeoQueue();
+    listStaffRequests('all', 300)
+      .then((r) => {
+        const n = r.requests.filter((x) => x.approvalStatus === 'approved' && x.fulfillmentStatus === 'unfulfilled').length;
+        setCeoBadges((c) => ({ ...c, fulfillment: n }));
+      })
+      .catch(() => {});
+  }, [isDesktop, isCeo, view, loadCeoQueue]);
 
   function goToRequestsWithPrefill(prefill: RequestPrefill) {
     setRequestPrefill(prefill);
@@ -166,13 +263,75 @@ function ManagementApp({ isCeo }: { isCeo: boolean }) {
     },
   ];
 
+  // ── Desktop (≥1024px) grouped tab strip — organized like Juno's (juno/src/Juno.tsx):
+  // small muted group captions above each cluster, thin vertical dividers between groups,
+  // active tab = amber underline + bold (Ceres's own brand color, matching the rest of this
+  // header/nav rather than literally recoloring to Juno's emerald), red pill count badges on
+  // queue tabs. Every group/tab here maps onto an EXISTING mobile destination (moreGroups
+  // above, or NeeHome/CeoHome's shortcuts) — nothing new except the 'ceo-queue' screen, which
+  // is just CeoHome/CeoOverview's own EscalationsSection given a dedicated tab. See
+  // GROUPING.md at the repo root for the full mapping + rationale.
+  type Tab = { key: View; label: string; icon: React.ReactNode; count?: number };
+  const gmTabGroups: { caption: string; tabs: Tab[] }[] = [
+    { caption: 'ขั้น 1 · คำขอ', tabs: [
+      { key: 'approvals', label: 'อนุมัติ', icon: <ClipboardCheck size={16} />, count: gmCounts.approvals },
+    ] },
+    { caption: 'ขั้น 2 · จ่ายเงิน', tabs: [
+      { key: 'fulfillment', label: 'รอจ่าย', icon: <CircleDollarSign size={16} />, count: gmCounts.fulfillment },
+      { key: 'recon', label: 'โอน/สลิป', icon: <Scale size={16} />, count: gmCounts.recon },
+    ] },
+    { caption: 'กล่องเงินสด', tabs: [
+      { key: 'board', label: 'บอร์ด', icon: <PiggyBank size={16} /> },
+      { key: 'close', label: 'ปิดวัน', icon: <FileCheck2 size={16} /> },
+    ] },
+    { caption: 'ค่าใช้จ่ายเดิม', tabs: [
+      { key: 'legacy-approval', label: 'ตรวจค่าใช้จ่าย', icon: <ClipboardList size={16} /> },
+      { key: 'money', label: 'เบิก/คืนเงิน', icon: <ArrowLeftRight size={16} /> },
+      { key: 'expenses', label: 'ประวัติค่าใช้จ่าย', icon: <ListChecks size={16} /> },
+      { key: 'requests', label: 'คำขอจ่ายเงินเดิม', icon: <Banknote size={16} /> },
+      { key: 'templates', label: 'รายการประจำ', icon: <Repeat size={16} /> },
+    ] },
+    { caption: 'สรุป', tabs: [
+      { key: 'exports', label: 'ส่งออกข้อมูล', icon: <Download size={16} /> },
+      { key: 'settings', label: 'ตั้งค่า LINE', icon: <SettingsIcon size={16} /> },
+    ] },
+  ];
+  const ceoTabGroups: { caption: string; tabs: Tab[] }[] = [
+    { caption: 'รอ CEO', tabs: [
+      { key: 'ceo-queue', label: 'รอ CEO', icon: <Bell size={16} />, count: ceoBadges.queue },
+    ] },
+    { caption: 'ภาพรวม', tabs: [
+      { key: 'home', label: 'วันนี้', icon: <LayoutDashboard size={16} /> },
+      { key: 'ceo-history', label: 'ย้อนหลัง', icon: <History size={16} /> },
+    ] },
+    { caption: 'ขั้น 2 · จ่ายเงิน', tabs: [
+      { key: 'legacy-fulfillment', label: 'จ่าย/ซื้อ', icon: <CircleDollarSign size={16} />, count: ceoBadges.fulfillment },
+      { key: 'recon', label: 'โอน/สลิป', icon: <Scale size={16} />, count: ceoBadges.recon },
+    ] },
+    { caption: 'กล่องเงินสด', tabs: [
+      { key: 'board', label: 'บอร์ด', icon: <PiggyBank size={16} /> },
+      { key: 'close', label: 'ปิดวัน', icon: <FileCheck2 size={16} /> },
+    ] },
+    { caption: 'ค่าใช้จ่ายเดิม', tabs: [
+      { key: 'legacy-approval', label: 'ตรวจค่าใช้จ่าย', icon: <ClipboardList size={16} /> },
+      { key: 'money', label: 'เบิก/คืนเงิน', icon: <ArrowLeftRight size={16} /> },
+      { key: 'expenses', label: 'ประวัติค่าใช้จ่าย', icon: <ListChecks size={16} /> },
+      { key: 'requests', label: 'คำขอจ่ายเงินเดิม', icon: <Banknote size={16} /> },
+      { key: 'templates', label: 'รายการประจำ', icon: <Repeat size={16} /> },
+    ] },
+    { caption: 'สรุป', tabs: [
+      { key: 'exports', label: 'ส่งออกข้อมูล', icon: <Download size={16} /> },
+      { key: 'settings', label: 'ตั้งค่า LINE', icon: <SettingsIcon size={16} /> },
+    ] },
+  ];
+  const desktopTabGroups = isCeo ? ceoTabGroups : gmTabGroups;
+
   return (
-    <div className="min-h-screen bg-slate-100 font-sans text-slate-800 pb-20">
+    <div className="min-h-screen bg-slate-100 font-sans text-slate-800 pb-20 lg:pb-4">
       <header className="bg-white border-b border-slate-200 sticky top-0 z-20">
         <div className="max-w-5xl mx-auto px-4 h-14 flex items-center justify-between">
           <div className="flex items-center gap-2 text-amber-700">
-            <Wallet size={22} />
-            <span className="font-bold text-lg">Ceres</span>
+            <AppSwitcher agent={agent} />
             <span className="text-slate-400 text-sm hidden sm:inline">· {isCeo ? 'CEO' : 'GM'}</span>
           </div>
           <div className="flex items-center gap-3 text-sm">
@@ -194,13 +353,44 @@ function ManagementApp({ isCeo }: { isCeo: boolean }) {
             </button>
           </div>
         </div>
+
+        {/* Desktop-only (≥1024px) grouped tab strip — see the gmTabGroups/ceoTabGroups
+            comment above for the design rationale. IS the nav on desktop: no big-button
+            home, no bottom bar, no "more" — every destination is a tab here. Mobile never
+            renders this (hidden below lg:), so the existing role homes + MoreMenu are
+            completely untouched below lg:. */}
+        <div className="hidden lg:flex max-w-5xl mx-auto px-4 gap-2 overflow-x-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
+          {desktopTabGroups.map((group, index) => (
+            <div key={group.caption} className={`flex flex-col shrink-0 ${index > 0 ? 'border-l border-slate-200 pl-2' : ''}`}>
+              <div className="text-[10px] leading-[13px] text-slate-400 whitespace-nowrap select-none">{group.caption}</div>
+              <div className="flex gap-1">
+                {group.tabs.map((t) => (
+                  <button
+                    key={t.key}
+                    onClick={() => setView(t.key)}
+                    className={`flex items-center gap-1.5 px-2.5 py-1.5 text-sm border-b-2 whitespace-nowrap ${
+                      activeView === t.key
+                        ? 'border-amber-600 text-amber-700 font-bold'
+                        : 'border-transparent text-slate-500 font-medium hover:text-slate-700'
+                    }`}
+                  >
+                    {t.icon} {t.label}
+                    {typeof t.count === 'number' && t.count > 0 && (
+                      <span className="ml-1 px-1.5 rounded-full text-xs bg-rose-100 text-rose-700">{t.count}</span>
+                    )}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
       </header>
 
       <main className="max-w-5xl mx-auto p-4">
         {SECONDARY_VIEWS.has(activeView) && (
           <button
             onClick={() => setView('more')}
-            className="mb-3 flex items-center gap-1 text-sm font-semibold text-slate-500 hover:text-amber-700"
+            className="lg:hidden mb-3 flex items-center gap-1 text-sm font-semibold text-slate-500 hover:text-amber-700"
           >
             <ArrowLeft size={16} /> กลับไปเมนูเพิ่มเติม
           </button>
@@ -235,9 +425,22 @@ function ManagementApp({ isCeo }: { isCeo: boolean }) {
         {activeView === 'ceo-history' && isCeo && <CeoOverview onGoExpenses={() => setView('expenses')} />}
         {activeView === 'legacy-fulfillment' && isCeo && <NeeFulfillmentQueue />}
         {activeView === 'settings' && <Settings />}
+        {activeView === 'ceo-queue' && isCeo && (
+          ceoQueueLoading ? (
+            <div className="py-16 flex justify-center text-slate-400">
+              <Loader2 className="animate-spin" size={24} />
+            </div>
+          ) : ceoQueueError ? (
+            <div className="py-16 flex items-center justify-center gap-1 text-rose-600 text-sm">
+              <AlertTriangle size={15} /> {ceoQueueError}
+            </div>
+          ) : (
+            <EscalationsSection escalations={ceoEscalations} onDecided={loadCeoQueue} />
+          )
+        )}
       </main>
 
-      <nav aria-label="เมนูหลัก" className="fixed bottom-0 inset-x-0 z-20 bg-white border-t border-slate-200 pb-[env(safe-area-inset-bottom)]">
+      <nav aria-label="เมนูหลัก" className="lg:hidden fixed bottom-0 inset-x-0 z-20 bg-white border-t border-slate-200 pb-[env(safe-area-inset-bottom)]">
         <div className={`max-w-5xl mx-auto grid ${isCeo ? 'grid-cols-2' : 'grid-cols-4'}`}>
           <NavButton active={activeView === 'home'} label="Home" icon={<Home size={20} />} onClick={() => setView('home')} />
           {!isCeo && <NavButton active={activeView === 'approvals'} label="Approvals" icon={<ClipboardCheck size={20} />} onClick={() => setView('approvals')} />}
