@@ -476,6 +476,11 @@ function compareTrialBalance(
     ] as const) {
       if (csvMoney(row[sourceKey]) !== actualValue) differences.push(`${id} ${sourceKey}`);
     }
+    for (const [sourceKey, actualValue] of [
+      ['account_code', found.accountCode], ['account_name', found.accountName],
+    ] as const) {
+      if (text(row[sourceKey]) !== text(actualValue)) differences.push(`${id} ${sourceKey}`);
+    }
     if (Number(row.line_count) !== found.lineCount) differences.push(`${id} line_count`);
     actualById.delete(id);
   }
@@ -489,9 +494,32 @@ function sumRows(rows: readonly { debit: string; credit: string }[]) {
   }), { debit: new Prisma.Decimal(0), credit: new Prisma.Decimal(0) });
 }
 
-function comparePartnerLedger(
+function harmonizedExpectedPartnerLedgerText(
+  companyCode: ImportCompanyCode,
+  row: SourceRow,
+  sourceKey: string,
+  actualMoveId: string,
+  mapping?: OdooNameMapping,
+): string {
+  const original = text(row[sourceKey]);
+  if (!mapping) return original;
+  if (sourceKey === 'partner_name') {
+    return mapping.partners[`res.partner:${text(row.partner_id)}`] ?? original;
+  }
+  if (sourceKey === 'line_name' || sourceKey === 'label') {
+    return mapping.lines[`${companyCode}:account.move.line:${text(row.line_id)}`] ?? original;
+  }
+  const entry = mapping.entries[`${companyCode}:account.move:${text(row.move_id) || actualMoveId}`];
+  if (sourceKey === 'move_ref' || sourceKey === 'ref') return entry?.ref ?? original;
+  if (sourceKey === 'move_memo' || sourceKey === 'memo') return entry?.memo ?? original;
+  return original;
+}
+
+export function comparePartnerLedger(
+  companyCode: ImportCompanyCode,
   expectedRows: SourceRow[],
   actual: Awaited<ReturnType<LedgerReports['partnerLedger']>>,
+  mapping?: OdooNameMapping,
 ) {
   const expected = expectedRows.filter((row) => !row.row_type || text(row.row_type).toLowerCase() === 'detail');
   const actualByLine = new Map(actual.map((row) => [row.rescueLineId, row]));
@@ -505,10 +533,23 @@ function comparePartnerLedger(
     ] as const) {
       if (csvMoney(row[sourceKey]) !== actualValue) differences.push(`${lineId} ${sourceKey}`);
     }
-    for (const [sourceKey, actualValue] of [
-      ['partner_id', found.rescuePartnerId], ['move_id', found.rescueMoveId], ['account_id', found.rescueAccountId], ['parent_state', found.parentState],
-    ] as const) {
-      if (text(row[sourceKey]) !== text(actualValue)) differences.push(`${lineId} ${sourceKey}`);
+    const sourceShape = 'label' in row
+      ? [
+        ['partner_id', found.rescuePartnerId], ['partner_name', found.partnerName], ['date', found.date],
+        ['move_name', found.moveName], ['ref', found.moveRef], ['journal_name', found.journalName],
+        ['account_code', found.accountCode], ['account_name', found.accountName], ['account_type', found.accountType],
+        ['label', found.lineName], ['parent_state', found.parentState],
+      ] as const
+      : [
+        ['partner_id', found.rescuePartnerId], ['partner_name', found.partnerName], ['date', found.date],
+        ['move_id', found.rescueMoveId], ['move_name', found.moveName], ['move_ref', found.moveRef],
+        ['account_id', found.rescueAccountId], ['account_code', found.accountCode], ['account_name', found.accountName],
+        ['line_name', found.lineName], ['parent_state', found.parentState],
+      ] as const;
+    for (const [sourceKey, actualValue] of sourceShape) {
+      if (harmonizedExpectedPartnerLedgerText(companyCode, row, sourceKey, found.rescueMoveId, mapping) !== text(actualValue)) {
+        differences.push(`${lineId} ${sourceKey}`);
+      }
     }
     actualByLine.delete(lineId);
   }
@@ -942,7 +983,9 @@ export async function importOdooSnapshot(options: ImportOdooOptions, client?: Pr
   });
   try {
     const mutations = { inserted: 0, updated: 0, noop: 0 };
-    await applyClient.$transaction((tx) => importPartners(tx, partners, mutations, nameMapping));
+    // Generous interactive-transaction limits: imports may run over a high-latency public DB proxy.
+    const TX_OPTS = { maxWait: 30_000, timeout: 600_000 } as const;
+    await applyClient.$transaction((tx) => importPartners(tx, partners, mutations, nameMapping), TX_OPTS);
     for (const [company, rows] of sourceByCompany) {
       await applyClient.$transaction(async (tx) => {
         const current = await tx.jupiterCompany.findUnique({ where: { code: company } });
@@ -954,7 +997,7 @@ export async function importOdooSnapshot(options: ImportOdooOptions, client?: Pr
         await upsertCompanyMasters(tx, company, rows, mutations);
         await importMoves(tx, company, rows.moves, rows.lines, preflight.snapshotRef, mutations, nameMapping);
         await seedImportedJournalSequences(tx, company);
-      }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+      }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, ...TX_OPTS });
     }
     const reconciliation: Record<string, unknown> = {};
     for (const company of companies) {
@@ -975,7 +1018,7 @@ export async function importOdooSnapshot(options: ImportOdooOptions, client?: Pr
       const comparisons = {
         trialBalanceClient: compareTrialBalance(source.trialBalanceClient, tb),
         trialBalanceServer: compareTrialBalance(source.trialBalanceServer, tb),
-        partnerLedger: comparePartnerLedger(source.partnerLedger, partnersReport),
+        partnerLedger: comparePartnerLedger(company, source.partnerLedger, partnersReport, nameMapping),
         postedBalance: {
           matched: sourceDebit.equals(sourceCredit) && sourceDebit.equals(glTotals.debit) && sourceCredit.equals(glTotals.credit),
           sourceDebit: moneyToString(sourceDebit), sourceCredit: moneyToString(sourceCredit),
@@ -991,6 +1034,8 @@ export async function importOdooSnapshot(options: ImportOdooOptions, client?: Pr
         comparisons,
       };
       if (!Object.values(comparisons).every((comparison) => comparison.matched)) {
+        // Persist the partial reconciliation so a failed batch still records WHAT differed.
+        Object.assign(result, { mutations, reconciliation });
         throw new OdooImportError('reconciliation_difference', `${company} did not reconcile exactly to the rescue reports`);
       }
     }

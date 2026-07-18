@@ -123,47 +123,60 @@ export async function partnerLedger(
 ) {
   const lines = await client.jupiterJournalLine.findMany({
     where: {
-      partnerId: filters.partnerId ?? { not: null },
+      ...(filters.partnerId ? { partnerId: filters.partnerId } : {}),
+      account: { accountType: { in: ['asset_receivable', 'liability_payable'] } },
       entry: {
         companyCode: filters.companyCode,
         state: 'posted',
         ...(filters.to ? { entryDate: { lte: parseAccountingDate(filters.to) } } : {}),
       },
     },
-    include: { entry: true, account: true, partner: true },
-    orderBy: [{ partner: { displayName: 'asc' } }, { entry: { entryDate: 'asc' } }, { entry: { entryNo: 'asc' } }, { lineNo: 'asc' }],
+    include: { entry: { include: { journal: true } }, account: true, partner: true },
+    orderBy: [{ entry: { entryDate: 'asc' } }, { entry: { entryNo: 'asc' } }, { lineNo: 'asc' }],
+  });
+  // Rescue exports account.move.line by ascending source ID. Reproduce that order for
+  // imported rows; native Jupiter rows retain the deterministic accounting-date order above.
+  const eligibleLines = lines.filter((line) =>
+    line.account.accountType === 'asset_receivable' || line.account.accountType === 'liability_payable');
+  eligibleLines.sort((left, right) => {
+    const leftId = left.sourceRef?.match(/:(\d+)$/)?.[1];
+    const rightId = right.sourceRef?.match(/:(\d+)$/)?.[1];
+    return leftId && rightId ? Number(leftId) - Number(rightId) : 0;
   });
   const from = filters.from ? parseAccountingDate(filters.from) : null;
   const openings = new Map<string, Prisma.Decimal>();
-  const periodLines = lines.filter((line) => {
+  const periodLines = eligibleLines.filter((line) => {
     if (!from || line.entry.entryDate >= from) return true;
     const key = line.partnerId ?? '';
-    if (line.account.accountType === 'asset_receivable' || line.account.accountType === 'liability_payable') {
-      const opening = (openings.get(key) ?? new Prisma.Decimal(0)).plus(line.debit).minus(line.credit);
-      openings.set(key, opening);
-    }
+    const opening = (openings.get(key) ?? new Prisma.Decimal(0)).plus(line.debit).minus(line.credit);
+    openings.set(key, opening);
     return false;
   });
   const balances = new Map(openings);
   return periodLines.map((line) => {
     const key = line.partnerId ?? '';
     const opening = openings.get(key) ?? new Prisma.Decimal(0);
-    const balance = (balances.get(key) ?? opening).plus(line.debit).minus(line.credit);
+    const lineBalance = line.debit.minus(line.credit);
+    // The rescue CSV's unbounded `balance` is Odoo account.move.line.balance (the
+    // signed value of that line). Ranged calls retain Jupiter's opening/running balance.
+    const balance = from ? (balances.get(key) ?? opening).plus(lineBalance) : lineBalance;
     balances.set(key, balance);
     return {
       rowType: 'detail',
       partnerId: line.partnerId,
       rescuePartnerId: line.partner ? rescueId(line.partner.sourceRef, line.partner.id) : null,
-      partnerName: line.partner?.displayName ?? '',
+      partnerName: line.partner?.displayName ?? '(No partner)',
       date: accountingDateString(line.entry.entryDate),
       moveId: line.entryId,
       rescueMoveId: rescueId(line.entry.sourceRef, line.entryId),
       moveName: line.entry.entryNo,
       moveRef: line.entry.ref,
+      journalName: line.entry.journal.name,
       accountId: line.accountId,
       rescueAccountId: rescueId(line.account.sourceRef, line.accountId),
       accountCode: line.account.code,
       accountName: line.account.name,
+      accountType: line.account.accountType,
       lineName: line.label,
       debit: moneyToString(line.debit),
       credit: moneyToString(line.credit),
@@ -204,11 +217,15 @@ export function partnerLedgerCsv(
   includeZeroOpening = false,
 ): string {
   const headers = [
-    'row_type', 'partner_id', 'partner_name', 'date', 'move_id', 'move_name', 'move_ref',
-    'account_id', 'account_code', 'account_name', 'line_name', 'debit', 'credit', 'balance', 'line_id', 'parent_state',
+    'row_type', 'partner_id', 'partner_name', 'date', 'move_name', 'ref', 'journal_name',
+    'account_code', 'account_name', 'account_type', 'label', 'debit', 'credit', 'balance', 'line_id', 'parent_state',
   ];
   const csvRows: unknown[][] = [];
   const seenPartners = new Set<string>();
+  const totals = new Map<string, {
+    partnerId: string | null; partnerName: string; debit: Prisma.Decimal; credit: Prisma.Decimal;
+    balance: Prisma.Decimal; lines: number;
+  }>();
   for (const row of rows) {
     const partnerKey = row.partnerId ?? row.rescuePartnerId ?? '';
     if (!seenPartners.has(partnerKey)) {
@@ -221,8 +238,26 @@ export function partnerLedgerCsv(
       }
     }
     csvRows.push([
-      row.rowType, row.rescuePartnerId, row.partnerName, row.date, row.rescueMoveId, row.moveName, row.moveRef,
-      row.rescueAccountId, row.accountCode, row.accountName, row.lineName, row.debit, row.credit, row.balance, row.rescueLineId, row.parentState,
+      row.rowType, row.rescuePartnerId, row.partnerName, row.date, row.moveName, row.moveRef, row.journalName,
+      row.accountCode, row.accountName, row.accountType, row.lineName, row.debit, row.credit, row.balance,
+      row.rescueLineId, row.parentState,
+    ]);
+    const total = totals.get(partnerKey) ?? {
+      partnerId: row.rescuePartnerId, partnerName: row.partnerName,
+      debit: new Prisma.Decimal(0), credit: new Prisma.Decimal(0), balance: new Prisma.Decimal(0), lines: 0,
+    };
+    total.debit = total.debit.plus(row.debit);
+    total.credit = total.credit.plus(row.credit);
+    total.balance = total.balance.plus(new Prisma.Decimal(row.debit).minus(row.credit));
+    total.lines += 1;
+    totals.set(partnerKey, total);
+  }
+  for (const total of [...totals.values()].sort((left, right) =>
+    left.partnerName.localeCompare(right.partnerName, 'th')
+    || Number(left.partnerId ?? 0) - Number(right.partnerId ?? 0))) {
+    csvRows.push([
+      'partner_total', total.partnerId, total.partnerName, '', '', '', '', '', '', '', `${total.lines} line(s)`,
+      moneyToString(total.debit), moneyToString(total.credit), moneyToString(total.balance), '', 'posted',
     ]);
   }
   return rfc4180Csv(headers, csvRows, [11, 12, 13]);

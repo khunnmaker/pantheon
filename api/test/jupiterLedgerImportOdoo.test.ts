@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   OdooImportError, accountClassFromOdooType, canonicalizeSourceObject, importOdooSnapshot,
-  entryNameFields, importedEntryAction, lineNameFields, many2oneId, parseOdooNameMapping,
+  comparePartnerLedger, entryNameFields, importedEntryAction, lineNameFields, many2oneId, parseOdooNameMapping,
   partnerNameFields, seedImportedJournalSequences, sourceContentHash, sourceMoney,
   validateOdooNameMapping,
 } from '../src/jupiter/ledger/importOdoo.js';
@@ -36,7 +36,7 @@ async function syntheticSnapshot(companyId = 2, firstDebit: string | number = '1
   const tb = 'account_id,account_code,account_name,debit,credit,balance,line_count\r\n';
   await writeFile(join(company, 'trial_balance_client.csv'), tb);
   await writeFile(join(company, 'trial_balance_server.csv'), tb);
-  await writeFile(join(company, 'partner_ledger.csv'), 'row_type,partner_id,partner_name,date,move_id,move_name,move_ref,account_id,account_code,account_name,line_name,debit,credit,balance,line_id,parent_state\r\n');
+  await writeFile(join(company, 'partner_ledger.csv'), 'row_type,partner_id,partner_name,date,move_name,ref,journal_name,account_code,account_name,account_type,label,debit,credit,balance,line_id,parent_state\r\n');
   return root;
 }
 
@@ -132,6 +132,43 @@ describe('Odoo rescue importer', () => {
       partners: {}, entries: { 'TONR:account.move:40': { memo: 'รายการทดสอบ' } }, lines: {},
     }));
     expect(sourceContentHash(rawMove)).toBe(before);
+  });
+
+  it('reconciles mapped partner-ledger text while keeping unexplained text differences strict', () => {
+    const source = [{
+      row_type: 'detail', partner_id: '7', partner_name: 'Synthetic Partner', date: '2026-07-18',
+      move_name: 'GEN/2026/000001', ref: 'Raw ref', journal_name: 'General Journal',
+      account_code: '21100', account_name: 'Synthetic payable', account_type: 'liability_payable', label: 'Raw line', debit: '10.00',
+      credit: '0.00', balance: '10.00', line_id: '50', parent_state: 'posted',
+    }, {
+      row_type: 'detail', partner_id: '', partner_name: '(No partner)', date: '2026-07-18',
+      move_name: 'GEN/2026/000002', ref: '', journal_name: 'General Journal',
+      account_code: '11100', account_name: 'Synthetic receivable', account_type: 'asset_receivable', label: 'No-partner line',
+      debit: '0.00', credit: '4.00', balance: '-4.00', line_id: '51', parent_state: 'posted',
+    }];
+    const actual = [{
+      rowType: 'detail', partnerId: 'partner-7', rescuePartnerId: '7', partnerName: 'Harmonized Partner',
+      date: '2026-07-18', moveId: 'move-40', rescueMoveId: '40', moveName: 'GEN/2026/000001',
+      moveRef: 'Harmonized ref', journalName: 'General Journal', accountId: 'account-10', rescueAccountId: '10', accountCode: '21100',
+      accountName: 'Synthetic payable', accountType: 'liability_payable', lineName: 'Harmonized line', debit: '10.00', credit: '0.00',
+      openingBalance: '0.00', balance: '10.00', lineId: 'line-50', rescueLineId: '50', parentState: 'posted',
+    }, {
+      rowType: 'detail', partnerId: null, rescuePartnerId: null, partnerName: '(No partner)',
+      date: '2026-07-18', moveId: 'move-41', rescueMoveId: '41', moveName: 'GEN/2026/000002',
+      moveRef: '', journalName: 'General Journal', accountId: 'account-11', rescueAccountId: '11', accountCode: '11100',
+      accountName: 'Synthetic receivable', accountType: 'asset_receivable', lineName: 'No-partner line', debit: '0.00', credit: '4.00',
+      openingBalance: '0.00', balance: '-4.00', lineId: 'line-51', rescueLineId: '51', parentState: 'posted',
+    }];
+    const mapping = parseOdooNameMapping({
+      partners: { 'res.partner:7': 'Harmonized Partner' },
+      entries: { 'TONR:account.move:40': { ref: 'Harmonized ref' } },
+      lines: { 'TONR:account.move.line:50': 'Harmonized line' },
+    });
+
+    expect(comparePartnerLedger('TONR', source, actual as never, mapping)).toEqual({ matched: true, differences: [] });
+    expect(comparePartnerLedger('TONR', source, [{ ...actual[0], lineName: 'Genuine typo' }, actual[1]] as never, mapping)).toEqual({
+      matched: false, differences: ['50 label'],
+    });
   });
 
   it('rejects unknown name mapping references loudly', async () => {
