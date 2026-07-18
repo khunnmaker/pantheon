@@ -9,7 +9,7 @@ export interface IngestInput {
   channelMsgId?: string;
   attachmentType?: string; // image | sticker | video | audio | file | location
   attachmentRef?: string; // image content-type, or "packageId/stickerId" for stickers
-  quoteToken?: string; // LINE token to quote THIS message later (inbound text/sticker)
+  quoteToken?: string; // LINE token to quote THIS message later (inbound text/sticker/image/video)
   quotedMessageId?: string; // OUR internal Message.id this message replies to (already resolved)
 }
 

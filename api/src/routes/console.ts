@@ -265,13 +265,13 @@ export async function consoleRoutes(app: FastifyInstance) {
       ? await prisma.agent.findMany({ where: { id: { in: agentIds } }, select: { id: true, name: true } })
       : [];
     const agentNameById = new Map(agents.map((a) => [a.id, a.name]));
-    // Never expose the raw quoteToken to the client — surface only a `quotable` flag (a customer
-    // text/sticker bubble the staff can tap to LINE-quote). quotedMessageId stays so the frontend
+    // Never expose the raw quoteToken to the client — surface only a `quotable` flag. The staff
+    // can tap text/sticker/image/video bubbles carrying one; quotedMessageId stays so the frontend
     // can render the quoted snippet by joining within the loaded messages.
     const messages = ordered.map(({ quoteToken, ...m }) => ({
       ...m,
       agentName: m.agentId ? (agentNameById.get(m.agentId) ?? null) : null,
-      quotable: !!quoteToken, // customer inbound OR our own sent text/sticker (self-reply)
+      quotable: !!quoteToken, // customer inbound OR our own sent message (self-reply)
     }));
 
     const queuedDraft = getPending(id);
@@ -501,7 +501,7 @@ export async function consoleRoutes(app: FastifyInstance) {
 
     // Reply linkage — any replyToMessageId belonging to THIS customer records quotedMessageId
     // (console-side linkage, incl. pictures). The real LINE quote rides the TEXT part only when
-    // the quoted message itself carries a quoteToken (inbound text/sticker); send normally
+    // the quoted message itself carries a quoteToken (text/sticker/image/video); send normally
     // (no error) when unmet.
     let quoteToken: string | undefined;
     let quotedMessageId: string | undefined;
@@ -622,6 +622,7 @@ export async function consoleRoutes(app: FastifyInstance) {
         attachmentType: 'image',
         attachmentRef: uploadId,
         ...(sendResult.channelMsgId ? { channelMsgId: sendResult.channelMsgId } : {}),
+        ...(sendResult.quoteToken ? { quoteToken: sendResult.quoteToken } : {}),
       },
     });
     void captionStaffUpload(message.id, uploadId);

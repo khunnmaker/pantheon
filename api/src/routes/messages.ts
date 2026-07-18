@@ -302,7 +302,7 @@ export async function messageRoutes(app: FastifyInstance) {
 
     // Reply linkage: any message of THIS customer records quotedMessageId (console-side linkage,
     // incl. pictures with no quoteToken). The real LINE quote-reply only rides the TEXT part when
-    // the quoted message itself carries a quoteToken (inbound text/sticker).
+    // the quoted message itself carries a quoteToken (text/sticker/image/video).
     let quoteToken: string | undefined;
     let quotedMessageId: string | undefined;
     if (parsed.data.replyToMessageId) {

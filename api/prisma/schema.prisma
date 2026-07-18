@@ -98,7 +98,8 @@ model Message {
   // Short AI-generated description used to make customer images meaningful in later history.
   aiCaption        String?
   // LINE quote-reply support. quoteToken = LINE's token to quote THIS message in a later
-  // send (issued only for inbound text/sticker; never exposed to the client). quotedMessageId
+  // send (issued for inbound text/sticker/image/video and outbound text/image; never exposed to the client).
+  // quotedMessageId
   // = OUR internal Message.id this message is a reply to (resolved at write time), for both an
   // incoming customer quote-reply and our own quote-reply out.
   quoteToken       String?

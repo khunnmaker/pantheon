@@ -20,7 +20,7 @@ interface LineMessage {
   fileName?: string; // for "file" messages
   fileSize?: number;
   mention?: { mentionees?: { isSelf?: boolean }[] }; // LINE @mention payload (text messages)
-  quoteToken?: string; // token to quote THIS message later (text/sticker only)
+  quoteToken?: string; // token to quote THIS message later (text/sticker/image/video)
   quotedMessageId?: string; // LINE channelMsgId of the message this one quote-replies to
 }
 interface LineEvent {
@@ -158,6 +158,7 @@ export async function webhookRoutes(app: FastifyInstance) {
             text: '[รูปภาพ]',
             channelMsgId,
             attachmentType: 'image',
+            quoteToken: ev.message.quoteToken ?? undefined,
           });
           let message = result.message;
           if (channelMsgId) {
@@ -192,6 +193,7 @@ export async function webhookRoutes(app: FastifyInstance) {
           text: fileName ? `[${label}] ${fileName}` : `[${label}]`,
           channelMsgId,
           attachmentType: mtype,
+          ...(mtype === 'video' ? { quoteToken: ev.message.quoteToken ?? undefined } : {}),
         });
         let message = result.message;
         // Download video/audio/file binaries so staff can view/download them in
