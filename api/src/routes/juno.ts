@@ -324,6 +324,12 @@ async function getDiscrepancySnapshot() {
       };
     }
     if (!expected && hasStamps) expected = { expectedSatang: grossSatang(payment), source: 're' as const };
+    // Manual-create only (owner ruling 2026-07-19): an RE-derived expected is a HINT for the
+    // payment drawer (getDiscrepancyForPayment), never a ledger entry by itself. A row lists
+    // only on explicit intent: FIN's typed ยอดตามเอกสาร, existing resolution/confirm stamps,
+    // or โอนเงินผิด (whose expected is forced above). This kills the auto-generated จาก RE
+    // rows that flooded the tab after the Jan–Jul history import.
+    if (expected?.source === 're' && !hasStamps) expected = undefined;
     if (!expected) return [];
 
     const gross = grossSatang(payment);
