@@ -2023,7 +2023,7 @@ export async function junoRoutes(app: FastifyInstance) {
 
     const headers = [
       'createdAt (UTC+7)', 'code', 'customer', 'sender', 'amount', 'creditUsed', 'ocrAmount', 'bank',
-      'transferAt', 'ref', 'sales', 'status', 'reNumber', 'บิลมือ', 'receiptName', 'customerType',
+      'transferAt', 'ref', 'sales', 'status', 'reNumber', 'MB', 'receiptName', 'customerType',
       'flagged', 'taxInvoiceStatus', 'taxInvoice', 'note',
       'source', 'settleState', 'chequeNo', 'chequeBank', 'chequeDueDate',
       'wrongTransfer',

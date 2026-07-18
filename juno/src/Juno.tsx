@@ -221,7 +221,7 @@ export default function Juno({ agent, onLogout }: { agent: Agent; onLogout: () =
   //   สรุป — reference views, no queue semantics.
   // Per-role visibility unchanged from the flat bar; groups render only if non-empty.
   type Tab = { key: View; label: string; icon: React.ReactNode; count?: number };
-  const billTab: Tab = { key: 'bills', label: 'บิลมือ', icon: <ReceiptText size={16} />, count: billUnpaid };
+  const billTab: Tab = { key: 'bills', label: 'MB', icon: <ReceiptText size={16} />, count: billUnpaid };
   const tabGroups: { caption: string; tabs: Tab[] }[] = (scope === 'billsOnly'
     ? [{ caption: 'ออกบิล', tabs: [billTab] }]
     : [
@@ -798,7 +798,7 @@ function PaymentsView({ view, onChanged, canDelete, isCeo }: { view: Exclude<Vie
                   <th className="text-left font-medium px-3 py-2">ลูกค้า</th>
                   <th className="text-right font-medium px-3 py-2">ยอด</th>
                   <th className="text-left font-medium px-3 py-2 hidden md:table-cell w-[120px]">ช่องทาง</th>
-                  <th className="text-left font-medium px-3 py-2 hidden md:table-cell">RE / บิลมือ</th>
+                  <th className="text-left font-medium px-3 py-2 hidden md:table-cell">RE / MB</th>
                   <th className="text-left font-medium px-3 py-2">สถานะ</th>
                 </tr>
               </thead>
@@ -1715,7 +1715,7 @@ function Detail({ payment, onClose, onUpdate, onDelete, onPrint, canDelete, isCe
               {field('วันที่ส่งเข้า', fmtDateTime(p.createdAt))}
               {p.reNumbers.length > 0 && field('ชื่อบนใบเสร็จ', p.receiptName)}
               {p.reNumbers.length > 0 && field('ประเภทลูกค้า', p.customerType)}
-              {p.billNos.length > 0 && field('บิลมือ', p.billNos.map(billLabel).join(' / '))}
+              {p.billNos.length > 0 && field('MB', p.billNos.map(billLabel).join(' / '))}
             </div>
 
             {p.mismatch && (
@@ -1870,7 +1870,7 @@ const BILL_TONE_CLS: Record<BillTone, string> = {
   other: 'bg-rose-100 text-rose-700',
 };
 const BILL_TONE_TITLE: Record<BillTone, string> = {
-  manual: 'บิลมือ',
+  manual: 'MB',
   external: 'เลขเอกสารภายนอก',
   other: 'ไม่รู้จักรูปแบบเลขนี้ — ตรวจสอบก่อนบันทึก',
 };
@@ -2039,7 +2039,7 @@ function ReceiptChipsBox({ state, onEnter, autoFocus }: {
           );
         })}
         <input ref={reRef} value={state.reInput} disabled={state.wrongTransfer} onChange={(e) => state.onReInputChange(e.target.value)} onKeyDown={onKeyDown}
-          placeholder={state.reNumbers.length || state.billNos.length ? 'เพิ่มอีก…' : 'เช่น 6900025 หรือ 9690001 (บิลมือ)'} className="flex-1 min-w-[120px] text-sm focus:outline-none" />
+          placeholder={state.reNumbers.length || state.billNos.length ? 'เพิ่มอีก…' : 'เช่น 6900025 หรือ 9690001 (MB)'} className="flex-1 min-w-[120px] text-sm focus:outline-none" />
       </div>
       {(state.mixedError || state.pendingMixed) && <span className="text-[11px] text-rose-600">0000000 ใช้ร่วมกับเลขเอกสารไม่ได้ — เอารายการเดิมออกก่อน</span>}
       {state.checkingBills && <span className="text-[11px] text-slate-400">กำลังตรวจเลขบิล…</span>}
@@ -2276,11 +2276,11 @@ function CheckDialog({ payment, onClose, onSaved }: {
     <div className="fixed inset-0 z-40 bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
       <div className="bg-white rounded-2xl p-4 w-full max-w-sm space-y-3" onClick={(e) => e.stopPropagation()}>
         <div className="font-semibold text-slate-800 flex items-center gap-1.5">
-          <FileText size={16} className="text-emerald-700" /> ตรวจแล้ว — ผูก RE / บิลมือ
+          <FileText size={16} className="text-emerald-700" /> ตรวจแล้ว — ผูก RE / MB
         </div>
 
         <label className="block">
-          <span className="text-xs text-slate-500">เลข RE หรือบิลมือ — พิมพ์ได้หลายเลข คั่นด้วย / , หรือเว้นวรรค</span>
+          <span className="text-xs text-slate-500">เลข RE หรือ MB — พิมพ์ได้หลายเลข คั่นด้วย / , หรือเว้นวรรค</span>
           <ReceiptChipsBox state={re} onEnter={save} autoFocus />
           {re.pendingInvalid && <span className="text-[11px] text-rose-600">เลขบิลห้ามมี / , หรือช่องว่าง</span>}
           {!re.wrongTransfer && !re.pendingInvalid && re.reNumbers.length === 0 && re.billNos.length === 0 && !re.pendingValid && (
@@ -2474,7 +2474,7 @@ function BatchCheckDialog({ payments, onDone }: {
       <div className="bg-white rounded-2xl p-4 w-full max-w-sm space-y-3">
         <div className="flex items-center justify-between gap-2">
           <div className="font-semibold text-slate-800 flex items-center gap-1.5">
-            <FileText size={16} className="text-emerald-700" /> ตรวจแล้ว (RE / บิลมือ) — รายการที่ {index + 1} / {payments.length}
+            <FileText size={16} className="text-emerald-700" /> ตรวจแล้ว (RE / MB) — รายการที่ {index + 1} / {payments.length}
           </div>
           <button onClick={onDone} title="ปิด" className="p-1 text-slate-400 hover:text-slate-600"><X size={18} /></button>
         </div>
@@ -2489,7 +2489,7 @@ function BatchCheckDialog({ payments, onDone }: {
         </div>
 
         <label className="block">
-          <span className="text-xs text-slate-500">เลข RE หรือบิลมือ — พิมพ์ได้หลายเลข คั่นด้วย / , หรือเว้นวรรค</span>
+          <span className="text-xs text-slate-500">เลข RE หรือ MB — พิมพ์ได้หลายเลข คั่นด้วย / , หรือเว้นวรรค</span>
           <ReceiptChipsBox state={re} onEnter={saveAndNext} autoFocus />
           {re.pendingInvalid && <span className="text-[11px] text-rose-600">เลขบิลห้ามมี / , หรือช่องว่าง</span>}
           {!re.wrongTransfer && !re.pendingInvalid && re.reNumbers.length === 0 && re.billNos.length === 0 && !re.pendingValid && (

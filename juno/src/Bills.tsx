@@ -61,7 +61,7 @@ export default function Bills({ onCountsChanged, canDelete, canEdit }: { onCount
         onCountsChanged(result.counts);
         setSelected((current) => current ? (result.bills.find((bill) => bill.id === current.id) ?? null) : null);
       })
-      .catch(() => setError('โหลดบิลมือไม่สำเร็จ'))
+      .catch(() => setError('โหลดบิล MB ไม่สำเร็จ'))
       .finally(() => setLoading(false));
   }, [onCountsChanged, q, status]);
 
@@ -77,7 +77,7 @@ export default function Bills({ onCountsChanged, canDelete, canEdit }: { onCount
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <ReceiptText size={20} className="text-emerald-700" />
-          <h1 className="text-lg font-bold">บิลมือ</h1>
+          <h1 className="text-lg font-bold">MB (บิลมือ)</h1>
         </div>
         {canEdit && (
           <button onClick={() => setEditing('new')} className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-700">
@@ -104,7 +104,7 @@ export default function Bills({ onCountsChanged, canDelete, canEdit }: { onCount
           ) : error ? (
             <div className="p-8 text-center text-rose-600 text-sm"><AlertTriangle size={15} className="inline mr-1" />{error}</div>
           ) : rows.length === 0 ? (
-            <div className="p-10 text-center text-slate-400 text-sm">ไม่มีบิลมือ</div>
+            <div className="p-10 text-center text-slate-400 text-sm">ไม่มีบิล MB</div>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
@@ -349,7 +349,7 @@ function BillModal({ bill, onClose, onSaved }: { bill: ManualBill | null; onClos
     <div className="fixed inset-0 z-40 bg-black/50 flex items-center justify-center p-3" onClick={onClose}>
       <div className="bg-white rounded-2xl w-full max-w-4xl max-h-[94vh] overflow-y-auto" onClick={(event) => event.stopPropagation()}>
         <div className="sticky top-0 z-20 bg-white border-b border-slate-100 px-4 py-3 flex items-center justify-between">
-          <div className="font-bold flex items-center gap-2"><ReceiptText size={18} className="text-emerald-700" />{bill ? `แก้ไข ${bill.billNo}` : 'ออกบิลมือ'}</div>
+          <div className="font-bold flex items-center gap-2"><ReceiptText size={18} className="text-emerald-700" />{bill ? `แก้ไข ${bill.billNo}` : 'ออกบิล MB'}</div>
           <button onClick={onClose} className="p-1 text-slate-400 hover:text-slate-600"><X size={19} /></button>
         </div>
 

@@ -35,7 +35,7 @@ const STATUS_FILTERS: { key: ReReconStatusFilter; label: string }[] = [
 const TYPE_FILTERS: { key: DocReconType | 'all'; label: string }[] = [
   { key: 'all', label: 'ทุกประเภท' },
   { key: 're', label: 'RE' },
-  { key: 'mb', label: 'บิลมือ' },
+  { key: 'mb', label: 'MB' },
   { key: 'xs', label: 'XS' },
 ];
 
@@ -69,7 +69,7 @@ export default function ReRecon({ isCeo }: { isCeo: boolean }) {
     <div className="space-y-4">
       <div className="flex items-center gap-2 text-emerald-700">
         <FileCheck size={20} />
-        <h1 className="text-lg font-bold text-slate-800">กระทบยอดเอกสาร (RE · บิลมือ · XS)</h1>
+        <h1 className="text-lg font-bold text-slate-800">กระทบยอดเอกสาร (RE · MB · XS)</h1>
       </div>
 
       {/* FILE imports (ARRCPDAT.TXT = RE, STTRNR6.TXT = XS) are CEO-only — server 403s the
