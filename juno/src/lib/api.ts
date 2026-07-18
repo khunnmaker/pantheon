@@ -922,7 +922,7 @@ export const getReNames = (reNumbers: string[]) =>
   authed<Record<string, string>>(`/api/juno/re/names?res=${encodeURIComponent([...new Set(reNumbers)].join(','))}`);
 
 // ── บิลมือ (manual bills) ──────────────────────────────────────────────────
-export type ManualBillStatus = 'paid' | 'mismatch' | 'unpaid' | 'void';
+export type ManualBillStatus = 'paid' | 'unpaid' | 'void';
 export type ManualBillStatusFilter = 'all' | ManualBillStatus;
 
 export interface ManualBillItem {
@@ -964,7 +964,6 @@ export interface ManualBill {
   updatedAt: string;
   linkedPayments: ManualBillLinkedPayment[];
   billStatus: ManualBillStatus;
-  paidGross: number;
 }
 
 export interface ManualBillBody {
@@ -979,7 +978,7 @@ export interface ManualBillBody {
   note: string;
 }
 
-export interface ManualBillCounts { unpaid: number; mismatch: number }
+export interface ManualBillCounts { unpaid: number }
 
 export const getManualBills = (f: { q?: string; status?: ManualBillStatusFilter } = {}) => {
   const p = new URLSearchParams();

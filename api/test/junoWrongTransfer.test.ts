@@ -9,12 +9,13 @@ const mocks = vi.hoisted(() => {
   const paymentBankMatch = { findMany: vi.fn(), count: vi.fn() };
   const bankTxn = { findUnique: vi.fn(), update: vi.fn(), findMany: vi.fn(), updateMany: vi.fn() };
   const reReceipt = { findMany: vi.fn() };
+  const manualBill = { findMany: vi.fn() };
   const customerCreditEntry = {
     findUnique: vi.fn(), findMany: vi.fn(), count: vi.fn(), aggregate: vi.fn(),
     create: vi.fn(), update: vi.fn(), upsert: vi.fn(), delete: vi.fn(),
   };
   const syncPaymentToJupiter = vi.fn().mockResolvedValue(undefined);
-  return { role, payment, paymentBankMatch, bankTxn, reReceipt, customerCreditEntry, syncPaymentToJupiter };
+  return { role, payment, paymentBankMatch, bankTxn, reReceipt, manualBill, customerCreditEntry, syncPaymentToJupiter };
 });
 
 vi.mock('../src/auth/middleware.js', () => ({
@@ -32,6 +33,7 @@ vi.mock('../src/db/prisma.js', () => ({
     paymentBankMatch: mocks.paymentBankMatch,
     bankTxn: mocks.bankTxn,
     reReceipt: mocks.reReceipt,
+    manualBill: mocks.manualBill,
     customerCreditEntry: mocks.customerCreditEntry,
     $queryRaw: vi.fn().mockResolvedValue([]),
     $transaction: vi.fn(),
@@ -68,6 +70,7 @@ beforeEach(() => {
   mocks.paymentBankMatch.findMany.mockResolvedValue([]);
   mocks.paymentBankMatch.count.mockResolvedValue(0);
   mocks.reReceipt.findMany.mockResolvedValue([]);
+  mocks.manualBill.findMany.mockResolvedValue([]);
   mocks.customerCreditEntry.findUnique.mockResolvedValue(null);
   mocks.customerCreditEntry.findMany.mockResolvedValue([]);
   mocks.customerCreditEntry.count.mockResolvedValue(0);
@@ -81,6 +84,31 @@ beforeEach(() => {
   mocks.bankTxn.update.mockResolvedValue({});
   mocks.bankTxn.updateMany.mockResolvedValue({ count: 0 });
   mocks.payment.update.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => basePayment(data));
+});
+
+describe('Juno manual-bill payment status', () => {
+  it('marks a bill paid when a non-void payment links it even if the gross amount differs', async () => {
+    const app = await server();
+    mocks.manualBill.findMany.mockResolvedValue([{
+      id: 'bill-1', billNo: '9690001', status: 'active', amount: '100.00', customerCode: '', buyerName: 'Buyer',
+      items: [], createdAt: new Date('2026-07-18T00:00:00Z'), updatedAt: new Date('2026-07-18T00:00:00Z'),
+      voidedAt: null,
+    }]);
+    mocks.payment.findMany.mockResolvedValue([{
+      id: 'payment-1', billNos: ['9690001'], amount: '250.00', whtAmount: '10.00', status: 'verified',
+      source: 'line', createdAt: new Date('2026-07-18T01:00:00Z'), customerName: 'Buyer',
+    }]);
+
+    const response = await app.inject({ method: 'GET', url: '/api/juno/bills' });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json();
+    expect(body.bills).toMatchObject([
+      { billStatus: 'paid', linkedPayments: [{ amount: '250.00', whtAmount: '10.00' }] },
+    ]);
+    expect(body.counts).toEqual({ unpaid: 0 });
+    await app.close();
+  });
 });
 
 describe('Juno wrong-transfer routes', () => {

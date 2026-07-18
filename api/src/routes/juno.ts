@@ -733,18 +733,18 @@ export async function junoRoutes(app: FastifyInstance) {
   });
 
   // ── Manual bills (บิลมือ) ──────────────────────────────────────────────
-  // A bill is a document, not an income row. Paid-ness is computed live from non-void
-  // Payments carrying its billNo, exactly like the RE reconciliation lane.
+  // A bill is a document, not an income row. Payment status is binary and computed live:
+  // any non-void Payment carrying its billNo means paid. FIN verifies amounts later.
   const billsQuerySchema = z.object({
     q: z.string().max(120).optional(),
-    status: z.enum(['all', 'paid', 'unpaid', 'mismatch', 'void']).optional(),
+    status: z.enum(['all', 'paid', 'unpaid', 'void']).optional(),
   });
   app.get('/api/juno/bills', async (req, reply) => {
     const parsed = billsQuerySchema.safeParse(req.query ?? {});
     if (!parsed.success) return reply.code(400).send({ error: 'invalid_query' });
     const q = parsed.data;
     // Query 1: every bill. Text/status filtering stays in JS so `counts` remains the global
-    // unpaid+mismatch badge even while the open tab has a search/filter applied.
+    // unpaid badge even while the open tab has a search/filter applied.
     const bills = await prisma.manualBill.findMany({ orderBy: { createdAt: 'desc' } });
     const candidatePayments = await prisma.payment.findMany({
       where: { status: { not: 'void' }, wrongTransferAt: null, billNos: { isEmpty: false } },
@@ -764,12 +764,9 @@ export async function junoRoutes(app: FastifyInstance) {
 
     const allRows = bills.map((bill) => {
       const payments = byBill.get(bill.billNo) ?? [];
-      const paidGross = payments.reduce((sum, payment) => sum + grossOf(payment), 0);
       const billStatus = bill.status === 'void'
         ? 'void'
-        : payments.length === 0
-          ? 'unpaid'
-          : amountsEqual(String(paidGross), bill.amount.replace(/,/g, '')) ? 'paid' : 'mismatch';
+        : payments.length > 0 ? 'paid' : 'unpaid';
       return {
         ...bill,
         createdAt: bill.createdAt.toISOString(),
@@ -786,12 +783,10 @@ export async function junoRoutes(app: FastifyInstance) {
           customerName: payment.customerName,
         })),
         billStatus,
-        paidGross,
       };
     });
     const counts = {
       unpaid: allRows.filter((bill) => bill.billStatus === 'unpaid').length,
-      mismatch: allRows.filter((bill) => bill.billStatus === 'mismatch').length,
     };
     const needle = q.q?.trim().toLocaleLowerCase();
     const normalizedBillNeedle = q.q ? normalizeBillReference(q.q)?.value.toLocaleLowerCase() : undefined;

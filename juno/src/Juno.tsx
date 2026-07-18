@@ -186,9 +186,8 @@ export default function Juno({ agent, onLogout }: { agent: Agent; onLogout: () =
   // open FinanceAudit (ตรวจสอบยอด) count — employee/supervisor badge; gm skips this request.
   const [auditOpen, setAuditOpen] = useState<number | undefined>(undefined);
   const [billUnpaid, setBillUnpaid] = useState<number | undefined>(undefined);
-  // Badge = ยังไม่จ่าย only (owner 2026-07-18) — ยอดไม่ตรง stays visible inside the tab's own
-  // status filter, it just no longer inflates the bar count.
-  const handleBillCounts = useCallback((counts: { unpaid: number; mismatch: number }) => {
+  // Badge = ยังไม่จ่าย only (owner 2026-07-18).
+  const handleBillCounts = useCallback((counts: { unpaid: number }) => {
     setBillUnpaid(counts.unpaid);
   }, []);
 

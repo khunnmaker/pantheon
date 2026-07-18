@@ -29,14 +29,12 @@ const fmtDate = (value: string): string => {
 const STATUS_OPTIONS: { key: ManualBillStatusFilter; label: string }[] = [
   { key: 'all', label: 'ทั้งหมด' },
   { key: 'unpaid', label: 'ยังไม่จ่าย' },
-  { key: 'mismatch', label: 'ยอดไม่ตรง' },
-  { key: 'paid', label: 'จับคู่แล้ว' },
+  { key: 'paid', label: 'จ่ายแล้ว' },
   { key: 'void', label: 'ยกเลิก' },
 ];
 
 function BillStatusChip({ status }: { status: ManualBillStatus }) {
-  if (status === 'paid') return <span className="px-2 py-0.5 rounded-full text-[11px] bg-emerald-100 text-emerald-700 whitespace-nowrap">✅ จับคู่แล้ว</span>;
-  if (status === 'mismatch') return <span className="px-2 py-0.5 rounded-full text-[11px] bg-amber-100 text-amber-700 whitespace-nowrap">⚠️ ยอดไม่ตรง</span>;
+  if (status === 'paid') return <span className="px-2 py-0.5 rounded-full text-[11px] bg-emerald-100 text-emerald-700 whitespace-nowrap">✅ จ่ายแล้ว</span>;
   if (status === 'void') return <span className="px-2 py-0.5 rounded-full text-[11px] bg-slate-200 text-slate-500 whitespace-nowrap">ยกเลิก</span>;
   return <span className="px-2 py-0.5 rounded-full text-[11px] bg-rose-100 text-rose-700 whitespace-nowrap">⏳ ยังไม่จ่าย</span>;
 }
