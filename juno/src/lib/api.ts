@@ -864,7 +864,7 @@ export const getBankWatchlist = (limit?: number) =>
 // against the Juno Payment(s) carrying it — the "future RE-import" the WHT feature's
 // grossOf() was built for. Import is CEO-only; the list is visible to every Juno user.
 
-export type ReReconStatus = 'matched' | 'mismatch' | 'unpaid';
+export type ReReconStatus = 'matched' | 'mismatch' | 'unpaid' | 'closed';
 export type ReReconStatusFilter = 'all' | ReReconStatus;
 
 export interface ReReceiptInvoice {
@@ -893,6 +893,7 @@ export interface ReReconSummary {
   matched: number;
   mismatch: number;
   unpaid: number;
+  closed: number;
   totalAmount: number;
   matchedAmount: number;
 }

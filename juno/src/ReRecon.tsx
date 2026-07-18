@@ -28,6 +28,7 @@ const STATUS_FILTERS: { key: ReReconStatusFilter; label: string }[] = [
   { key: 'matched', label: 'จับ RE แล้ว' },
   { key: 'mismatch', label: 'ยอดไม่ตรง' },
   { key: 'unpaid', label: 'ยังไม่จ่าย' },
+  { key: 'closed', label: 'ปิดใน Express' },
 ];
 
 function StatusBadge({ status }: { status: ReReconRow['status'] }) {
@@ -36,6 +37,9 @@ function StatusBadge({ status }: { status: ReReconRow['status'] }) {
   }
   if (status === 'mismatch') {
     return <span className="px-1.5 py-0.5 rounded-full text-[11px] bg-amber-100 text-amber-700 whitespace-nowrap">⚠️ ยอดไม่ตรง</span>;
+  }
+  if (status === 'closed') {
+    return <span className="px-1.5 py-0.5 rounded-full text-[11px] bg-slate-100 text-slate-500 whitespace-nowrap">✔ ปิดใน Express</span>;
   }
   return <span className="px-1.5 py-0.5 rounded-full text-[11px] bg-rose-100 text-rose-700 whitespace-nowrap">⏳ ยังไม่จ่าย</span>;
 }
@@ -218,10 +222,11 @@ function SummaryCards({ summary }: { summary: ReReconSummary | null }) {
     { label: '✅ จับ RE แล้ว', count: summary.matched, tone: 'text-emerald-600' },
     { label: '⚠️ ยอดไม่ตรง', count: summary.mismatch, tone: 'text-amber-600' },
     { label: '⏳ ยังไม่จ่าย', count: summary.unpaid, tone: 'text-rose-600' },
+    { label: '✔ ปิดใน Express', count: summary.closed, tone: 'text-slate-500' },
     { label: 'ยอดรวมทั้งหมด', count: summary.total, sum: summary.totalAmount, tone: 'text-slate-700' },
   ];
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
       {cards.map((c) => (
         <div key={c.label} className="bg-white rounded-xl border border-slate-200 p-4">
           <div className="text-xs text-slate-400">{c.label}</div>
@@ -242,7 +247,7 @@ function ReRow({ row, expanded, onToggle }: { row: ReReconRow; expanded: boolean
         <div className="w-20 shrink-0 text-slate-500 whitespace-nowrap">{fmtReceiptDate(row.receiptDate)}</div>
         <div className="flex-1 min-w-0 truncate text-slate-600">
           {row.customerName}
-          {row.notPosted && <span className="ml-1.5 text-[11px] text-amber-500" title="ทำรายการรับชำระหนี้ไม่เรียบร้อย">*** ไม่เรียบร้อย</span>}
+          {row.notPosted && <span className="ml-1.5 text-[11px] text-amber-500" title="*** ในไฟล์ Express = ยังไม่ได้รับเงิน / รายการยังไม่จบ">*** ไม่เรียบร้อย</span>}
         </div>
         <div className="w-28 shrink-0 text-right font-semibold whitespace-nowrap">{baht(row.amount)}</div>
         <div className="shrink-0 flex items-center gap-1.5 flex-wrap justify-end max-w-[38%]">
@@ -268,8 +273,10 @@ function ReDetail({ row }: { row: ReReconRow }) {
       <div className="mb-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500">
         <span>พนักงานขาย: <span className="text-slate-700">{row.salesName || '—'}</span></span>
         <span>ยอดตามใบกำกับ: <span className="text-slate-700 font-medium">{baht(row.amount)}</span></span>
-        <span>รับเงินจริง (gross): <span className="text-slate-700 font-medium">{baht(row.paidGross)}</span></span>
-        {row.status !== 'unpaid' && (
+        {row.paymentCount > 0 && (
+          <span>รับเงินจริง (gross): <span className="text-slate-700 font-medium">{baht(row.paidGross)}</span></span>
+        )}
+        {row.paymentCount > 0 && (
           <span>ผลต่าง: <span className={`font-medium ${Math.abs(row.diff) < 0.01 ? 'text-emerald-600' : 'text-amber-600'}`}>{row.diff > 0 ? '+' : ''}{row.diff.toFixed(2)}</span></span>
         )}
       </div>

@@ -2995,7 +2995,7 @@ export async function junoRoutes(app: FastifyInstance) {
   // to employee/supervisor users (no supervisor gate, unlike the import above). Built in ≤2 queries
   // total (ReReceipt list + one Payment scan), never one query per RE.
   const reQuerySchema = z.object({
-    status: z.enum(['all', 'matched', 'mismatch', 'unpaid']).optional(),
+    status: z.enum(['all', 'matched', 'mismatch', 'unpaid', 'closed']).optional(),
     q: z.string().max(120).optional(),
     from: z.string().max(20).optional(),
     to: z.string().max(20).optional(),
@@ -3067,7 +3067,7 @@ export async function junoRoutes(app: FastifyInstance) {
       .map((r) => {
         // Apportion each covering transfer by this RE's own receipt amount — never add a multi-RE
         // payment's whole gross to every RE it lists (that was the double-count bug). See reRecon.ts.
-        const c = computeReRow(r.amount, byRe.get(r.reNumber) ?? [], reAmountByCore);
+        const c = computeReRow(r.amount, byRe.get(r.reNumber) ?? [], reAmountByCore, r.notPosted);
         return {
           id: r.id,
           reNumber: r.reNumber,
@@ -3093,6 +3093,7 @@ export async function junoRoutes(app: FastifyInstance) {
       matched: allRows.filter((r) => r.status === 'matched').length,
       mismatch: allRows.filter((r) => r.status === 'mismatch').length,
       unpaid: allRows.filter((r) => r.status === 'unpaid').length,
+      closed: allRows.filter((r) => r.status === 'closed').length,
       totalAmount: allRows.reduce((s, r) => s + r.amount, 0),
       matchedAmount: allRows.filter((r) => r.status === 'matched').reduce((s, r) => s + r.amount, 0),
     };

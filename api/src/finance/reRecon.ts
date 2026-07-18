@@ -35,7 +35,12 @@ export function effectivePaidOf(p: { amount: string; whtAmount: string; creditUs
 // tolerance absorbs that without masking a genuine short-/over-payment (those are far larger).
 export const RE_MATCH_TOL_BAHT = 1;
 
-export type ReReconStatus = 'unpaid' | 'matched' | 'mismatch';
+// 'closed' = ปิดใน Express, the terminal state (owner semantics 2026-07-18): a clean line in
+// ARRCPDAT (no ***) means Express already received the money and finished the entry, so a clean
+// RE closes automatically — UNLESS Juno's linked payments contradict the amount (mismatch wins,
+// a human must look before the row disappears into the closed pile). `***` = money not received
+// yet, so *** rows stay in the live unpaid/matched flow until a later import shows them clean.
+export type ReReconStatus = 'unpaid' | 'matched' | 'mismatch' | 'closed';
 
 export interface ReReconPayment {
   reNumbers: string[];
@@ -58,20 +63,25 @@ export interface ReRowResult {
  * @param payments        every non-void Payment whose reNumbers include this RE
  * @param reAmountByCore  ReReceipt.amount for EVERY covered RE core (so a multi-RE transfer can be
  *                        priced against the SUM of the receipts it pays, not just this one)
+ * @param notPosted       the RE's *** flag from the import. Clean (false) = Express already has the
+ *                        money → terminal 'closed', except when linked payments genuinely mismatch.
+ *                        Defaults to true so ***-era callers/tests keep the live-flow semantics.
  *
  * Edge case — a covering transfer that references a co-receipt not yet imported (no ReReceipt row):
- * its expected total is unknowable, so we do NOT raise a false ⚠️mismatch. That RE stays in the
- * ⏳ "not reconciled" bucket (status 'unpaid') until the missing receipt is imported; paymentCount
+ * its expected total is unknowable, so we do NOT raise a false ⚠️mismatch. A *** RE stays in the
+ * ⏳ "not reconciled" bucket (status 'unpaid') until the missing receipt is imported (a clean RE
+ * still closes — Express is authoritative and there is no priced contradiction); paymentCount
  * still reflects that a transfer exists so the UI can show the "N รายการรับเงิน" hint.
  */
 export function computeReRow(
   reAmount: string,
   payments: ReReconPayment[],
   reAmountByCore: Map<string, string>,
+  notPosted = true,
 ): ReRowResult {
   const own = num(reAmount);
   if (payments.length === 0) {
-    return { status: 'unpaid', paidGross: 0, diff: Number((0 - own).toFixed(2)), paymentCount: 0 };
+    return { status: notPosted ? 'unpaid' : 'closed', paidGross: 0, diff: Number((0 - own).toFixed(2)), paymentCount: 0 };
   }
 
   let paidGross = 0;
@@ -105,7 +115,10 @@ export function computeReRow(
   const diff = Number((paidGross - own).toFixed(2));
 
   if (anyUnresolved) {
-    return { status: 'unpaid', paidGross, diff, paymentCount: payments.length };
+    return { status: notPosted ? 'unpaid' : 'closed', paidGross, diff, paymentCount: payments.length };
   }
-  return { status: allMatched ? 'matched' : 'mismatch', paidGross, diff, paymentCount: payments.length };
+  if (!allMatched) {
+    return { status: 'mismatch', paidGross, diff, paymentCount: payments.length };
+  }
+  return { status: notPosted ? 'matched' : 'closed', paidGross, diff, paymentCount: payments.length };
 }

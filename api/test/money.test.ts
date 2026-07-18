@@ -111,6 +111,47 @@ describe('computeReRow (กระทบยอด RE apportionment)', () => {
   });
 });
 
+describe('computeReRow ปิดใน Express (clean *** flag = Express already got the money)', () => {
+  const oneRe = new Map<string, string>([['A', '400.00']]);
+  const pay = (reNumbers: string[], amount: string, whtAmount = ''): ReReconPayment => ({ reNumbers, amount, whtAmount });
+
+  it('clean + no Juno payments → closed (the pre-Pantheon backlog case)', () => {
+    const r = computeReRow('400.00', [], oneRe, false);
+    expect(r.status).toBe('closed');
+    expect(r.paymentCount).toBe(0);
+  });
+
+  it('*** + no payments → unpaid (the real chase queue)', () => {
+    expect(computeReRow('400.00', [], oneRe, true).status).toBe('unpaid');
+  });
+
+  it('clean + matched payments → closed (จับ RE แล้ว advances at the next import)', () => {
+    const r = computeReRow('400.00', [pay(['A'], '400.00')], oneRe, false);
+    expect(r.status).toBe('closed');
+    expect(r.paidGross).toBe(400);
+  });
+
+  it('*** + matched payments → matched (money in Juno, Express entry not finished)', () => {
+    expect(computeReRow('400.00', [pay(['A'], '400.00')], oneRe, true).status).toBe('matched');
+  });
+
+  it('clean + genuinely mismatched payments → mismatch wins over closed (never silenced)', () => {
+    const r = computeReRow('400.00', [pay(['A'], '300.00')], oneRe, false);
+    expect(r.status).toBe('mismatch');
+    expect(r.diff).toBe(-100);
+  });
+
+  it('clean + unpriceable transfer (co-receipt missing) → closed, Express is authoritative', () => {
+    const r = computeReRow('400.00', [pay(['A', 'C'], '1000.00')], oneRe, false);
+    expect(r.status).toBe('closed');
+    expect(r.paymentCount).toBe(1);
+  });
+
+  it('omitted flag defaults to *** semantics (legacy callers unchanged)', () => {
+    expect(computeReRow('400.00', [], oneRe).status).toBe('unpaid');
+  });
+});
+
 describe('wrong-transfer discrepancy invariants', () => {
   const wrong = { id: 'wrong', amount: '125.50', whtAmount: '', reNumbers: [] as string[], discExpected: '0', status: 'verified' };
   it('treats expected zero as the whole-gross refund even without an RE', () => {
