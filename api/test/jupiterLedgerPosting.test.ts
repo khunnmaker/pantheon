@@ -105,7 +105,9 @@ function makePostingClient(overrides: Record<string, unknown> = {}) {
   const tx = {
     $queryRaw: vi.fn(async () => [{ id: 'entry-1' }]),
     jupiterJournalEntry: {
-      findUnique: vi.fn(async () => makeEntry(overrides, mutable)),
+      findUnique: vi.fn(async ({ where }: { where: Record<string, unknown> }) => (
+        'id' in where ? makeEntry(overrides, mutable) : null
+      )),
       update,
     },
     jupiterJournalSequence: { upsert: vi.fn(async () => ({ nextNo: 2 })) },
@@ -166,6 +168,52 @@ describe('Jupiter draft posting rules', () => {
     expect(audits[0]).toMatchObject({ action: 'post', entityId: 'entry-1', actorId: 'staff-1' });
   });
 
+  it('advances past a colliding entry number before posting', async () => {
+    const { client, tx, mutable } = makePostingClient();
+    tx.jupiterJournalSequence.upsert
+      .mockResolvedValueOnce({ nextNo: 2 })
+      .mockResolvedValueOnce({ nextNo: 3 });
+    tx.jupiterJournalEntry.findUnique.mockImplementation(async ({ where }: { where: Record<string, unknown> }) => {
+      if ('id' in where) return makeEntry({}, mutable);
+      const entryNo = (where.companyCode_entryNo as { entryNo: string }).entryNo;
+      return entryNo.endsWith('000001') ? { id: 'imported-entry' } : null;
+    });
+
+    await postJournalEntry('entry-1', actor, client as never);
+    expect(mutable.entryNo).toBe('GEN/2026/000002');
+    expect(tx.jupiterJournalSequence.upsert).toHaveBeenCalledTimes(2);
+  });
+
+  it('retries a P2002 entry-number race in a fresh transaction', async () => {
+    const { client, tx, mutable } = makePostingClient();
+    let updateAttempt = 0;
+    tx.jupiterJournalSequence.upsert
+      .mockResolvedValueOnce({ nextNo: 2 })
+      .mockResolvedValueOnce({ nextNo: 2 })
+      .mockResolvedValueOnce({ nextNo: 3 });
+    tx.jupiterJournalEntry.findUnique.mockImplementation(async ({ where }: { where: Record<string, unknown> }) => {
+      if ('id' in where) return makeEntry({}, mutable);
+      const entryNo = (where.companyCode_entryNo as { entryNo: string }).entryNo;
+      return updateAttempt > 0 && entryNo.endsWith('000001') ? { id: 'racing-entry' } : null;
+    });
+    tx.jupiterJournalEntry.update.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => {
+      updateAttempt += 1;
+      if (updateAttempt === 1) {
+        throw new Prisma.PrismaClientKnownRequestError('entry number race', {
+          code: 'P2002', clientVersion: '5.22.0', meta: { target: ['companyCode', 'entryNo'] },
+        });
+      }
+      if (typeof data.state === 'string') mutable.state = data.state;
+      if (typeof data.entryNo === 'string') mutable.entryNo = data.entryNo;
+      if (data.version) mutable.version += 1;
+      return {};
+    });
+
+    await postJournalEntry('entry-1', actor, client as never);
+    expect(client.$transaction).toHaveBeenCalledTimes(2);
+    expect(mutable.entryNo).toBe('GEN/2026/000002');
+  });
+
   it('rejects cross-company accounts, paper-only companies, and locked entries before writing', async () => {
     for (const overrides of [
       { lines: [line(1, '100.00', '0.00', 'DENC'), line(2, '0.00', '100.00')] },
@@ -207,6 +255,7 @@ describe('Jupiter draft posting rules', () => {
       $queryRaw: vi.fn(async () => [{ id: 'entry-1' }]),
       jupiterJournalEntry: {
         findUnique: vi.fn(async ({ where }: { where: { id: string } }) => {
+          if (!('id' in where)) return null;
           if (where.id === 'entry-1') return original;
           return makeEntry({
             id: 'reversal-1',

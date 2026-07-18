@@ -37,6 +37,20 @@ function newLine(partnerId: string | null = null): LineState {
   return { key: `L${lineKeySeq}`, accountId: '', partnerId, partnerTouched: false, label: '', debit: '', credit: '' };
 }
 
+const BANGKOK_DATE_FORMATTER = new Intl.DateTimeFormat('en-CA-u-ca-gregory-nu-latn', {
+  timeZone: 'Asia/Bangkok',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+});
+
+function bangkokAccountingDate(now = new Date()): string {
+  const parts = Object.fromEntries(
+    BANGKOK_DATE_FORMATTER.formatToParts(now).map(({ type, value }) => [type, value]),
+  );
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}
+
 const ERROR_TH: Record<string, string> = {
   unbalanced_entry: 'เดบิตและเครดิตไม่เท่ากัน — ตรวจสอบรายการอีกครั้ง',
   invalid_line: 'รายการบัญชีไม่ถูกต้อง (ต้องมีอย่างน้อย 2 บรรทัดที่มีจำนวนเงินและเลือกบัญชีแล้ว)',
@@ -64,7 +78,7 @@ export default function JournalEntryForm({
   const isEdit = Boolean(existing);
   const [companyCode, setCompanyCode] = useState(existing?.companyCode ?? defaultCompany);
   const [journalId, setJournalId] = useState(existing?.journalId ?? '');
-  const [entryDate, setEntryDate] = useState(existing?.entryDate ?? new Date().toISOString().slice(0, 10));
+  const [entryDate, setEntryDate] = useState(existing?.entryDate ?? bangkokAccountingDate());
   const [ref, setRef] = useState(existing?.ref ?? '');
   const [memo, setMemo] = useState(existing?.memo ?? '');
   const [partnerId, setPartnerId] = useState<string | null>(existing?.partnerId ?? null);

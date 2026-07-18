@@ -633,7 +633,7 @@ export interface PartnerLedgerRow {
   rowType: string; partnerId: string | null; rescuePartnerId: string | null; partnerName: string; date: string;
   moveId: string; rescueMoveId: string; moveName: string | null; moveRef: string; accountId: string;
   rescueAccountId: string; accountCode: string; accountName: string; lineName: string;
-  debit: string; credit: string; balance: string; lineId: string; rescueLineId: string; parentState: string;
+  debit: string; credit: string; openingBalance: string; balance: string; lineId: string; rescueLineId: string; parentState: string;
 }
 export interface LedgerReportParams { company: string; from?: string; to?: string }
 

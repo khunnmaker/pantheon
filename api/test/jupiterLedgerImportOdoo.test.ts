@@ -1,16 +1,16 @@
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   OdooImportError, accountClassFromOdooType, canonicalizeSourceObject, importOdooSnapshot,
-  importedEntryAction, many2oneId, sourceContentHash,
+  importedEntryAction, many2oneId, seedImportedJournalSequences, sourceContentHash,
 } from '../src/jupiter/ledger/importOdoo.js';
 
 const temporary: string[] = [];
 
-async function syntheticSnapshot(companyId = 2) {
+async function syntheticSnapshot(companyId = 2, firstDebit: string | number = '10.00') {
   const root = await mkdtemp(join(tmpdir(), 'jupiter-odoo-synthetic-'));
   temporary.push(root);
   const company = join(root, 'TONR');
@@ -23,7 +23,7 @@ async function syntheticSnapshot(companyId = 2) {
     account_tax: [{ id: 30, company_id: [companyId, 'TONR'], name: 'Synthetic tax', amount: '7.000000', type_tax_use: 'purchase' }],
     account_move: [{ id: 40, company_id: [companyId, 'TONR'], journal_id: [20, 'GEN'], name: '/', date: '2026-07-18', state: 'draft' }],
     account_move_line: [
-      { id: 50, company_id: [companyId, 'TONR'], move_id: [40, '/'], journal_id: [20, 'GEN'], account_id: [10, '00100'], debit: '10.00', credit: '0.00', parent_state: 'draft', tax_ids: [] },
+      { id: 50, company_id: [companyId, 'TONR'], move_id: [40, '/'], journal_id: [20, 'GEN'], account_id: [10, '00100'], debit: firstDebit, credit: '0.00', parent_state: 'draft', tax_ids: [] },
       { id: 51, company_id: [companyId, 'TONR'], move_id: [40, '/'], journal_id: [20, 'GEN'], account_id: [10, '00100'], debit: '0.00', credit: '10.00', parent_state: 'draft', tax_ids: [] },
     ],
   };
@@ -75,5 +75,44 @@ describe('Odoo rescue importer', () => {
     await expect(importOdooSnapshot({ snapshotPath: root, companies: ['TONR'], apply: false })).rejects.toEqual(
       expect.objectContaining<Partial<OdooImportError>>({ code: 'company_mapping_mismatch' }),
     );
+  });
+
+  it('rejects numeric source amounts and names the offending record', async () => {
+    const root = await syntheticSnapshot(2, 10);
+    await expect(importOdooSnapshot({ snapshotPath: root, companies: ['TONR'], apply: false })).rejects.toMatchObject({
+      code: 'invalid_money',
+      message: expect.stringContaining('account.move.line:50 debit'),
+    });
+  });
+
+  it('seeds each imported journal-year sequence past its maximum numeric suffix', async () => {
+    const create = vi.fn(async () => ({}));
+    const update = vi.fn(async () => ({}));
+    const tx = {
+      jupiterJournalEntry: { findMany: vi.fn(async () => [
+        { journalId: 'journal-1', entryDate: new Date('2026-01-02T00:00:00.000Z'), entryNo: 'GEN/2026/000041' },
+        { journalId: 'journal-1', entryDate: new Date('2026-12-31T00:00:00.000Z'), entryNo: 'MISC-105' },
+        { journalId: 'journal-1', entryDate: new Date('2025-12-31T00:00:00.000Z'), entryNo: 'GEN/2025/000007' },
+        { journalId: 'journal-2', entryDate: new Date('2026-07-18T00:00:00.000Z'), entryNo: 'BNK/2026/000009' },
+        { journalId: 'journal-2', entryDate: new Date('2026-07-18T00:00:00.000Z'), entryNo: 'NO-NUMBER' },
+      ]) },
+      jupiterJournalSequence: {
+        findUnique: vi.fn(async ({ where }) => {
+          const { journalId, fiscalYear } = where.companyCode_journalId_fiscalYear;
+          if (journalId === 'journal-1' && fiscalYear === 2026) return { nextNo: 200 };
+          if (journalId === 'journal-1' && fiscalYear === 2025) return { nextNo: 4 };
+          return null;
+        }),
+        create,
+        update,
+      },
+    };
+
+    await seedImportedJournalSequences(tx as never, 'TONR');
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({ data: { nextNo: 8 } }));
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({
+      data: { companyCode: 'TONR', journalId: 'journal-2', fiscalYear: 2026, nextNo: 10 },
+    }));
+    expect(update).not.toHaveBeenCalledWith(expect.objectContaining({ data: { nextNo: 106 } }));
   });
 });

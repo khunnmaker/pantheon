@@ -377,7 +377,9 @@ export async function jupiterLedgerRoutes(app: FastifyInstance) {
     if (!parsed.success) return reply.code(400).send({ error: 'bad_request', detail: parsed.error.flatten() });
     try {
       const rows = await partnerLedger({ companyCode: parsed.data.company, from: parsed.data.from, to: parsed.data.to, partnerId: parsed.data.partnerId });
-      if (parsed.data.format === 'csv') return reply.type('text/csv; charset=utf-8').send(partnerLedgerCsv(rows));
+      if (parsed.data.format === 'csv') {
+        return reply.type('text/csv; charset=utf-8').send(partnerLedgerCsv(rows, Boolean(parsed.data.from)));
+      }
       return { company: parsed.data.company, rows };
     } catch (error) { return sendError(reply, error); }
   });

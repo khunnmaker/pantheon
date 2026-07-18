@@ -108,12 +108,15 @@ function optionalDate(value: unknown): Date | null {
   return date;
 }
 
-function sourceMoney(value: unknown, fallback = '0.00'): Prisma.Decimal {
+function sourceMoney(value: unknown, record = 'Odoo record', fallback = '0.00'): Prisma.Decimal {
   if (value === false || value === null || value === undefined || value === '') return parseMoney(fallback);
-  if (typeof value !== 'string' && typeof value !== 'number') {
-    throw new OdooImportError('invalid_money', `Invalid Odoo money value ${JSON.stringify(value)}`);
+  if (typeof value !== 'string') {
+    throw new OdooImportError(
+      'invalid_money',
+      `${record} has a non-string money value (${typeof value}): ${JSON.stringify(value)}`,
+    );
   }
-  return parseMoney(String(value));
+  return parseMoney(value);
 }
 
 function sourceRate(value: unknown): Prisma.Decimal {
@@ -430,8 +433,11 @@ function validateSourceCompany(
     if ([...appliedTaxIds, ...(taxLineId === null ? [] : [taxLineId])].some((id) => !taxIds.has(id))) {
       throw new OdooImportError('unresolved_reference', `Move line ${text(line.id)} tax`);
     }
-    sourceMoney(line.debit); sourceMoney(line.credit);
-    if (line.amount_currency !== false && line.amount_currency !== null && line.amount_currency !== undefined) sourceMoney(line.amount_currency);
+    const lineRecord = `account.move.line:${text(line.id)}`;
+    sourceMoney(line.debit, `${lineRecord} debit`); sourceMoney(line.credit, `${lineRecord} credit`);
+    if (line.amount_currency !== false && line.amount_currency !== null && line.amount_currency !== undefined) {
+      sourceMoney(line.amount_currency, `${lineRecord} amount_currency`);
+    }
     const bucket = linesByMove.get(moveId) ?? [];
     bucket.push(line); linesByMove.set(moveId, bucket);
   }
@@ -449,7 +455,9 @@ function validateSourceCompany(
     if (!moveLines.length) throw new OdooImportError('unresolved_reference', `account.move:${id} has no lines`);
     let debit = new Prisma.Decimal(0); let credit = new Prisma.Decimal(0);
     for (const line of moveLines) {
-      debit = debit.plus(sourceMoney(line.debit)); credit = credit.plus(sourceMoney(line.credit));
+      const lineRecord = `account.move.line:${text(line.id)}`;
+      debit = debit.plus(sourceMoney(line.debit, `${lineRecord} debit`));
+      credit = credit.plus(sourceMoney(line.credit, `${lineRecord} credit`));
       const parentState = text(line.parent_state);
       if (parentState && parentState !== state) throw new OdooImportError('source_state_mismatch', `account.move.line:${text(line.id)}`);
       const lineJournal = many2oneId(line.journal_id);
@@ -594,6 +602,34 @@ async function resolvePartner(tx: LedgerTx, value: unknown) {
   return partner;
 }
 
+export async function seedImportedJournalSequences(tx: LedgerTx, companyCode: ImportCompanyCode): Promise<void> {
+  const entries = await tx.jupiterJournalEntry.findMany({
+    where: { companyCode, source: ODOO_IMPORT_SOURCE, entryNo: { not: null } },
+    select: { journalId: true, entryDate: true, entryNo: true },
+  });
+  const maxima = new Map<string, { journalId: string; fiscalYear: number; maxNo: number }>();
+  for (const entry of entries) {
+    const suffix = entry.entryNo?.match(/(\d+)$/)?.[1];
+    if (!suffix) continue;
+    const number = Number(suffix);
+    if (!Number.isSafeInteger(number) || number < 1 || number >= 2_147_483_647) continue;
+    const fiscalYear = entry.entryDate.getUTCFullYear();
+    const key = `${entry.journalId}:${fiscalYear}`;
+    const current = maxima.get(key);
+    if (!current || number > current.maxNo) maxima.set(key, { journalId: entry.journalId, fiscalYear, maxNo: number });
+  }
+  for (const { journalId, fiscalYear, maxNo } of maxima.values()) {
+    const where = { companyCode_journalId_fiscalYear: { companyCode, journalId, fiscalYear } };
+    const sequence = await tx.jupiterJournalSequence.findUnique({ where, select: { nextNo: true } });
+    const nextNo = maxNo + 1;
+    if (!sequence) {
+      await tx.jupiterJournalSequence.create({ data: { companyCode, journalId, fiscalYear, nextNo } });
+    } else if (sequence.nextNo < nextNo) {
+      await tx.jupiterJournalSequence.update({ where, data: { nextNo } });
+    }
+  }
+}
+
 async function importMoves(
   tx: LedgerTx,
   companyCode: ImportCompanyCode,
@@ -617,8 +653,8 @@ async function importMoves(
     const moveLines = (linesByMove.get(moveId) ?? []).sort((a, b) =>
       Number(a.sequence ?? 0) - Number(b.sequence ?? 0) || requiredId(a, 'account.move.line') - requiredId(b, 'account.move.line'));
     if (!moveLines.length) throw new OdooImportError('unresolved_reference', `account.move:${moveId} has no lines`);
-    const debit = moveLines.reduce((sum, line) => sum.plus(sourceMoney(line.debit)), new Prisma.Decimal(0));
-    const credit = moveLines.reduce((sum, line) => sum.plus(sourceMoney(line.credit)), new Prisma.Decimal(0));
+    const debit = moveLines.reduce((sum, line) => sum.plus(sourceMoney(line.debit, `account.move.line:${text(line.id)} debit`)), new Prisma.Decimal(0));
+    const credit = moveLines.reduce((sum, line) => sum.plus(sourceMoney(line.credit, `account.move.line:${text(line.id)} credit`)), new Prisma.Decimal(0));
     if (!debit.equals(credit)) {
       throw new OdooImportError('unbalanced_entry', `${companyCode}:account.move:${moveId} debit ${moneyToString(debit)} credit ${moneyToString(credit)}`);
     }
@@ -676,8 +712,11 @@ async function importMoves(
       const linePartner = await resolvePartner(tx, line.partner_id);
       const createdLine = await tx.jupiterJournalLine.create({ data: {
         entryId, lineNo: index + 1, accountId: account.id, partnerId: linePartner?.id ?? null,
-        label: text(line.name), debit: sourceMoney(line.debit), credit: sourceMoney(line.credit),
-        amountCurrency: line.amount_currency === false || line.amount_currency == null ? null : sourceMoney(line.amount_currency),
+        label: text(line.name),
+        debit: sourceMoney(line.debit, `account.move.line:${lineId} debit`),
+        credit: sourceMoney(line.credit, `account.move.line:${lineId} credit`),
+        amountCurrency: line.amount_currency === false || line.amount_currency == null
+          ? null : sourceMoney(line.amount_currency, `account.move.line:${lineId} amount_currency`),
         currencyCode: currencyCode(line.currency_id), maturityDate: optionalDate(line.date_maturity),
         reconciled: bool(line.reconciled), externalReconcileRef: text(line.full_reconcile_id || line.matching_number) || null,
         sourceRef: `${companyCode}:account.move.line:${lineId}`,
@@ -765,6 +804,7 @@ export async function importOdooSnapshot(options: ImportOdooOptions, client?: Pr
         if (current.ledgerMode !== 'shadow') await tx.jupiterCompany.update({ where: { code: company }, data: { ledgerMode: 'shadow' } });
         await upsertCompanyMasters(tx, company, rows, mutations);
         await importMoves(tx, company, rows.moves, rows.lines, preflight.snapshotRef, mutations);
+        await seedImportedJournalSequences(tx, company);
       }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
     }
     const reconciliation: Record<string, unknown> = {};
@@ -777,8 +817,12 @@ export async function importOdooSnapshot(options: ImportOdooOptions, client?: Pr
       ]);
       const glTotals = sumRows(gl);
       const sourcePostedLines = source.lines.filter((line) => text(line.parent_state) === 'posted');
-      const sourceDebit = sourcePostedLines.reduce((sum, line) => sum.plus(sourceMoney(line.debit)), new Prisma.Decimal(0));
-      const sourceCredit = sourcePostedLines.reduce((sum, line) => sum.plus(sourceMoney(line.credit)), new Prisma.Decimal(0));
+      const sourceDebit = sourcePostedLines.reduce((sum, line) => sum.plus(
+        sourceMoney(line.debit, `account.move.line:${text(line.id)} debit`),
+      ), new Prisma.Decimal(0));
+      const sourceCredit = sourcePostedLines.reduce((sum, line) => sum.plus(
+        sourceMoney(line.credit, `account.move.line:${text(line.id)} credit`),
+      ), new Prisma.Decimal(0));
       const comparisons = {
         trialBalanceClient: compareTrialBalance(source.trialBalanceClient, tb),
         trialBalanceServer: compareTrialBalance(source.trialBalanceServer, tb),

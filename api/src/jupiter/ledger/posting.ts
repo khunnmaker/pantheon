@@ -32,6 +32,7 @@ const ENTRY_INCLUDE = Prisma.validator<Prisma.JupiterJournalEntryInclude>()({
 
 type LoadedEntry = Prisma.JupiterJournalEntryGetPayload<{ include: typeof ENTRY_INCLUDE }>;
 type LedgerTx = Prisma.TransactionClient;
+const ENTRY_NUMBER_ATTEMPTS = 5;
 
 export function validateDraftLines(lines: readonly DraftLineInput[]): DraftValidationResult {
   const seenLineNumbers = new Set<number>();
@@ -179,20 +180,45 @@ function actorAuditFields(actor: LedgerActor): Pick<
 async function assignEntryNumber(tx: LedgerTx, entry: LoadedEntry): Promise<string> {
   if (entry.entryNo) return entry.entryNo;
   const fiscalYear = entry.entryDate.getUTCFullYear();
-  const sequence = await tx.jupiterJournalSequence.upsert({
-    where: {
-      companyCode_journalId_fiscalYear: {
-        companyCode: entry.companyCode,
-        journalId: entry.journalId,
-        fiscalYear,
+  for (let attempt = 0; attempt < ENTRY_NUMBER_ATTEMPTS; attempt += 1) {
+    const sequence = await tx.jupiterJournalSequence.upsert({
+      where: {
+        companyCode_journalId_fiscalYear: {
+          companyCode: entry.companyCode,
+          journalId: entry.journalId,
+          fiscalYear,
+        },
       },
-    },
-    create: { companyCode: entry.companyCode, journalId: entry.journalId, fiscalYear, nextNo: 2 },
-    update: { nextNo: { increment: 1 } },
-    select: { nextNo: true },
-  });
-  const assigned = sequence.nextNo - 1;
-  return `${entry.journal.code}/${fiscalYear}/${String(assigned).padStart(6, '0')}`;
+      create: { companyCode: entry.companyCode, journalId: entry.journalId, fiscalYear, nextNo: 2 },
+      update: { nextNo: { increment: 1 } },
+      select: { nextNo: true },
+    });
+    const assigned = sequence.nextNo - 1;
+    const candidate = `${entry.journal.code}/${fiscalYear}/${String(assigned).padStart(6, '0')}`;
+    const collision = await tx.jupiterJournalEntry.findUnique({
+      where: { companyCode_entryNo: { companyCode: entry.companyCode, entryNo: candidate } },
+      select: { id: true },
+    });
+    if (!collision) return candidate;
+  }
+  throw new Error(`Could not assign a unique entry number after ${ENTRY_NUMBER_ATTEMPTS} attempts`);
+}
+
+function isEntryNumberCollision(error: unknown): boolean {
+  if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== 'P2002') return false;
+  const target = error.meta?.target;
+  if (Array.isArray(target)) return target.includes('companyCode') && target.includes('entryNo');
+  return typeof target === 'string' && target.includes('companyCode') && target.includes('entryNo');
+}
+
+async function retryEntryNumberCollision<T>(operation: () => Promise<T>): Promise<T> {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      if (!isEntryNumberCollision(error) || attempt >= ENTRY_NUMBER_ATTEMPTS) throw error;
+    }
+  }
 }
 
 async function postInTransaction(
@@ -242,10 +268,10 @@ export async function postJournalEntry(
   client: PrismaClient = prisma,
   expectedVersion?: number,
 ): Promise<LoadedEntry> {
-  return client.$transaction(
+  return retryEntryNumberCollision(() => client.$transaction(
     (tx) => postInTransaction(tx, entryId, actor, expectedVersion),
     { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
-  );
+  ));
 }
 
 export async function reverseJournalEntry(
@@ -259,7 +285,7 @@ export async function reverseJournalEntry(
   if (!reason.trim()) throw new LedgerPostingError('reason_required', 'A reversal reason is required');
   const parsedDate = parseAccountingDate(reversalDate);
 
-  return client.$transaction(async (tx) => {
+  return retryEntryNumberCollision(() => client.$transaction(async (tx) => {
     await lockEntry(tx, entryId);
     const original = await loadEntry(tx, entryId);
     if (expectedVersion !== undefined && original.version !== expectedVersion) {
@@ -331,7 +357,7 @@ export async function reverseJournalEntry(
       },
     });
     return postInTransaction(tx, reversal.id, actor);
-  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }));
 }
 
 export async function voidJournalEntry(

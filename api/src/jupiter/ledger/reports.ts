@@ -127,16 +127,28 @@ export async function partnerLedger(
       entry: {
         companyCode: filters.companyCode,
         state: 'posted',
-        entryDate: inclusiveDates(filters.from, filters.to),
+        ...(filters.to ? { entryDate: { lte: parseAccountingDate(filters.to) } } : {}),
       },
     },
     include: { entry: true, account: true, partner: true },
     orderBy: [{ partner: { displayName: 'asc' } }, { entry: { entryDate: 'asc' } }, { entry: { entryNo: 'asc' } }, { lineNo: 'asc' }],
   });
-  const balances = new Map<string, Prisma.Decimal>();
-  return lines.map((line) => {
+  const from = filters.from ? parseAccountingDate(filters.from) : null;
+  const openings = new Map<string, Prisma.Decimal>();
+  const periodLines = lines.filter((line) => {
+    if (!from || line.entry.entryDate >= from) return true;
     const key = line.partnerId ?? '';
-    const balance = (balances.get(key) ?? new Prisma.Decimal(0)).plus(line.debit).minus(line.credit);
+    if (line.account.accountType === 'asset_receivable' || line.account.accountType === 'liability_payable') {
+      const opening = (openings.get(key) ?? new Prisma.Decimal(0)).plus(line.debit).minus(line.credit);
+      openings.set(key, opening);
+    }
+    return false;
+  });
+  const balances = new Map(openings);
+  return periodLines.map((line) => {
+    const key = line.partnerId ?? '';
+    const opening = openings.get(key) ?? new Prisma.Decimal(0);
+    const balance = (balances.get(key) ?? opening).plus(line.debit).minus(line.credit);
     balances.set(key, balance);
     return {
       rowType: 'detail',
@@ -155,6 +167,7 @@ export async function partnerLedger(
       lineName: line.label,
       debit: moneyToString(line.debit),
       credit: moneyToString(line.credit),
+      openingBalance: moneyToString(opening),
       balance: moneyToString(balance),
       lineId: line.id,
       rescueLineId: rescueId(line.sourceRef, line.id),
@@ -163,31 +176,56 @@ export async function partnerLedger(
   });
 }
 
-function csvCell(value: unknown): string {
-  const text = value === null || value === undefined ? '' : String(value);
+function csvCell(value: unknown, formulaGuard: boolean): string {
+  const raw = value === null || value === undefined ? '' : String(value);
+  const text = formulaGuard && /^[=+\-@]/.test(raw) ? `'${raw}` : raw;
   return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 }
 
-export function rfc4180Csv(headers: readonly string[], rows: readonly (readonly unknown[])[]): string {
-  return `\uFEFF${[headers, ...rows].map((row) => row.map(csvCell).join(',')).join('\r\n')}\r\n`;
+export function rfc4180Csv(
+  headers: readonly string[],
+  rows: readonly (readonly unknown[])[],
+  amountColumns: readonly number[] = [],
+): string {
+  const amounts = new Set(amountColumns);
+  return `\uFEFF${[headers, ...rows].map((row, rowIndex) => row
+    .map((value, columnIndex) => csvCell(value, rowIndex > 0 && !amounts.has(columnIndex))).join(',')).join('\r\n')}\r\n`;
 }
 
 export function trialBalanceCsv(rows: Awaited<ReturnType<typeof trialBalance>>): string {
   const headers = ['account_id', 'account_code', 'account_name', 'debit', 'credit', 'balance', 'line_count'];
   return rfc4180Csv(headers, rows.map((row) => [
     row.rescueAccountId, row.accountCode, row.accountName, row.periodDebit, row.periodCredit, row.closingBalance, row.lineCount,
-  ]));
+  ]), [3, 4, 5]);
 }
 
-export function partnerLedgerCsv(rows: Awaited<ReturnType<typeof partnerLedger>>): string {
+export function partnerLedgerCsv(
+  rows: Awaited<ReturnType<typeof partnerLedger>>,
+  includeZeroOpening = false,
+): string {
   const headers = [
     'row_type', 'partner_id', 'partner_name', 'date', 'move_id', 'move_name', 'move_ref',
     'account_id', 'account_code', 'account_name', 'line_name', 'debit', 'credit', 'balance', 'line_id', 'parent_state',
   ];
-  return rfc4180Csv(headers, rows.map((row) => [
-    row.rowType, row.rescuePartnerId, row.partnerName, row.date, row.rescueMoveId, row.moveName, row.moveRef,
-    row.rescueAccountId, row.accountCode, row.accountName, row.lineName, row.debit, row.credit, row.balance, row.rescueLineId, row.parentState,
-  ]));
+  const csvRows: unknown[][] = [];
+  const seenPartners = new Set<string>();
+  for (const row of rows) {
+    const partnerKey = row.partnerId ?? row.rescuePartnerId ?? '';
+    if (!seenPartners.has(partnerKey)) {
+      seenPartners.add(partnerKey);
+      if (includeZeroOpening || row.openingBalance !== '0.00') {
+        csvRows.push([
+          'opening', row.rescuePartnerId, row.partnerName, '', '', '', '', '', '', '', 'Opening balance',
+          '0.00', '0.00', row.openingBalance, '', 'posted',
+        ]);
+      }
+    }
+    csvRows.push([
+      row.rowType, row.rescuePartnerId, row.partnerName, row.date, row.rescueMoveId, row.moveName, row.moveRef,
+      row.rescueAccountId, row.accountCode, row.accountName, row.lineName, row.debit, row.credit, row.balance, row.rescueLineId, row.parentState,
+    ]);
+  }
+  return rfc4180Csv(headers, csvRows, [11, 12, 13]);
 }
 
 export function generalLedgerCsv(rows: Awaited<ReturnType<typeof generalLedger>>): string {
@@ -198,5 +236,5 @@ export function generalLedgerCsv(rows: Awaited<ReturnType<typeof generalLedger>>
   return rfc4180Csv(headers, rows.map((row) => [
     row.date, row.rescueMoveId, row.entryNo, row.journalCode, row.ref, row.lineNo, row.rescueLineId,
     row.rescueAccountId, row.accountCode, row.accountName, row.rescuePartnerId, row.partnerName, row.label, row.debit, row.credit, row.parentState,
-  ]));
+  ]), [13, 14]);
 }
