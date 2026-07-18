@@ -377,7 +377,7 @@ function ManagementApp({ isCeo }: { isCeo: boolean }) {
             home, no bottom bar, no "more" — every destination is a tab here. Mobile never
             renders this (hidden below lg:), so the existing role homes + MoreMenu are
             completely untouched below lg:. */}
-        <div className="hidden lg:flex max-w-5xl mx-auto px-4 gap-2 overflow-x-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
+        <div className="hidden lg:flex lg:flex-wrap max-w-5xl mx-auto px-4 gap-2">
           {desktopTabGroups.map((group, index) => (
             <div key={group.caption} className={`flex flex-col shrink-0 ${index > 0 ? 'border-l border-slate-200 pl-2' : ''}`}>
               <div className="text-[10px] leading-[13px] text-slate-400 whitespace-nowrap select-none">{group.caption}</div>
