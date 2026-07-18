@@ -422,6 +422,7 @@ model Payment {
   // figure (may differ slightly from a naive rate×gross calc to match the 50-ทวิ certificate).
   whtRate          Int                @default(0)
   whtAmount        String             @default("")
+  creditUsed       String             @default("")
   bank             String             @default("") // account received into
   transferAt       String             @default("") // when the customer transferred (as-shown on slip)
   ref              String             @default("") // transfer reference no.
@@ -482,6 +483,7 @@ model Payment {
   // Explicit mistaken-transfer classification. The discrepancy ledger owns its refund workflow.
   wrongTransferAt  DateTime?
   wrongTransferBy  String             @default("")
+  creditEntries    CustomerCreditEntry[]
   // cheque details (source='cheque' only)
   chequeNo         String             @default("")
   chequeBank       String             @default("")
@@ -497,6 +499,24 @@ model Payment {
   @@index([source])
   @@index([settleState])
   @@index([wrongTransferAt])
+}
+
+model CustomerCreditEntry {
+  id            String   @id @default(cuid())
+  customerKey   String
+  customerCode  String   @default("")
+  customerName  String   @default("")
+  kind          String
+  amountSatang  Int
+  paymentId     String
+  payment       Payment  @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  createdBy     String   @default("")
+
+  @@unique([paymentId, kind])
+  @@index([customerKey, createdAt])
+  @@index([paymentId])
 }
 
 // ─── Juno phase B (bank import + reconciliation) ─────────────────────────

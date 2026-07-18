@@ -9,8 +9,12 @@ const mocks = vi.hoisted(() => {
   const paymentBankMatch = { findMany: vi.fn(), count: vi.fn() };
   const bankTxn = { findUnique: vi.fn(), update: vi.fn(), findMany: vi.fn(), updateMany: vi.fn() };
   const reReceipt = { findMany: vi.fn() };
+  const customerCreditEntry = {
+    findUnique: vi.fn(), findMany: vi.fn(), count: vi.fn(), aggregate: vi.fn(),
+    create: vi.fn(), update: vi.fn(), upsert: vi.fn(), delete: vi.fn(),
+  };
   const syncPaymentToJupiter = vi.fn().mockResolvedValue(undefined);
-  return { role, payment, paymentBankMatch, bankTxn, reReceipt, syncPaymentToJupiter };
+  return { role, payment, paymentBankMatch, bankTxn, reReceipt, customerCreditEntry, syncPaymentToJupiter };
 });
 
 vi.mock('../src/auth/middleware.js', () => ({
@@ -22,20 +26,26 @@ vi.mock('../src/auth/middleware.js', () => ({
 }));
 vi.mock('../src/jupiter/sync.js', () => ({ syncPaymentToJupiter: mocks.syncPaymentToJupiter }));
 vi.mock('../src/db/prisma.js', () => ({
-  prisma: {
+  prisma: (() => {
+    const mocked = {
     payment: mocks.payment,
     paymentBankMatch: mocks.paymentBankMatch,
     bankTxn: mocks.bankTxn,
     reReceipt: mocks.reReceipt,
-    $transaction: vi.fn(async (arg: unknown) => Array.isArray(arg) ? Promise.all(arg) : (arg as (tx: unknown) => unknown)({})),
-  },
+    customerCreditEntry: mocks.customerCreditEntry,
+    $queryRaw: vi.fn().mockResolvedValue([]),
+    $transaction: vi.fn(),
+    };
+    mocked.$transaction.mockImplementation(async (arg: unknown) => Array.isArray(arg) ? Promise.all(arg) : (arg as (tx: unknown) => unknown)(mocked));
+    return mocked;
+  })(),
 }));
 
 import { junoRoutes } from '../src/routes/juno.js';
 
 const basePayment = (overrides: Record<string, unknown> = {}) => ({
   id: 'payment-1', customerId: null, customerCode: 'C1', customerName: 'Customer', senderName: 'Sender',
-  amount: '500.00', ocrAmount: '500.00', whtRate: 0, whtAmount: '', bank: 'KBANK', transferAt: '', ref: '',
+  amount: '500.00', ocrAmount: '500.00', whtRate: 0, whtAmount: '', creditUsed: '', bank: 'KBANK', transferAt: '', ref: '',
   slipMessageId: null, slipUrl: '', taxInvoice: '', taxInvoiceStatus: 'none', salesAgentId: null, salesName: '', note: '',
   status: 'received', flagged: false, reconciled: false, verifiedById: null, verifiedAt: null, createdAt: new Date('2026-07-18T00:00:00Z'),
   reNumber: '', reNumbers: [], billNos: [], receiptName: '', customerType: '', source: 'line', settleState: '', settledAt: null,
@@ -57,6 +67,10 @@ beforeEach(() => {
   mocks.paymentBankMatch.findMany.mockResolvedValue([]);
   mocks.paymentBankMatch.count.mockResolvedValue(0);
   mocks.reReceipt.findMany.mockResolvedValue([]);
+  mocks.customerCreditEntry.findUnique.mockResolvedValue(null);
+  mocks.customerCreditEntry.findMany.mockResolvedValue([]);
+  mocks.customerCreditEntry.count.mockResolvedValue(0);
+  mocks.customerCreditEntry.aggregate.mockResolvedValue({ _sum: { amountSatang: null } });
   mocks.payment.count.mockResolvedValue(0);
   mocks.payment.findMany.mockResolvedValue([]);
   mocks.payment.updateMany.mockResolvedValue({ count: 0 });

@@ -6,8 +6,10 @@ export interface DiscrepancyPaymentInput {
   reNumbers: string[];
   amount: string;
   whtAmount: string;
+  creditUsed?: string;
   status?: string;
   discExpected?: string;
+  wrongTransferAt?: Date | null;
 }
 
 export interface DiscrepancyReceiptInput {
@@ -42,6 +44,12 @@ export function satangToBaht(value: number): number {
 
 export function grossSatang(payment: Pick<DiscrepancyPaymentInput, 'amount' | 'whtAmount'>): number {
   return moneyToSatang(payment.amount) + moneyToSatang(payment.whtAmount);
+}
+
+export function effectivePaidSatang(
+  payment: Pick<DiscrepancyPaymentInput, 'amount' | 'whtAmount' | 'creditUsed'> & { wrongTransferAt?: Date | null },
+): number {
+  return grossSatang(payment) + (payment.wrongTransferAt ? 0 : moneyToSatang(payment.creditUsed ?? ''));
 }
 
 export function normalizeReCore(value: string): string | null {
@@ -110,7 +118,7 @@ export function buildDiscrepancyComponents(
   return [...grouped.values()].map((componentPayments) => {
     const reNumbers = [...new Set(componentPayments.flatMap((payment) => payment.reNumbers))];
     const allImported = reNumbers.length > 0 && reNumbers.every((re) => receiptAmountByRe.has(re));
-    const gross = componentPayments.reduce((sum, payment) => sum + grossSatang(payment), 0);
+    const gross = componentPayments.reduce((sum, payment) => sum + effectivePaidSatang(payment), 0);
     const expected = allImported
       ? reNumbers.reduce((sum, re) => sum + (receiptAmountByRe.get(re) ?? 0), 0)
       : 0;
@@ -123,6 +131,28 @@ export function buildDiscrepancyComponents(
       diffSatang: allImported ? gross - expected : 0,
     };
   });
+}
+
+export interface DiscrepancyDb {
+  payment: { findMany(args: { orderBy: { createdAt: 'desc' } }): Promise<DiscrepancyPaymentInput[]> };
+  reReceipt: { findMany(args: { select: { reNumber: true; amount: true } }): Promise<DiscrepancyReceiptInput[]> };
+}
+
+export async function getDiscrepancyForPayment(db: DiscrepancyDb, paymentId: string) {
+  const [payments, receipts] = await Promise.all([
+    db.payment.findMany({ orderBy: { createdAt: 'desc' } }),
+    db.reReceipt.findMany({ select: { reNumber: true, amount: true } }),
+  ]);
+  const payment = payments.find((row) => row.id === paymentId);
+  if (!payment) return null;
+  const components = buildDiscrepancyComponents(payments, receipts);
+  const expected = expectedForPayment(payment, componentByPaymentId(components).get(payment.id));
+  if (!expected) return { payment, expected: null, diffSatang: 0 };
+  return {
+    payment,
+    expected,
+    diffSatang: effectivePaidSatang(payment) - expected.expectedSatang,
+  };
 }
 
 export function componentByPaymentId(components: DiscrepancyComponent[]): Map<string, DiscrepancyComponent> {

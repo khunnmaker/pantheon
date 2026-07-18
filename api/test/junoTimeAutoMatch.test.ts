@@ -118,6 +118,21 @@ describe('Juno auto-match pass B', () => {
     expect(state.links).toEqual([{ paymentId: 'payment-1', bankTxnId: 'txn-1', createdById: null }]);
   });
 
+  it('matches bank cash only and never adds customer credit to the bank amount', async () => {
+    const credited = payment('payment-1', '04/07/2026 15:54') as ReturnType<typeof payment> & { creditUsed: string };
+    credited.creditUsed = '100.00';
+    state.payments.push({ ...credited, reconciled: false });
+    state.txns.push(txn('txn-1', '2026-07-04T15:54:00+07:00', '500.00'));
+    expect((await runAutoMatch()).json().timeMatched).toBe(1);
+
+    state.txns.length = 0;
+    state.payments.length = 0;
+    state.links.length = 0;
+    state.payments.push(credited);
+    state.txns.push(txn('txn-2', '2026-07-04T15:54:00+07:00', '600.00'));
+    expect((await runAutoMatch()).json().timeMatched).toBe(0);
+  });
+
   it('leaves two same-amount payments in the same minute unmatched', async () => {
     const agreeingPayment = payment('payment-1', '04/07/2026 15:54');
     agreeingPayment.senderName = 'Third Party Payer';

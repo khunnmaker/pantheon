@@ -3,6 +3,7 @@
 import {
   buildDiscrepancyComponents,
   expectedForPayment,
+  effectivePaidSatang,
   grossSatang,
   mismatchedMultiPaymentComponentCount,
   normalizeReCore,
@@ -22,7 +23,8 @@ const payment = (
   reNumbers: string[],
   whtAmount = '',
   discExpected = '',
-) => ({ id, amount, reNumbers, whtAmount, discExpected, status: 'verified' });
+  creditUsed = '',
+) => ({ id, amount, reNumbers, whtAmount, creditUsed, discExpected, status: 'verified' });
 
 for (const [label, amount, expectedDiff] of [
   ['over', '120.00', 2_000],
@@ -34,6 +36,20 @@ for (const [label, amount, expectedDiff] of [
     [receipt('6900001', '100.00')],
   );
   check(components.length === 1 && components[0].diffSatang === expectedDiff, `1 payment ↔ 1 RE ${label}`);
+}
+
+{
+  const p = payment('credit-shortfall', '2000.00', ['6900010'], '', '', '3000.00');
+  const [component] = buildDiscrepancyComponents([p], [receipt('6900010', '5000.00')]);
+  check(component.diffSatang === 0, '2,000 cash + 3,000 credit settles a 5,000 RE');
+  check(grossSatang(p) === 200_000 && effectivePaidSatang(p) === 500_000, 'credit changes effective paid but preserves raw gross');
+  check(computeReRow('5000.00', [p], new Map([['6900010', '5000.00']])).status === 'matched', 'GET /re helper matches cash plus credit');
+}
+
+{
+  const p = payment('wht-credit', '1900.00', ['6900011'], '100.00', '', '3000.00');
+  const [component] = buildDiscrepancyComponents([p], [receipt('6900011', '5000.00')]);
+  check(component.diffSatang === 0 && grossSatang(p) === 200_000, 'cash + WHT + credit settles exactly while raw gross excludes credit');
 }
 
 {
@@ -54,10 +70,11 @@ for (const [label, amount, expectedDiff] of [
 }
 
 {
-  const wrong = payment('wrong-transfer', '725.50', [], '', '0');
+  const wrong = { ...payment('wrong-transfer', '725.50', [], '', '0', '900.00'), wrongTransferAt: new Date() };
   const expected = expectedForPayment(wrong);
   check(expected?.expectedSatang === 0, 'wrong transfer uses typed expected zero without an RE');
   check(grossSatang(wrong) - (expected?.expectedSatang ?? 0) === 72_550, 'wrong-transfer refund equals the whole incoming gross');
+  check(effectivePaidSatang(wrong) === 72_550, 'wrong transfer always ignores customer credit');
   check(normalizeReCore('0000000') === null, 'wrong-transfer sentinel is excluded from RE components');
   check(buildDiscrepancyComponents([payment('legacy', '10', ['0000000'])], []).length === 0, 'legacy sentinel cannot enter RE reconciliation');
   check(buildDiscrepancyComponents([{ ...payment('void', '10', ['6900099']), status: 'void' }], [receipt('6900099', '10')]).length === 0, 'void payments stay outside active discrepancy components');

@@ -62,6 +62,8 @@ export interface Payment {
   whtRate: number;
   whtAmount: string;
   grossAmount: number;
+  creditUsed: string;
+  effectivePaidAmount: number;
   bank: string;
   transferAt: string;
   ref: string;
@@ -196,10 +198,23 @@ async function authed<T>(path: string, init?: RequestInit): Promise<T> {
   if (res.status === 403) throw new Error('forbidden');
   if (!res.ok) {
     const payload = await res.json().catch(() => ({})) as { error?: string; message?: string };
-    throw new Error(payload.error || payload.message || `HTTP ${res.status}`);
+    throw new Error(payload.message || (payload.error ? API_ERROR_MESSAGES[payload.error] : '') || payload.error || `HTTP ${res.status}`);
   }
   return res.json() as Promise<T>;
 }
+
+const API_ERROR_MESSAGES: Record<string, string> = {
+  credit_customer_required: 'กรุณากรอกรหัสลูกค้าหรือชื่อลูกค้าก่อนยืนยันเครดิต',
+  credit_overpay_required: 'สร้างเครดิตได้เฉพาะรายการยอดเกินที่มากกว่า 0',
+  credit_insufficient: 'เครดิตลูกค้าคงเหลือไม่พอ',
+  credit_wrong_transfer: 'รายการโอนเงินผิดไม่สามารถใช้เครดิตลูกค้าได้',
+  credit_grant_spent: 'เครดิตจากรายการนี้ถูกใช้ไปแล้ว',
+  credit_grant_locked: 'กรุณายกเลิกยืนยันเครดิตก่อนแก้ยอดตามเอกสาร',
+  credit_customer_locked: 'กรุณาล้างการใช้เครดิตหรือยกเลิกยืนยันเครดิตก่อนแก้ข้อมูลลูกค้า',
+};
+
+export const apiErrorMessage = (error: unknown, fallback = 'บันทึกไม่สำเร็จ — ลองใหม่อีกครั้ง'): string =>
+  error instanceof Error && error.message ? error.message : fallback;
 
 export async function login(email: string, password: string): Promise<{ token: string; agent: Agent }> {
   const res = await fetch(`${API_URL}/api/auth/login`, {
@@ -413,6 +428,7 @@ export const verifyPayment = (
     customerType?: CustomerType;
     whtRate?: WhtRate;
     whtAmount?: string;
+    creditUsed?: string;
     discExpected?: string;
   },
 ) =>
@@ -438,6 +454,8 @@ export interface DiscrepancyRow {
   expected: number;
   expectedSource: 'typed' | 're';
   gross: number;
+  creditUsed: number;
+  effectivePaid: number;
   diff: number;
   direction: DiscrepancyDirection;
   discExpected: string;
@@ -460,6 +478,45 @@ export interface DiscrepancyResponse {
 }
 
 export const getDiscrepancies = () => authed<DiscrepancyResponse>('/api/juno/discrepancies');
+
+export interface PaymentCreditBalance {
+  customerKey: string | null;
+  balance: number;
+  currentUsed: number;
+  availableToPayment: number;
+  canSpend: boolean;
+}
+
+export interface CustomerCreditHistoryEntry {
+  id: string;
+  kind: 'grant' | 'spend';
+  amount: number;
+  paymentId: string;
+  transferAt: string;
+  createdAt: string;
+  paymentCreatedAt: string;
+  reNumbers: string[];
+  actor: string;
+}
+
+export interface CustomerCredit {
+  customerKey: string;
+  customerCode: string;
+  customerName: string;
+  balance: number;
+  history: CustomerCreditHistoryEntry[];
+}
+
+export interface CustomerCreditsResponse {
+  totalOutstanding: number;
+  customers: CustomerCredit[];
+}
+
+export const getPaymentCreditBalance = (id: string) =>
+  authed<PaymentCreditBalance>(`/api/juno/payments/${id}/credit-balance`);
+
+export const getCustomerCredits = () =>
+  authed<CustomerCreditsResponse>('/api/juno/customer-credits');
 
 export const setDiscrepancyExpected = (id: string, expected: string) =>
   authed<{ ok: boolean; payment: Payment }>(`/api/juno/payments/${id}/discrepancy`, {

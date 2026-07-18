@@ -2,7 +2,9 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, Check, CheckCircle2, Loader2, RefreshCw, Scale, Undo2 } from 'lucide-react';
 import {
   baht,
+  apiErrorMessage,
   confirmDiscrepancy,
+  getCustomerCredits,
   getDiscrepancies,
   resolveDiscrepancy,
   setDiscrepancyExpected,
@@ -11,6 +13,7 @@ import {
   type DiscResolution,
   type DiscrepancyResponse,
   type DiscrepancyRow,
+  type CustomerCreditsResponse,
   type Payment,
 } from './lib/api';
 
@@ -49,6 +52,7 @@ function StateBadge({ row }: { row: DiscrepancyRow }) {
 
 export default function Discrepancies({ isCeo, onChanged }: { isCeo: boolean; onChanged: () => void }) {
   const [data, setData] = useState<DiscrepancyResponse | null>(null);
+  const [credits, setCredits] = useState<CustomerCreditsResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [direction, setDirection] = useState<'all' | 'over' | 'under'>('all');
@@ -58,8 +62,8 @@ export default function Discrepancies({ isCeo, onChanged }: { isCeo: boolean; on
   const load = useCallback(() => {
     setLoading(true);
     setError('');
-    getDiscrepancies()
-      .then(setData)
+    Promise.all([getDiscrepancies(), getCustomerCredits()])
+      .then(([discrepancies, customerCredits]) => { setData(discrepancies); setCredits(customerCredits); })
       .catch(() => setError('โหลดข้อมูลยอดเกิน/ขาดไม่สำเร็จ'))
       .finally(() => setLoading(false));
   }, []);
@@ -79,10 +83,11 @@ export default function Discrepancies({ isCeo, onChanged }: { isCeo: boolean; on
         <h1 className="text-lg font-bold text-slate-800">ยอดเกิน/ขาด</h1>
       </div>
 
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <SummaryCard label="Σ เกิน (เปิดอยู่)" count={data?.totals.over.count} value={data?.totals.over.sum} tone="text-emerald-700" />
         <SummaryCard label="Σ ขาด (เปิดอยู่)" count={data?.totals.under.count} value={Math.abs(data?.totals.under.sum ?? 0)} tone="text-rose-700" />
         <SummaryCard label="รอ CEO ยืนยัน" count={data?.totals.pendingConfirm} tone="text-amber-700" />
+        <SummaryCard label="เครดิตคงเหลือ" value={credits?.totalOutstanding} tone="text-sky-700" />
       </div>
       {!!data?.groupHints && (
         <div className="inline-flex rounded-full border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs font-medium text-amber-700">
@@ -122,7 +127,7 @@ export default function Discrepancies({ isCeo, onChanged }: { isCeo: boolean; on
                       {row.wrongTransfer && <div className="mt-1 inline-flex rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-semibold text-rose-700">โอนเงินผิด</div>}
                       <div className="mt-1 flex flex-wrap gap-1">{row.reNumbers.map((re) => <span key={re} className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-600">RE {re}</span>)}</div>
                     </td>
-                    <td className="px-3 py-3 text-right font-semibold whitespace-nowrap">{baht(row.gross)}</td>
+                    <td className="px-3 py-3 text-right font-semibold whitespace-nowrap">{baht(row.gross)}{row.creditUsed > 0 && <div className="text-[10px] font-normal text-emerald-700">ใช้เครดิต {baht(row.creditUsed)}</div>}</td>
                     <td className="px-3 py-3 text-right whitespace-nowrap">{baht(row.expected)}<div className="text-[10px] text-slate-400">{row.wrongTransfer ? 'ไม่มีเอกสารขาย' : row.expectedSource === 'typed' ? 'FIN กรอก' : 'จาก RE'}</div></td>
                     <td className={`px-3 py-3 text-right font-bold whitespace-nowrap ${row.wrongTransfer ? 'text-rose-700' : row.diff > 0 ? 'text-emerald-700' : row.diff < 0 ? 'text-rose-700' : 'text-sky-700'}`}>{row.wrongTransfer ? `ต้องคืน ${baht(row.gross)}` : signedDiff(row.diff)}</td>
                     <td className="px-3 py-3"><StateBadge row={row} />{row.discResolution && <div className="mt-1 text-[11px] text-slate-500">{RESOLUTION_LABELS[row.discResolution]}</div>}</td>
@@ -142,13 +147,42 @@ export default function Discrepancies({ isCeo, onChanged }: { isCeo: boolean; on
         )}
       </div>
 
+      {credits && <CustomerCreditList data={credits} />}
+
       {editing && <ResolutionDialog row={editing} onClose={() => setEditing(null)} onChanged={() => { setEditing(null); changed(); }} />}
     </div>
   );
 }
 
 function SummaryCard({ label, count, value, tone }: { label: string; count?: number; value?: number; tone: string }) {
-  return <div className="rounded-xl border border-slate-200 bg-white p-4"><div className="text-xs text-slate-400">{label}</div><div className={`text-2xl font-bold ${tone}`}>{count ?? '—'}</div>{value !== undefined && <div className="text-sm text-slate-500">{baht(value)}</div>}</div>;
+  return <div className="rounded-xl border border-slate-200 bg-white p-4"><div className="text-xs text-slate-400">{label}</div><div className={`text-2xl font-bold ${tone}`}>{count ?? (value !== undefined ? baht(value) : '—')}</div>{count !== undefined && value !== undefined && <div className="text-sm text-slate-500">{baht(value)}</div>}</div>;
+}
+
+function CustomerCreditList({ data }: { data: CustomerCreditsResponse }) {
+  const [showZero, setShowZero] = useState(false);
+  const [open, setOpen] = useState<Set<string>>(new Set());
+  const customers = data.customers.filter((customer) => showZero || customer.balance > 0);
+  const toggle = (key: string) => setOpen((current) => {
+    const next = new Set(current);
+    if (next.has(key)) next.delete(key); else next.add(key);
+    return next;
+  });
+  return <section className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+    <div className="flex items-center justify-between border-b border-slate-100 p-3">
+      <div><div className="font-semibold text-slate-800">เครดิตลูกค้า</div><div className="text-xs text-slate-400">ประวัติล่าสุดไม่เกิน 50 รายการต่อลูกค้า</div></div>
+      <button onClick={() => setShowZero((value) => !value)} className="text-xs font-medium text-emerald-700">{showZero ? 'ซ่อนประวัติที่ใช้หมดแล้ว' : 'ดูประวัติที่ใช้หมดแล้ว'}</button>
+    </div>
+    {customers.length === 0 ? <div className="p-6 text-center text-sm text-slate-400">ไม่มีเครดิตคงเหลือ</div> : <div className="divide-y divide-slate-100">{customers.map((customer) => <div key={customer.customerKey}>
+      <button onClick={() => toggle(customer.customerKey)} className="flex w-full items-center justify-between gap-3 p-3 text-left hover:bg-slate-50">
+        <span><span className="font-medium text-slate-800">{[customer.customerCode, customer.customerName].filter(Boolean).join(' · ') || customer.customerKey}</span><span className="block text-[11px] text-slate-400">{customer.customerKey}</span></span>
+        <span className="font-bold text-emerald-700">{baht(customer.balance)}</span>
+      </button>
+      {open.has(customer.customerKey) && <div className="space-y-1 bg-slate-50 px-3 py-2">{customer.history.map((entry) => <div key={entry.id} className="flex items-start justify-between gap-3 rounded-lg bg-white px-3 py-2 text-xs">
+        <div><div className="text-slate-600">{entry.transferAt || fmtDate(entry.paymentCreatedAt)} · {entry.reNumbers.length ? `RE ${entry.reNumbers.join(' / ')}` : 'ไม่มี RE'}</div><div className="text-[10px] text-slate-400" title={entry.paymentId}>รายการ {entry.paymentId.slice(-8)}{entry.actor ? ` · ${entry.actor}` : ''}</div></div>
+        <span className={`font-bold ${entry.kind === 'grant' ? 'text-emerald-700' : 'text-rose-700'}`}>{entry.kind === 'grant' ? '+' : '−'} {baht(entry.amount)}</span>
+      </div>)}</div>}
+    </div>)}</div>}
+  </section>;
 }
 
 function ChipGroup<T extends string>({ value, onChange, options }: { value: T; onChange: (value: T) => void; options: [T, string][] }) {
@@ -157,7 +191,7 @@ function ChipGroup<T extends string>({ value, onChange, options }: { value: T; o
 
 function ConfirmButton({ row, onChanged }: { row: DiscrepancyRow; onChanged: () => void }) {
   const [busy, setBusy] = useState(false);
-  async function run() { setBusy(true); try { await confirmDiscrepancy(row.id, !row.discConfirmedAt); onChanged(); } catch { window.alert('ยืนยันไม่สำเร็จ — ลองใหม่อีกครั้ง'); } finally { setBusy(false); } }
+  async function run() { setBusy(true); try { await confirmDiscrepancy(row.id, !row.discConfirmedAt); onChanged(); } catch (error) { window.alert(apiErrorMessage(error, 'ยืนยันไม่สำเร็จ — ลองใหม่อีกครั้ง')); } finally { setBusy(false); } }
   return <button disabled={busy} onClick={run} className="ml-1.5 rounded-lg border border-slate-200 px-2 py-1.5 text-xs text-slate-600 hover:bg-slate-50 disabled:opacity-50">{busy ? <Loader2 size={13} className="inline animate-spin" /> : row.discConfirmedAt ? <><Undo2 size={13} className="inline" /> ยกเลิกยืนยัน</> : <><Check size={13} className="inline" /> ยืนยัน</>}</button>;
 }
 
@@ -175,7 +209,7 @@ function ResolutionDialog({ row, onClose, onChanged }: { row: DiscrepancyRow; on
       if (!row.wrongTransfer) await setDiscrepancyExpected(row.id, expected.trim());
       await resolveDiscrepancy(row.id, resolution, note.trim() || undefined);
       onChanged();
-    } catch { setError('บันทึกไม่สำเร็จ — ตรวจสอบยอดและลองใหม่'); } finally { setBusy(false); }
+    } catch (caught) { setError(apiErrorMessage(caught, 'บันทึกไม่สำเร็จ — ตรวจสอบยอดและลองใหม่')); } finally { setBusy(false); }
   }
   return <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/50 p-4" onClick={onClose}><div className="w-full max-w-md space-y-3 rounded-2xl bg-white p-4" onClick={(e) => e.stopPropagation()}>
     <div className="font-semibold text-slate-800">{row.wrongTransfer ? `โอนเงินผิด — ต้องคืน ${baht(row.gross)}` : 'บันทึกการจัดการส่วนต่าง'}</div>
@@ -208,10 +242,10 @@ export function PaymentDiscrepancyBlock({ payment, isCeo, onUpdated }: { payment
   if (!row && !hasStamps) return null;
   const direction = row?.direction ?? 'balanced';
   const options: Exclude<DiscResolution, ''>[] = payment.wrongTransfer ? ['refund'] : direction === 'under' ? ['chase', 'writeoff'] : ['refund', 'credit', 'writeoff'];
-  async function run(key: string, action: () => Promise<{ payment: Payment }>) { setBusy(key); setErr(''); try { const result = await action(); onUpdated(result.payment); load(); } catch { setErr('บันทึกไม่สำเร็จ — ตรวจสอบยอดและลองใหม่'); } finally { setBusy(''); } }
+  async function run(key: string, action: () => Promise<{ payment: Payment }>) { setBusy(key); setErr(''); try { const result = await action(); onUpdated(result.payment); load(); } catch (caught) { setErr(apiErrorMessage(caught, 'บันทึกไม่สำเร็จ — ตรวจสอบยอดและลองใหม่')); } finally { setBusy(''); } }
   return <div className="mx-4 mt-3 space-y-2 rounded-lg border border-emerald-200 bg-emerald-50/40 p-3 text-xs">
     <div className="flex items-center justify-between"><span className="font-semibold text-slate-700">{payment.wrongTransfer ? 'โอนเงินผิด' : 'ส่วนต่างยอด'}</span>{row && <span className={`font-bold ${payment.wrongTransfer ? 'text-rose-700' : row.diff > 0 ? 'text-emerald-700' : row.diff < 0 ? 'text-rose-700' : 'text-sky-700'}`}>{payment.wrongTransfer ? `ต้องคืน ${baht(row.gross)}` : signedDiff(row.diff)}</span>}</div>
-    {row && <div className="text-slate-500">{payment.wrongTransfer ? 'ไม่มีเอกสารขาย · ยอดรับเข้าทั้งหมดต้องโอนคืน' : `ยอดเต็ม ${baht(row.gross)} · ยอดตาม RE ${baht(row.expected)} (${row.expectedSource === 'typed' ? 'FIN กรอก' : 'จาก RE'})`}</div>}
+    {row && <div className="text-slate-500">{payment.wrongTransfer ? 'ไม่มีเอกสารขาย · ยอดรับเข้าทั้งหมดต้องโอนคืน' : `ยอดเต็ม ${baht(row.gross)}${row.creditUsed > 0 ? ` · ใช้เครดิต ${baht(row.creditUsed)} · ชำระรวม ${baht(row.effectivePaid)}` : ''} · ยอดตาม RE ${baht(row.expected)} (${row.expectedSource === 'typed' ? 'FIN กรอก' : 'จาก RE'})`}</div>}
     {!payment.wrongTransfer && <div className="flex gap-1.5"><input value={expected} onChange={(e) => setExpected(e.target.value)} inputMode="decimal" placeholder="ยอดตาม RE" className="min-w-0 flex-1 rounded-lg border border-slate-300 px-2 py-1.5" /><button disabled={!!busy} onClick={() => run('expected', () => setDiscrepancyExpected(payment.id, expected.trim()))} className="rounded-lg bg-white px-2 py-1.5 text-emerald-700 border border-emerald-200">ปรับยอด</button>{payment.discExpected && <button disabled={!!busy} onClick={() => run('expected', () => setDiscrepancyExpected(payment.id, ''))} className="text-slate-500">ใช้ RE</button>}</div>}
     <select value={resolution} onChange={(e) => setResolution(e.target.value as DiscResolution)} className="w-full rounded-lg border border-slate-300 bg-white px-2 py-1.5"><option value="">เลือกวิธีจัดการ</option>{options.map((key) => <option key={key} value={key}>{RESOLUTION_LABELS[key]}</option>)}</select>
     <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2} placeholder="หมายเหตุ" className="w-full rounded-lg border border-slate-300 px-2 py-1.5" />

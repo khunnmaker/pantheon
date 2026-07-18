@@ -1,0 +1,163 @@
+import { Prisma, type Payment } from '@prisma/client';
+import { moneyToSatang, satangToBaht } from './discrepancy.js';
+
+export type CreditErrorCode =
+  | 'credit_customer_required'
+  | 'credit_overpay_required'
+  | 'credit_insufficient'
+  | 'credit_wrong_transfer'
+  | 'credit_grant_spent'
+  | 'credit_grant_locked'
+  | 'credit_customer_locked';
+
+const CREDIT_MESSAGES: Record<CreditErrorCode, string> = {
+  credit_customer_required: 'กรุณากรอกรหัสลูกค้าหรือชื่อลูกค้าก่อนยืนยันเครดิต',
+  credit_overpay_required: 'สร้างเครดิตได้เฉพาะรายการยอดเกินที่มากกว่า 0',
+  credit_insufficient: 'เครดิตลูกค้าคงเหลือไม่พอ',
+  credit_wrong_transfer: 'รายการโอนเงินผิดไม่สามารถใช้เครดิตลูกค้าได้',
+  credit_grant_spent: 'เครดิตจากรายการนี้ถูกใช้ไปแล้ว',
+  credit_grant_locked: 'กรุณายกเลิกยืนยันเครดิตก่อนแก้ยอดตามเอกสาร',
+  credit_customer_locked: 'กรุณาล้างการใช้เครดิตหรือยกเลิกยืนยันเครดิตก่อนแก้ข้อมูลลูกค้า',
+};
+
+export class CustomerCreditError extends Error {
+  constructor(public code: CreditErrorCode, public detail?: Record<string, unknown>, message = CREDIT_MESSAGES[code]) {
+    super(message);
+  }
+}
+
+export const creditErrorMessage = (code: CreditErrorCode): string => CREDIT_MESSAGES[code];
+
+export function customerCreditKey(payment: Pick<Payment, 'customerCode' | 'customerName'>): string | null {
+  return payment.customerCode.trim() || payment.customerName.trim() || null;
+}
+
+export type CreditTx = Prisma.TransactionClient;
+
+export async function lockPayment(tx: CreditTx, paymentId: string): Promise<void> {
+  await tx.$queryRaw`SELECT "id" FROM "Payment" WHERE "id" = ${paymentId} FOR UPDATE`;
+}
+
+export async function lockCustomer(tx: CreditTx, customerKey: string): Promise<void> {
+  await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${customerKey}, 0))`;
+}
+
+export async function customerBalanceSatang(tx: CreditTx, customerKey: string, lock = true): Promise<number> {
+  if (lock) await lockCustomer(tx, customerKey);
+  const aggregate = await tx.customerCreditEntry.aggregate({
+    where: { customerKey },
+    _sum: { amountSatang: true },
+  });
+  return aggregate._sum.amountSatang ?? 0;
+}
+
+export async function grantCredit(
+  tx: CreditTx,
+  payment: Pick<Payment, 'id' | 'customerCode' | 'customerName'>,
+  amountSatang: number,
+  actor: string,
+) {
+  const existing = await tx.customerCreditEntry.findUnique({
+    where: { paymentId_kind: { paymentId: payment.id, kind: 'grant' } },
+  });
+  if (existing) return existing;
+  if (amountSatang <= 0) throw new CustomerCreditError('credit_overpay_required');
+  const customerKey = customerCreditKey(payment);
+  if (!customerKey) throw new CustomerCreditError('credit_customer_required');
+  await lockCustomer(tx, customerKey);
+  return tx.customerCreditEntry.create({
+    data: {
+      customerKey,
+      customerCode: payment.customerCode.trim(),
+      customerName: payment.customerName.trim(),
+      kind: 'grant',
+      amountSatang,
+      paymentId: payment.id,
+      createdBy: actor,
+    },
+  });
+}
+
+export async function removeGrant(tx: CreditTx, paymentId: string, message?: string): Promise<boolean> {
+  const grant = await tx.customerCreditEntry.findUnique({
+    where: { paymentId_kind: { paymentId, kind: 'grant' } },
+  });
+  if (!grant) return false;
+  await lockCustomer(tx, grant.customerKey);
+  const balance = await customerBalanceSatang(tx, grant.customerKey, false);
+  if (balance - grant.amountSatang < 0) {
+    throw new CustomerCreditError('credit_grant_spent', undefined, message);
+  }
+  await tx.customerCreditEntry.delete({ where: { id: grant.id } });
+  return true;
+}
+
+export async function replaceSpend(
+  tx: CreditTx,
+  payment: Pick<Payment, 'id' | 'customerCode' | 'customerName' | 'wrongTransferAt'>,
+  requestedSatang: number,
+  actor: string,
+) {
+  const current = await tx.customerCreditEntry.findUnique({
+    where: { paymentId_kind: { paymentId: payment.id, kind: 'spend' } },
+  });
+  if (requestedSatang <= 0) {
+    if (current) {
+      await lockCustomer(tx, current.customerKey);
+      await tx.customerCreditEntry.delete({ where: { id: current.id } });
+    }
+    return { amountSatang: 0, availableSatang: 0 };
+  }
+  if (payment.wrongTransferAt) throw new CustomerCreditError('credit_wrong_transfer');
+  const customerKey = customerCreditKey(payment);
+  if (!customerKey) throw new CustomerCreditError('credit_customer_required');
+  await lockCustomer(tx, customerKey);
+  const balance = await customerBalanceSatang(tx, customerKey, false);
+  const availableSatang = balance - (current?.amountSatang ?? 0);
+  if (requestedSatang > availableSatang) {
+    const available = satangToBaht(Math.max(0, availableSatang));
+    throw new CustomerCreditError(
+      'credit_insufficient',
+      { available },
+      `เครดิตลูกค้าคงเหลือไม่พอ (ใช้ได้ ฿${available.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})`,
+    );
+  }
+  const entry = await tx.customerCreditEntry.upsert({
+    where: { paymentId_kind: { paymentId: payment.id, kind: 'spend' } },
+    create: {
+      customerKey,
+      customerCode: payment.customerCode.trim(),
+      customerName: payment.customerName.trim(),
+      kind: 'spend',
+      amountSatang: -requestedSatang,
+      paymentId: payment.id,
+      createdBy: actor,
+    },
+    update: { amountSatang: -requestedSatang, updatedAt: new Date(), createdBy: actor },
+  });
+  return { entry, amountSatang: requestedSatang, availableSatang };
+}
+
+export async function releaseSpend(tx: CreditTx, paymentId: string): Promise<boolean> {
+  const spend = await tx.customerCreditEntry.findUnique({
+    where: { paymentId_kind: { paymentId, kind: 'spend' } },
+  });
+  if (!spend) return false;
+  await lockCustomer(tx, spend.customerKey);
+  await tx.customerCreditEntry.delete({ where: { id: spend.id } });
+  return true;
+}
+
+export async function paymentHasCreditEntries(tx: CreditTx, paymentId: string): Promise<boolean> {
+  return (await tx.customerCreditEntry.count({ where: { paymentId } })) > 0;
+}
+
+export async function paymentHasGrant(tx: CreditTx, paymentId: string): Promise<boolean> {
+  return !!(await tx.customerCreditEntry.findUnique({
+    where: { paymentId_kind: { paymentId, kind: 'grant' } }, select: { id: true },
+  }));
+}
+
+export function normalizedCreditUsed(value: string): string {
+  return moneyToSatang(value) > 0 ? value.trim() : '';
+}

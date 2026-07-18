@@ -26,6 +26,10 @@ export function grossOf(p: { amount: string; whtAmount: string }): number {
   return num(p.amount) + num(p.whtAmount || '0');
 }
 
+export function effectivePaidOf(p: { amount: string; whtAmount: string; creditUsed?: string }): number {
+  return grossOf(p) + num(p.creditUsed || '0');
+}
+
 // Rounding tolerance for the transfer↔receipts gross comparison. The receipt amounts are satang-
 // exact, so the only drift is per-payment WHT rounding summed across a multi-RE transfer — a small
 // tolerance absorbs that without masking a genuine short-/over-payment (those are far larger).
@@ -37,6 +41,7 @@ export interface ReReconPayment {
   reNumbers: string[];
   amount: string;
   whtAmount: string;
+  creditUsed?: string;
 }
 
 export interface ReRowResult {
@@ -88,7 +93,7 @@ export function computeReRow(
       anyUnresolved = true; // can't fully price this transfer — leave it unresolved, not mismatched
       continue;
     }
-    const gross = grossOf(p);
+    const gross = effectivePaidOf(p);
     // apportion the real gross across the transfer's receipts, weighted by each receipt's amount →
     // this RE gets only its own share (double-count fix), and its share === its receipt amount when
     // the transfer ties out.

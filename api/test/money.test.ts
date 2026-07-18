@@ -5,7 +5,7 @@ import { describe, it, expect } from 'vitest';
 import { normalizeAmount } from '../src/finance/normalize.js';
 import { amountsEqual } from '../src/bank/match.js';
 import { computeReRow, type ReReconPayment } from '../src/finance/reRecon.js';
-import { buildDiscrepancyComponents, expectedForPayment, grossSatang, normalizeReCore } from '../src/finance/discrepancy.js';
+import { buildDiscrepancyComponents, effectivePaidSatang, expectedForPayment, grossSatang, normalizeReCore } from '../src/finance/discrepancy.js';
 
 describe('normalizeAmount', () => {
   it('strips thousands commas to a 2-decimal string', () => {
@@ -83,6 +83,13 @@ describe('computeReRow (กระทบยอด RE apportionment)', () => {
     expect(a.paidGross).toBe(400);
   });
 
+  it('cash plus customer credit settles the RE without changing raw gross', () => {
+    const transfer = { ...pay(['A'], '2000.00'), creditUsed: '3000.00' };
+    const result = computeReRow('5000.00', [transfer], new Map([['A', '5000.00']]));
+    expect(result.status).toBe('matched');
+    expect(result.paidGross).toBe(5000);
+  });
+
   it('a genuinely short multi-RE transfer → mismatch, diff is the RE’s proportional share', () => {
     const short = pay(['A', 'B'], '900.00'); // 100 short of 1,000
     const a = computeReRow('400.00', [short], twoRe);
@@ -114,5 +121,19 @@ describe('wrong-transfer discrepancy invariants', () => {
     expect(normalizeReCore('0000000')).toBeNull();
     expect(buildDiscrepancyComponents([{ ...wrong, reNumbers: ['0000000'] }], [])).toEqual([]);
     expect(buildDiscrepancyComponents([{ ...wrong, status: 'void', reNumbers: ['6900001'] }], [{ reNumber: '6900001', amount: '125.50' }])).toEqual([]);
+  });
+  it('ignores credit on wrong transfers while preserving raw gross', () => {
+    expect(grossSatang({ ...wrong, creditUsed: '300.00' })).toBe(12_550);
+    expect(effectivePaidSatang({ ...wrong, creditUsed: '300.00', wrongTransferAt: new Date() })).toBe(12_550);
+  });
+});
+
+describe('customer-credit discrepancy math', () => {
+  it('uses cash + WHT + credit for settlement and retains cash + WHT as gross', () => {
+    const payment = { id: 'credit', amount: '2000.00', whtAmount: '100.00', creditUsed: '2900.00', reNumbers: ['6900001'] };
+    const [component] = buildDiscrepancyComponents([payment], [{ reNumber: '6900001', amount: '5000.00' }]);
+    expect(grossSatang(payment)).toBe(210_000);
+    expect(effectivePaidSatang(payment)).toBe(500_000);
+    expect(component.diffSatang).toBe(0);
   });
 });

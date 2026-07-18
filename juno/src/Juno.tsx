@@ -12,6 +12,8 @@ import {
   getSummary, getPayments, setStatus, setFlag, verifyPayment, getReport, downloadCsv, baht,
   logout, getBankSummary, createPayment, uploadSlip, fileToBase64, readManualSlip, readManualCheque,
   deletePayment, confirmReceived, getWhtSummary, updatePayment, getFinanceAudits, getManualBills,
+  getPaymentCreditBalance,
+  apiErrorMessage,
   type Agent, type Payment, type PaymentStatus, type Summary,
   type Report, type PaymentFilter, type CustomerType, type PaymentSource,
   type WhtRate, type WhtSummary, type EditPaymentBody,
@@ -798,6 +800,7 @@ function PaymentsView({ view, onChanged, canDelete, isCeo }: { view: Exclude<Vie
                     <td className="px-3 py-2 text-right font-semibold whitespace-nowrap">
                       {baht(p.amountNum)}
                       {p.mismatch && <AlertTriangle size={13} className="inline ml-1 text-rose-500" />}
+                      {Number(p.creditUsed || 0) > 0 && <div className="text-[11px] font-normal text-emerald-700">ใช้เครดิต {baht(Number(p.creditUsed))}</div>}
                     </td>
                     <td className="px-3 py-2 text-slate-500 hidden md:table-cell"><MethodCell p={p} /></td>
                     <td className="px-3 py-2 text-slate-500 hidden md:table-cell whitespace-nowrap">
@@ -1621,7 +1624,7 @@ function Detail({ payment, onClose, onUpdate, onDelete, onPrint, canDelete, isCe
               {field('รหัส', p.customerCode)}
               {field('ผู้โอน (บนสลิป)', p.senderName)}
               {field('ธนาคาร', p.bank)}
-              {field('ยอดที่ยืนยัน', <span className="font-semibold">{baht(p.amountNum)}</span>)}
+              {field('ยอดที่ยืนยัน', <span className="font-semibold">{baht(p.amountNum)}{Number(p.creditUsed || 0) > 0 && <span className="block text-[11px] font-normal text-emerald-700">ใช้เครดิต {baht(Number(p.creditUsed))}</span>}</span>)}
               {field('ยอดที่ AI อ่าน', p.mismatch
                 ? <span className="text-rose-600 font-semibold">{p.ocrAmount || '—'}</span>
                 : (p.ocrAmount || '—'))}
@@ -1972,7 +1975,7 @@ const VERIFY_ERROR_MESSAGES: Record<string, string> = {
   receipt_required: 'ต้องมีเลขเอกสาร หรือเลือกโอนเงินผิด 0000000',
 };
 const verifyErrorMessage = (error: unknown): string =>
-  VERIFY_ERROR_MESSAGES[(error as Error).message] ?? 'บันทึกไม่สำเร็จ — ลองใหม่อีกครั้ง';
+  VERIFY_ERROR_MESSAGES[(error as Error).message] ?? apiErrorMessage(error, 'บันทึกไม่สำเร็จ — ลองใหม่อีกครั้ง');
 
 // ── Shared WHT (หัก ณ ที่จ่าย, task 2) control logic — used by CheckDialog only (see the
 // BatchCheckDialog note below for why the batch path leaves WHT out). Mirrors the
@@ -2092,15 +2095,29 @@ function CheckDialog({ payment, onClose, onSaved }: {
   // หัก ณ ที่จ่าย (WHT, task 2) — pre-filled from the payment when re-opening an already-checked
   // row (useWhtControl reads payment.whtRate/whtAmount on mount).
   const wht = useWhtControl(payment);
+  // null = balance unknown (loading or fetch failed) — never block saving on an unknown balance;
+  // the server transaction is the authoritative overdraw guard.
+  const [creditAvailable, setCreditAvailable] = useState<number | null>(null);
+  const [creditUsed, setCreditUsed] = useState(payment.creditUsed);
+  useEffect(() => {
+    let active = true;
+    getPaymentCreditBalance(payment.id)
+      .then((result) => { if (active) setCreditAvailable(result.availableToPayment); })
+      .catch(() => { if (active) setCreditAvailable(null); });
+    return () => { active = false; };
+  }, [payment.id]);
   const [discExpected, setDiscExpected] = useState(payment.discExpected);
-  const discPreview = discExpected.trim() === '' ? 0 : round2(wht.grossPreview - (parseFloat(discExpected.replace(/,/g, '')) || 0));
+  const creditPreview = re.wrongTransfer ? 0 : (parseFloat(creditUsed.replace(/,/g, '')) || 0);
+  const creditTooHigh = creditAvailable !== null && creditPreview > creditAvailable + 0.001;
+  const effectivePreview = round2(wht.grossPreview + creditPreview);
+  const discPreview = discExpected.trim() === '' ? 0 : round2(effectivePreview - (parseFloat(discExpected.replace(/,/g, '')) || 0));
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
   const resettingWrongTransfer = payment.wrongTransfer && !re.wrongTransfer &&
     re.reNumbers.length === 0 && re.billNos.length === 0 && !re.pendingValid;
 
   async function save() {
-    if ((!re.valid && !resettingWrongTransfer) || saving) return;
+    if ((!re.valid && !resettingWrongTransfer) || saving || creditTooHigh) return;
     const documents = re.finalize();
     if (!documents.wrongTransfer && documents.reNumbers.length === 0 && documents.billNos.length === 0 && !resettingWrongTransfer) return;
     const hasRefundAudit = !!(payment.discResolution || payment.discResolvedAt || payment.discConfirmedAt);
@@ -2116,6 +2133,7 @@ function CheckDialog({ payment, onClose, onSaved }: {
         receiptName: receiptName.trim(),
         customerType,
         ...wht.toBody(),
+        creditUsed: documents.wrongTransfer ? '' : creditUsed.trim(),
         discExpected: discExpected.trim(),
         undoConfirmed,
       });
@@ -2171,6 +2189,19 @@ function CheckDialog({ payment, onClose, onSaved }: {
 
         {!re.wrongTransfer && <WhtSection wht={wht} />}
 
+        {!re.wrongTransfer && ((creditAvailable ?? 0) > 0 || creditPreview > 0) && <label className="block rounded-lg border border-emerald-200 bg-emerald-50/40 p-2.5">
+          <span className="text-xs font-medium text-emerald-800">{creditAvailable !== null ? `ลูกค้ามีเครดิต ${baht(creditAvailable)}` : 'เครดิตลูกค้า (โหลดยอดคงเหลือไม่สำเร็จ)'}</span>
+          <span className="mt-2 block text-[11px] text-slate-500">ใช้เครดิต</span>
+          <input
+            value={creditUsed}
+            onChange={(e) => setCreditUsed(e.target.value)}
+            inputMode="decimal"
+            placeholder="0.00"
+            className="mt-0.5 w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400"
+          />
+          {creditTooHigh && <div className="mt-1 text-[11px] text-rose-600">ใช้ได้สูงสุด {baht(creditAvailable ?? 0)}</div>}
+        </label>}
+
         {!re.wrongTransfer && <label className="block rounded-lg border border-slate-200 p-2.5">
           <span className="text-xs text-slate-500">ยอดตามเอกสาร (ก่อนหัก) <span className="font-normal text-slate-400">— ไม่บังคับ</span></span>
           <input
@@ -2183,7 +2214,7 @@ function CheckDialog({ payment, onClose, onSaved }: {
           {discExpected.trim() !== '' && discPreview !== 0 && (
             <div className={`mt-1.5 text-xs font-semibold ${discPreview > 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
               {discPreview > 0 ? `เกิน +${baht(discPreview)}` : `ขาด −${baht(Math.abs(discPreview))}`}
-              <span className="ml-1 font-normal text-slate-400">(ยอดเต็ม {baht(wht.grossPreview)})</span>
+              <span className="ml-1 font-normal text-slate-400">(รับ {baht(payment.amountNum)} + WHT {baht(wht.grossPreview - payment.amountNum)} + เครดิต {baht(creditPreview)} = {baht(effectivePreview)})</span>
             </div>
           )}
         </label>}
@@ -2197,7 +2228,7 @@ function CheckDialog({ payment, onClose, onSaved }: {
           <button
             type="button"
             onClick={save}
-            disabled={(!re.valid && !resettingWrongTransfer) || saving}
+            disabled={(!re.valid && !resettingWrongTransfer) || saving || creditTooHigh}
             className="px-4 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold flex items-center gap-1 disabled:opacity-50"
           >
             {saving ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={13} />} {resettingWrongTransfer ? 'กลับไปรอตรวจ' : 'บันทึก'}

@@ -1,4 +1,4 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyReply } from 'fastify';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { prisma } from '../db/prisma.js';
@@ -36,11 +36,27 @@ import {
   buildDiscrepancyComponents,
   componentByPaymentId,
   expectedForPayment,
+  effectivePaidSatang,
+  getDiscrepancyForPayment,
   grossSatang,
   isMoneyString,
+  moneyToSatang,
   mismatchedMultiPaymentComponentCount,
   satangToBaht,
 } from '../finance/discrepancy.js';
+import {
+  CustomerCreditError,
+  customerBalanceSatang,
+  customerCreditKey,
+  grantCredit,
+  lockPayment,
+  normalizedCreditUsed,
+  paymentHasCreditEntries,
+  paymentHasGrant,
+  releaseSpend,
+  removeGrant,
+  replaceSpend,
+} from '../finance/customerCredit.js';
 
 // Owner decision 2026-07-13: the gm tier is default-deny inside Juno and may use only
 // the manual-bill lane plus its read-only product picker. Employees keep the existing Juno
@@ -132,6 +148,11 @@ function grossOf(p: { amount: string; whtAmount: string }): number {
   return num(p.amount) + num(p.whtAmount || '0');
 }
 
+function sendCreditError(reply: FastifyReply, error: unknown) {
+  if (!(error instanceof CustomerCreditError)) throw error;
+  return reply.code(409).send({ error: error.code, message: error.message, ...error.detail });
+}
+
 // The row shape the Juno UI consumes (the stored Payment plus a couple of derived fields).
 function toRow(p: {
   id: string; customerId: string | null; customerCode: string; customerName: string;
@@ -143,7 +164,7 @@ function toRow(p: {
   source: string; settleState: string; settledAt: Date | null;
   receivedAt: Date | null; receivedBy: string | null;
   chequeNo: string; chequeBank: string; chequeDueDate: string;
-  whtRate: number; whtAmount: string;
+  whtRate: number; whtAmount: string; creditUsed: string;
   discExpected: string; discResolution: string; discNote: string;
   discResolvedAt: Date | null; discResolvedBy: string;
   discConfirmedAt: Date | null; discConfirmedBy: string;
@@ -164,6 +185,8 @@ function toRow(p: {
     whtRate: p.whtRate,
     whtAmount: p.whtAmount,
     grossAmount: grossOf(p),
+    creditUsed: p.creditUsed,
+    effectivePaidAmount: grossOf(p) + num(p.creditUsed),
     bank: p.bank,
     transferAt: p.transferAt,
     ref: p.ref,
@@ -243,7 +266,8 @@ async function getDiscrepancySnapshot() {
     if (!expected) return [];
 
     const gross = grossSatang(payment);
-    const diff = gross - expected.expectedSatang;
+    const effectivePaid = effectivePaidSatang(payment);
+    const diff = effectivePaid - expected.expectedSatang;
     if (diff === 0 && !hasStamps) return [];
     return [{
       id: payment.id,
@@ -260,6 +284,8 @@ async function getDiscrepancySnapshot() {
       expected: satangToBaht(expected.expectedSatang),
       expectedSource: expected.source,
       gross: satangToBaht(gross),
+      creditUsed: payment.wrongTransferAt ? 0 : satangToBaht(effectivePaid - gross),
+      effectivePaid: satangToBaht(effectivePaid),
       diff: satangToBaht(diff),
       _diffSatang: diff,
       direction: diff > 0 ? 'over' as const : diff < 0 ? 'under' as const : 'balanced' as const,
@@ -969,15 +995,23 @@ export async function junoRoutes(app: FastifyInstance) {
   app.post<{ Params: { id: string } }>('/api/juno/payments/:id/discrepancy', async (req, reply) => {
     const body = z.object({ expected: moneyStringSchema }).safeParse(req.body);
     if (!body.success) return reply.code(400).send({ error: 'invalid_body' });
-    const current = await prisma.payment.findUnique({ where: { id: req.params.id }, select: { id: true, status: true, wrongTransferAt: true } });
-    if (!current) return reply.code(404).send({ error: 'not_found' });
-    if (current.status === 'void') return reply.code(409).send({ error: 'void_locked' });
-    if (current.wrongTransferAt) return reply.code(409).send({ error: 'wrong_transfer_expected_locked' });
-    const payment = await prisma.payment.update({
-      where: { id: req.params.id },
-      data: { discExpected: body.data.expected.trim() },
-    });
-    return { ok: true, payment: toRow(payment) };
+    try {
+      const payment = await prisma.$transaction(async (tx) => {
+        await lockPayment(tx, req.params.id);
+        const current = await tx.payment.findUnique({ where: { id: req.params.id } });
+        if (!current) return null;
+        if (current.status === 'void') return 'void_locked' as const;
+        if (current.wrongTransferAt) return 'wrong_transfer_expected_locked' as const;
+        const expected = body.data.expected.trim();
+        if (expected !== current.discExpected && await paymentHasGrant(tx, current.id)) {
+          throw new CustomerCreditError('credit_grant_locked');
+        }
+        return tx.payment.update({ where: { id: current.id }, data: { discExpected: expected } });
+      });
+      if (!payment) return reply.code(404).send({ error: 'not_found' });
+      if (typeof payment === 'string') return reply.code(409).send({ error: payment });
+      return { ok: true, payment: toRow(payment) };
+    } catch (error) { return sendCreditError(reply, error); }
   });
 
   // FIN records how the difference was handled. An empty resolution is the explicit reset path.
@@ -987,53 +1021,78 @@ export async function junoRoutes(app: FastifyInstance) {
       note: z.string().max(600).optional(),
     }).safeParse(req.body);
     if (!body.success) return reply.code(400).send({ error: 'invalid_body' });
-    const current = await prisma.payment.findUnique({ where: { id: req.params.id }, select: { id: true, status: true, wrongTransferAt: true } });
-    if (!current) return reply.code(404).send({ error: 'not_found' });
-    if (current.status === 'void') return reply.code(409).send({ error: 'void_locked' });
-    if (current.wrongTransferAt && body.data.resolution !== '' && body.data.resolution !== 'refund') {
-      return reply.code(409).send({ error: 'wrong_transfer_refund_only' });
-    }
-
-    const clearing = body.data.resolution === '';
-    const payment = await prisma.payment.update({
-      where: { id: req.params.id },
-      data: clearing ? {
-        discResolution: '', discNote: '', discResolvedAt: null, discResolvedBy: '',
-        discConfirmedAt: null, discConfirmedBy: '',
-      } : {
-        discResolution: body.data.resolution,
-        discNote: body.data.note?.trim() ?? '',
-        discResolvedAt: new Date(),
-        discResolvedBy: req.agent?.email ?? req.agent?.id ?? '',
-        // Editing a resolution sends it back through the CEO confirmation gate.
-        discConfirmedAt: null,
-        discConfirmedBy: '',
-      },
-    });
-    return { ok: true, payment: toRow(payment) };
+    try {
+      const payment = await prisma.$transaction(async (tx) => {
+        await lockPayment(tx, req.params.id);
+        const current = await tx.payment.findUnique({ where: { id: req.params.id } });
+        if (!current) return null;
+        if (current.status === 'void') return 'void_locked' as const;
+        if (current.wrongTransferAt && body.data.resolution !== '' && body.data.resolution !== 'refund') {
+          return 'wrong_transfer_refund_only' as const;
+        }
+        await removeGrant(
+          tx,
+          current.id,
+          'เครดิตจากรายการนี้ถูกใช้ไปแล้ว จึงเปลี่ยนวิธีจัดการไม่ได้',
+        );
+        const clearing = body.data.resolution === '';
+        return tx.payment.update({
+          where: { id: current.id },
+          data: clearing ? {
+            discResolution: '', discNote: '', discResolvedAt: null, discResolvedBy: '',
+            discConfirmedAt: null, discConfirmedBy: '',
+          } : {
+            discResolution: body.data.resolution,
+            discNote: body.data.note?.trim() ?? '',
+            discResolvedAt: new Date(),
+            discResolvedBy: req.agent?.email ?? req.agent?.id ?? '',
+            discConfirmedAt: null,
+            discConfirmedBy: '',
+          },
+        });
+      });
+      if (!payment) return reply.code(404).send({ error: 'not_found' });
+      if (typeof payment === 'string') return reply.code(409).send({ error: payment });
+      return { ok: true, payment: toRow(payment) };
+    } catch (error) { return sendCreditError(reply, error); }
   });
 
   app.post<{ Params: { id: string } }>('/api/juno/payments/:id/disc-confirm', async (req, reply) => {
     if (req.agent?.role !== 'supervisor') return reply.code(403).send({ error: 'forbidden' });
     const body = z.object({ confirmed: z.boolean() }).safeParse(req.body);
     if (!body.success) return reply.code(400).send({ error: 'invalid_body' });
-    const current = await prisma.payment.findUnique({
-      where: { id: req.params.id },
-      select: { id: true, status: true, discResolution: true },
-    });
-    if (!current) return reply.code(404).send({ error: 'not_found' });
-    if (current.status === 'void') return reply.code(409).send({ error: 'void_locked' });
-    if (body.data.confirmed && !current.discResolution) {
-      return reply.code(409).send({ error: 'resolution_required' });
-    }
-    const payment = await prisma.payment.update({
-      where: { id: req.params.id },
-      data: {
-        discConfirmedAt: body.data.confirmed ? new Date() : null,
-        discConfirmedBy: body.data.confirmed ? (req.agent?.email ?? req.agent?.id ?? '') : '',
-      },
-    });
-    return { ok: true, payment: toRow(payment) };
+    try {
+      const payment = await prisma.$transaction(async (tx) => {
+        await lockPayment(tx, req.params.id);
+        const current = await tx.payment.findUnique({ where: { id: req.params.id } });
+        if (!current) return null;
+        if (current.status === 'void') return 'void_locked' as const;
+        if (body.data.confirmed && !current.discResolution) return 'resolution_required' as const;
+        if (body.data.confirmed && current.discResolution === 'credit') {
+          const discrepancy = await getDiscrepancyForPayment(tx, current.id);
+          if (!discrepancy || discrepancy.diffSatang <= 0) {
+            throw new CustomerCreditError('credit_overpay_required');
+          }
+          await grantCredit(tx, current, discrepancy.diffSatang, req.agent?.email ?? req.agent?.id ?? '');
+        } else if (!body.data.confirmed) {
+          await removeGrant(
+            tx,
+            current.id,
+            'เครดิตจากรายการนี้ถูกใช้ไปแล้ว จึงยกเลิกการยืนยันไม่ได้',
+          );
+        }
+        return tx.payment.update({
+          where: { id: current.id },
+          data: {
+            discConfirmedAt: body.data.confirmed ? new Date() : null,
+            discConfirmedBy: body.data.confirmed ? (req.agent?.email ?? req.agent?.id ?? '') : '',
+          },
+        });
+      });
+      if (!payment) return reply.code(404).send({ error: 'not_found' });
+      if (typeof payment === 'string') return reply.code(409).send({ error: payment });
+      return { ok: true, payment: toRow(payment) };
+    } catch (error) { return sendCreditError(reply, error); }
   });
 
   // GET /api/juno/wht/summary?from=&to= — period totals for the หัก ณ ที่จ่าย (WHT, task 2)
@@ -1088,6 +1147,84 @@ export async function junoRoutes(app: FastifyInstance) {
     return { payment: toRow(p) };
   });
 
+  app.get<{ Params: { id: string } }>('/api/juno/payments/:id/credit-balance', async (req, reply) => {
+    const result = await prisma.$transaction(async (tx) => {
+      await lockPayment(tx, req.params.id);
+      const payment = await tx.payment.findUnique({
+        where: { id: req.params.id },
+        include: { creditEntries: { where: { kind: 'spend' } } },
+      });
+      if (!payment) return null;
+      const customerKey = customerCreditKey(payment);
+      if (!customerKey) return { customerKey: null, balance: 0, currentUsed: 0, availableToPayment: 0, canSpend: false };
+      const balanceSatang = await customerBalanceSatang(tx, customerKey);
+      const currentSpend = payment.creditEntries[0]?.amountSatang ?? 0;
+      const currentUsed = -currentSpend;
+      return {
+        customerKey,
+        balance: satangToBaht(balanceSatang),
+        currentUsed: satangToBaht(currentUsed),
+        availableToPayment: satangToBaht(balanceSatang - currentSpend),
+        canSpend: payment.wrongTransferAt === null && balanceSatang - currentSpend > 0,
+      };
+    });
+    if (!result) return reply.code(404).send({ error: 'not_found' });
+    return result;
+  });
+
+  app.get('/api/juno/customer-credits', async (req, reply) => {
+    const entries = await prisma.$transaction(async (tx) => {
+      const keys = await tx.customerCreditEntry.findMany({ distinct: ['customerKey'], select: { customerKey: true } });
+      for (const { customerKey } of keys.sort((a, b) => a.customerKey.localeCompare(b.customerKey))) {
+        await customerBalanceSatang(tx, customerKey);
+      }
+      return tx.customerCreditEntry.findMany({
+        where: { customerKey: { in: keys.map(({ customerKey }) => customerKey) } },
+        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+        include: {
+          payment: { select: { id: true, transferAt: true, createdAt: true, reNumbers: true } },
+        },
+      });
+    });
+    const grouped = new Map<string, typeof entries>();
+    for (const entry of entries) {
+      const list = grouped.get(entry.customerKey);
+      if (list) list.push(entry);
+      else grouped.set(entry.customerKey, [entry]);
+    }
+    const customers = [...grouped.entries()].map(([customerKey, all]) => {
+      const balanceSatang = all.reduce((sum, entry) => sum + entry.amountSatang, 0);
+      if (balanceSatang < 0) {
+        req.log.error({ customerKey, balanceSatang }, 'customer credit invariant violated');
+        throw new Error('negative customer credit balance');
+      }
+      const snapshot = all[all.length - 1];
+      // Amendment 2: the balance above uses every row; only the per-customer history is capped.
+      const history = all.slice(-50).map((entry) => ({
+        id: entry.id,
+        kind: entry.kind,
+        amount: satangToBaht(Math.abs(entry.amountSatang)),
+        paymentId: entry.paymentId,
+        transferAt: entry.payment.transferAt,
+        createdAt: entry.createdAt.toISOString(),
+        paymentCreatedAt: entry.payment.createdAt.toISOString(),
+        reNumbers: entry.payment.reNumbers,
+        actor: entry.createdBy,
+      }));
+      return {
+        customerKey,
+        customerCode: snapshot.customerCode,
+        customerName: snapshot.customerName,
+        balance: satangToBaht(balanceSatang),
+        history,
+      };
+    }).sort((a, b) => b.balance - a.balance || a.customerKey.localeCompare(b.customerKey));
+    return {
+      totalOutstanding: Number(customers.reduce((sum, customer) => sum + customer.balance, 0).toFixed(2)),
+      customers,
+    };
+  });
+
   // DELETE /api/juno/payments/:id — CEO-ONLY permanent hard delete. Contrast with
   // POST /status {status:'void'}, which only soft-deletes (the row stays, filterable back
   // in). This is the true "gone forever" override — supervisor only, not even gm, so it is
@@ -1096,19 +1233,23 @@ export async function junoRoutes(app: FastifyInstance) {
   // such thing as "too far along to delete" for the CEO override.
   app.delete<{ Params: { id: string } }>('/api/juno/payments/:id', async (req, reply) => {
     if (req.agent?.role !== 'supervisor') return reply.code(403).send({ error: 'forbidden' });
-
-    const existing = await prisma.payment.findUnique({
-      where: { id: req.params.id },
-      select: { id: true, bankMatches: { select: { bankTxnId: true } } },
-    });
-    if (!existing) return reply.code(404).send({ error: 'not_found' });
-
-    // Capture linked bank lines BEFORE deleting — PaymentBankMatch rows cascade-delete with
-    // the Payment (schema onDelete: Cascade), so this is the last chance to know which
-    // BankTxns need their matchStatus recomputed afterward.
-    const linkedBankTxnIds = [...new Set(existing.bankMatches.map((m) => m.bankTxnId))];
-
-    await prisma.payment.delete({ where: { id: req.params.id } });
+    let linkedBankTxnIds: string[];
+    try {
+      const deleted = await prisma.$transaction(async (tx) => {
+        await lockPayment(tx, req.params.id);
+        const existing = await tx.payment.findUnique({
+          where: { id: req.params.id },
+          select: { id: true, bankMatches: { select: { bankTxnId: true } } },
+        });
+        if (!existing) return null;
+        await releaseSpend(tx, existing.id);
+        await removeGrant(tx, existing.id, 'เครดิตจากรายการนี้ถูกใช้ไปแล้ว จึงลบรายการไม่ได้');
+        await tx.payment.delete({ where: { id: existing.id } });
+        return [...new Set(existing.bankMatches.map((m) => m.bankTxnId))];
+      });
+      if (!deleted) return reply.code(404).send({ error: 'not_found' });
+      linkedBankTxnIds = deleted;
+    } catch (error) { return sendCreditError(reply, error); }
 
     // A previously-matched bank line has just lost this link; it may now have zero links
     // left, in which case it must fall back to 'unmatched' — recomputeTxnMatchStatus already
@@ -1150,12 +1291,6 @@ export async function junoRoutes(app: FastifyInstance) {
     const body = editPaymentBodySchema.safeParse(req.body);
     if (!body.success) return reply.code(400).send({ error: 'invalid_body' });
 
-    const existing = await prisma.payment.findUnique({
-      where: { id: req.params.id },
-      select: { id: true, amount: true, bankMatches: { select: { bankTxnId: true } } },
-    });
-    if (!existing) return reply.code(404).send({ error: 'not_found' });
-
     // Build `data` from only the keys the client actually sent (partial update) — an omitted
     // field must NOT be clobbered back to ''. Every value trimmed, matching the create route's
     // convention. amount gets an extra positive-number check (same rule as POST /payments) so a
@@ -1178,16 +1313,42 @@ export async function junoRoutes(app: FastifyInstance) {
     // pattern, just without deleting the Payment itself). Folding `reconciled: false` into the
     // SAME update as the field edits (rather than a second write) keeps this to one payment
     // UPDATE either way.
-    const amountChanged = data.amount !== undefined && data.amount !== existing.amount;
-    const detaching = amountChanged && existing.bankMatches.length > 0;
-    const p = await prisma.payment.update({
-      where: { id: req.params.id },
-      data: detaching ? { ...data, reconciled: false } : data,
-    });
+    let p;
+    let bankTxnIds: string[] = [];
+    try {
+      const result = await prisma.$transaction(async (tx) => {
+        await lockPayment(tx, req.params.id);
+        const existing = await tx.payment.findUnique({
+          where: { id: req.params.id },
+          include: { bankMatches: { select: { bankTxnId: true } } },
+        });
+        if (!existing) return null;
+        const nextKey = customerCreditKey({
+          customerCode: data.customerCode ?? existing.customerCode,
+          customerName: data.customerName ?? existing.customerName,
+        });
+        if (nextKey !== customerCreditKey(existing) && await paymentHasCreditEntries(tx, existing.id)) {
+          throw new CustomerCreditError('credit_customer_locked');
+        }
+        const amountChanged = data.amount !== undefined && data.amount !== existing.amount;
+        if (amountChanged && await paymentHasGrant(tx, existing.id)) {
+          throw new CustomerCreditError('credit_grant_locked');
+        }
+        const detaching = amountChanged && existing.bankMatches.length > 0;
+        const payment = await tx.payment.update({
+          where: { id: existing.id },
+          data: detaching ? { ...data, reconciled: false } : data,
+        });
+        const ids = detaching ? [...new Set(existing.bankMatches.map((m) => m.bankTxnId))] : [];
+        if (detaching) await tx.paymentBankMatch.deleteMany({ where: { paymentId: existing.id } });
+        return { payment, bankTxnIds: ids };
+      });
+      if (!result) return reply.code(404).send({ error: 'not_found' });
+      p = result.payment;
+      bankTxnIds = result.bankTxnIds;
+    } catch (error) { return sendCreditError(reply, error); }
 
-    if (detaching) {
-      const bankTxnIds = [...new Set(existing.bankMatches.map((m) => m.bankTxnId))];
-      await prisma.paymentBankMatch.deleteMany({ where: { paymentId: req.params.id } });
+    if (bankTxnIds.length) {
       await Promise.all(bankTxnIds.map((id) => recomputeTxnMatchStatus(id)));
       req.log.info(
         { paymentId: req.params.id, by: req.agent?.id, detachedMatches: bankTxnIds.length },
@@ -1336,43 +1497,50 @@ export async function junoRoutes(app: FastifyInstance) {
   app.post<{ Params: { id: string } }>('/api/juno/payments/:id/status', async (req, reply) => {
     const body = z.object({ status: z.enum(STATUSES) }).safeParse(req.body);
     if (!body.success) return reply.code(400).send({ error: 'invalid_status' });
-    const cur = await prisma.payment.findUnique({
-      where: { id: req.params.id },
-      select: { id: true, status: true, source: true, receivedAt: true, wrongTransferAt: true },
-    });
-    if (!cur) return reply.code(404).send({ error: 'not_found' });
-    // A marked row can only be reclassified through /verify. Lifecycle exceptions: soft-void
-    // (archiving keeps the marker + audit stamps) and restoring an archived row, which resumes
-    // the dedicated wrong-transfer stage as verified.
-    const restoringWrongTransfer = cur.status === 'void' && cur.wrongTransferAt !== null && body.data.status === 'received';
-    const voidingWrongTransfer = cur.wrongTransferAt !== null && cur.status !== 'void' && body.data.status === 'void';
-    if (cur.wrongTransferAt && !restoringWrongTransfer && !voidingWrongTransfer) {
-      return reply.code(409).send({ error: 'wrong_transfer' });
-    }
-    if (body.data.status === 'verified') return reply.code(409).send({ error: 'use_verify' });
-    if (cur.status === 'void' && body.data.status === 'recorded') {
-      return reply.code(409).send({ error: 'void_locked' });
-    }
-    if (
-      body.data.status === 'recorded' &&
-      (cur.source === 'cash' || cur.source === 'cheque') &&
-      cur.receivedAt === null
-    ) {
-      return reply.code(409).send({ error: 'received_required' });
-    }
-    const nextStatus = restoringWrongTransfer ? 'verified' : body.data.status;
-    const advancing = nextStatus === 'recorded';
-    const p = await prisma.payment.update({
-      where: { id: req.params.id },
-      data: {
-        status: nextStatus,
-        ...(restoringWrongTransfer || voidingWrongTransfer
-          ? {} // preserve the original verification audit stamps across void/restore
-          : advancing
-          ? { verifiedById: req.agent?.id ?? null, verifiedAt: new Date() }
-          : { verifiedById: null, verifiedAt: null }),   // received/void clear the stamps
-      },
-    });
+    let p;
+    try {
+      const result = await prisma.$transaction(async (tx) => {
+        await lockPayment(tx, req.params.id);
+        const cur = await tx.payment.findUnique({ where: { id: req.params.id } });
+        if (!cur) return null;
+        const restoringWrongTransfer = cur.status === 'void' && cur.wrongTransferAt !== null && body.data.status === 'received';
+        const voidingWrongTransfer = cur.wrongTransferAt !== null && cur.status !== 'void' && body.data.status === 'void';
+        if (cur.wrongTransferAt && !restoringWrongTransfer && !voidingWrongTransfer) return 'wrong_transfer' as const;
+        if (body.data.status === 'verified') return 'use_verify' as const;
+        if (cur.status === 'void' && body.data.status === 'recorded') return 'void_locked' as const;
+        if (body.data.status === 'recorded' && (cur.source === 'cash' || cur.source === 'cheque') && cur.receivedAt === null) {
+          return 'received_required' as const;
+        }
+        const nextStatus = restoringWrongTransfer ? 'verified' : body.data.status;
+        const advancing = nextStatus === 'recorded';
+        let spendRemoved = false;
+        let grantRemoved = false;
+        if (nextStatus === 'void') {
+          spendRemoved = await releaseSpend(tx, cur.id);
+          grantRemoved = await removeGrant(
+            tx,
+            cur.id,
+            'เครดิตจากรายการนี้ถูกใช้ไปแล้ว จึงยกเลิกรายการไม่ได้',
+          );
+        }
+        return tx.payment.update({
+          where: { id: cur.id },
+          data: {
+            status: nextStatus,
+            ...(restoringWrongTransfer || voidingWrongTransfer
+              ? {}
+              : advancing
+              ? { verifiedById: req.agent?.id ?? null, verifiedAt: new Date() }
+              : { verifiedById: null, verifiedAt: null }),
+            ...(spendRemoved ? { creditUsed: '' } : {}),
+            ...(grantRemoved ? { discConfirmedAt: null, discConfirmedBy: '' } : {}),
+          },
+        });
+      });
+      if (!result) return reply.code(404).send({ error: 'not_found' });
+      if (typeof result === 'string') return reply.code(409).send({ error: result });
+      p = result;
+    } catch (error) { return sendCreditError(reply, error); }
     // Phase-1b: mirror this payment into the Jupiter group books (PROM income) now it is
     // 'recorded', or drop it if it just left 'recorded' (void/undo). Fire-and-forget — a books
     // sync must NEVER affect the Juno flow. Bank-reconciliation records sync via /sync/juno.
@@ -1397,6 +1565,7 @@ export async function junoRoutes(app: FastifyInstance) {
     customerType: customerTypeSchema.optional(),
     whtRate: z.union([z.literal(0), z.literal(1), z.literal(2), z.literal(3), z.literal(5)]).optional(),
     whtAmount: z.string().max(40).optional(),
+    creditUsed: moneyStringSchema.optional(),
     discExpected: moneyStringSchema.optional(),
   });
   app.post<{ Params: { id: string } }>('/api/juno/payments/:id/verify', async (req, reply) => {
@@ -1439,90 +1608,123 @@ export async function junoRoutes(app: FastifyInstance) {
     const whtRate: (typeof WHT_RATES)[number] = body.data.whtRate ?? 0;
     const whtAmount = whtRate === 0 ? '' : (body.data.whtAmount?.trim() ?? '');
 
-    const cur = await prisma.payment.findUnique({
-      where: { id: req.params.id },
-      select: {
-        id: true, status: true, wrongTransferAt: true, discResolution: true,
-        discResolvedAt: true, discConfirmedAt: true,
-      },
-    });
-    if (!cur) return reply.code(404).send({ error: 'not_found' });
-    if (cur.status === 'void') return reply.code(409).send({ error: 'void_locked' });
-
     const actor = req.agent?.email ?? req.agent?.id ?? '';
     const now = new Date();
-    if (wantsWrongTransfer) {
-      const payment = await prisma.payment.update({
-        where: { id: req.params.id },
-        data: {
-          status: 'verified',
-          wrongTransferAt: now,
-          wrongTransferBy: actor,
-          discExpected: '0',
-          discResolution: '', discNote: '', discResolvedAt: null, discResolvedBy: '',
-          discConfirmedAt: null, discConfirmedBy: '',
-          reNumbers: [], reNumber: '', billNos: [], receiptName: '', customerType: '',
-          whtRate: 0, whtAmount: '',
-          verifiedById: req.agent?.id ?? null,
-          verifiedAt: now,
-        },
-      });
-      await clearWrongOnlyExpressConfirmations(payment.id);
-      if (cur.status === 'recorded') {
-        void syncPaymentToJupiter(payment.id).catch((err) => req.log.error({ err }, 'jupiter sync failed'));
-      }
-      return { ok: true, payment: toRow(payment) };
+    const explicitCredit = body.data.creditUsed !== undefined;
+    const requestedCreditSatang = explicitCredit ? moneyToSatang(body.data.creditUsed ?? '') : 0;
+    if (wantsWrongTransfer && requestedCreditSatang > 0) {
+      return sendCreditError(reply, new CustomerCreditError('credit_wrong_transfer'));
     }
 
-    if (!hasRealDocuments) {
-      if (!cur.wrongTransferAt) return reply.code(400).send({ error: 'receipt_required' });
-      const hasResolution = !!(cur.discResolution || cur.discResolvedAt || cur.discConfirmedAt);
-      if (hasResolution && !body.data.undoConfirmed) {
-        return reply.code(409).send({ error: 'wrong_transfer_resolution_locked' });
-      }
-      const payment = await prisma.payment.update({
-        where: { id: req.params.id },
-        data: {
-          status: 'received', wrongTransferAt: null, wrongTransferBy: '',
-          discExpected: '', discResolution: '', discNote: '', discResolvedAt: null,
-          discResolvedBy: '', discConfirmedAt: null, discConfirmedBy: '',
-          verifiedById: null, verifiedAt: null,
-        },
-      });
-      return { ok: true, payment: toRow(payment) };
-    }
+    let p;
+    let clearWrongConfirmations = false;
+    let syncRecordedCorrection = false;
+    try {
+      const result = await prisma.$transaction(async (tx) => {
+        await lockPayment(tx, req.params.id);
+        const cur = await tx.payment.findUnique({ where: { id: req.params.id } });
+        if (!cur) return null;
+        if (cur.status === 'void') return 'void_locked' as const;
 
-    // Routine document edits on a normally-recorded payment preserve its Express state and
-    // original verification audit stamps. Only correcting a marked wrong transfer demotes it
-    // and asks Jupiter to remove the former income projection.
-    const correctingWrongTransfer = cur.wrongTransferAt !== null;
-    const keepRecorded = cur.status === 'recorded' && !correctingWrongTransfer;
-    const p = await prisma.payment.update({
-      where: { id: req.params.id },
-      data: {
-        status: keepRecorded ? 'recorded' : 'verified',
-        reNumbers: normalized,
-        reNumber: normalized.join('/'), // deprecated join mirror — see schema comment
-        billNos: normalizedBills,
-        receiptName: body.data.receiptName?.trim() ?? '',
-        customerType: body.data.customerType ?? '',
-        whtRate,
-        whtAmount,
-        ...(correctingWrongTransfer
-          ? {
-              wrongTransferAt: null, wrongTransferBy: '',
+        const hasGrant = await paymentHasGrant(tx, cur.id);
+        const arraysEqual = (left: string[], right: string[]) => left.length === right.length && left.every((value, i) => value === right[i]);
+        const grantDrivingChange = wantsWrongTransfer !== (cur.wrongTransferAt !== null)
+          || hasRealDocuments && (
+            !arraysEqual(normalized, cur.reNumbers)
+            || !arraysEqual(normalizedBills, cur.billNos)
+            || whtRate !== cur.whtRate
+            || whtAmount !== cur.whtAmount
+            || (body.data.discExpected !== undefined && body.data.discExpected.trim() !== cur.discExpected)
+            || (explicitCredit && normalizedCreditUsed(body.data.creditUsed ?? '') !== cur.creditUsed)
+          );
+        if (hasGrant && grantDrivingChange) throw new CustomerCreditError('credit_grant_locked');
+
+        if (wantsWrongTransfer) {
+          const spendRemoved = await releaseSpend(tx, cur.id);
+          const payment = await tx.payment.update({
+            where: { id: cur.id },
+            data: {
+              status: 'verified',
+              wrongTransferAt: now,
+              wrongTransferBy: actor,
+              discExpected: '0',
+              discResolution: '', discNote: '', discResolvedAt: null, discResolvedBy: '',
+              discConfirmedAt: null, discConfirmedBy: '',
+              reNumbers: [], reNumber: '', billNos: [], receiptName: '', customerType: '',
+              whtRate: 0, whtAmount: '',
+              ...(spendRemoved ? { creditUsed: '' } : {}),
+              verifiedById: req.agent?.id ?? null,
+              verifiedAt: now,
+            },
+          });
+          return { payment, clearWrongConfirmations: true, syncRecordedCorrection: cur.status === 'recorded' };
+        }
+
+        if (!hasRealDocuments) {
+          if (!cur.wrongTransferAt) return 'receipt_required' as const;
+          const hasResolution = !!(cur.discResolution || cur.discResolvedAt || cur.discConfirmedAt);
+          if (hasResolution && !body.data.undoConfirmed) return 'wrong_transfer_resolution_locked' as const;
+          const spendRemoved = await releaseSpend(tx, cur.id);
+          const payment = await tx.payment.update({
+            where: { id: cur.id },
+            data: {
+              status: 'received', wrongTransferAt: null, wrongTransferBy: '',
               discExpected: '', discResolution: '', discNote: '', discResolvedAt: null,
               discResolvedBy: '', discConfirmedAt: null, discConfirmedBy: '',
-            }
-          : body.data.discExpected === undefined ? {} : { discExpected: body.data.discExpected.trim() }),
-        ...(keepRecorded ? {} : { verifiedById: req.agent?.id ?? null, verifiedAt: now }),
-      },
-    });
+              ...(spendRemoved ? { creditUsed: '' } : {}),
+              verifiedById: null, verifiedAt: null,
+            },
+          });
+          return { payment, clearWrongConfirmations: false, syncRecordedCorrection: false };
+        }
 
-    if (cur.status === 'recorded' && correctingWrongTransfer) {
+        const correctingWrongTransfer = cur.wrongTransferAt !== null;
+        const keepRecorded = cur.status === 'recorded' && !correctingWrongTransfer;
+        if (explicitCredit) {
+          await replaceSpend(
+            tx,
+            { ...cur, wrongTransferAt: correctingWrongTransfer ? null : cur.wrongTransferAt },
+            requestedCreditSatang,
+            actor,
+          );
+        }
+        const payment = await tx.payment.update({
+          where: { id: cur.id },
+          data: {
+            status: keepRecorded ? 'recorded' : 'verified',
+            reNumbers: normalized,
+            reNumber: normalized.join('/'),
+            billNos: normalizedBills,
+            receiptName: body.data.receiptName?.trim() ?? '',
+            customerType: body.data.customerType ?? '',
+            whtRate,
+            whtAmount,
+            ...(explicitCredit ? { creditUsed: normalizedCreditUsed(body.data.creditUsed ?? '') } : {}),
+            ...(correctingWrongTransfer
+              ? {
+                  wrongTransferAt: null, wrongTransferBy: '',
+                  discExpected: '', discResolution: '', discNote: '', discResolvedAt: null,
+                  discResolvedBy: '', discConfirmedAt: null, discConfirmedBy: '',
+                }
+              : body.data.discExpected === undefined ? {} : { discExpected: body.data.discExpected.trim() }),
+            ...(keepRecorded ? {} : { verifiedById: req.agent?.id ?? null, verifiedAt: now }),
+          },
+        });
+        return { payment, clearWrongConfirmations: false, syncRecordedCorrection: cur.status === 'recorded' && correctingWrongTransfer };
+      });
+      if (!result) return reply.code(404).send({ error: 'not_found' });
+      if (typeof result === 'string') {
+        return reply.code(result === 'receipt_required' ? 400 : 409).send({ error: result });
+      }
+      p = result.payment;
+      clearWrongConfirmations = result.clearWrongConfirmations;
+      syncRecordedCorrection = result.syncRecordedCorrection;
+    } catch (error) { return sendCreditError(reply, error); }
+
+    if (clearWrongConfirmations) await clearWrongOnlyExpressConfirmations(p.id);
+    if (syncRecordedCorrection) {
       void syncPaymentToJupiter(p.id).catch((err) => req.log.error({ err }, 'jupiter sync failed'));
     }
-
     return { ok: true, payment: toRow(p) };
   });
 
@@ -1632,7 +1834,7 @@ export async function junoRoutes(app: FastifyInstance) {
     }
 
     const headers = [
-      'createdAt (UTC+7)', 'code', 'customer', 'sender', 'amount', 'ocrAmount', 'bank',
+      'createdAt (UTC+7)', 'code', 'customer', 'sender', 'amount', 'creditUsed', 'ocrAmount', 'bank',
       'transferAt', 'ref', 'sales', 'status', 'reNumber', 'บิลมือ', 'receiptName', 'customerType',
       'flagged', 'taxInvoiceStatus', 'taxInvoice', 'note',
       'source', 'settleState', 'chequeNo', 'chequeBank', 'chequeDueDate',
@@ -1649,7 +1851,7 @@ export async function junoRoutes(app: FastifyInstance) {
     for (const p of rows) {
       lines.push([
         new Date(p.createdAt.getTime() + TH_OFFSET_MS).toISOString().slice(0, 16).replace('T', ' '),
-        p.customerCode, p.customerName, p.senderName, p.amount, p.ocrAmount,
+        p.customerCode, p.customerName, p.senderName, p.amount, p.creditUsed, p.ocrAmount,
         p.bank, p.transferAt, p.ref, p.salesName, p.status, p.reNumber, p.billNos.join('/'), p.receiptName, p.customerType,
         p.flagged ? 'yes' : '', p.taxInvoiceStatus, p.taxInvoice, p.note,
         p.source, p.settleState, p.chequeNo, p.chequeBank, p.chequeDueDate,
@@ -2626,7 +2828,7 @@ export async function junoRoutes(app: FastifyInstance) {
     // the whole reason it's 2 queries instead of N: no per-RE lookup.
     const candidatePayments = await prisma.payment.findMany({
       where: { status: { not: 'void' }, wrongTransferAt: null, reNumbers: { isEmpty: false } },
-      select: { id: true, reNumbers: true, amount: true, whtAmount: true, customerName: true, status: true },
+      select: { id: true, reNumbers: true, amount: true, whtAmount: true, creditUsed: true, customerName: true, status: true },
     });
     const byRe = new Map<string, typeof candidatePayments>();
     for (const p of candidatePayments) {
