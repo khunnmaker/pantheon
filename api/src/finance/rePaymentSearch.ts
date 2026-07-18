@@ -16,3 +16,24 @@ export function searchedAmount(value: string): number | null {
 export function nearAmountTolerance(amount: number): number {
   return Math.max(1, amount * 0.02);
 }
+
+// Bank exports and staff searches may format the same cheque number with spaces, dashes,
+// labels, and leading zeroes. Match on the significant digits only, like the auto-matcher.
+export function chequeSearchDigits(value: string): string | null {
+  const digits = value.replace(/\D/g, '').replace(/^0+/, '');
+  return digits || null;
+}
+
+// Keep the receipt-first bank-line search's business ranking explicit and unit-testable.
+export function bankTxnSearchTier(matches: {
+  exactAmount: boolean;
+  cheque: boolean;
+  text: boolean;
+  nearAmount: boolean;
+}): number {
+  if (matches.exactAmount) return 4;
+  if (matches.cheque) return 3;
+  if (matches.text) return 2;
+  if (matches.nearAmount) return 1;
+  return 0;
+}

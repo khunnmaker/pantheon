@@ -7,7 +7,7 @@ import {
   baht, fileToBase64, previewBankImport, applyBankImport, getBankTxns, getBankSuggestions,
   searchBankPayments,
   matchBankTxn, unmatchBankTxn, setBankTxnRef, confirmBankTxn, confirmAllMatched, getBankSummary,
-  getPaymentsRecon, getPaymentTxnSuggestions, matchPaymentTxns,
+  getPaymentsRecon, getPaymentTxnSuggestions, searchPaymentTxns, matchPaymentTxns,
   type BankTxn, type BankTxnStatusFilter, type BankImportPreview,
   type BankSuggestion, type BankSummary, type PaymentReconRow, type PaymentReconState,
   type TxnSuggestion,
@@ -909,7 +909,12 @@ function ReceiptMatchDetail({ payment, onChanged }: {
   const rowPending = payment.linkedTxns.length === 0;
   const [suggestions, setSuggestions] = useState<TxnSuggestion[]>([]);
   const [loadingSug, setLoadingSug] = useState(rowPending);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<TxnSuggestion[]>([]);
+  const [loadingSearch, setLoadingSearch] = useState(false);
+  const [searchError, setSearchError] = useState('');
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const candidateCache = useRef(new Map<string, TxnSuggestion>());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
@@ -917,15 +922,55 @@ function ReceiptMatchDetail({ payment, onChanged }: {
     if (!rowPending) return;
     setLoadingSug(true);
     getPaymentTxnSuggestions(payment.id)
-      .then((result) => setSuggestions(result.suggestions))
+      .then((result) => {
+        for (const suggestion of result.suggestions) candidateCache.current.set(suggestion.bankTxnId, suggestion);
+        setSuggestions(result.suggestions);
+      })
       .catch(() => setSuggestions([]))
       .finally(() => setLoadingSug(false));
   }, [payment.id, rowPending]);
 
-  function toggle(id: string) {
+  useEffect(() => {
+    if (!rowPending) return;
+    const query = searchQuery.trim();
+    if (query.length < 2) {
+      setSearchResults([]);
+      setLoadingSearch(false);
+      setSearchError('');
+      return;
+    }
+
+    const controller = new AbortController();
+    setLoadingSearch(true);
+    setSearchError('');
+    const timer = setTimeout(() => {
+      searchPaymentTxns(payment.id, query, controller.signal)
+        .then((result) => {
+          for (const candidate of result.results) candidateCache.current.set(candidate.bankTxnId, candidate);
+          setSearchResults(result.results);
+        })
+        .catch((err: Error) => {
+          if (err.name !== 'AbortError') {
+            setSearchResults([]);
+            setSearchError('ค้นหาไม่สำเร็จ — ลองใหม่อีกครั้ง');
+          }
+        })
+        .finally(() => {
+          if (!controller.signal.aborted) setLoadingSearch(false);
+        });
+    }, 300);
+
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [payment.id, rowPending, searchQuery]);
+
+  function toggle(candidate: TxnSuggestion) {
+    candidateCache.current.set(candidate.bankTxnId, candidate);
     setSelected((previous) => {
       const next = new Set(previous);
-      if (next.has(id)) next.delete(id); else next.add(id);
+      if (next.has(candidate.bankTxnId)) next.delete(candidate.bankTxnId); else next.add(candidate.bankTxnId);
       return next;
     });
   }
@@ -958,11 +1003,25 @@ function ReceiptMatchDetail({ payment, onChanged }: {
   }
 
   const selectedSum = [...selected].reduce((sum, id) => {
-    const suggestion = suggestions.find((item) => item.bankTxnId === id);
-    return sum + (suggestion ? parseFloat(suggestion.amount || '0') : 0);
+    const candidate = candidateCache.current.get(id);
+    return sum + (candidate ? parseFloat(candidate.amount || '0') : 0);
   }, 0);
   const linkedSum = payment.linkedTxns.reduce((sum, txn) => sum + parseFloat(txn.amount || '0'), 0);
   const sumDelta = Number((linkedSum - payment.amountNum).toFixed(2));
+  const linkedIds = new Set(payment.linkedTxns.map((txn) => txn.bankTxnId));
+  const availableSuggestions = suggestions.filter((suggestion) => !linkedIds.has(suggestion.bankTxnId));
+  const suggestionIds = new Set(suggestions.map((suggestion) => suggestion.bankTxnId));
+  // Keep checked search rows visible after FIN changes or clears the query before saving.
+  const selectedSearchRows = [...selected]
+    .map((id) => candidateCache.current.get(id))
+    .filter((candidate): candidate is TxnSuggestion =>
+      !!candidate && !suggestionIds.has(candidate.bankTxnId) && !linkedIds.has(candidate.bankTxnId));
+  const availableSearchResults = [...selectedSearchRows, ...searchResults]
+    .filter((candidate, index, all) =>
+      !suggestionIds.has(candidate.bankTxnId) &&
+      !linkedIds.has(candidate.bankTxnId) &&
+      all.findIndex((row) => row.bankTxnId === candidate.bankTxnId) === index,
+    );
 
   return (
     <div className="px-4 pb-4 pt-2 bg-slate-50 border-t border-slate-100 text-sm">
@@ -997,23 +1056,47 @@ function ReceiptMatchDetail({ payment, onChanged }: {
           </div>
           {loadingSug ? (
             <div className="text-xs text-slate-400 py-2"><Loader2 className="animate-spin inline" size={14} /> กำลังค้นหา…</div>
-          ) : suggestions.length === 0 ? (
-            <div className="text-xs text-slate-400 py-1">ไม่พบเงินเข้าที่ใกล้เคียง — รอไฟล์ธนาคารรอบถัดไป หรือค้นหาในมุมมองเงินเข้า</div>
+          ) : availableSuggestions.length === 0 ? (
+            <div className="text-xs text-slate-400 py-1">ไม่พบเงินเข้าที่ใกล้เคียง — ลองค้นหารายการธนาคารด้านล่าง</div>
           ) : (
             <div className="space-y-1 max-h-52 overflow-y-auto">
-              {suggestions.map((suggestion) => (
-                <label key={suggestion.bankTxnId} className="flex items-center gap-2 px-2 py-1.5 rounded-lg bg-white border border-slate-200 hover:border-emerald-300 cursor-pointer text-xs">
-                  <input type="checkbox" checked={selected.has(suggestion.bankTxnId)} onChange={() => toggle(suggestion.bankTxnId)} className="accent-emerald-600" />
-                  <span className="text-slate-500 whitespace-nowrap">{fmtDateTime(suggestion.txnAt)}</span>
-                  <span className="font-semibold shrink-0">{baht(parseFloat(suggestion.amount || '0'))}</span>
-                  {suggestion.exactAmount && <span className="px-1 py-0.5 rounded bg-emerald-50 text-emerald-600 shrink-0">ยอดตรง</span>}
-                  <span className="px-1 py-0.5 rounded bg-slate-100 text-slate-600 shrink-0">{channelChip(suggestion.channel)}</span>
-                  <span className="text-slate-500 truncate flex-1">{suggestion.payerName || suggestion.details}</span>
-                  {txnRefOf(suggestion.details) && <span className="text-slate-400 font-mono shrink-0 truncate max-w-[130px]" title="เลขอ้างอิงรายการจากไฟล์ธนาคาร">อ้างอิง {txnRefOf(suggestion.details)}</span>}
-                  <span className="text-slate-400 shrink-0">±{suggestion.dayDistance.toFixed(1)}ว</span>
-                  {suggestion.linkedCount > 0 && <span className="px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-600 shrink-0">จับคู่แล้ว {suggestion.linkedCount} ใบ</span>}
-                </label>
+              {availableSuggestions.map((suggestion) => (
+                <TxnCandidateRow
+                  key={suggestion.bankTxnId}
+                  candidate={suggestion}
+                  checked={selected.has(suggestion.bankTxnId)}
+                  onToggle={() => toggle(suggestion)}
+                />
               ))}
+            </div>
+          )}
+          <div className="relative mt-2">
+            <Search size={13} className="absolute left-2.5 top-2 text-slate-400" />
+            <input
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              placeholder="ค้นหา ชื่อผู้โอน / จำนวน / เลขเช็ค"
+              className="w-full pl-7 pr-8 py-1.5 rounded-lg border border-slate-300 bg-white text-xs focus:outline-none focus:ring-2 focus:ring-emerald-400"
+            />
+            {loadingSearch && <Loader2 size={13} className="absolute right-2.5 top-2 animate-spin text-slate-400" />}
+          </div>
+          {searchError && <div className="text-xs text-rose-600 mt-1">{searchError}</div>}
+          {searchQuery.trim().length >= 2 && !loadingSearch && !searchError && searchResults.length === 0 && (
+            <div className="text-xs text-slate-400 py-1">ไม่พบรายการธนาคารที่ค้นหา</div>
+          )}
+          {availableSearchResults.length > 0 && (
+            <div className="mt-1">
+              <div className="text-[11px] text-slate-400 mb-1">ผลการค้นหา</div>
+              <div className="space-y-1 max-h-52 overflow-y-auto">
+                {availableSearchResults.map((candidate) => (
+                  <TxnCandidateRow
+                    key={candidate.bankTxnId}
+                    candidate={candidate}
+                    checked={selected.has(candidate.bankTxnId)}
+                    onToggle={() => toggle(candidate)}
+                  />
+                ))}
+              </div>
             </div>
           )}
           {selected.size > 0 && (
@@ -1028,6 +1111,26 @@ function ReceiptMatchDetail({ payment, onChanged }: {
         </div>
       )}
     </div>
+  );
+}
+
+function TxnCandidateRow({ candidate, checked, onToggle }: {
+  candidate: TxnSuggestion;
+  checked: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <label className="flex items-center gap-2 px-2 py-1.5 rounded-lg bg-white border border-slate-200 hover:border-emerald-300 cursor-pointer text-xs">
+      <input type="checkbox" checked={checked} onChange={onToggle} className="accent-emerald-600" />
+      <span className="text-slate-500 whitespace-nowrap">{fmtDateTime(candidate.txnAt)}</span>
+      <span className="font-semibold shrink-0">{baht(parseFloat(candidate.amount || '0'))}</span>
+      {candidate.exactAmount && <span className="px-1 py-0.5 rounded bg-emerald-50 text-emerald-600 shrink-0">ยอดตรง</span>}
+      <span className="px-1 py-0.5 rounded bg-slate-100 text-slate-600 shrink-0">{channelChip(candidate.channel)}</span>
+      <span className="text-slate-500 truncate flex-1">{candidate.payerName || candidate.details}</span>
+      {txnRefOf(candidate.details) && <span className="text-slate-400 font-mono shrink-0 truncate max-w-[130px]" title="เลขอ้างอิงรายการจากไฟล์ธนาคาร">อ้างอิง {txnRefOf(candidate.details)}</span>}
+      <span className="text-slate-400 shrink-0">±{candidate.dayDistance.toFixed(1)}ว</span>
+      {candidate.linkedCount > 0 && <span className="px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-600 shrink-0">จับคู่แล้ว {candidate.linkedCount} ใบ</span>}
+    </label>
   );
 }
 

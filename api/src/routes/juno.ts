@@ -22,7 +22,13 @@ import { readChequeFromBuffer, readSlipFromBuffer } from '../llm/readSlip.js';
 import { parseReReceipts, decodeExpressBytes } from '../finance/parseReReceipts.js';
 import { computeReRow } from '../finance/reRecon.js';
 import { normalizeSlipDate } from '../finance/normalize.js';
-import { nearAmountTolerance, reSearchCore, searchedAmount } from '../finance/rePaymentSearch.js';
+import {
+  bankTxnSearchTier,
+  chequeSearchDigits,
+  nearAmountTolerance,
+  reSearchCore,
+  searchedAmount,
+} from '../finance/rePaymentSearch.js';
 import {
   buildDiscrepancyComponents,
   componentByPaymentId,
@@ -423,7 +429,7 @@ function extractChequeNo(t: { details: string }): string {
 // Canonical cheque-number key: digits only, no leading zeros ('' if nothing survives) — so
 // "0001234", "1234", and "No.1234" all compare equal across the bank line and the payment.
 function normChq(s: string): string {
-  return s.replace(/\D/g, '').replace(/^0+/, '');
+  return chequeSearchDigits(s) ?? '';
 }
 
 // The auto-matcher (see spec B3): runs in TWO passes over the in-scope unmatched "in" lines.
@@ -1797,7 +1803,7 @@ export async function junoRoutes(app: FastifyInstance) {
       let score = 0;
       if (exact) score = 3000 - days;
       else if (nameScore > 0.3) score = 2000 + nameScore * 100 - days;
-      else if (days < 1 && delta <= Math.max(1, paymentAmount * 0.02)) score = 1000 - delta;
+      else if (days < 1 && delta <= nearAmountTolerance(paymentAmount)) score = 1000 - delta;
       else score = -1;
       return { txn, days, exact, nameScore, score };
     }).filter((candidate) => candidate.score > -1);
@@ -1816,6 +1822,104 @@ export async function junoRoutes(app: FastifyInstance) {
         exactAmount: exact,
         dayDistance: Number(days.toFixed(2)),
         nameScore: Number(nameScore.toFixed(2)),
+      })),
+    };
+  });
+
+  // GET /api/juno/payments/:id/txn-search?q= — live bank-line search for the receipt-first
+  // panel. Results intentionally share the suggestion row shape and lifecycle rules. A line
+  // linked to another payment remains eligible for legitimate many-to-many reconciliation.
+  const paymentTxnSearchQuerySchema = z.object({ q: z.string().trim().min(2).max(120) });
+  app.get<{ Params: { id: string } }>('/api/juno/payments/:id/txn-search', async (req, reply) => {
+    const parsed = paymentTxnSearchQuerySchema.safeParse(req.query ?? {});
+    if (!parsed.success) return reply.code(400).send({ error: 'invalid_query' });
+
+    const payment = await prisma.payment.findUnique({ where: { id: req.params.id } });
+    if (!payment) return reply.code(404).send({ error: 'not_found' });
+
+    const term = parsed.data.q;
+    const amount = searchedAmount(term);
+    const chequeDigits = chequeSearchDigits(term);
+
+    // BankTxn.amount is a house String-money field, so use the same normalization as the
+    // existing search route to bound numeric candidates before Prisma applies eligibility.
+    const [amountHits, chequeHits] = await Promise.all([
+      amount !== null
+        ? prisma.$queryRaw<{ id: string }[]>`
+            SELECT "id" FROM "BankTxn"
+            WHERE "direction" = 'in'
+              AND "expressConfirmedAt" IS NULL
+              AND regexp_replace("amount", '[^0-9.]', '', 'g') ~ '^[0-9]+([.][0-9]+)?$'
+              AND abs((regexp_replace("amount", '[^0-9.]', '', 'g'))::numeric - ${amount}) <= ${nearAmountTolerance(amount)}
+            ORDER BY abs((regexp_replace("amount", '[^0-9.]', '', 'g'))::numeric - ${amount})
+            LIMIT 60`
+        : Promise.resolve([]),
+      chequeDigits
+        ? prisma.$queryRaw<{ id: string }[]>`
+            SELECT "id" FROM "BankTxn"
+            WHERE "direction" = 'in'
+              AND "expressConfirmedAt" IS NULL
+              AND lower("details") LIKE '%cheque%'
+              AND regexp_replace("details", '[^0-9]', '', 'g') LIKE ${`%${chequeDigits}%`}
+            LIMIT 60`
+        : Promise.resolve([]),
+    ]);
+    const hitIds = [...new Set([...amountHits, ...chequeHits].map((row) => row.id))];
+    const textSearch = [
+      { payerName: { contains: term, mode: 'insensitive' as const } },
+      { details: { contains: term, mode: 'insensitive' as const } },
+    ];
+    const candidates = await prisma.bankTxn.findMany({
+      where: {
+        direction: 'in',
+        expressConfirmedAt: null,
+        matches: { none: { paymentId: payment.id } },
+        OR: [...textSearch, ...(hitIds.length ? [{ id: { in: hitIds } }] : [])],
+      },
+      select: {
+        id: true, txnAt: true, amount: true, channel: true, payerName: true,
+        details: true, matchStatus: true,
+      },
+      take: 60,
+    });
+    const linkedCounts = candidates.length ? await prisma.paymentBankMatch.groupBy({
+      by: ['bankTxnId'],
+      where: { bankTxnId: { in: candidates.map((txn) => txn.id) } },
+      _count: { _all: true },
+    }) : [];
+    const countByTxn = new Map(linkedCounts.map((row) => [row.bankTxnId, row._count._all]));
+
+    const termLower = term.toLocaleLowerCase('th-TH');
+    const paymentAt = paymentTimestamp(payment.transferAt, payment.createdAt);
+    const scored = candidates.map((txn) => {
+      const txnAmount = txnAmountNum(txn.amount);
+      const amountDistance = amount === null ? Number.POSITIVE_INFINITY : Math.abs(txnAmount - amount);
+      const exactAmount = amount !== null && amountDistance < 0.005;
+      const nearAmount = amount !== null && amountDistance <= nearAmountTolerance(amount);
+      const cheque = !!chequeDigits && chequeSearchDigits(extractChequeNo(txn)) === chequeDigits;
+      const text = [txn.payerName, txn.details]
+        .some((value) => value.toLocaleLowerCase('th-TH').includes(termLower));
+      const tier = bankTxnSearchTier({ exactAmount, cheque, text, nearAmount });
+      const days = dayDistance(txn.txnAt, paymentAt);
+      return { txn, tier, days };
+    }).filter((candidate) => candidate.tier > 0);
+    scored.sort((a, b) => b.tier - a.tier || a.days - b.days);
+
+    return {
+      results: scored.slice(0, 30).map(({ txn, days }) => ({
+        bankTxnId: txn.id,
+        txnAt: txn.txnAt.toISOString(),
+        amount: txn.amount,
+        channel: txn.channel,
+        payerName: txn.payerName,
+        details: txn.details,
+        matchStatus: txn.matchStatus,
+        linkedCount: countByTxn.get(txn.id) ?? 0,
+        exactAmount: amountsEqual(txn.amount, payment.amount),
+        dayDistance: Number(days.toFixed(2)),
+        nameScore: Number(maxNameSimilarity(txn.payerName || txn.details, [
+          payment.senderName, payment.customerName, payment.receiptName,
+        ]).toFixed(2)),
       })),
     };
   });

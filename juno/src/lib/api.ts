@@ -725,6 +725,11 @@ export const getPaymentsRecon = (state: PaymentReconState = 'pending', q?: strin
 export const getPaymentTxnSuggestions = (paymentId: string) =>
   authed<{ suggestions: TxnSuggestion[] }>(`/api/juno/payments/${paymentId}/txn-suggestions`);
 
+export const searchPaymentTxns = (paymentId: string, q: string, signal?: AbortSignal) => {
+  const params = new URLSearchParams({ q });
+  return authed<{ results: TxnSuggestion[] }>(`/api/juno/payments/${paymentId}/txn-search?${params.toString()}`, { signal });
+};
+
 export const matchPaymentTxns = (paymentId: string, bankTxnIds: string[]) =>
   authed<{ ok: boolean; linkedSum: number; sumDelta: number }>(`/api/juno/payments/${paymentId}/match`, {
     method: 'POST',
