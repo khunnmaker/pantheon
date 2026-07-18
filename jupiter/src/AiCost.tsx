@@ -186,7 +186,7 @@ export default function AiCost() {
                                   style={{ width: `${Math.min(100, (f.estCostUsd / maxFeatureCost) * 100)}%` }}
                                 />
                               </div>
-                              <span className="tabular-nums font-bold text-[#1E1A2B]">{fmtUsd(f.estCostUsd)}</span>
+                              <span className="tabular-nums font-bold text-[#1E1A2B] min-w-[4.2rem] text-right">{fmtUsd(f.estCostUsd)}</span>
                             </div>
                           </td>
                         </tr>
