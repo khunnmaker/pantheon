@@ -82,11 +82,12 @@ export default function Recon({ isCeo }: { isCeo: boolean }) {
     try {
       const result = await runBankAutomatch();
       setAutomatchMsg(
-        result.autoMatched === 0 && result.timeMatched === 0 && result.chequeMatched === 0
+        result.autoMatched === 0 && result.timeMatched === 0 && result.chequeMatched === 0 && result.autoRecorded === 0
           ? 'ไม่พบคู่ใหม่'
           : `จับคู่อัตโนมัติแล้ว ${result.autoMatched} รายการ` +
             (result.timeMatched > 0 ? ` · จับคู่เวลาตรง ${result.timeMatched} รายการ` : '') +
-            (result.chequeMatched > 0 ? ` · จับคู่เช็คธนาคาร ${result.chequeMatched} รายการ` : ''),
+            (result.chequeMatched > 0 ? ` · จับคู่เช็คธนาคาร ${result.chequeMatched} รายการ` : '') +
+            (result.autoRecorded > 0 ? ` · ยืนยัน Express อัตโนมัติ ${result.autoRecorded} รายการ` : ''),
       );
       bump();
     } catch {
@@ -238,7 +239,8 @@ function ImportPanel({ onImported }: { onImported: () => void }) {
         `นำเข้า ${result.source === 'kbiz' ? 'KBIZ' : 'K SHOP'}: ใหม่ ${result.counts.new} / ซ้ำ ${result.counts.dup} / ยกเว้น ${result.counts.excluded}` +
         (result.autoMatched > 0 ? ` — จับคู่อัตโนมัติแล้ว ${result.autoMatched} รายการ` : '') +
         (result.timeMatched > 0 ? ` · จับคู่เวลาตรง ${result.timeMatched} รายการ` : '') +
-        (result.chequeMatched > 0 ? ` · จับคู่เช็คธนาคาร ${result.chequeMatched} รายการ` : ''),
+        (result.chequeMatched > 0 ? ` · จับคู่เช็คธนาคาร ${result.chequeMatched} รายการ` : '') +
+        (result.autoRecorded > 0 ? ` · ยืนยัน Express อัตโนมัติ ${result.autoRecorded} รายการ` : ''),
       );
       onImported();
       setPreview(null);

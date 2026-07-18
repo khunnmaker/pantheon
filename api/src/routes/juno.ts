@@ -23,6 +23,7 @@ import { syncPaymentToJupiter } from '../jupiter/sync.js';
 import { readChequeFromBuffer, readSlipFromBuffer } from '../llm/readSlip.js';
 import { parseReReceipts, decodeExpressBytes } from '../finance/parseReReceipts.js';
 import { parseXsDocs } from '../finance/parseXsDocs.js';
+import { autoRecordEligible } from '../finance/autoRecord.js';
 import { buildReReconIndex, computeReRow } from '../finance/reRecon.js';
 import { normalizeSlipDate } from '../finance/normalize.js';
 import {
@@ -1622,13 +1623,21 @@ export async function junoRoutes(app: FastifyInstance) {
     if (!cur) return reply.code(404).send({ error: 'not_found' });
     if (cur.source !== 'cash' && cur.source !== 'cheque') return reply.code(409).send({ error: 'not_cash_cheque' });
 
-    const p = await prisma.payment.update({
+    let p = await prisma.payment.update({
       where: { id: req.params.id },
       data: {
         receivedAt: body.data.received ? new Date() : null,
         receivedBy: body.data.received ? (req.agent?.email ?? null) : null,
       },
     });
+    // ได้รับแล้ว is the grounding event for cash/cheque — the auto stage-4 sweep may advance
+    // this (and other) payments right now; return the fresh row so the UI shows the new stage.
+    if (body.data.received) {
+      const auto = await autoRecordEligible(req.log);
+      if (auto.paymentIds.includes(p.id)) {
+        p = (await prisma.payment.findUnique({ where: { id: p.id } })) ?? p;
+      }
+    }
     return { ok: true, payment: toRow(p) };
   });
 
@@ -1913,7 +1922,13 @@ export async function junoRoutes(app: FastifyInstance) {
     if (syncRecordedCorrection) {
       void syncPaymentToJupiter(p.id).catch((err) => req.log.error({ err }, 'jupiter sync failed'));
     }
-    return { ok: true, payment: toRow(p) };
+    // Late typing: FIN may verify against REs that are ALREADY clean in the last import (and
+    // money already grounded) — the auto stage-4 sweep advances immediately; return fresh.
+    const autoAfterVerify = await autoRecordEligible(req.log);
+    const finalRow = autoAfterVerify.paymentIds.includes(p.id)
+      ? (await prisma.payment.findUnique({ where: { id: p.id } })) ?? p
+      : p;
+    return { ok: true, payment: toRow(finalRow) };
   });
 
   // POST /api/juno/payments/:id/flag { flagged, note? } — raise/clear the flag queue.
@@ -2183,6 +2198,7 @@ export async function junoRoutes(app: FastifyInstance) {
     }
 
     const { matched, chequeMatched, timeMatched } = await runAutoMatcher(insertedIds);
+    const auto = await autoRecordEligible(req.log);
 
     return {
       ok: true,
@@ -2192,14 +2208,16 @@ export async function junoRoutes(app: FastifyInstance) {
       autoMatched: matched,
       chequeMatched,
       timeMatched,
+      autoRecorded: auto.advanced,
     };
   });
 
   // POST /api/juno/bank/automatch — re-run the auto-matcher over ALL currently-unmatched
   // "in" bank txns (e.g. after FIN checks a backlog of payments post-import).
-  app.post('/api/juno/bank/automatch', async () => {
+  app.post('/api/juno/bank/automatch', async (req) => {
     const { matched, chequeMatched, timeMatched } = await runAutoMatcher();
-    return { ok: true, autoMatched: matched, chequeMatched, timeMatched };
+    const auto = await autoRecordEligible(req.log);
+    return { ok: true, autoMatched: matched, chequeMatched, timeMatched, autoRecorded: auto.advanced };
   });
 
   // GET /api/juno/bank/txns?status=&dir=&from=&to=&q= — the เงินเข้า/เงินออก list, with
@@ -2528,7 +2546,8 @@ export async function junoRoutes(app: FastifyInstance) {
     });
     const linkedSum = Number(allLinks.reduce((sum, link) => sum + txnAmountNum(link.bankTxn.amount), 0).toFixed(2));
     const sumDelta = Number((linkedSum - txnAmountNum(payment.amount)).toFixed(2));
-    return { ok: true, linkedSum, sumDelta };
+    const autoFromLink = await autoRecordEligible(req.log);
+    return { ok: true, linkedSum, sumDelta, autoRecorded: autoFromLink.advanced };
   });
 
   // GET /api/juno/bank/txns/:id/suggestions — ranked candidate payments for the จับคู่ panel.
@@ -2726,7 +2745,8 @@ export async function junoRoutes(app: FastifyInstance) {
     const linkedSum = allLinks.reduce((s, l) => s + txnAmountNum(l.payment.amount), 0);
     const sumDelta = Number((linkedSum - txnAmountNum(txn.amount)).toFixed(2));
 
-    return { ok: true, sumDelta };
+    const autoFromLink = await autoRecordEligible(req.log);
+    return { ok: true, sumDelta, autoRecorded: autoFromLink.advanced };
   });
 
   // POST /api/juno/bank/txns/:id/unmatch { paymentId } — remove one link; recompute both
@@ -2986,6 +3006,10 @@ export async function junoRoutes(app: FastifyInstance) {
 
     req.log.info({ by: req.agent?.id, parsed: parsed.parsedCount, imported, updated }, 're receipts imported');
 
+    // The import IS the stage-4 trigger now (owner 2026-07-19): freshly-clean REs advance
+    // their grounded payments to ยืนยันใน Express automatically.
+    const auto = await autoRecordEligible(req.log);
+
     return {
       parsed: parsed.parsedCount,
       imported,
@@ -2994,6 +3018,7 @@ export async function junoRoutes(app: FastifyInstance) {
       totalAmount: parsed.totalAmount,
       fileTotal: parsed.fileTotal,
       totalsMatch: parsed.totalsMatch,
+      autoRecorded: auto.advanced,
     };
   });
 

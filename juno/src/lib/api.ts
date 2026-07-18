@@ -688,6 +688,7 @@ export interface BankImportApplyResult {
   autoMatched: number;
   chequeMatched: number; // cheque number + amount links created by the cheque pass
   timeMatched: number; // exact amount + Bangkok calendar-minute links created by pass B
+  autoRecorded: number; // payments auto-advanced to ยืนยันใน Express by the stage-4 sweep
 }
 
 export interface BankSuggestion {
@@ -774,7 +775,7 @@ export const applyBankImport = (token: string) =>
   });
 
 export const runBankAutomatch = () =>
-  authed<{ ok: boolean; autoMatched: number; chequeMatched: number; timeMatched: number }>('/api/juno/bank/automatch', { method: 'POST' });
+  authed<{ ok: boolean; autoMatched: number; chequeMatched: number; timeMatched: number; autoRecorded: number }>('/api/juno/bank/automatch', { method: 'POST' });
 
 export interface BankTxnFilter {
   status?: BankTxnStatusFilter;
@@ -904,6 +905,7 @@ export interface ReReconSummary {
 }
 
 export interface ReImportResult {
+  autoRecorded: number;
   parsed: number;
   imported: number;
   updated: number;

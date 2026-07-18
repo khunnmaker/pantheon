@@ -145,6 +145,7 @@ function ImportPanel({ onImported }: { onImported: () => void }) {
           <div className="flex items-center gap-1 font-medium">
             <CheckCircle2 size={13} /> RE: นำเข้าแล้ว {reResult.parsed} รายการ — ใหม่ {reResult.imported} / อัปเดต {reResult.updated}
             {reResult.cancelledSkipped > 0 && ` / ข้ามใบยกเลิก ${reResult.cancelledSkipped}`}
+            {reResult.autoRecorded > 0 && ` · ยืนยัน Express อัตโนมัติ ${reResult.autoRecorded} รายการ`}
           </div>
           {!reResult.totalsMatch && (
             <div className="flex items-center gap-1 text-amber-700">
