@@ -1,9 +1,11 @@
-import { getLineClient } from './client.js';
+import { getAppdentLineClient, getLineClient } from './client.js';
 import { env } from '../env.js';
 
 export interface SendResult {
   sent: boolean;
   dryRun: boolean;
+  skipped?: boolean;
+  skipReason?: 'appdent_token_unset';
   channelMsgId?: string;
   quoteToken?: string; // LINE token to later quote OUR just-sent text/image (enables self-reply)
 }
@@ -16,21 +18,31 @@ const dryRunForced = () => env.LINE_DRY_RUN === '1' || env.LINE_DRY_RUN.toLowerC
 
 // Push one or more messages. Dry-run (log only) when no access token is configured
 // OR LINE_DRY_RUN is set — so the approve→send flow is testable without messaging
-// real customers. Never logs PII (masks the userId, logs only message kinds).
+// real customers. Logs only structured channel/message kinds, never IDs or bodies.
 async function push(
+  client: ReturnType<typeof getLineClient>,
+  channel: 'prominent' | 'appdent',
   lineUserId: string,
   messages: LineOutMessage[],
   resultIndex = 0,
 ): Promise<SendResult> {
-  const c = getLineClient();
-  if (!c || dryRunForced()) {
-    const masked = lineUserId.length > 6 ? `${lineUserId.slice(0, 2)}…${lineUserId.slice(-4)}` : 'U…';
+  if (!client || dryRunForced()) {
     // eslint-disable-next-line no-console
-    console.log(`[LINE DRY-RUN] -> ${masked} (${messages.map((m) => m.type).join('+')})`);
+    console.log({ event: 'line_push_dry_run', channel, kind: messages.map((m) => m.type).join('+') });
     return { sent: false, dryRun: true };
   }
-  // @line/bot-sdk Message union — our literals match Text/Image message shapes.
-  const res = await c.pushMessage({ to: lineUserId, messages: messages as never });
+  let res;
+  try {
+    // @line/bot-sdk Message union — our literals match Text/Image message shapes.
+    res = await client.pushMessage({ to: lineUserId, messages: messages as never });
+  } catch (err) {
+    if (channel === 'appdent') {
+      // Never attach the SDK error: request metadata can include destination/content.
+      // eslint-disable-next-line no-console
+      console.error({ event: 'owner_push_failed', kind: messages.map((m) => m.type).join('+'), reason: 'line_api_error' });
+    }
+    throw err;
+  }
   // Pick the LINE message represented by our single DB row. For mixed text+image sends the
   // route renders that row as a picture bubble, so callers select the first image response.
   // (Cast: the installed SDK type predates quoteToken on image responses.)
@@ -44,7 +56,21 @@ export async function sendLineText(
   text: string,
   quoteToken?: string,
 ): Promise<SendResult> {
-  return push(lineUserId, [{ type: 'text', text, ...(quoteToken ? { quoteToken } : {}) }]);
+  return push(getLineClient(), 'prominent', lineUserId, [{ type: 'text', text, ...(quoteToken ? { quoteToken } : {}) }]);
+}
+
+export async function sendOwnerLineText(
+  prominentOwnerUserId: string,
+  text: string,
+): Promise<SendResult> {
+  const client = getAppdentLineClient();
+  if (!client) {
+    // eslint-disable-next-line no-console
+    console.error({ event: 'owner_digest_skipped', kind: 'text', reason: 'appdent_token_unset' });
+    return { sent: false, dryRun: false, skipped: true, skipReason: 'appdent_token_unset' };
+  }
+  const destination = env.APPDENT_OWNER_LINE_USER_ID || prominentOwnerUserId;
+  return push(client, 'appdent', destination, [{ type: 'text', text }]);
 }
 
 // Image(s) only — no text bubble (LINE rejects empty text). For an instant photo send.
@@ -57,7 +83,7 @@ export async function sendLineImages(lineUserId: string, imageUrls: string[]): P
   if (!messages.length) return { sent: false, dryRun: true };
   let first: SendResult | undefined;
   for (let i = 0; i < messages.length; i += 5) {
-    const res = await push(lineUserId, messages.slice(i, i + 5));
+    const res = await push(getLineClient(), 'prominent', lineUserId, messages.slice(i, i + 5));
     first ??= res;
   }
   return first as SendResult;
@@ -78,7 +104,7 @@ export async function sendLineReply(
   }
   let first: SendResult | undefined;
   for (let i = 0; i < messages.length; i += 5) {
-    const res = await push(lineUserId, messages.slice(i, i + 5), i === 0 && imageUrls.length ? 1 : 0);
+    const res = await push(getLineClient(), 'prominent', lineUserId, messages.slice(i, i + 5), i === 0 && imageUrls.length ? 1 : 0);
     first ??= res;
   }
   return first as SendResult;

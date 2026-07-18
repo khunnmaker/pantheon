@@ -1,5 +1,6 @@
 import { prisma } from '../db/prisma.js';
-import { sendLineText } from '../line/send.js';
+import { getProminentOwnerLineUserId } from '../line/owner.js';
+import { sendLineText, sendOwnerLineText } from '../line/send.js';
 import { eventDateRangeWhere, recurringEventRangeWhere } from './calendarQuery.js';
 import { APOLLO_URL, buildDigestLines, digestEventsForDay } from './digest.js';
 
@@ -13,14 +14,20 @@ export async function notifyApolloAssignment(taskId: string): Promise<void> {
     include: { project: { select: { name: true } }, assignee: { select: { lineUserId: true } } },
   });
   if (!task?.assignee?.lineUserId) return;
-  await sendLineText(task.assignee.lineUserId, [
+  const isOwner = task.assignee.lineUserId === getProminentOwnerLineUserId();
+  const result = await (isOwner ? sendOwnerLineText : sendLineText)(task.assignee.lineUserId, [
     `📌 งานใหม่: ${task.title}`,
     `โครงการ: ${task.project.name} · กำหนด ${task.dueDate.toISOString().slice(0, 10)}`,
     `${APOLLO_URL}/t/${task.id}`,
   ].join('\n'));
+  if (isOwner && result.skipped) {
+    // eslint-disable-next-line no-console
+    console.error({ event: 'owner_digest_skipped', kind: 'apollo_assignment', reason: result.skipReason });
+  }
 }
 
 export async function sendApolloMorningDigests(): Promise<number> {
+  const ownerLineUserId = getProminentOwnerLineUserId();
   const today = thaiDateKey();
   const todayDate = new Date(`${today}T00:00:00.000Z`);
   const dueThrough = todayDate;
@@ -37,8 +44,11 @@ export async function sendApolloMorningDigests(): Promise<number> {
     },
   });
   let sent = 0;
+  let ownerMatches = 0;
   for (const agent of agents) {
     if (!agent.lineUserId) continue;
+    const isOwner = Boolean(ownerLineUserId && agent.lineUserId === ownerLineUserId);
+    if (isOwner) ownerMatches += 1;
     const taskWhere = { assigneeId: agent.id, completedAt: null, dueDate: { lte: dueThrough } };
     const [totalOpenCount, events] = await Promise.all([
       // True total (the findMany above is capped at 20) — feeds buildDigestLines' "และอีก N
@@ -57,8 +67,31 @@ export async function sendApolloMorningDigests(): Promise<number> {
     ]);
     const lines = buildDigestLines(agent.name, agent.apolloAssignedTasks, digestEventsForDay(events, today), today, totalOpenCount);
     if (!lines) continue;
+    if (isOwner) {
+      try {
+        const result = await sendOwnerLineText(agent.lineUserId, lines.join('\n'));
+        if (result.sent) sent += 1;
+        else if (result.skipped) {
+          // eslint-disable-next-line no-console
+          console.error({ event: 'owner_digest_skipped', kind: 'apollo_morning', reason: result.skipReason });
+        }
+      } catch {
+        // Owner delivery is isolated so a private-channel outage cannot block staff digests.
+        // eslint-disable-next-line no-console
+        console.error({ event: 'owner_push_failed', kind: 'apollo_morning', reason: 'line_api_error' });
+      }
+      continue;
+    }
     await sendLineText(agent.lineUserId, lines.join('\n'));
     sent += 1;
+  }
+  if (ownerMatches === 0) {
+    // eslint-disable-next-line no-console
+    console.warn({
+      event: 'owner_digest_skipped',
+      kind: 'apollo_morning',
+      reason: ownerLineUserId ? 'owner_agent_not_found' : 'owner_id_unset',
+    });
   }
   return sent;
 }

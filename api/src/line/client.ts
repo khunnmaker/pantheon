@@ -4,6 +4,7 @@ import { env } from '../env.js';
 // Lazily create the LINE Messaging API client. Returns null when no access
 // token is configured (M1 dev runs without real LINE credentials).
 let client: messagingApi.MessagingApiClient | null = null;
+let appdentClient: messagingApi.MessagingApiClient | null = null;
 
 export function getLineClient(): messagingApi.MessagingApiClient | null {
   if (!env.LINE_CHANNEL_ACCESS_TOKEN) return null;
@@ -13,6 +14,18 @@ export function getLineClient(): messagingApi.MessagingApiClient | null {
     });
   }
   return client;
+}
+
+// Separately cached outbound-only client for private owner notifications. This
+// must never fall back to the Prominent client when appdent is unconfigured.
+export function getAppdentLineClient(): messagingApi.MessagingApiClient | null {
+  if (!env.APPDENT_LINE_CHANNEL_ACCESS_TOKEN) return null;
+  if (!appdentClient) {
+    appdentClient = new messagingApi.MessagingApiClient({
+      channelAccessToken: env.APPDENT_LINE_CHANNEL_ACCESS_TOKEN,
+    });
+  }
+  return appdentClient;
 }
 
 // Best-effort display-name lookup; null if no client or the call fails.

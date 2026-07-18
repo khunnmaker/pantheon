@@ -7,6 +7,7 @@ vi.mock('../src/env.js', () => ({
 }));
 vi.mock('../src/line/client.js', () => ({
   getLineClient: () => ({ pushMessage: mocks.pushMessage }),
+  getAppdentLineClient: () => null,
 }));
 
 import { sendLineImages, sendLineReply } from '../src/line/send.js';

@@ -26,6 +26,7 @@ vi.mock('../src/db/prisma.js', () => ({
 vi.mock('../src/apollo/notify.js', () => ({ notifyApolloAssignment: vi.fn(), thaiDateKey: () => '2026-07-17' }));
 vi.mock('../src/apollo/attachmentStore.js', () => ({ deleteApolloAttachment: vi.fn(), readApolloAttachment: vi.fn(), saveApolloAttachment: vi.fn() }));
 vi.mock('../src/db/ensureSeeded.js', () => ({ EMPLOYEES: [], TIER_ACCOUNTS: [], employeeEmail: (slug: string) => `${slug}@example.test` }));
+vi.mock('../src/line/staffBind.js', () => ({ createStaffLineBindCode: vi.fn(), staffLineBindStatus: vi.fn() }));
 
 import { apolloRoutes } from '../src/routes/apollo.js';
 

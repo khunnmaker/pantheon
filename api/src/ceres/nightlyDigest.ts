@@ -1,6 +1,7 @@
 import { prisma } from '../db/prisma.js';
 import { env } from '../env.js';
-import { sendLineText } from '../line/send.js';
+import { getProminentOwnerLineUserId } from '../line/owner.js';
+import { sendOwnerLineText } from '../line/send.js';
 import { computeBoard, num, thaiDayKey, thaiDayRange, transferReconciliationStats } from '../routes/ceres/common.js';
 import { computeTemplateDue } from '../routes/ceres/requests.js';
 import { ageStuckAIReviews } from './requestService.js';
@@ -143,19 +144,32 @@ function msUntilNextDigest(): number {
 
 // One firing: resolve the CEO's LINE id, send tonight's digest. Never throws — a missing
 // id or a LINE failure only logs, so the caller's reschedule always runs.
-async function fireDigest(log: { info: Function; error: Function }): Promise<void> {
-  // Suite-wide CEO_LINE_USER_ID, with the old Ceres-scoped name as a deprecated fallback
-  // (same fallback pattern as ceres/notifyCeo.ts).
-  const ceoLineUserId = env.CEO_LINE_USER_ID || env.CERES_CEO_LINE_USER_ID;
+export async function fireDigest(log: { info: Function; error: Function }): Promise<void> {
+  const ceoLineUserId = getProminentOwnerLineUserId();
   if (!ceoLineUserId) {
-    log.info('[ceres digest] CEO_LINE_USER_ID not configured — skipping nightly digest');
+    log.error(
+      { event: 'owner_digest_skipped', kind: 'ceres_nightly', reason: 'owner_id_unset' },
+      '[ceres digest] owner ID not configured — skipping nightly digest',
+    );
     return;
   }
   try {
-    await sendLineText(ceoLineUserId, await buildCeresDigest());
-    log.info('[ceres digest] sent nightly CEO digest');
-  } catch (err) {
-    log.error({ err }, '[ceres digest] failed to send nightly CEO digest');
+    const result = await sendOwnerLineText(ceoLineUserId, await buildCeresDigest());
+    if (result.skipped) {
+      log.error(
+        { event: 'owner_digest_skipped', kind: 'ceres_nightly', reason: result.skipReason },
+        '[ceres digest] appdent unavailable — skipped nightly owner digest',
+      );
+    } else if (result.dryRun) {
+      log.info({ event: 'owner_digest_dry_run', kind: 'ceres_nightly' }, '[ceres digest] nightly owner digest dry-run');
+    } else {
+      log.info({ event: 'owner_digest_sent', kind: 'ceres_nightly' }, '[ceres digest] sent nightly owner digest');
+    }
+  } catch {
+    log.error(
+      { event: 'owner_push_failed', kind: 'ceres_nightly', reason: 'line_api_error' },
+      '[ceres digest] failed to send nightly owner digest',
+    );
   }
 }
 

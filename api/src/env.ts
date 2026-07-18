@@ -17,6 +17,10 @@ const schema = z.object({
   // Needed M1 webhook / M2 send — optional at M0.
   LINE_CHANNEL_ACCESS_TOKEN: z.string().default(''),
   LINE_CHANNEL_SECRET: z.string().default(''),
+  // Outbound-only owner channel. When the token is blank, owner-directed pushes
+  // fail closed and are never retried through the Prominent LINE client.
+  APPDENT_LINE_CHANNEL_ACCESS_TOKEN: z.string().default(''),
+  APPDENT_OWNER_LINE_USER_ID: z.string().default(''),
   // Set to "1"/"true" to never actually push to LINE (testing/staging safety).
   LINE_DRY_RUN: z.string().default(''),
 
