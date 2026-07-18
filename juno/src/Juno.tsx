@@ -185,14 +185,16 @@ export default function Juno({ agent, onLogout }: { agent: Agent; onLogout: () =
   const [verifiedUnmatched, setVerifiedUnmatched] = useState<number | undefined>(undefined);
   // open FinanceAudit (ตรวจสอบยอด) count — employee/supervisor badge; gm skips this request.
   const [auditOpen, setAuditOpen] = useState<number | undefined>(undefined);
-  const [billAlerts, setBillAlerts] = useState<number | undefined>(undefined);
+  const [billUnpaid, setBillUnpaid] = useState<number | undefined>(undefined);
+  // Badge = ยังไม่จ่าย only (owner 2026-07-18) — ยอดไม่ตรง stays visible inside the tab's own
+  // status filter, it just no longer inflates the bar count.
   const handleBillCounts = useCallback((counts: { unpaid: number; mismatch: number }) => {
-    setBillAlerts(counts.unpaid + counts.mismatch);
+    setBillUnpaid(counts.unpaid);
   }, []);
 
   const refreshSummary = useCallback(() => {
     if (scope === 'billsOnly') {
-      getManualBills().then((r) => handleBillCounts(r.counts)).catch(() => setBillAlerts(undefined));
+      getManualBills().then((r) => handleBillCounts(r.counts)).catch(() => setBillUnpaid(undefined));
       return;
     }
     getSummary().then(setSummary).catch(() => setSummary(null));
@@ -201,7 +203,7 @@ export default function Juno({ agent, onLogout }: { agent: Agent; onLogout: () =
     // receipt-less noise: K SHOP lumps, pre-Juno history; it replaced the ≤31d line count).
     getBankSummary().then((s) => setVerifiedUnmatched(s.verifiedUnreconciled.count)).catch(() => setVerifiedUnmatched(undefined));
     getFinanceAudits('open').then((r) => setAuditOpen(r.audits.length)).catch(() => setAuditOpen(undefined));
-    getManualBills().then((r) => handleBillCounts(r.counts)).catch(() => setBillAlerts(undefined));
+    getManualBills().then((r) => handleBillCounts(r.counts)).catch(() => setBillUnpaid(undefined));
   }, [handleBillCounts, scope]);
   useEffect(() => { refreshSummary(); }, [refreshSummary]);
 
@@ -215,7 +217,7 @@ export default function Juno({ agent, onLogout }: { agent: Agent; onLogout: () =
   //   สรุป — reference views, no queue semantics.
   // Per-role visibility unchanged from the flat bar; groups render only if non-empty.
   type Tab = { key: View; label: string; icon: React.ReactNode; count?: number };
-  const billTab: Tab = { key: 'bills', label: 'บิลมือ', icon: <ReceiptText size={16} />, count: billAlerts };
+  const billTab: Tab = { key: 'bills', label: 'บิลมือ', icon: <ReceiptText size={16} />, count: billUnpaid };
   const tabGroups: { caption: string; tabs: Tab[] }[] = (scope === 'billsOnly'
     ? [{ caption: 'ออกบิล', tabs: [billTab] }]
     : [
