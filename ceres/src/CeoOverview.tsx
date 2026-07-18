@@ -57,7 +57,17 @@ function isStaffRequest(request: CeoOverviewData['escalations'][number]): reques
   return 'workflowVersion' in request && request.workflowVersion === 2;
 }
 
-export default function CeoOverview({ onGoExpenses }: { onGoExpenses?: () => void }) {
+export default function CeoOverview({
+  onGoExpenses,
+  showDailyOutflow = false,
+}: {
+  onGoExpenses?: () => void;
+  // Desktop ภาพรวม tab (Md.tsx, 2026-07-18 flat strip) grafts in CeoHome's daily
+  // outflow-by-lane/type breakdown so nothing is lost when CeoOverview replaces CeoHome as
+  // the CEO's desktop oversight screen. Off by default so the mobile ภาพรวมย้อนหลัง screen
+  // (MoreMenu → 'ceo-history') keeps rendering byte-for-byte as before.
+  showDailyOutflow?: boolean;
+}) {
   const [date, setDate] = useState(todayStr());
   const [data, setData] = useState<CeoOverviewData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -98,6 +108,12 @@ export default function CeoOverview({ onGoExpenses }: { onGoExpenses?: () => voi
         <div className="space-y-4">
           <EscalationsSection escalations={data.escalations} onDecided={bump} />
           <CashSection cash={data.cash} onTopupDone={bump} />
+          {showDailyOutflow && (
+            <DailyOutflowSection
+              dailyOutflow={data.dailyOutflow}
+              title={date === todayStr() ? undefined : 'รายจ่ายตามช่องทาง/ประเภท'}
+            />
+          )}
           <AiReviewsSection aiReviews={data.aiReviews} />
           <FlaggedExpensesSection flaggedExpenses={data.flaggedExpenses} onGoExpenses={onGoExpenses} />
           <MissedBillsSection missedBills={data.missedBills} />
@@ -248,6 +264,41 @@ function EscalationCard({ r, onDecided }: { r: CeoOverviewData['escalations'][nu
         </div>
       )}
     </div>
+  );
+}
+
+// Extracted verbatim from CeoHome.tsx (2026-07-18) so the mobile CEO home and the desktop
+// ภาพรวม tab render the identical daily outflow-by-lane/type markup. Title is overridable
+// because the desktop screen's date picker can point at a day other than today.
+const OUTFLOW_LANE_LABEL: Record<string, string> = { cash: 'เงินสด', transfer: 'โอน' };
+const OUTFLOW_TYPE_LABEL: Record<string, string> = { advance: 'เบิกล่วงหน้า', reimbursement: 'สำรองจ่าย-ขอคืน', purchase: 'ขอให้ซื้อ', unknown: 'อื่นๆ' };
+
+export function DailyOutflowSection({
+  dailyOutflow,
+  title = 'รายจ่ายวันนี้ ตามช่องทาง/ประเภท',
+}: {
+  dailyOutflow: CeoOverviewData['dailyOutflow'];
+  title?: string;
+}) {
+  return (
+    <SectionCard title={title}>
+      {dailyOutflow.length === 0 ? (
+        <div className="text-center text-slate-400 text-sm py-6 bg-white rounded-xl border border-slate-200">ยังไม่มีรายจ่ายวันนี้</div>
+      ) : (
+        <div className="bg-white rounded-xl border border-slate-200 divide-y divide-slate-100">
+          {dailyOutflow.map((bucket) => (
+            <div key={`${bucket.lane}:${bucket.requestType}`} className="flex items-center justify-between px-4 py-3 text-sm">
+              <div>
+                <span className="font-semibold">{OUTFLOW_LANE_LABEL[bucket.lane] ?? bucket.lane}</span>
+                <span className="text-slate-400"> · {OUTFLOW_TYPE_LABEL[bucket.requestType] ?? bucket.requestType}</span>
+                <span className="text-xs text-slate-400"> ({bucket.count} รายการ)</span>
+              </div>
+              <span className="font-bold text-amber-700">{baht(Number(bucket.amount))}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </SectionCard>
   );
 }
 

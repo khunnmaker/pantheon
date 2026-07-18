@@ -1,16 +1,15 @@
 import { useCallback, useEffect, useState } from 'react';
 import { AlertTriangle, Loader2, Scale, Send } from 'lucide-react';
-import { baht, getCeoOverview, type CeoOverview as CeoOverviewData } from './lib/api';
+import { getCeoOverview, type CeoOverview as CeoOverviewData } from './lib/api';
 import { todayStr } from './MdRequests';
-import { CashSection, EscalationsSection, FlaggedExpensesSection, SectionCard, SettlementSection } from './CeoOverview';
+import { CashSection, DailyOutflowSection, EscalationsSection, FlaggedExpensesSection, SectionCard, SettlementSection } from './CeoOverview';
 
 // Phase 4 — CEO home. Default view is TODAY's oversight snapshot: pending CEO
 // decisions, daily outflow by lane/type, cash balance, unreconciled transfers, AI
 // flags, and close status. History/date-picker/CSV exports move to More (the existing
 // full CeoOverview.tsx screen) — see docs/CERES_REVAMP_PLAN.md "Phase 4" CEO section.
-
-const LANE_LABEL: Record<string, string> = { cash: 'เงินสด', transfer: 'โอน' };
-const TYPE_LABEL: Record<string, string> = { advance: 'เบิกล่วงหน้า', reimbursement: 'สำรองจ่าย-ขอคืน', purchase: 'ขอให้ซื้อ', unknown: 'อื่นๆ' };
+// The outflow section itself was extracted to CeoOverview.tsx (2026-07-18) so the desktop
+// ภาพรวม tab can render the identical markup — no visual change here.
 
 export default function CeoHome({ onGoOwnRequest }: { onGoOwnRequest: () => void }) {
   const [data, setData] = useState<CeoOverviewData | null>(null);
@@ -62,24 +61,7 @@ export default function CeoHome({ onGoOwnRequest }: { onGoOwnRequest: () => void
       <EscalationsSection escalations={data.escalations} onDecided={bump} />
       <CashSection cash={data.cash} onTopupDone={bump} />
 
-      <SectionCard title="รายจ่ายวันนี้ ตามช่องทาง/ประเภท">
-        {data.dailyOutflow.length === 0 ? (
-          <div className="text-center text-slate-400 text-sm py-6 bg-white rounded-xl border border-slate-200">ยังไม่มีรายจ่ายวันนี้</div>
-        ) : (
-          <div className="bg-white rounded-xl border border-slate-200 divide-y divide-slate-100">
-            {data.dailyOutflow.map((bucket) => (
-              <div key={`${bucket.lane}:${bucket.requestType}`} className="flex items-center justify-between px-4 py-3 text-sm">
-                <div>
-                  <span className="font-semibold">{LANE_LABEL[bucket.lane] ?? bucket.lane}</span>
-                  <span className="text-slate-400"> · {TYPE_LABEL[bucket.requestType] ?? bucket.requestType}</span>
-                  <span className="text-xs text-slate-400"> ({bucket.count} รายการ)</span>
-                </div>
-                <span className="font-bold text-amber-700">{baht(Number(bucket.amount))}</span>
-              </div>
-            ))}
-          </div>
-        )}
-      </SectionCard>
+      <DailyOutflowSection dailyOutflow={data.dailyOutflow} />
 
       <SectionCard title="กระทบยอดโอนเงิน">
         <div className="bg-white rounded-xl border border-slate-200 p-4 flex items-center gap-3">

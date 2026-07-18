@@ -7,7 +7,6 @@ import {
   Bell,
   CircleDollarSign,
   ClipboardCheck,
-  ClipboardList,
   Crown,
   Download,
   FileCheck2,
@@ -29,6 +28,7 @@ import { useCeres } from './lib/bootstrapContext';
 import {
   getTransferReconciliation,
   getCeoOverview,
+  listExpenses,
   listStaffRequests,
   logout as logoutSuite,
   type CeoOverview as CeoOverviewData,
@@ -74,10 +74,17 @@ type View =
   | 'my-requests'
   // Desktop-only (≥1024px) CEO escalation queue — a focused single-purpose screen around the
   // same EscalationsSection CeoHome/CeoOverview already render, so the leading tab in the CEO's
-  // desktop strip (ceoTabGroups, inside ManagementApp below) has somewhere dedicated to point.
-  // Never reachable on mobile (not in moreGroups, not in SECONDARY_VIEWS) and gm never gets it
-  // (roleInappropriate, below).
-  | 'ceo-queue';
+  // desktop strip has somewhere dedicated to point. Never reachable on mobile (not in
+  // moreGroups, not in SECONDARY_VIEWS) and gm never gets it (roleInappropriate, below).
+  | 'ceo-queue'
+  // Desktop-only (≥1024px) composed tabs (2026-07-18 flat-strip simplification) — each one
+  // groups several of the individual keys above behind an internal segmented control. See the
+  // desktop*Redirect consts + Cashbox/History/Other ComposedView components below, and
+  // docs/CERES_DESKTOP_NAV.md for the full map. Not linked from any mobile UI (MoreMenu still
+  // points at the individual keys), but included here so a stale hash never dead-ends.
+  | 'cashbox'
+  | 'history'
+  | 'other';
 
 const VIEW_KEYS: View[] = [
   'home',
@@ -99,6 +106,9 @@ const VIEW_KEYS: View[] = [
   'my-submit',
   'my-requests',
   'ceo-queue',
+  'cashbox',
+  'history',
+  'other',
 ];
 
 const SECONDARY_VIEWS = new Set<View>([
@@ -116,6 +126,9 @@ const SECONDARY_VIEWS = new Set<View>([
   'settings',
   'my-submit',
   'my-requests',
+  'cashbox',
+  'history',
+  'other',
 ]);
 
 // Tracks Tailwind's own `lg:` breakpoint (min-width: 1024px) in JS, for the few nav decisions
@@ -147,6 +160,14 @@ export function CeoApp() {
   return <ManagementApp isCeo />;
 }
 
+// Sub-tab keys for the desktop-only composed views (2026-07-18 flat-strip simplification).
+// Each mirrors a small cluster of the pre-existing individual View keys — see the
+// desktop*Redirect consts in ManagementApp for how an old key (e.g. 'money') maps in and
+// primes the right segment.
+type CashboxTab = 'board' | 'money' | 'close';
+type HistoryTab = 'expenses' | 'requests';
+type OtherTab = 'templates' | 'exports' | 'settings';
+
 function ManagementApp({ isCeo }: { isCeo: boolean }) {
   const { agent, onLogout } = useCeres();
   const [view, setView] = useHashTab<View>(VIEW_KEYS, 'home');
@@ -161,20 +182,50 @@ function ManagementApp({ isCeo }: { isCeo: boolean }) {
   // Desktop gm has no big-button home (owner spec, 2026-07-18 desktop nav) — NeeHome's four
   // cards are a mobile-only front door, so a gm landing on (or hash-linking to) 'home' on a
   // ≥1024px viewport is redirected to their desktop default, the approval queue. CEO's 'home'
-  // stays put: CeoHome IS the desktop "oversight" tab (see ceoTabGroups below).
+  // stays put: CeoOverview IS the desktop "ภาพรวม" tab (see ceoTabs below) once isDesktop.
   const desktopGmHomeRedirect = isDesktop && !isCeo && view === 'home';
-  const activeView = roleInappropriate ? 'home' : desktopGmHomeRedirect ? 'approvals' : view;
+  // Old individual keys folded into a desktop composed tab (2026-07-18) — each old destination
+  // still works from mobile (its own render block below is untouched) and from a stale/shared
+  // hash on desktop, it just lands on the composed tab that now contains it, with that tab's
+  // internal segmented control primed to the right segment (see the *Tab state + syncing
+  // useEffects below) instead of dead-ending.
+  const desktopLegacyApprovalRedirect = isDesktop && !isCeo && view === 'legacy-approval';
+  const desktopCeoHistoryRedirect = isDesktop && isCeo && view === 'ceo-history';
+  const desktopCashboxRedirect = isDesktop && (view === 'board' || view === 'money' || view === 'close');
+  const desktopHistoryRedirect = isDesktop && (view === 'expenses' || view === 'requests');
+  const desktopOtherRedirect = isDesktop && (view === 'templates' || view === 'exports' || view === 'settings');
+  const activeView: View = roleInappropriate
+    ? 'home'
+    : desktopGmHomeRedirect
+    ? 'approvals'
+    : desktopLegacyApprovalRedirect
+    ? 'approvals'
+    : desktopCeoHistoryRedirect
+    ? 'home'
+    : desktopCashboxRedirect
+    ? 'cashbox'
+    : desktopHistoryRedirect
+    ? 'history'
+    : desktopOtherRedirect
+    ? 'other'
+    : view;
 
   // ── Desktop-only (≥1024px) tab-strip badge counts — gated on isDesktop so mobile never
   // pays for the extra requests (mobile's NeeHome/CeoHome already fetch their own numbers for
   // their own cards; this is a separate, desktop-nav-only fetch, refreshed on every tab switch
   // for a reasonably "live" count without inventing a push channel). ─────────────────────────
-  const [gmCounts, setGmCounts] = useState<{ approvals?: number; fulfillment?: number; recon?: number }>({});
+  const [gmCounts, setGmCounts] = useState<{ approvals?: number; legacyApprovals?: number; fulfillment?: number; recon?: number }>({});
   useEffect(() => {
     if (!isDesktop || isCeo) return;
     let cancelled = false;
     listStaffRequests('queue', 200)
       .then((r) => { if (!cancelled) setGmCounts((c) => ({ ...c, approvals: r.requests.length })); })
+      .catch(() => {});
+    // Same call MdApproval itself makes by default (no partyId) — reused here for the อนุมัติ
+    // tab's badge so the legacy expense-check queue counts toward the same red pill as the v2
+    // request queue, with no new endpoint.
+    listExpenses({ scope: 'all', status: 'pending' })
+      .then((r) => { if (!cancelled) setGmCounts((c) => ({ ...c, legacyApprovals: r.expenses.length })); })
       .catch(() => {});
     listStaffRequests('all', 300)
       .then((r) => {
@@ -221,6 +272,41 @@ function ManagementApp({ isCeo }: { isCeo: boolean }) {
       })
       .catch(() => {});
   }, [isDesktop, isCeo, view, loadCeoQueue]);
+
+  // ── Internal segment state for the desktop composed tabs (กล่องเงินสด / ประวัติ / อื่นๆ) —
+  // each defaults to its "ritual order" first segment, but re-primes itself whenever the raw
+  // hash (`view`) lands directly on one of the old individual keys it now contains (e.g. a
+  // MoreMenu/prefill flow that still does setView('money')), so that old flow still opens on
+  // the right segment instead of always resetting to the default. ───────────────────────────
+  const [cashboxTab, setCashboxTab] = useState<CashboxTab>('board');
+  useEffect(() => {
+    if (view === 'board' || view === 'money' || view === 'close') setCashboxTab(view);
+  }, [view]);
+
+  const [historyTab, setHistoryTab] = useState<HistoryTab>('expenses');
+  useEffect(() => {
+    if (view === 'expenses' || view === 'requests') setHistoryTab(view);
+  }, [view]);
+
+  const [otherTab, setOtherTab] = useState<OtherTab>('templates');
+  useEffect(() => {
+    if (view === 'templates' || view === 'exports' || view === 'settings') setOtherTab(view);
+  }, [view]);
+
+  // ── One-shot "open the compose sheet immediately" flag for the ของฉัน tab. NeeHome/CeoHome's
+  // big amber "ส่งคำขอเงิน" button (mobile-only front-door shortcut) still wants StaffHome's
+  // request sheet to pop open right away, exactly like the old dedicated "ส่งคำขอ" tab did. The
+  // desktop ของฉัน strip tab, by contrast, is a normal browsable landing (submit button + own
+  // request list) and must NOT auto-pop a modal every time it's clicked. Set true only by
+  // goToOwnRequest below, and cleared the moment we navigate away from 'my-submit'. ──────────
+  const [autoOpenOwnRequest, setAutoOpenOwnRequest] = useState(false);
+  useEffect(() => {
+    if (view !== 'my-submit') setAutoOpenOwnRequest(false);
+  }, [view]);
+  function goToOwnRequest() {
+    setAutoOpenOwnRequest(true);
+    setView('my-submit');
+  }
 
   function goToRequestsWithPrefill(prefill: RequestPrefill) {
     setRequestPrefill(prefill);
@@ -271,78 +357,33 @@ function ManagementApp({ isCeo }: { isCeo: boolean }) {
     },
   ];
 
-  // ── Desktop (≥1024px) grouped tab strip — organized like Juno's (juno/src/Juno.tsx):
-  // small muted group captions above each cluster, thin vertical dividers between groups,
-  // active tab = amber underline + bold (Ceres's own brand color, matching the rest of this
-  // header/nav rather than literally recoloring to Juno's emerald), red pill count badges on
-  // queue tabs. Every group/tab here maps onto an EXISTING mobile destination (moreGroups
-  // above, or NeeHome/CeoHome's shortcuts) — nothing new except the 'ceo-queue' screen, which
-  // is just CeoHome/CeoOverview's own EscalationsSection given a dedicated tab. See
-  // GROUPING.md at the repo root for the full mapping + rationale.
+  // ── Desktop (≥1024px) FLAT tab strip (2026-07-18 simplification — no group captions, no
+  // divider bars; 7 tabs for GM, 8 for CEO). Every tab still maps onto an existing mobile
+  // destination or a composed view built from existing components (see the
+  // Approvals/Cashbox/History/OtherComposedView components below + docs/CERES_DESKTOP_NAV.md
+  // for the full map). Active tab = amber underline + bold, red pill count badges — same look
+  // as before, just flattened. ──────────────────────────────────────────────────────────────
   type Tab = { key: View; label: string; icon: React.ReactNode; count?: number };
-  // Shared by both role tab strips (gm and ceo alike get their own money requests) — kept as
-  // one literal so the two strips can never drift out of sync on label/icon/position.
-  const myRequestsGroup: { caption: string; tabs: Tab[] } = {
-    caption: 'ของฉัน', tabs: [
-      { key: 'my-submit', label: 'ส่งคำขอ', icon: <Send size={16} /> },
-      { key: 'my-requests', label: 'คำขอ', icon: <ListChecks size={16} /> },
-    ],
-  };
-  const gmTabGroups: { caption: string; tabs: Tab[] }[] = [
-    { caption: 'ขั้น 1 · คำขอ', tabs: [
-      { key: 'approvals', label: 'อนุมัติ', icon: <ClipboardCheck size={16} />, count: gmCounts.approvals },
-    ] },
-    { caption: 'ขั้น 2 · จ่ายเงิน', tabs: [
-      { key: 'fulfillment', label: 'รอจ่าย', icon: <CircleDollarSign size={16} />, count: gmCounts.fulfillment },
-      { key: 'recon', label: 'โอน/สลิป', icon: <Scale size={16} />, count: gmCounts.recon },
-    ] },
-    { caption: 'กล่องเงินสด', tabs: [
-      { key: 'board', label: 'บอร์ด', icon: <PiggyBank size={16} /> },
-      { key: 'close', label: 'ปิดวัน', icon: <FileCheck2 size={16} /> },
-    ] },
-    { caption: 'ค่าใช้จ่ายเดิม', tabs: [
-      { key: 'legacy-approval', label: 'ตรวจ', icon: <ClipboardList size={16} /> },
-      { key: 'money', label: 'เบิก/คืน', icon: <ArrowLeftRight size={16} /> },
-      { key: 'expenses', label: 'ประวัติ', icon: <ListChecks size={16} /> },
-      { key: 'requests', label: 'คำขอเดิม', icon: <Banknote size={16} /> },
-      { key: 'templates', label: 'ประจำ', icon: <Repeat size={16} /> },
-    ] },
-    myRequestsGroup,
-    { caption: 'สรุป', tabs: [
-      { key: 'exports', label: 'ส่งออก', icon: <Download size={16} /> },
-      { key: 'settings', label: 'ตั้งค่า', icon: <SettingsIcon size={16} /> },
-    ] },
+  const gmTabs: Tab[] = [
+    { key: 'approvals', label: 'อนุมัติ', icon: <ClipboardCheck size={16} />, count: (gmCounts.approvals ?? 0) + (gmCounts.legacyApprovals ?? 0) },
+    { key: 'fulfillment', label: 'รอจ่าย', icon: <CircleDollarSign size={16} />, count: gmCounts.fulfillment },
+    { key: 'recon', label: 'โอน/สลิป', icon: <Scale size={16} />, count: gmCounts.recon },
+    { key: 'cashbox', label: 'กล่องเงินสด', icon: <PiggyBank size={16} /> },
+    { key: 'history', label: 'ประวัติ', icon: <History size={16} /> },
+    { key: 'my-submit', label: 'ของฉัน', icon: <Send size={16} /> },
+    { key: 'other', label: 'อื่นๆ', icon: <MoreHorizontal size={16} /> },
   ];
-  const ceoTabGroups: { caption: string; tabs: Tab[] }[] = [
-    { caption: 'รอ CEO', tabs: [
-      { key: 'ceo-queue', label: 'รอ CEO', icon: <Bell size={16} />, count: ceoBadges.queue },
-    ] },
-    { caption: 'ภาพรวม', tabs: [
-      { key: 'home', label: 'วันนี้', icon: <LayoutDashboard size={16} /> },
-      { key: 'ceo-history', label: 'ย้อนหลัง', icon: <History size={16} /> },
-    ] },
-    { caption: 'ขั้น 2 · จ่ายเงิน', tabs: [
-      { key: 'legacy-fulfillment', label: 'จ่าย/ซื้อ', icon: <CircleDollarSign size={16} />, count: ceoBadges.fulfillment },
-      { key: 'recon', label: 'โอน/สลิป', icon: <Scale size={16} />, count: ceoBadges.recon },
-    ] },
-    { caption: 'กล่องเงินสด', tabs: [
-      { key: 'board', label: 'บอร์ด', icon: <PiggyBank size={16} /> },
-      { key: 'close', label: 'ปิดวัน', icon: <FileCheck2 size={16} /> },
-    ] },
-    { caption: 'ค่าใช้จ่ายเดิม', tabs: [
-      { key: 'legacy-approval', label: 'ตรวจ', icon: <ClipboardList size={16} /> },
-      { key: 'money', label: 'เบิก/คืน', icon: <ArrowLeftRight size={16} /> },
-      { key: 'expenses', label: 'ประวัติ', icon: <ListChecks size={16} /> },
-      { key: 'requests', label: 'คำขอเดิม', icon: <Banknote size={16} /> },
-      { key: 'templates', label: 'ประจำ', icon: <Repeat size={16} /> },
-    ] },
-    myRequestsGroup,
-    { caption: 'สรุป', tabs: [
-      { key: 'exports', label: 'ส่งออก', icon: <Download size={16} /> },
-      { key: 'settings', label: 'ตั้งค่า', icon: <SettingsIcon size={16} /> },
-    ] },
+  const ceoTabs: Tab[] = [
+    { key: 'ceo-queue', label: 'รอ CEO', icon: <Bell size={16} />, count: ceoBadges.queue },
+    { key: 'home', label: 'ภาพรวม', icon: <LayoutDashboard size={16} /> },
+    { key: 'legacy-fulfillment', label: 'จ่าย/ซื้อ', icon: <CircleDollarSign size={16} />, count: ceoBadges.fulfillment },
+    { key: 'recon', label: 'โอน/สลิป', icon: <Scale size={16} />, count: ceoBadges.recon },
+    { key: 'cashbox', label: 'กล่องเงินสด', icon: <PiggyBank size={16} /> },
+    { key: 'history', label: 'ประวัติ', icon: <History size={16} /> },
+    { key: 'my-submit', label: 'ของฉัน', icon: <Send size={16} /> },
+    { key: 'other', label: 'อื่นๆ', icon: <MoreHorizontal size={16} /> },
   ];
-  const desktopTabGroups = isCeo ? ceoTabGroups : gmTabGroups;
+  const desktopTabs = isCeo ? ceoTabs : gmTabs;
 
   return (
     <div className="min-h-screen bg-slate-100 font-sans text-slate-800 pb-20 lg:pb-4">
@@ -372,34 +413,27 @@ function ManagementApp({ isCeo }: { isCeo: boolean }) {
           </div>
         </div>
 
-        {/* Desktop-only (≥1024px) grouped tab strip — see the gmTabGroups/ceoTabGroups
-            comment above for the design rationale. IS the nav on desktop: no big-button
-            home, no bottom bar, no "more" — every destination is a tab here. Mobile never
-            renders this (hidden below lg:), so the existing role homes + MoreMenu are
-            completely untouched below lg:. */}
-        <div className="hidden lg:flex lg:flex-wrap px-4 gap-2">
-          {desktopTabGroups.map((group, index) => (
-            <div key={group.caption} className={`flex flex-col shrink-0 ${index > 0 ? 'border-l border-slate-200 pl-2' : ''}`}>
-              <div className="text-[10px] leading-[13px] text-slate-400 whitespace-nowrap select-none">{group.caption}</div>
-              <div className="flex gap-1">
-                {group.tabs.map((t) => (
-                  <button
-                    key={t.key}
-                    onClick={() => setView(t.key)}
-                    className={`flex items-center gap-1.5 px-2.5 py-1.5 text-sm border-b-2 whitespace-nowrap ${
-                      activeView === t.key
-                        ? 'border-amber-600 text-amber-700 font-bold'
-                        : 'border-transparent text-slate-500 font-medium hover:text-slate-700'
-                    }`}
-                  >
-                    {t.icon} {t.label}
-                    {typeof t.count === 'number' && t.count > 0 && (
-                      <span className="ml-1 px-1.5 rounded-full text-xs bg-rose-100 text-rose-700">{t.count}</span>
-                    )}
-                  </button>
-                ))}
-              </div>
-            </div>
+        {/* Desktop-only (≥1024px) flat tab strip — IS the nav on desktop: no big-button home,
+            no bottom bar, no "more". Every top-level destination is a tab here, no group
+            captions or divider bars (2026-07-18 simplification). Mobile never renders this
+            (hidden below lg:), so the existing role homes + MoreMenu are completely untouched
+            below lg:. */}
+        <div className="hidden lg:flex lg:flex-wrap px-4 gap-1">
+          {desktopTabs.map((t) => (
+            <button
+              key={t.key}
+              onClick={() => setView(t.key)}
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 text-sm border-b-2 whitespace-nowrap ${
+                activeView === t.key
+                  ? 'border-amber-600 text-amber-700 font-bold'
+                  : 'border-transparent text-slate-500 font-medium hover:text-slate-700'
+              }`}
+            >
+              {t.icon} {t.label}
+              {typeof t.count === 'number' && t.count > 0 && (
+                <span className="ml-1 px-1.5 rounded-full text-xs bg-rose-100 text-rose-700">{t.count}</span>
+              )}
+            </button>
           ))}
         </div>
       </header>
@@ -415,17 +449,27 @@ function ManagementApp({ isCeo }: { isCeo: boolean }) {
         )}
 
         {activeView === 'home' && (isCeo ? (
-          <CeoHome onGoOwnRequest={() => setView('my-submit')} />
+          isDesktop ? (
+            <CeoOverview showDailyOutflow onGoExpenses={() => setView('expenses')} />
+          ) : (
+            <CeoHome onGoOwnRequest={goToOwnRequest} />
+          )
         ) : (
           <NeeHome
             onGoApprovals={() => setView('approvals')}
             onGoFulfillment={() => setView('fulfillment')}
             onGoRecon={() => setView('recon')}
             onGoBoard={() => setView('board')}
-            onGoOwnRequest={() => setView('my-submit')}
+            onGoOwnRequest={goToOwnRequest}
           />
         ))}
-        {activeView === 'approvals' && !isCeo && <NeeApprovalQueue />}
+        {activeView === 'approvals' && !isCeo && (
+          isDesktop ? (
+            <ApprovalsComposedView prefill={approvalPrefill} onConsumePrefill={() => setApprovalPrefill(null)} />
+          ) : (
+            <NeeApprovalQueue />
+          )
+        )}
         {activeView === 'fulfillment' && !isCeo && <NeeFulfillmentQueue />}
         {activeView === 'more' && <MoreMenu groups={moreGroups} />}
         {activeView === 'board' && <MdBoard onViewPendingParty={goToApprovalWithPrefill} />}
@@ -448,7 +492,7 @@ function ManagementApp({ isCeo }: { isCeo: boolean }) {
           <StaffHome
             key="my-submit"
             embeddedView="home"
-            openRequestOnMount
+            openRequestOnMount={autoOpenOwnRequest}
             onOpenMine={() => setView('my-requests')}
             onOpenSettings={() => setView('settings')}
           />
@@ -468,6 +512,20 @@ function ManagementApp({ isCeo }: { isCeo: boolean }) {
           ) : (
             <EscalationsSection escalations={ceoEscalations} onDecided={loadCeoQueue} />
           )
+        )}
+        {activeView === 'cashbox' && (
+          <CashboxComposedView sub={cashboxTab} onSubChange={setCashboxTab} onViewPendingParty={goToApprovalWithPrefill} />
+        )}
+        {activeView === 'history' && (
+          <HistoryComposedView
+            sub={historyTab}
+            onSubChange={setHistoryTab}
+            requestPrefill={requestPrefill}
+            onConsumeRequestPrefill={() => setRequestPrefill(null)}
+          />
+        )}
+        {activeView === 'other' && (
+          <OtherComposedView sub={otherTab} onSubChange={setOtherTab} onCreateRequest={goToRequestsWithPrefill} />
         )}
       </main>
 
@@ -504,5 +562,141 @@ function NavButton({
       {icon}
       <span className="text-[10px] font-medium">{label}</span>
     </button>
+  );
+}
+
+// ── Desktop composed views (2026-07-18) — each composes EXISTING screens rather than
+// rewriting them. See docs/CERES_DESKTOP_NAV.md for the rationale per tab. ───────────────────
+
+// อนุมัติ (GM only): the v2 request queue on top, the legacy expense-check screen below it
+// under its own section header, so GM only needs one tab to clear both approval lanes.
+function ApprovalsComposedView({
+  prefill,
+  onConsumePrefill,
+}: {
+  prefill: ApprovalPrefill | null;
+  onConsumePrefill: () => void;
+}) {
+  return (
+    <div className="space-y-6">
+      <NeeApprovalQueue />
+      <div className="pt-4 border-t border-slate-200">
+        <div className="text-sm font-semibold text-slate-500 mb-2">ตรวจค่าใช้จ่ายเดิม (ระบบเดิม)</div>
+        <MdApproval prefill={prefill} onConsumePrefill={onConsumePrefill} />
+      </div>
+    </div>
+  );
+}
+
+// A small pill-row segmented control matching the app's existing toggle idiom (see e.g.
+// NeeFulfillmentQueue's lane switch / ExpenseSheet's entity picker: bordered buttons in a
+// row, active = filled amber, inactive = outlined slate).
+function SegmentBar<T extends string>({
+  options,
+  value,
+  onChange,
+}: {
+  options: { key: T; label: string; icon: React.ReactNode }[];
+  value: T;
+  onChange: (key: T) => void;
+}) {
+  return (
+    <div className="grid gap-2 mb-4" style={{ gridTemplateColumns: `repeat(${options.length}, minmax(0, 1fr))` }}>
+      {options.map((o) => (
+        <button
+          key={o.key}
+          onClick={() => onChange(o.key)}
+          className={`min-h-[44px] rounded-xl border text-sm font-semibold flex items-center justify-center gap-1.5 ${
+            value === o.key ? 'bg-amber-600 border-amber-600 text-white' : 'border-slate-300 text-slate-600 hover:bg-slate-50'
+          }`}
+        >
+          {o.icon} {o.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// กล่องเงินสด: บอร์ด · เบิก·คืน · ปิดวัน — ritual order, defaults to บอร์ด.
+function CashboxComposedView({
+  sub,
+  onSubChange,
+  onViewPendingParty,
+}: {
+  sub: CashboxTab;
+  onSubChange: (t: CashboxTab) => void;
+  onViewPendingParty: (partyId: string) => void;
+}) {
+  return (
+    <div>
+      <SegmentBar
+        value={sub}
+        onChange={onSubChange}
+        options={[
+          { key: 'board', label: 'บอร์ด', icon: <PiggyBank size={15} /> },
+          { key: 'money', label: 'เบิก·คืน', icon: <ArrowLeftRight size={15} /> },
+          { key: 'close', label: 'ปิดวัน', icon: <FileCheck2 size={15} /> },
+        ]}
+      />
+      {sub === 'board' && <MdBoard onViewPendingParty={onViewPendingParty} />}
+      {sub === 'money' && <MdMoney />}
+      {sub === 'close' && <MdClose />}
+    </div>
+  );
+}
+
+// ประวัติ: ค่าใช้จ่าย · คำขอเดิม.
+function HistoryComposedView({
+  sub,
+  onSubChange,
+  requestPrefill,
+  onConsumeRequestPrefill,
+}: {
+  sub: HistoryTab;
+  onSubChange: (t: HistoryTab) => void;
+  requestPrefill: RequestPrefill | null;
+  onConsumeRequestPrefill: () => void;
+}) {
+  return (
+    <div>
+      <SegmentBar
+        value={sub}
+        onChange={onSubChange}
+        options={[
+          { key: 'expenses', label: 'ค่าใช้จ่าย', icon: <ListChecks size={15} /> },
+          { key: 'requests', label: 'คำขอเดิม', icon: <Banknote size={15} /> },
+        ]}
+      />
+      {sub === 'expenses' && <MdExpenses />}
+      {sub === 'requests' && <MdRequests prefill={requestPrefill} onConsumePrefill={onConsumeRequestPrefill} />}
+    </div>
+  );
+}
+
+// อื่นๆ: ประจำ · ส่งออก · ตั้งค่า.
+function OtherComposedView({
+  sub,
+  onSubChange,
+  onCreateRequest,
+}: {
+  sub: OtherTab;
+  onSubChange: (t: OtherTab) => void;
+  onCreateRequest: (prefill: RequestPrefill) => void;
+}) {
+  return (
+    <div>
+      <SegmentBar
+        value={sub}
+        onChange={onSubChange}
+        options={[
+          { key: 'templates', label: 'ประจำ', icon: <Repeat size={15} /> },
+          { key: 'exports', label: 'ส่งออก', icon: <Download size={15} /> },
+          { key: 'settings', label: 'ตั้งค่า', icon: <SettingsIcon size={15} /> },
+        ]}
+      />
+      {sub === 'templates' && <MdTemplates onCreateRequest={onCreateRequest} />}
+      {sub === 'exports' && <WeeklyPackSection />}
+      {sub === 'settings' && <Settings />}
+    </div>
   );
 }
