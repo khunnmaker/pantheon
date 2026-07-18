@@ -285,7 +285,7 @@ function ManagementApp({ isCeo }: { isCeo: boolean }) {
   const myRequestsGroup: { caption: string; tabs: Tab[] } = {
     caption: 'ของฉัน', tabs: [
       { key: 'my-submit', label: 'ส่งคำขอ', icon: <Send size={16} /> },
-      { key: 'my-requests', label: 'คำขอของฉัน', icon: <ListChecks size={16} /> },
+      { key: 'my-requests', label: 'คำขอ', icon: <ListChecks size={16} /> },
     ],
   };
   const gmTabGroups: { caption: string; tabs: Tab[] }[] = [
@@ -301,16 +301,16 @@ function ManagementApp({ isCeo }: { isCeo: boolean }) {
       { key: 'close', label: 'ปิดวัน', icon: <FileCheck2 size={16} /> },
     ] },
     { caption: 'ค่าใช้จ่ายเดิม', tabs: [
-      { key: 'legacy-approval', label: 'ตรวจค่าใช้จ่าย', icon: <ClipboardList size={16} /> },
-      { key: 'money', label: 'เบิก/คืนเงิน', icon: <ArrowLeftRight size={16} /> },
-      { key: 'expenses', label: 'ประวัติค่าใช้จ่าย', icon: <ListChecks size={16} /> },
-      { key: 'requests', label: 'คำขอจ่ายเงินเดิม', icon: <Banknote size={16} /> },
-      { key: 'templates', label: 'รายการประจำ', icon: <Repeat size={16} /> },
+      { key: 'legacy-approval', label: 'ตรวจ', icon: <ClipboardList size={16} /> },
+      { key: 'money', label: 'เบิก/คืน', icon: <ArrowLeftRight size={16} /> },
+      { key: 'expenses', label: 'ประวัติ', icon: <ListChecks size={16} /> },
+      { key: 'requests', label: 'คำขอเดิม', icon: <Banknote size={16} /> },
+      { key: 'templates', label: 'ประจำ', icon: <Repeat size={16} /> },
     ] },
     myRequestsGroup,
     { caption: 'สรุป', tabs: [
-      { key: 'exports', label: 'ส่งออกข้อมูล', icon: <Download size={16} /> },
-      { key: 'settings', label: 'ตั้งค่า LINE', icon: <SettingsIcon size={16} /> },
+      { key: 'exports', label: 'ส่งออก', icon: <Download size={16} /> },
+      { key: 'settings', label: 'ตั้งค่า', icon: <SettingsIcon size={16} /> },
     ] },
   ];
   const ceoTabGroups: { caption: string; tabs: Tab[] }[] = [
@@ -330,16 +330,16 @@ function ManagementApp({ isCeo }: { isCeo: boolean }) {
       { key: 'close', label: 'ปิดวัน', icon: <FileCheck2 size={16} /> },
     ] },
     { caption: 'ค่าใช้จ่ายเดิม', tabs: [
-      { key: 'legacy-approval', label: 'ตรวจค่าใช้จ่าย', icon: <ClipboardList size={16} /> },
-      { key: 'money', label: 'เบิก/คืนเงิน', icon: <ArrowLeftRight size={16} /> },
-      { key: 'expenses', label: 'ประวัติค่าใช้จ่าย', icon: <ListChecks size={16} /> },
-      { key: 'requests', label: 'คำขอจ่ายเงินเดิม', icon: <Banknote size={16} /> },
-      { key: 'templates', label: 'รายการประจำ', icon: <Repeat size={16} /> },
+      { key: 'legacy-approval', label: 'ตรวจ', icon: <ClipboardList size={16} /> },
+      { key: 'money', label: 'เบิก/คืน', icon: <ArrowLeftRight size={16} /> },
+      { key: 'expenses', label: 'ประวัติ', icon: <ListChecks size={16} /> },
+      { key: 'requests', label: 'คำขอเดิม', icon: <Banknote size={16} /> },
+      { key: 'templates', label: 'ประจำ', icon: <Repeat size={16} /> },
     ] },
     myRequestsGroup,
     { caption: 'สรุป', tabs: [
-      { key: 'exports', label: 'ส่งออกข้อมูล', icon: <Download size={16} /> },
-      { key: 'settings', label: 'ตั้งค่า LINE', icon: <SettingsIcon size={16} /> },
+      { key: 'exports', label: 'ส่งออก', icon: <Download size={16} /> },
+      { key: 'settings', label: 'ตั้งค่า', icon: <SettingsIcon size={16} /> },
     ] },
   ];
   const desktopTabGroups = isCeo ? ceoTabGroups : gmTabGroups;
@@ -377,7 +377,7 @@ function ManagementApp({ isCeo }: { isCeo: boolean }) {
             home, no bottom bar, no "more" — every destination is a tab here. Mobile never
             renders this (hidden below lg:), so the existing role homes + MoreMenu are
             completely untouched below lg:. */}
-        <div className="hidden lg:flex lg:flex-wrap max-w-5xl mx-auto px-4 gap-2">
+        <div className="hidden lg:flex lg:flex-wrap px-4 gap-2">
           {desktopTabGroups.map((group, index) => (
             <div key={group.caption} className={`flex flex-col shrink-0 ${index > 0 ? 'border-l border-slate-200 pl-2' : ''}`}>
               <div className="text-[10px] leading-[13px] text-slate-400 whitespace-nowrap select-none">{group.caption}</div>
