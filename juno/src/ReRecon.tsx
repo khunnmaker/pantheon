@@ -25,14 +25,14 @@ const fmtReceiptDate = (dd: string): string => {
 
 const STATUS_FILTERS: { key: ReReconStatusFilter; label: string }[] = [
   { key: 'all', label: 'ทั้งหมด' },
-  { key: 'matched', label: 'จับคู่แล้ว' },
+  { key: 'matched', label: 'จับ RE แล้ว' },
   { key: 'mismatch', label: 'ยอดไม่ตรง' },
   { key: 'unpaid', label: 'ยังไม่จ่าย' },
 ];
 
 function StatusBadge({ status }: { status: ReReconRow['status'] }) {
   if (status === 'matched') {
-    return <span className="px-1.5 py-0.5 rounded-full text-[11px] bg-emerald-100 text-emerald-700 whitespace-nowrap">✅ จับคู่แล้ว</span>;
+    return <span className="px-1.5 py-0.5 rounded-full text-[11px] bg-emerald-100 text-emerald-700 whitespace-nowrap">✅ จับ RE แล้ว</span>;
   }
   if (status === 'mismatch') {
     return <span className="px-1.5 py-0.5 rounded-full text-[11px] bg-amber-100 text-amber-700 whitespace-nowrap">⚠️ ยอดไม่ตรง</span>;
@@ -215,7 +215,7 @@ function SummaryCards({ summary }: { summary: ReReconSummary | null }) {
     );
   }
   const cards = [
-    { label: '✅ จับคู่แล้ว', count: summary.matched, tone: 'text-emerald-600' },
+    { label: '✅ จับ RE แล้ว', count: summary.matched, tone: 'text-emerald-600' },
     { label: '⚠️ ยอดไม่ตรง', count: summary.mismatch, tone: 'text-amber-600' },
     { label: '⏳ ยังไม่จ่าย', count: summary.unpaid, tone: 'text-rose-600' },
     { label: 'ยอดรวมทั้งหมด', count: summary.total, sum: summary.totalAmount, tone: 'text-slate-700' },
