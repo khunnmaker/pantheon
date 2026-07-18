@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Bell, CheckCircle2, Loader2, MessageCircleMore, RefreshCw } from 'lucide-react';
 import { generateLineBind, getLineBind, type LineBindState } from './lib/api';
 import { useCeres } from './lib/bootstrapContext';
+import CategoryAdmin from './CategoryAdmin';
 
 // Phase 4 — optional LINE binding UI, reusing the SUITE-WIDE Agent.lineUserId/
 // lineBindCode fields Apollo already writes (api/src/line/staffBind.ts). No Ceres
@@ -132,6 +133,10 @@ export default function Settings() {
           )}
         </div>
       </section>
+
+      {/* GM/CEO only — messenger also reaches this Settings screen via StaffHome's own
+          "ตั้งค่า" tab, so this gate is load-bearing, not decorative. */}
+      {(bootstrap.role === 'gm' || bootstrap.role === 'ceo') && <CategoryAdmin />}
     </div>
   );
 }

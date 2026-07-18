@@ -18,11 +18,13 @@ import {
   cancelRequest,
   listTemplates,
   baht,
+  type Category,
   type PaymentRequest,
   type RequestStatus,
   type RecurringTemplate,
 } from './lib/api';
 import { useCeres } from './lib/bootstrapContext';
+import CategoryPicker from './components/CategoryPicker';
 
 const AMOUNT_RE = /^\d+(\.\d{1,2})?$/;
 
@@ -334,7 +336,7 @@ function RequestForm({
   onCreated,
 }: {
   entities: string[];
-  categories: { id: string; name: string }[];
+  categories: Category[];
   open: boolean;
   setOpen: (v: boolean) => void;
   prefill: RequestPrefill | null;
@@ -345,7 +347,9 @@ function RequestForm({
   const [templateId, setTemplateId] = useState('');
   const [payee, setPayee] = useState('');
   const [amount, setAmount] = useState('');
-  const [entity, setEntity] = useState(entities[0] ?? '');
+  // NO lazy default (owner rule, 2026-07-18) — entity starts empty; a template/prefill
+  // apply still fills it explicitly via applyTemplate()/the prefill effect below.
+  const [entity, setEntity] = useState('');
   const [category, setCategory] = useState('');
   const [detail, setDetail] = useState('');
   const [billPeriod, setBillPeriod] = useState('');
@@ -397,6 +401,7 @@ function RequestForm({
     setResult(null);
     if (!payee.trim()) return setError('กรอกชื่อผู้รับเงิน');
     if (!AMOUNT_RE.test(amount) || Number(amount) <= 0) return setError('กรอกจำนวนเงินให้ถูกต้อง');
+    if (!entity) return setError('เลือกบริษัท');
     if (!category) return setError('เลือกหมวดหมู่');
     setBusy(true);
     try {
@@ -473,19 +478,7 @@ function RequestForm({
             ))}
           </div>
 
-          <div className="flex flex-wrap gap-1.5">
-            {categories.map((c) => (
-              <button
-                key={c.id}
-                onClick={() => setCategory(c.name)}
-                className={`px-2.5 py-1.5 rounded-full text-xs font-medium border ${
-                  category === c.name ? 'bg-amber-600 border-amber-600 text-white' : 'border-slate-300 text-slate-600'
-                }`}
-              >
-                {c.name}
-              </button>
-            ))}
-          </div>
+          <CategoryPicker categories={categories} value={category} onChange={setCategory} getKey={(c) => c.name} />
 
           <input
             value={detail}

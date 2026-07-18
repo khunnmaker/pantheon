@@ -30,7 +30,7 @@ vi.mock('../src/db/prisma.js', () => ({
   },
 }));
 
-import { editStaffRequest, neeApprovalTarget } from '../src/ceres/requestService.js';
+import { CeresRequestError, editStaffRequest, neeApprovalTarget } from '../src/ceres/requestService.js';
 import { requestsRoutes } from '../src/routes/ceres/requests.js';
 
 const apiRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -187,7 +187,7 @@ describe('Ceres v2 approval binding', () => {
     expect(neeApprovalTarget({ amount: '100.00', aiScreenStatus: 'pending' })).toBe('pending_ceo');
   });
 
-  it('invalidates AI on edit, appends audit records, and reruns screening', async () => {
+  it('accepts an unchanged now-inactive category, invalidates AI, and appends audit records', async () => {
     const now = new Date('2026-07-17T00:00:00Z');
     const existing = {
       id: 'request-1', workflowVersion: 2, requestedById: 'staff-1', requestedByName: 'Staff', requesterPartyId: 'party-1',
@@ -200,7 +200,7 @@ describe('Ceres v2 approval binding', () => {
     const edited = { ...existing, amount: '200.00', detail: 'after', aiScreenStatus: 'pending', aiReviewId: null, rowVersion: 2 };
     const screened = { ...edited, aiScreenStatus: 'clear', aiReviewId: 'review-new', rowVersion: 3 };
     mocks.findRequest.mockReset().mockResolvedValueOnce(existing).mockResolvedValueOnce(screened);
-    mocks.findCategory.mockResolvedValue({ name: 'general', active: true });
+    mocks.findCategory.mockResolvedValue({ name: 'general', active: false });
     mocks.updateMany.mockResolvedValue({ count: 1 });
     mocks.txFindRequest.mockResolvedValue(edited);
     mocks.createRevision.mockResolvedValue({ id: 'revision-1' });
@@ -221,6 +221,22 @@ describe('Ceres v2 approval binding', () => {
     expect(mocks.createRevision).toHaveBeenCalledOnce();
     expect(mocks.createEvent).toHaveBeenCalledWith({ data: expect.objectContaining({ kind: 'edited' }) });
     expect(mocks.reviewStaffRequest).toHaveBeenCalledWith('request-1');
+    expect(mocks.findCategory).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['inactive', { name: 'Unavailable', active: false }],
+    ['unknown', null],
+  ])('rejects a changed %s category with invalid_category', async (_label, categoryRow) => {
+    vi.clearAllMocks();
+    mocks.findRequest.mockResolvedValue({ ...pendingRequest, id: 'request-edit', requestedById: 'staff-1' });
+    mocks.findCategory.mockResolvedValue(categoryRow);
+
+    await expect(editStaffRequest('request-edit', { category: 'Unavailable' }, {
+      id: 'staff-1', email: 'staff@example.test', name: 'Staff', role: 'employee', apps: ['ceres'], authVersion: 0,
+    })).rejects.toMatchObject<CeresRequestError>({ code: 'invalid_category' });
+    expect(mocks.findCategory).toHaveBeenCalledWith({ where: { name: 'Unavailable' } });
+    expect(mocks.transaction).not.toHaveBeenCalled();
   });
 
   it('keeps the legacy decision alias workflow-v1 only and adds both human v2 decisions', async () => {

@@ -3,6 +3,7 @@ import { Camera, Loader2, AlertTriangle, X, Check, ImageOff } from 'lucide-react
 import { createExpense, updateExpense, uploadReceipt, type Expense, type OcrResult, type DuplicateReceipt } from './lib/api';
 import { downscaleImage } from './lib/image';
 import { useCeres } from './lib/bootstrapContext';
+import CategoryPicker from './components/CategoryPicker';
 
 const AMOUNT_RE = /^\d+(\.\d{1,2})?$/;
 
@@ -32,7 +33,9 @@ export default function ExpenseSheet({
   const categories = [...bootstrap.categories].filter((c) => c.active).sort((a, b) => a.sortOrder - b.sortOrder);
   const isLiquidation = !!advanceRequestId;
 
-  const [entity, setEntity] = useState(editing?.entity || defaultEntity || entities[0] || 'PROM');
+  // NO lazy default (owner rule, 2026-07-18) — only editing or an explicit defaultEntity
+  // (e.g. advance-liquidation prefill) pre-fills; otherwise starts empty for an explicit tap.
+  const [entity, setEntity] = useState(editing?.entity || defaultEntity || '');
   const [categoryId, setCategoryId] = useState(() => {
     const wantName = editing?.category || defaultCategory;
     if (!wantName) return '';
@@ -97,6 +100,7 @@ export default function ExpenseSheet({
 
   function validate(): string {
     if (!AMOUNT_RE.test(amount.trim()) || Number(amount) <= 0) return 'invalid_amount';
+    if (!entity) return 'invalid_entity';
     if (!selectedCategory) return 'invalid_category';
     if (selectedCategory.needsCustomerNote && !customerNote.trim()) return 'missing_customer_note';
     if (!receiptUploadId && (isLiquidation || !noReceipt)) return 'missing_receipt';
@@ -114,15 +118,17 @@ export default function ExpenseSheet({
     const problem = validate();
     if (problem) {
       setSubmitError(
-        problem === 'invalid_category'
-          ? 'กรุณาเลือกหมวดหมู่'
-          : problem === 'missing_customer_note'
-            ? 'กรุณากรอกชื่อลูกค้า'
-            : problem === 'missing_receipt'
-              ? isLiquidation
-                ? 'กรุณาถ่ายรูปใบเสร็จ (จำเป็นสำหรับรายการหักเงินเบิก)'
-                : 'กรุณาถ่ายรูปใบเสร็จ หรือยืนยันว่าไม่มีใบเสร็จ'
-              : 'กรอกจำนวนเงินให้ถูกต้อง',
+        problem === 'invalid_entity'
+          ? 'กรุณาเลือกบริษัท'
+          : problem === 'invalid_category'
+            ? 'กรุณาเลือกหมวดหมู่'
+            : problem === 'missing_customer_note'
+              ? 'กรุณากรอกชื่อลูกค้า'
+              : problem === 'missing_receipt'
+                ? isLiquidation
+                  ? 'กรุณาถ่ายรูปใบเสร็จ (จำเป็นสำหรับรายการหักเงินเบิก)'
+                  : 'กรุณาถ่ายรูปใบเสร็จ หรือยืนยันว่าไม่มีใบเสร็จ'
+                : 'กรอกจำนวนเงินให้ถูกต้อง',
       );
       return;
     }
@@ -306,22 +312,10 @@ export default function ExpenseSheet({
             </div>
           </div>
 
-          {/* Category chips */}
+          {/* Category chips — grouped, no default; explicit tap required */}
           <div>
             <div className="text-xs font-semibold text-slate-500 mb-1.5">หมวดหมู่</div>
-            <div className="flex flex-wrap gap-2">
-              {categories.map((c) => (
-                <button
-                  key={c.id}
-                  onClick={() => setCategoryId(c.id)}
-                  className={`px-3 py-2 rounded-full text-sm font-medium border min-h-[40px] ${
-                    categoryId === c.id ? 'bg-amber-600 border-amber-600 text-white' : 'border-slate-300 text-slate-600 hover:bg-slate-50'
-                  }`}
-                >
-                  {c.name}
-                </button>
-              ))}
-            </div>
+            <CategoryPicker categories={categories} value={categoryId} onChange={setCategoryId} />
           </div>
 
           {selectedCategory?.needsCustomerNote && (

@@ -24,6 +24,7 @@ import {
 import { useMediaUrl } from './lib/media';
 import { downscaleImage } from './lib/image';
 import { useCeres } from './lib/bootstrapContext';
+import CategoryPicker from './components/CategoryPicker';
 
 const AMOUNT_RE = /^\d+(\.\d{1,2})?$/;
 
@@ -53,13 +54,15 @@ export default function RequestSheet({
   const [step, setStep] = useState<'type' | 'form'>(editing ? 'form' : 'type');
   const [requestType, setRequestType] = useState<V2RequestType>(editing?.requestType ?? 'advance');
 
-  const [entity, setEntity] = useState(editing?.entity || entities[0] || 'PROM');
+  // NO lazy defaults (owner rule, 2026-07-18) — entity/category start empty for a NEW
+  // request; only an edit of an existing request pre-fills its own prior values.
+  const [entity, setEntity] = useState(editing?.entity || '');
   const [categoryId, setCategoryId] = useState(() => {
     if (editing) {
       const match = categories.find((c) => c.name === editing.category);
       if (match) return match.id;
     }
-    return categories[0]?.id ?? '';
+    return '';
   });
   const [amount, setAmount] = useState(editing?.amount || '');
   const [amountError, setAmountError] = useState('');
@@ -125,6 +128,7 @@ export default function RequestSheet({
   function validate(): string {
     if (!AMOUNT_RE.test(amount.trim()) || Number(amount) <= 0) return 'invalid_amount';
     if (!reason.trim()) return 'missing_reason';
+    if (!entity) return 'invalid_entity';
     if (!selectedCategory) return 'invalid_category';
     if (requestType === 'reimbursement' && !photoUploadId) return 'missing_receipt';
     return '';
@@ -139,9 +143,11 @@ export default function RequestSheet({
           ? 'กรอกจำนวนเงินให้ถูกต้อง (มากกว่า 0)'
           : problem === 'missing_reason'
             ? 'กรุณากรอกเหตุผล'
-            : problem === 'invalid_category'
-              ? 'กรุณาเลือกหมวดหมู่'
-              : 'กรุณาถ่ายรูปใบเสร็จก่อนส่งคำขอ',
+            : problem === 'invalid_entity'
+              ? 'กรุณาเลือกบริษัท'
+              : problem === 'invalid_category'
+                ? 'กรุณาเลือกหมวดหมู่'
+                : 'กรุณาถ่ายรูปใบเสร็จก่อนส่งคำขอ',
       );
       if (problem === 'invalid_amount') setAmountError('กรอกจำนวนเงินให้ถูกต้อง');
       return;
@@ -324,7 +330,7 @@ export default function RequestSheet({
                 )}
               </div>
 
-              {/* Entity — secondary, defaulted */}
+              {/* Entity — no default; explicit tap required */}
               <div>
                 <div className="text-xs font-semibold text-slate-500 mb-1.5">บริษัท</div>
                 <div className="grid grid-cols-3 gap-2">
@@ -342,22 +348,10 @@ export default function RequestSheet({
                 </div>
               </div>
 
-              {/* Category — secondary, defaulted */}
+              {/* Category — no default; explicit tap required */}
               <div>
                 <div className="text-xs font-semibold text-slate-500 mb-1.5">หมวดหมู่</div>
-                <div className="flex flex-wrap gap-2">
-                  {categories.map((c) => (
-                    <button
-                      key={c.id}
-                      onClick={() => setCategoryId(c.id)}
-                      className={`px-3 py-2 rounded-full text-sm font-medium border min-h-[40px] ${
-                        categoryId === c.id ? 'bg-amber-600 border-amber-600 text-white' : 'border-slate-300 text-slate-600 hover:bg-slate-50'
-                      }`}
-                    >
-                      {c.name}
-                    </button>
-                  ))}
-                </div>
+                <CategoryPicker categories={categories} value={categoryId} onChange={setCategoryId} />
               </div>
 
               {submitError && (

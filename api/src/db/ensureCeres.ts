@@ -10,26 +10,33 @@ const CARRIERS = [
   { name: 'ทั่วไป', sortOrder: 103 },
 ] as const;
 
-// Starter category list (order matches the old GAS expense-type set — see
-// CERES_BRIEF §10.5/§6). Shipping categories require the "ลูกค้า: X" customer note.
+// Full company-wide expense category catalog. Shipping categories retain the
+// legacy "ลูกค้า: X" customer-note requirement.
 const CATEGORIES = [
-  { name: 'ค่าขนส่ง SD', kind: 'shipping', needsCustomerNote: true },
-  { name: 'ค่าขนส่ง J&T', kind: 'shipping', needsCustomerNote: true },
-  { name: 'ค่าขนส่ง LALAMOVE Prom', kind: 'shipping', needsCustomerNote: true },
-  { name: 'ค่าขนส่ง LALAMOVE Dentalport', kind: 'shipping', needsCustomerNote: true },
-  { name: 'ค่าขนส่งทั่วไป', kind: 'shipping', needsCustomerNote: true },
-  { name: 'ค่าน้ำมัน', kind: 'fuel', needsCustomerNote: false },
-  { name: 'ค่าทางด่วน', kind: 'toll', needsCustomerNote: false },
-  { name: 'ค่าซ่อมบำรุงรถ', kind: 'general', needsCustomerNote: false },
-  { name: 'ค่าไปรษณีย์', kind: 'general', needsCustomerNote: false },
-  { name: 'ค่าเอกสาร/ธุรการ', kind: 'general', needsCustomerNote: false },
-  { name: 'อื่นๆ', kind: 'general', needsCustomerNote: false },
+  { id: 'cerescat_shipping_sd', name: 'ค่าขนส่ง SD', group: 'งานขนส่ง (เมสเซนเจอร์)', kind: 'shipping', ceiling: '', needsCustomerNote: true, active: true, sortOrder: 10 },
+  { id: 'cerescat_shipping_jt', name: 'ค่าขนส่ง J&T', group: 'งานขนส่ง (เมสเซนเจอร์)', kind: 'shipping', ceiling: '', needsCustomerNote: true, active: true, sortOrder: 20 },
+  { id: 'cerescat_shipping_lalamove_prom', name: 'ค่าขนส่ง LALAMOVE Prom', group: 'งานขนส่ง (เมสเซนเจอร์)', kind: 'shipping', ceiling: '', needsCustomerNote: true, active: true, sortOrder: 30 },
+  { id: 'cerescat_shipping_lalamove_dentalport', name: 'ค่าขนส่ง LALAMOVE Dentalport', group: 'งานขนส่ง (เมสเซนเจอร์)', kind: 'shipping', ceiling: '', needsCustomerNote: true, active: true, sortOrder: 40 },
+  { id: 'cerescat_shipping_general', name: 'ค่าขนส่งทั่วไป', group: 'งานขนส่ง (เมสเซนเจอร์)', kind: 'shipping', ceiling: '', needsCustomerNote: true, active: true, sortOrder: 50 },
+  { id: 'cerescat_postage', name: 'ค่าไปรษณีย์', group: 'งานขนส่ง (เมสเซนเจอร์)', kind: 'general', ceiling: '', needsCustomerNote: false, active: true, sortOrder: 60 },
+  { id: 'cerescat_fuel', name: 'ค่าน้ำมัน', group: 'ยานพาหนะ/เดินทาง', kind: 'fuel', ceiling: '', needsCustomerNote: false, active: true, sortOrder: 110 },
+  { id: 'cerescat_toll', name: 'ค่าทางด่วน', group: 'ยานพาหนะ/เดินทาง', kind: 'toll', ceiling: '', needsCustomerNote: false, active: true, sortOrder: 120 },
+  { id: 'cerescat_vehicle_repair', name: 'ค่าซ่อมบำรุงรถ', group: 'ยานพาหนะ/เดินทาง', kind: 'general', ceiling: '', needsCustomerNote: false, active: true, sortOrder: 130 },
+  { id: 'cerescat_travel_public', name: 'ค่าเดินทาง (แท็กซี่/วิน/รถสาธารณะ)', group: 'ยานพาหนะ/เดินทาง', kind: 'general', ceiling: '', needsCustomerNote: false, active: true, sortOrder: 140 },
+  { id: 'cerescat_parking', name: 'ค่าที่จอดรถ', group: 'ยานพาหนะ/เดินทาง', kind: 'general', ceiling: '', needsCustomerNote: false, active: true, sortOrder: 150 },
+  { id: 'cerescat_documents_admin', name: 'ค่าเอกสาร/ธุรการ', group: 'สำนักงาน/ธุรการ', kind: 'general', ceiling: '', needsCustomerNote: false, active: true, sortOrder: 210 },
+  { id: 'cerescat_office_supplies', name: 'อุปกรณ์/เครื่องเขียนสำนักงาน', group: 'สำนักงาน/ธุรการ', kind: 'general', ceiling: '', needsCustomerNote: false, active: true, sortOrder: 220 },
+  { id: 'cerescat_copy_print', name: 'ค่าถ่ายเอกสาร/พิมพ์งาน', group: 'สำนักงาน/ธุรการ', kind: 'general', ceiling: '', needsCustomerNote: false, active: true, sortOrder: 230 },
+  { id: 'cerescat_consumables', name: 'ของใช้สิ้นเปลือง', group: 'ของใช้/วัสดุ', kind: 'general', ceiling: '', needsCustomerNote: false, active: true, sortOrder: 310 },
+  { id: 'cerescat_tools', name: 'อุปกรณ์/เครื่องมือ', group: 'ของใช้/วัสดุ', kind: 'general', ceiling: '', needsCustomerNote: false, active: true, sortOrder: 320 },
+  { id: 'cerescat_food_drink', name: 'ค่าอาหารและเครื่องดื่ม', group: 'อาหาร/รับรอง', kind: 'general', ceiling: '', needsCustomerNote: false, active: true, sortOrder: 410 },
+  { id: 'cerescat_client_entertainment', name: 'ค่ารับรองลูกค้า', group: 'อาหาร/รับรอง', kind: 'general', ceiling: '', needsCustomerNote: false, active: true, sortOrder: 420 },
+  { id: 'cerescat_facility_repair', name: 'ค่าซ่อมแซม/บำรุงสถานที่', group: 'สถานที่/ซ่อมแซม', kind: 'general', ceiling: '', needsCustomerNote: false, active: true, sortOrder: 510 },
+  { id: 'cerescat_other', name: 'อื่นๆ', group: 'อื่นๆ', kind: 'general', ceiling: '', needsCustomerNote: false, active: true, sortOrder: 910 },
 ] as const;
 
-// Populate Ceres's reference tables (cash accounts, parties, categories) on an
-// EMPTY production database, mirroring ensureCatalog/ensureStock's "seed once"
-// pattern. Each table is checked independently and only inserted when empty, so
-// a partial prior run (e.g. accounts seeded but parties not yet) still completes.
+// Populate Ceres's reference tables. Categories are always inserted idempotently
+// because a fresh database migration already creates the nine newer rows.
 export async function ensureCeres(): Promise<void> {
   try {
     if ((await prisma.cashAccount.count()) === 0) {
@@ -93,18 +100,10 @@ export async function ensureCeres(): Promise<void> {
       console.log('[seed] unlinked/deactivated party "นี" (she is the GM, not an employee)');
     }
 
-    if ((await prisma.ceresCategory.count()) === 0) {
-      await prisma.ceresCategory.createMany({
-        data: CATEGORIES.map((c, i) => ({
-          name: c.name,
-          kind: c.kind,
-          needsCustomerNote: c.needsCustomerNote,
-          sortOrder: i,
-        })),
-      });
-      // eslint-disable-next-line no-console
-      console.log(`[seed] created ${CATEGORIES.length} Ceres categories`);
-    }
+    await prisma.ceresCategory.createMany({
+      data: CATEGORIES.map((category) => ({ ...category })),
+      skipDuplicates: true,
+    });
 
     // Rolling-deploy repair: an older API instance may have accepted a legacy
     // receipt between the migration backfill and this code reaching every node.
