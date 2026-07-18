@@ -157,6 +157,41 @@ describe('computeReRow split payments (group-level matching)', () => {
   });
 });
 
+describe('computeReRow ยอดตามเอกสาร cap (declared document total limits a payment’s contribution)', () => {
+  const twoRe = new Map<string, string>([['A', '400.00'], ['B', '600.00']]);
+  const pay = (reNumbers: string[], amount: string, discExpected = ''): ReReconPayment =>
+    ({ reNumbers, amount, whtAmount: '', discExpected });
+
+  it('overpay with FIN-typed ยอดตามเอกสาร → matched, excess ignored (เด็นทาเนียร์ case)', () => {
+    // 1,500 paid onto documents worth 1,000 — FIN declared 1,000; the +500 is เกิน-ledger money.
+    const transfer = pay(['A', 'B'], '1500.00', '1000.00');
+    const a = reRow('A', '400.00', [transfer], twoRe);
+    const b = reRow('B', '600.00', [transfer], twoRe);
+    expect(a.status).toBe('matched');
+    expect(a.paidGross).toBe(400); // apportioned from the CAPPED contribution
+    expect(b.status).toBe('matched');
+    expect(b.paidGross).toBe(600);
+  });
+
+  it('cap + clean *** flag → closed (resolved overpays retire fully)', () => {
+    const transfer = pay(['A', 'B'], '1500.00', '1000.00');
+    expect(reRow('A', '400.00', [transfer], twoRe, false).status).toBe('closed');
+  });
+
+  it('the cap never RAISES a short payment — underpay still alarms', () => {
+    const short = pay(['A'], '300.00', '400.00'); // FIN declared 400 but only 300 arrived
+    const r = reRow('A', '400.00', [short], new Map([['A', '400.00']]));
+    expect(r.status).toBe('mismatch');
+    expect(r.diff).toBe(-100);
+  });
+
+  it('blank ยอดตามเอกสาร → no cap (raw paid, unchanged behavior)', () => {
+    const r = reRow('A', '400.00', [pay(['A'], '500.00', '')], new Map([['A', '400.00']]));
+    expect(r.status).toBe('mismatch');
+    expect(r.diff).toBe(100);
+  });
+});
+
 describe('computeReRow ปิดใน Express (clean *** flag = Express already got the money)', () => {
   const oneRe = new Map<string, string>([['A', '400.00']]);
   const pay = (reNumbers: string[], amount: string, whtAmount = ''): ReReconPayment => ({ reNumbers, amount, whtAmount });

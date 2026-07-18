@@ -51,6 +51,8 @@ export interface ReReconPayment {
   amount: string;
   whtAmount: string;
   creditUsed?: string;
+  // FIN-typed ยอดตามเอกสาร (ก่อนหัก) from the ตรวจแล้ว dialog / เกิน-ขาด flow ('' = not declared).
+  discExpected?: string;
 }
 
 export interface ReRowResult {
@@ -70,6 +72,21 @@ interface CoreVerdict {
 
 export interface ReReconIndex {
   byCore: Map<string, CoreVerdict>;
+}
+
+// A payment never contributes MORE to its receipts than the document total FIN declared on it
+// (discExpected, "ยอดตามเอกสาร"): the excess of an overpay is เกิน/ขาด-ledger money (credit or
+// refund, e.g. the เด็นทาเนียร์ ฿2.96M transfer whose +555k was a มัดจำ deposit) — not receipt
+// money, so it must not keep the receipts ⚠️ forever after the discrepancy is handled. The cap
+// only ever LOWERS a contribution: an underpaid document still alarms until real money (or spent
+// credit) covers it. Blank/zero/unparseable discExpected = no declaration = raw paid.
+function contributionOf(p: ReReconPayment): number {
+  const paid = effectivePaidOf(p);
+  const declared = (p.discExpected ?? '').trim();
+  if (!declared) return paid;
+  const cap = num(declared);
+  if (cap <= 0) return paid;
+  return Math.min(paid, cap);
 }
 
 /**
@@ -109,7 +126,7 @@ export function buildReReconIndex(
   const compCores = new Map<number, Set<string>>();
   payments.forEach((p, i) => {
     const root = find(i);
-    compPaid.set(root, (compPaid.get(root) ?? 0) + effectivePaidOf(p));
+    compPaid.set(root, (compPaid.get(root) ?? 0) + contributionOf(p));
     let cores = compCores.get(root);
     if (!cores) {
       cores = new Set();

@@ -3038,7 +3038,7 @@ export async function junoRoutes(app: FastifyInstance) {
     // the whole reason it's 2 queries instead of N: no per-RE lookup.
     const candidatePayments = await prisma.payment.findMany({
       where: { status: { not: 'void' }, wrongTransferAt: null, reNumbers: { isEmpty: false } },
-      select: { id: true, reNumbers: true, amount: true, whtAmount: true, creditUsed: true, customerName: true, status: true },
+      select: { id: true, reNumbers: true, amount: true, whtAmount: true, creditUsed: true, discExpected: true, customerName: true, status: true },
     });
     const referencedCores = new Set<string>();
     for (const p of candidatePayments) for (const re of p.reNumbers) referencedCores.add(re);
