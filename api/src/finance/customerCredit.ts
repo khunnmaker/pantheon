@@ -39,7 +39,8 @@ export async function lockPayment(tx: CreditTx, paymentId: string): Promise<void
 }
 
 export async function lockCustomer(tx: CreditTx, customerKey: string): Promise<void> {
-  await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${customerKey}, 0))`;
+  // ::text cast — pg_advisory_xact_lock returns void, which Prisma's $queryRaw cannot deserialize.
+  await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${customerKey}, 0))::text`;
 }
 
 export async function customerBalanceSatang(tx: CreditTx, customerKey: string, lock = true): Promise<number> {
