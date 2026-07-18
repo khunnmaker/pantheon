@@ -21,7 +21,13 @@ export async function runVisionPasses(
   let products = initialProducts;
   const call = async (productSearchExpanded: boolean): Promise<DraftResult> => {
     const { system, user } = buildImagePrompt({ ...context, products, productSearchExpanded });
-    const parsed = parseDraft(await callClaudeWithImages(user, system, images));
+    const parsed = parseDraft(await callClaudeWithImages(
+      user,
+      system,
+      images,
+      undefined,
+      { app: 'minerva', feature: 'vision-draft' },
+    ));
     if (parsed === SAFE_DEFAULT) throw new Error('invalid vision draft envelope');
     // Captions are best-effort history enrichment — a miscounted array must not
     // invalidate an otherwise good draft (persistence maps by index and skips gaps).

@@ -25,7 +25,7 @@ export async function readReceiptImage(buf: Buffer, contentType: string): Promis
     const raw = await callClaudeWithImage('อ่านใบเสร็จนี้แล้วตอบ JSON ตามรูปแบบที่กำหนด', RECEIPT_SYSTEM, {
       base64: buf.toString('base64'),
       mediaType: contentType || 'image/jpeg',
-    });
+    }, undefined, { app: 'ceres', feature: 'receipt-ocr' });
     const obj = JSON.parse(raw.replace(/```json/gi, '').replace(/```/g, '').trim()) as Record<string, unknown>;
     const s = (v: unknown) => (typeof v === 'string' ? v : typeof v === 'number' ? String(v) : '');
     return {

@@ -20,9 +20,12 @@ import {
   type Direction,
   type BackfillSummary,
   type BackfillStatus,
+  type Agent,
   logout,
 } from './lib/api';
 import { useHashTab } from '@pantheon/ui';
+import AiCost from './AiCost';
+import { Chip, Kpi } from './ui';
 
 const PORTAL_URL = import.meta.env.VITE_PORTAL_URL ?? 'https://pantheon.prominentdental.com';
 
@@ -62,14 +65,20 @@ const toNum = (s: string) => {
   return Number.isNaN(n) ? 0 : n;
 };
 
-type Tab = 'overview' | 'ledger' | 'close';
+type Tab = 'overview' | 'ledger' | 'close' | 'ai-cost';
 // The whole component is supervisor-only (gated by the caller in App.tsx) with no further
-// per-tab role split inside it, so all 3 tabs are always valid.
+// per-tab role split inside it, so the base 3 tabs are always valid. "ต้นทุน AI" hits a
+// supervisor-only endpoint underneath (GET /api/jupiter/token-usage), so — since `jupiter`
+// app access can in principle be granted to a non-supervisor agent (agm/employee `apps`
+// list) — that one tab is additionally gated on agent.role here, both in the tab list
+// (useHashTab falls back to the default for a now-invalid hash) and in the nav button.
 const ACCT_TABS: Tab[] = ['overview', 'ledger', 'close'];
 
-export default function Accounting({ onLogout }: { onLogout: () => void }) {
+export default function Accounting({ agent, onLogout }: { agent: Agent; onLogout: () => void }) {
   const month = currentMonth();
-  const [tab, setTab] = useHashTab<Tab>(ACCT_TABS, 'overview');
+  const isSupervisor = agent.role === 'supervisor';
+  const tabs = useMemo<Tab[]>(() => (isSupervisor ? [...ACCT_TABS, 'ai-cost'] : ACCT_TABS), [isSupervisor]);
+  const [tab, setTab] = useHashTab<Tab>(tabs, 'overview');
   const [company, setCompany] = useState<string>(ALL); // ALL or a company code
 
   const [companies, setCompanies] = useState<AcctCompany[]>([]);
@@ -198,6 +207,9 @@ export default function Accounting({ onLogout }: { onLogout: () => void }) {
           <TabBtn active={tab === 'overview'} onClick={() => setTab('overview')}>ภาพรวม</TabBtn>
           <TabBtn active={tab === 'ledger'} onClick={() => setTab('ledger')}>บันทึกรายการ</TabBtn>
           <TabBtn active={tab === 'close'} onClick={() => setTab('close')}>ปิดรอบบัญชี</TabBtn>
+          {isSupervisor && (
+            <TabBtn active={tab === 'ai-cost'} onClick={() => setTab('ai-cost')}>ต้นทุน AI</TabBtn>
+          )}
         </div>
       </div>
 
@@ -244,6 +256,7 @@ export default function Accounting({ onLogout }: { onLogout: () => void }) {
               />
             )}
             {tab === 'close' && <Close registers={registers} company={company} colorOf={colorOf} />}
+            {tab === 'ai-cost' && isSupervisor && <AiCost />}
           </>
         )}
 
@@ -1047,23 +1060,7 @@ function MiniStat({ label, value, tone }: { label: string; value: string; tone?:
 }
 
 /* ─────────────────────────── small UI atoms ─────────────────────────── */
-
-function Chip({ active, onClick, children, dot, all }: { active: boolean; onClick: () => void; children: React.ReactNode; dot?: string; all?: boolean }) {
-  const base = 'border rounded-[9px] px-3 py-1.5 text-[12.5px] font-bold whitespace-nowrap flex items-center gap-1.5 cursor-pointer transition';
-  const cls = all
-    ? active
-      ? 'bg-[#6D28D9] border-[#6D28D9] text-white'
-      : 'bg-white border-[#E9E4F2] text-[#726C86]'
-    : active
-      ? 'bg-[#F3EEFE] border-[#6D28D9] text-[#4C1D95]'
-      : 'bg-white border-[#E9E4F2] text-[#726C86]';
-  return (
-    <button onClick={onClick} className={`${base} ${cls}`}>
-      {dot && <span className="w-[7px] h-[7px] rounded-full" style={{ background: dot }} />}
-      {children}
-    </button>
-  );
-}
+/* Chip + Kpi moved to ./ui.tsx (shared with AiCost.tsx) */
 
 function TabBtn({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
   return (
@@ -1073,16 +1070,6 @@ function TabBtn({ active, onClick, children }: { active: boolean; onClick: () =>
     >
       {children}
     </button>
-  );
-}
-
-function Kpi({ accent, label, value, sub, subTone }: { accent: string; label: string; value: string; sub?: string; subTone?: 'up' | 'down' }) {
-  return (
-    <div className="bg-white border border-[#E9E4F2] rounded-xl px-3.5 py-3" style={{ borderTop: `3px solid ${accent}` }}>
-      <div className="text-[11.5px] text-[#726C86] font-semibold mb-1">{label}</div>
-      <div className="text-[21px] font-extrabold text-[#1E1A2B] tracking-tight tabular-nums">{value}</div>
-      {sub && <div className={`text-[11px] mt-0.5 font-bold ${subTone === 'down' ? 'text-[#DC2626]' : subTone === 'up' ? 'text-[#0F9D58]' : 'text-[#726C86]'}`}>{sub}</div>}
-    </div>
   );
 }
 

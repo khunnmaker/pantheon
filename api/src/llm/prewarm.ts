@@ -28,7 +28,7 @@ export async function prewarmDraftCache(): Promise<void> {
       confirmedProducts: [],
       currentStage: null,
     });
-    await callClaude('warmup', system, 0);
+    await callClaude('warmup', system, 0, undefined, { app: 'minerva', feature: 'prewarm' });
     // eslint-disable-next-line no-console
     console.log(`[prewarm] draft prompt cache warmed (${kb.length} KB entries${kb.length > env.KB_INJECT_ALL_MAX ? '; semantic mode — rules block only' : ''})`);
   } catch (err) {

@@ -2,11 +2,17 @@ import { createHash } from 'node:crypto';
 import { Prisma } from '@prisma/client';
 import { prisma } from '../db/prisma.js';
 import { env } from '../env.js';
+import { estimateCostUsd } from '../llm/pricing.js';
 
 // ── EmbeddingProvider (swappable, spec §3) ───────────────────────────────
 // Default: Voyage AI `voyage-3` → 1024-dim vectors (matches vector(1024)).
 const VOYAGE_URL = 'https://api.voyageai.com/v1/embeddings';
 const MODEL = 'voyage-3';
+
+export interface EmbeddingCallMeta {
+  app?: string;
+  feature?: string;
+}
 
 export function embeddingsAvailable(): boolean {
   return !!env.VOYAGE_API_KEY;
@@ -17,6 +23,7 @@ export async function embed(
   texts: string[],
   inputType: 'document' | 'query' = 'document',
   signal?: AbortSignal,
+  meta: EmbeddingCallMeta = {},
 ): Promise<number[][]> {
   if (!env.VOYAGE_API_KEY) throw new Error('VOYAGE_API_KEY not configured');
   if (texts.length === 0) return [];
@@ -28,12 +35,44 @@ export async function embed(
     ...(signal ? { signal } : {}),
   });
   if (!res.ok) throw new Error(`Voyage API ${res.status}: ${await res.text()}`);
-  const data = (await res.json()) as { data: { embedding: number[] }[] };
+  const data = (await res.json()) as {
+    data: { embedding: number[] }[];
+    usage: { total_tokens: number };
+  };
+  const tokens = {
+    inputTokens: data.usage.total_tokens,
+    outputTokens: 0,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+  };
+  try {
+    void prisma.tokenUsage.create({
+      data: {
+        app: meta.app ?? 'unknown',
+        feature: meta.feature ?? 'unknown',
+        provider: 'voyage',
+        model: MODEL,
+        ...tokens,
+        estCostUsd: estimateCostUsd(MODEL, tokens),
+      },
+    }).catch((err) => {
+      // Embedding usage telemetry is best-effort and must never affect retrieval.
+      // eslint-disable-next-line no-console
+      console.warn('[embed] token usage persistence failed', err);
+    });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn('[embed] token usage persistence failed', err);
+  }
   return data.data.map((d) => d.embedding);
 }
 
-export async function embedOne(text: string, inputType: 'document' | 'query'): Promise<number[]> {
-  return (await embed([text], inputType))[0];
+export async function embedOne(
+  text: string,
+  inputType: 'document' | 'query',
+  meta: EmbeddingCallMeta = {},
+): Promise<number[]> {
+  return (await embed([text], inputType, undefined, meta))[0];
 }
 
 // pgvector accepts a textual literal like "[0.1,0.2,...]" cast to ::vector.
@@ -54,7 +93,7 @@ export async function storeMessageEmbedding(messageId: string, vec: number[]): P
 export async function embedMessage(messageId: string, text: string): Promise<void> {
   if (!embeddingsAvailable()) return;
   try {
-    const [vec] = await embed([text], 'document');
+    const [vec] = await embed([text], 'document', undefined, { app: 'minerva', feature: 'msg-embed' });
     await storeMessageEmbedding(messageId, vec);
   } catch (err) {
     // best-effort: a missing embedding only means this message won't be retrieved
@@ -120,7 +159,7 @@ export async function storeKbEmbedding(kbId: string, vec: number[], textHash: st
 export async function embedKbEntry(kbId: string, text: string): Promise<void> {
   if (!embeddingsAvailable()) return;
   try {
-    const [vec] = await embed([text], 'document');
+    const [vec] = await embed([text], 'document', undefined, { app: 'minerva', feature: 'kb-embed' });
     await storeKbEmbedding(kbId, vec, kbTextHash(text));
   } catch (err) {
     // Couldn't (re)embed — drop any existing row so we never serve a STALE vector for an
@@ -174,7 +213,7 @@ export async function findSimilarKb(
 ): Promise<{ id: string; category: string; answer: string; similarity: number } | null> {
   if (!embeddingsAvailable()) return null;
   try {
-    const vec = await embedOne(text, 'document');
+    const vec = await embedOne(text, 'document', { app: 'minerva', feature: 'kb-embed' });
     const lit = toVectorLiteral(vec);
     const rows = await prisma.$queryRaw<{ id: string; category: string; answer: string; similarity: number }[]>`
       SELECT k.id, k.category, k.answer, 1 - (ke.embedding <=> ${lit}::vector) AS similarity

@@ -32,6 +32,8 @@ mercury/vite.config.js
 mercury/vite.config.d.ts
 apollo/vite.config.js
 apollo/vite.config.d.ts
+pantheon/vite.config.js
+pantheon/vite.config.d.ts
 
 # downloaded LINE image content
 api/uploads/

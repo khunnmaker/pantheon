@@ -19,7 +19,13 @@ export async function summarizeCustomer(customerId: string): Promise<string | nu
   let summary: string;
   try {
     const history = messages.map((m) => histLine(m.role, m.text)).join('\n');
-    summary = (await callClaude(buildSummaryPrompt(history))).trim();
+    summary = (await callClaude(
+      buildSummaryPrompt(history),
+      undefined,
+      undefined,
+      undefined,
+      { app: 'minerva', feature: 'memory-summary' },
+    )).trim();
   } catch {
     return null;
   }

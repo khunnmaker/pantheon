@@ -16,6 +16,7 @@ import { PRODUCT_PHOTO_DIR } from './content.js';
 import { saveStaffUpload, readStaffUploadMeta, UPLOAD_ID_RE } from '../line/staffUploads.js';
 import { recordCrossSellOutcome } from '../catalog/crossSell.js';
 import { recordReplyOutcome } from '../learning/recordOutcome.js';
+import { learningCaptureDecision } from '../learning/captureFilter.js';
 import { recordProductKeywords } from '../catalog/match.js';
 import { readSlip } from '../llm/readSlip.js';
 import { sendToFinance } from '../finance/sendToFinance.js';
@@ -421,7 +422,11 @@ export async function messageRoutes(app: FastifyInstance) {
     // AFTER the LINE send already succeeded, so a DB hiccup here must never 500 the route and
     // skip the metrics/socket updates below; the customer already has their reply.
     let learnedCaptured = false;
-    if (draft && finalText.trim() !== draft.draftText.trim()) {
+    if (
+      draft &&
+      finalText.trim() !== draft.draftText.trim() &&
+      learningCaptureDecision(draft.draftText, finalText).capture
+    ) {
       try {
         await prisma.learnedAnswer.create({
           data: {

@@ -26,7 +26,13 @@ export interface RewriteResult {
 // the text — so a caveat can't be sent to the customer by mistake).
 export async function rewriteText(input: string): Promise<RewriteResult> {
   if (!llmAvailable()) return { text: input, note: null };
-  const raw = await callClaude(`ข้อความที่ต้องเรียบเรียงใหม่:\n"""\n${input}\n"""`, SYSTEM, 900);
+  const raw = await callClaude(
+    `ข้อความที่ต้องเรียบเรียงใหม่:\n"""\n${input}\n"""`,
+    SYSTEM,
+    900,
+    undefined,
+    { app: 'minerva', feature: 'rewrite' },
+  );
   const parsed = parseRewrite(raw);
   return { text: parsed.text || input, note: parsed.note };
 }

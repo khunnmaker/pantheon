@@ -117,7 +117,8 @@ export interface LearnedAnswer {
   aiDraft: string;
   finalAnswer: string;
   agentId: string;
-  status: 'pending' | 'approved' | 'rejected';
+  status: 'pending' | 'flagged' | 'promoting' | 'resolving' | 'approved' | 'rejected';
+  flagNote: string | null;
   promotedKbId: string | null;
   createdAt: string;
 }
@@ -465,6 +466,33 @@ export async function promoteLearned(id: string): Promise<
 
 export const rejectLearned = (id: string) =>
   authed<{ ok: boolean }>(`/api/learned/${id}/reject`, { method: 'POST' });
+
+export const flagLearned = (id: string, note?: string) =>
+  authed<{ ok: boolean }>(`/api/learned/${id}/flag`, {
+    method: 'POST',
+    body: JSON.stringify(note ? { note } : {}),
+  });
+
+export async function resolveLearned(
+  id: string,
+  resolution: { action: 'promote'; kbText: string } | { action: 'reject' },
+): Promise<
+  | { ok: boolean; kb?: { answer: string } | null }
+  | { priceContent: true }
+  | { conflict: true }
+> {
+  const res = await authedResponse(`/api/learned/${id}/resolve`, {
+    method: 'POST',
+    body: JSON.stringify(resolution),
+  });
+  if (res.status === 400) {
+    const body = await res.json().catch(() => null) as { error?: string } | null;
+    if (body?.error === 'price_content') return { priceContent: true };
+  }
+  if (res.status === 409) return { conflict: true };
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
 
 // AI-accuracy metrics (supervisor only) — Stage-1 learning dashboard.
 export interface MetricsBucket {

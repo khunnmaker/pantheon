@@ -12,7 +12,7 @@ import {
   dayDistance,
   nameAgreement,
   narrowByAgreement,
-  nameSimilarity,
+  maxNameSimilarity,
 } from '../bank/match.js';
 import type { BankSource, ParsedBankRow } from '../bank/types.js';
 import { BankParseError } from '../bank/types.js';
@@ -21,6 +21,7 @@ import { syncPaymentToJupiter } from '../jupiter/sync.js';
 import { readChequeFromBuffer, readSlipFromBuffer } from '../llm/readSlip.js';
 import { parseReReceipts, decodeExpressBytes } from '../finance/parseReReceipts.js';
 import { computeReRow } from '../finance/reRecon.js';
+import { normalizeSlipDate } from '../finance/normalize.js';
 import {
   buildDiscrepancyComponents,
   componentByPaymentId,
@@ -1059,6 +1060,7 @@ export async function junoRoutes(app: FastifyInstance) {
       const v = body.data[key];
       if (v !== undefined) data[key] = v.trim();
     }
+    if (data.transferAt !== undefined) data.transferAt = normalizeSlipDate(data.transferAt);
     if (data.amount !== undefined) {
       const amountNum = parseFloat(data.amount);
       if (!Number.isFinite(amountNum) || amountNum <= 0) return reply.code(400).send({ error: 'invalid_amount' });
@@ -1131,7 +1133,7 @@ export async function junoRoutes(app: FastifyInstance) {
         note: body.data.note?.trim() ?? '',
         senderName: body.data.senderName?.trim() ?? '',
         bank: body.data.bank?.trim() ?? '',
-        transferAt: body.data.transferAt?.trim() ?? '',
+        transferAt: normalizeSlipDate(body.data.transferAt?.trim() ?? ''),
         ref: body.data.ref?.trim() ?? '',
         slipUrl: body.data.slipUrl?.trim() ?? '',
         chequeNo: body.data.chequeNo?.trim() ?? '',
@@ -1785,10 +1787,11 @@ export async function junoRoutes(app: FastifyInstance) {
     const scored = candidates.map((txn) => {
       const days = dayDistance(txn.txnAt, paymentAt);
       const exact = amountsEqual(txn.amount, payment.amount);
-      const nameScore = Math.max(
-        nameSimilarity(txn.payerName || txn.details, payment.senderName || payment.customerName),
-        nameSimilarity(txn.payerName || txn.details, payment.receiptName),
-      );
+      const nameScore = maxNameSimilarity(txn.payerName || txn.details, [
+        payment.senderName,
+        payment.customerName,
+        payment.receiptName,
+      ]);
       const delta = Math.abs(txnAmountNum(txn.amount) - paymentAmount);
       let score = 0;
       if (exact) score = 3000 - days;
@@ -1863,10 +1866,11 @@ export async function junoRoutes(app: FastifyInstance) {
       const pAt = paymentTimestamp(p.transferAt, p.createdAt);
       const days = dayDistance(txn.txnAt, pAt);
       const exact = amountsEqual(txn.amount, p.amount);
-      const nameScore = Math.max(
-        nameSimilarity(txn.payerName || txn.details, p.senderName || p.customerName),
-        nameSimilarity(txn.payerName || txn.details, p.receiptName),
-      );
+      const nameScore = maxNameSimilarity(txn.payerName || txn.details, [
+        p.senderName,
+        p.customerName,
+        p.receiptName,
+      ]);
       const delta = Math.abs(txnAmount - parseFloat(p.amount || '0'));
       // Rank tiers: exact-amount (closer day wins ties) > name-similarity > same-day-small-delta.
       // Encoded as a single sortable number: tier * 1000 - tiebreak, higher = better.

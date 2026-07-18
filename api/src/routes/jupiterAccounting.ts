@@ -372,7 +372,13 @@ export async function jupiterAccountingRoutes(app: FastifyInstance) {
           `companyCode ต้องเป็นหนึ่งใน: ${codes.join(', ')} (ถ้าไม่ระบุชัด ใช้ PROM). ` +
           'direction=income เมื่อเป็นการขาย/รับเงิน, expense เมื่อเป็นการจ่าย. ' +
           'amount คือยอดสุทธิที่รับ/จ่ายจริง เป็นตัวเลขล้วน ไม่มีสัญลักษณ์หรือคอมมา.';
-        const raw = await callClaude(text, system, 400);
+        const raw = await callClaude(
+          text,
+          system,
+          400,
+          undefined,
+          { app: 'jupiter', feature: 'acct-parse' },
+        );
         // Extract the first JSON object even if the model wrapped it in prose/fences.
         const jsonStr = raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1);
         const obj = JSON.parse(jsonStr) as Record<string, unknown>;

@@ -4,14 +4,18 @@
 
 const DAY_MS = 24 * 3600 * 1000;
 
-// Payment.transferAt is stored "DD/MM/YYYY HH:MM" (Gregorian — see finance/normalize.ts
-// normalizeSlipDate), but can be blank, or left as unparseable raw OCR text when the LLM's
-// output didn't match either expected shape. Falls back to createdAt in both cases, per spec.
+// Payment.transferAt is normally "DD/MM/YYYY HH:MM" Gregorian (see finance/normalize.ts
+// normalizeSlipDate), but rows written before the write-path normalization can hold Buddhist
+// or 2-digit years — parse those with normalizeSlipDate's year convention rather than trust
+// the string. Blank/unparseable raw OCR text falls back to createdAt, per spec.
 export function paymentTimestamp(transferAt: string, createdAt: Date): Date {
-  const m = transferAt.trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2})$/);
+  const m = transferAt.trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})\s+(\d{1,2}):(\d{2})$/);
   if (m) {
-    const [, dd, mm, yyyy, hh, min] = m;
-    const d = new Date(`${yyyy}-${mm.padStart(2, '0')}-${dd.padStart(2, '0')}T${hh.padStart(2, '0')}:${min}:00+07:00`);
+    const [, dd, mm, year, hh, min] = m;
+    let y = parseInt(year, 10);
+    if (year.length <= 2) y = y >= 50 ? 2500 + y : 2000 + y;
+    if (y >= 2500) y -= 543;
+    const d = new Date(`${y}-${mm.padStart(2, '0')}-${dd.padStart(2, '0')}T${hh.padStart(2, '0')}:${min}:00+07:00`);
     if (!Number.isNaN(d.getTime())) return d;
   }
   return createdAt;
@@ -122,4 +126,11 @@ export function nameSimilarity(bankSide: string, paymentSide: string): number {
   let overlap = 0;
   for (const t of ta) if (tb.has(t)) overlap++;
   return overlap / Math.max(ta.size, tb.size); // Jaccard-ish, 0..1 (rewards proportional overlap over sheer token count)
+}
+
+export function maxNameSimilarity(bankSide: string, paymentNames: string[]): number {
+  const scores = paymentNames
+    .filter((name) => name.trim())
+    .map((name) => nameSimilarity(bankSide, name));
+  return scores.length ? Math.max(...scores) : 0;
 }

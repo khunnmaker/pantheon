@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { APOLLO_URL, buildDigestLines, type DigestEvent, type DigestTask } from '../src/apollo/digest.js';
+import { APOLLO_URL, buildDigestLines, digestEventsForDay, type DigestEvent, type DigestTask } from '../src/apollo/digest.js';
+import { parseDate } from '../src/apollo/calendarQuery.js';
 
 const TODAY = '2026-07-15';
 const task = (id: string, title: string, dueKey: string, priority = 'normal'): DigestTask =>
@@ -85,5 +86,45 @@ describe('Apollo morning digest builder: display caps + "and N more" trailers', 
     expect(lines[1]).toBe('วันนี้ 0 · เลยกำหนด 0 · นัดหมาย 7'); // header counts all 7
     expect(lines.filter((l) => l.startsWith('📅')).length).toBe(5);
     expect(lines).toContain('และอีกนัดหมาย 2 รายการ');
+  });
+});
+
+describe('Apollo morning digest: recurring-event inclusion (digestEventsForDay)', () => {
+  // TODAY (2026-07-15) is a Wednesday — UTC weekday 3.
+  const row = (title: string, baseKey: string, rule: unknown, opts: { until?: string; skip?: string[]; visibility?: string } = {}) => ({
+    ...event(title, '07:00', '08:00', opts.visibility ?? 'public'),
+    date: parseDate(baseKey) as Date,
+    recurrenceRule: rule,
+    recurrenceUntil: opts.until ? parseDate(opts.until) : null,
+    skipDates: opts.skip ?? [],
+  });
+
+  it('keeps a recurring event only when today is a real occurrence', () => {
+    const kept = digestEventsForDay([
+      row('ติววันพุธ', '2026-07-01', { freq: 'weekly', weekday: 3 }), // Wednesday series → occurs today
+      row('ติววันพฤหัส', '2026-07-02', { freq: 'weekly', weekday: 4 }), // Thursday series → not today
+      row('ทุกวัน', '2026-07-01', { freq: 'daily' }),
+    ], TODAY);
+    expect(kept.map((e) => e.title)).toEqual(['ติววันพุธ', 'ทุกวัน']);
+  });
+
+  it('respects recurrenceUntil and skipDates for today specifically', () => {
+    const kept = digestEventsForDay([
+      row('จบไปแล้ว', '2026-07-01', { freq: 'daily' }, { until: '2026-07-14' }), // ended yesterday
+      row('วันนี้โดนลบ', '2026-07-01', { freq: 'daily' }, { skip: [TODAY] }), // skipped today only
+      row('ยังอยู่', '2026-07-01', { freq: 'daily' }, { until: TODAY }), // until inclusive
+    ], TODAY);
+    expect(kept.map((e) => e.title)).toEqual(['ยังอยู่']);
+  });
+
+  it('passes non-recurring rows straight through — a multi-day span mid-way through today must not be dropped', () => {
+    const span = { ...row('สัมมนา 3 วัน', '2026-07-14', null), endDate: parseDate('2026-07-16') };
+    expect(digestEventsForDay([span], TODAY)).toEqual([span]);
+  });
+
+  it('a private recurring occurrence still gets the 🔒 prefix downstream — the prefix rule is untouched', () => {
+    const kept = digestEventsForDay([row('นัดหมอฟัน', '2026-07-01', { freq: 'weekly', weekday: 3 }, { visibility: 'private' })], TODAY);
+    const lines = buildDigestLines('a', [], kept, TODAY, 0)!;
+    expect(lines).toContain('📅 07:00–08:00 🔒 นัดหมอฟัน');
   });
 });

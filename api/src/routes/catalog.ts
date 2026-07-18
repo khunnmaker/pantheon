@@ -54,7 +54,13 @@ export async function catalogRoutes(app: FastifyInstance) {
     const grounded = all.filter((p) => p.price > 0).map((p) => `${p.price}บาท`).join(' ');
     const groundedStock = all.some((p) => p.stock != null);
     const { system, user } = buildDraftPrompt({ question: q, kb, products, confirmedProducts, agentText });
-    const parsed = parseDraft(await callClaude(user, system));
+    const parsed = parseDraft(await callClaude(
+      user,
+      system,
+      undefined,
+      undefined,
+      { app: 'minerva', feature: 'test-draft' },
+    ));
     const citedKb = kb.filter((k) =>
       parsed.used_kb.map((s) => s.toLowerCase()).includes(k.id.toLowerCase()),
     );

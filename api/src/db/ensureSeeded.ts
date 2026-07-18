@@ -233,7 +233,12 @@ export async function backfillKbEmbeddings(): Promise<void> {
     for (let i = 0; i < stale.length; i += CHUNK) {
       const batch = stale.slice(i, i + CHUNK);
       try {
-        const vecs = await embed(batch.map((m) => kbEmbeddingText(m)), 'document');
+        const vecs = await embed(
+          batch.map((m) => kbEmbeddingText(m)),
+          'document',
+          undefined,
+          { app: 'minerva', feature: 'kb-embed' },
+        );
         // allSettled + the vecs[j] guard so one bad row/store never aborts the whole run;
         // anything left unembedded is just retried on the next boot.
         const results = await Promise.allSettled(

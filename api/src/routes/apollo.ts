@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { prisma } from '../db/prisma.js';
 import { requireAuth, requireApp } from '../auth/middleware.js';
 import { completeApolloTask, parseRecurrenceRule } from '../apollo/recurrence.js';
-import { CALENDAR_MAX_RANGE_DAYS, buildEventData, dateSchema, eventDateRangeWhere, eventTimeSchema, maskEvent, parseCalendarRange, parseDate, resolveCalendarScope } from '../apollo/calendarQuery.js';
+import { CALENDAR_MAX_RANGE_DAYS, buildEventData, dateSchema, eventDateRangeWhere, eventTimeSchema, expandCalendarEvents, occursOn, parseCalendarRange, parseDate, recurringEventRangeWhere, resolveCalendarScope, type EventData } from '../apollo/calendarQuery.js';
 import { notifyApolloAssignment, thaiDateKey } from '../apollo/notify.js';
 import { deleteApolloAttachment, readApolloAttachment, saveApolloAttachment } from '../apollo/attachmentStore.js';
 import { EMPLOYEES, TIER_ACCOUNTS, employeeEmail } from '../db/ensureSeeded.js';
@@ -46,7 +46,20 @@ const eventBody = z.object({
   startTime: eventTimeSchema.nullable().optional(),
   endTime: eventTimeSchema.nullable().optional(),
   visibility: z.enum(['private', 'public']).optional(),
+  // Same rule vocabulary as taskBody (recurrenceSchema above). skipDates is intentionally NOT here
+  // — it's owned by the skip route, so a whole-form PATCH can never clobber it. buildEventData does
+  // the base-date-match + rule/endDate-exclusivity + until validation.
+  recurrenceRule: recurrenceSchema.nullable().optional(),
+  recurrenceUntil: dateSchema.nullable().optional(),
 });
+// EventData (recurrenceRule as a rule object | null) → Prisma create/update input: a nullable Json
+// column needs Prisma.JsonNull, never a bare null. skipDates is never written here (see above).
+function eventWriteData(data: EventData) {
+  const { recurrenceRule, ...rest } = data;
+  // Cast as InputJsonValue (a named interface lacks the string index signature Prisma's Json input
+  // type wants) — same as recurrence.ts does for the task rule.
+  return { ...rest, recurrenceRule: recurrenceRule ? (recurrenceRule as unknown as Prisma.InputJsonValue) : Prisma.JsonNull };
+}
 
 const peopleSelect = { id: true, name: true, email: true, role: true } as const;
 const taskInclude = {
@@ -66,6 +79,7 @@ const calendarTaskSelect = {
 // unfiltered); maskEvent() strips them for non-owners afterward, in application code, never here.
 const calendarEventSelect = {
   id: true, agentId: true, title: true, note: true, date: true, endDate: true, startTime: true, endTime: true, visibility: true,
+  recurrenceRule: true, recurrenceUntil: true, skipDates: true,
   agent: { select: peopleSelect },
 } as const;
 
@@ -369,7 +383,7 @@ export async function apolloRoutes(app: FastifyInstance) {
     const data = buildEventData(parsed.data);
     if (!data) return reply.code(400).send({ error: 'invalid_body' });
     // agentId always the caller — never accepted from the body.
-    return reply.code(201).send(await prisma.apolloEvent.create({ data: { ...data, agentId: req.agent!.id } }));
+    return reply.code(201).send(await prisma.apolloEvent.create({ data: { ...eventWriteData(data), agentId: req.agent!.id } }));
   });
 
   app.patch<{ Params: { id: string } }>('/api/apollo/events/:id', async (req, reply) => {
@@ -379,7 +393,9 @@ export async function apolloRoutes(app: FastifyInstance) {
     if (!parsed.success) return reply.code(400).send({ error: 'invalid_body' });
     const data = buildEventData(parsed.data);
     if (!data) return reply.code(400).send({ error: 'invalid_body' });
-    return prisma.apolloEvent.update({ where: { id: req.params.id }, data });
+    // Whole-series edit. eventWriteData omits skipDates, so individually-skipped occurrences survive
+    // a series edit; stale skip entries (if the base date moved) are ignored harmlessly by occursOn.
+    return prisma.apolloEvent.update({ where: { id: req.params.id }, data: eventWriteData(data) });
   });
 
   app.delete<{ Params: { id: string } }>('/api/apollo/events/:id', async (req, reply) => {
@@ -387,6 +403,25 @@ export async function apolloRoutes(app: FastifyInstance) {
     if (!existing || existing.agentId !== req.agent!.id) return reply.code(404).send({ error: 'not_found' });
     await prisma.apolloEvent.delete({ where: { id: req.params.id } });
     return { ok: true };
+  });
+
+  // "ลบเฉพาะวันนี้" — delete a single occurrence of a recurring event by adding its date to
+  // skipDates. Owner-only, same 404-for-missing-or-not-yours shape as the other event routes (no
+  // manager/CEO bypass — CRUD stays owner-only). 400 unless the date is a real occurrence.
+  app.post<{ Params: { id: string } }>('/api/apollo/events/:id/skip', async (req, reply) => {
+    const existing = await prisma.apolloEvent.findUnique({
+      where: { id: req.params.id },
+      select: { agentId: true, date: true, recurrenceRule: true, recurrenceUntil: true, skipDates: true },
+    });
+    if (!existing || existing.agentId !== req.agent!.id) return reply.code(404).send({ error: 'not_found' });
+    const parsed = z.object({ date: dateSchema }).safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'invalid_body' });
+    // Occurrence check against the series with skipDates blanked — occursOn is skip-aware, so
+    // checking the raw row would 400 a re-skip of an already-skipped date; blanking makes the
+    // route idempotent (double-click/retry safe), which is what the dedupe append is for.
+    if (!occursOn({ ...existing, skipDates: [] }, parsed.data.date)) return reply.code(400).send({ error: 'not_an_occurrence' });
+    const skipDates = existing.skipDates.includes(parsed.data.date) ? existing.skipDates : [...existing.skipDates, parsed.data.date];
+    return prisma.apolloEvent.update({ where: { id: req.params.id }, data: { skipDates } });
   });
 
   app.get('/api/apollo/my-tasks', async (req) => {
@@ -433,15 +468,20 @@ export async function apolloRoutes(app: FastifyInstance) {
     // query rather than ask Prisma to filter a required column against null. No member-project
     // restriction here (see resolveCalendarScope's doc) — free/busy is team-wide by design, and
     // masking (not scoping) is what keeps title/note private.
-    const events = scope.assigneeId === null ? [] : (await prisma.apolloEvent.findMany({
+    // Candidate fetch: rows overlapping the range (non-recurring + a recurring event's base day)
+    // OR recurring series still active in the range. Expansion (below) turns each recurring row
+    // into one masked row per occurrence; the take-500 cap is re-applied AFTER expansion since a
+    // daily rule can fan a single row out to ~62 (range is capped at 62 days).
+    const rawEvents = scope.assigneeId === null ? [] : await prisma.apolloEvent.findMany({
       where: {
-        ...eventDateRangeWhere(range.from, range.to),
         ...(scope.assigneeId === undefined ? {} : { agentId: scope.assigneeId }),
+        OR: [eventDateRangeWhere(range.from, range.to), recurringEventRangeWhere(range.from, range.to)],
       },
       select: calendarEventSelect,
       orderBy: { date: 'asc' },
       take: 500,
-    })).map((event) => maskEvent(event, viewerId, isCeo));
+    });
+    const events = expandCalendarEvents(rawEvents, viewerId, isCeo, range.from, range.to).slice(0, 500);
     return { tasks, events };
   });
 

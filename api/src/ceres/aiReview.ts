@@ -192,7 +192,13 @@ export async function reviewPaymentRequest(
       requestedByName: request.requestedByName,
       template,
     });
-    const raw = await callClaude(userJson, { cached: [POLICY_TEXT] });
+    const raw = await callClaude(
+      userJson,
+      { cached: [POLICY_TEXT] },
+      undefined,
+      undefined,
+      { app: 'ceres', feature: 'payment-gate' },
+    );
     const parsed = parseVerdict(raw);
     if (!parsed) {
       const review = await writeReview('paymentRequest', requestId, 'escalate', 'คำตอบ AI ไม่ชัดเจน — ส่งต่อ CEO (fail-closed)');
@@ -353,7 +359,13 @@ export async function reviewExpensePostHoc(expenseId: string): Promise<void> {
           ocrVendor: expense.ocrVendor,
           note: expense.note,
         });
-        const raw = await callClaude(userJson, { cached: [EXPENSE_POLICY_TEXT] });
+        const raw = await callClaude(
+          userJson,
+          { cached: [EXPENSE_POLICY_TEXT] },
+          undefined,
+          undefined,
+          { app: 'ceres', feature: 'expense-check' },
+        );
         const obj = JSON.parse(raw.replace(/```json/gi, '').replace(/```/g, '').trim()) as Record<string, unknown>;
         const v = obj.verdict;
         const r = obj.reasoning;

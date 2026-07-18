@@ -1596,8 +1596,14 @@ function GroupTab() {
 
   // Keep selection within the current view: drop it when the bucket or search changes.
   useEffect(() => { setSelected(new Set()); setBatchNote(''); }, [sel, q]);
-  // Reset sort to รหัส when switching buckets (a group's "ชนิด" option may not exist in the next).
-  useEffect(() => { setSortBy('sku'); }, [sel]);
+  // Default sort per bucket (owner 2026-07-15): ชนิด wherever the group has subgroups;
+  // รหัส for ยังไม่จัด and subgroup-less groups, whose select has no ชนิด option.
+  useEffect(() => {
+    const g = sel && sel !== 'unassigned' ? groups.find((x) => x.key === sel) : undefined;
+    setSortBy((g?.subgroups.length ?? 0) > 0 ? 'sub' : 'sku');
+    // groups deliberately omitted from deps: a background loadGroups() refresh must not stomp
+    // a sort the supervisor picked by hand.
+  }, [sel]);
   // Prune selection to rows still present. A per-row move (changeProduct) filters a SKU out of
   // `products` without changing [sel, q]; it must NOT linger in `selected` and get swept into a
   // later batch acting on a row the supervisor can no longer see.
