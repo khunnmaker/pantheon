@@ -438,12 +438,23 @@ export const verifyPayment = (
     whtAmount?: string;
     creditUsed?: string;
     discExpected?: string;
+    discResolution?: DiscResolution;
   },
 ) =>
   authed<{ ok: boolean; payment: Payment }>(`/api/juno/payments/${id}/verify`, {
     method: 'POST',
     body: JSON.stringify(data),
   });
+
+export interface ReExpectedResponse {
+  cores: { core: string; amount: string | null; shared: boolean }[];
+  derived: string | null;
+}
+
+export const getReExpected = (nums: string[], exclude: string, signal?: AbortSignal) => {
+  const params = new URLSearchParams({ nums: nums.join(','), exclude });
+  return authed<ReExpectedResponse>(`/api/juno/re-expected?${params.toString()}`, { signal });
+};
 
 // ── Payment discrepancy ledger (ยอดเกิน/ขาด) ───────────────────────────────
 export type DiscrepancyDirection = 'over' | 'under' | 'balanced';

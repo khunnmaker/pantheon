@@ -17,7 +17,7 @@ import {
   type Payment,
 } from './lib/api';
 
-const RESOLUTION_LABELS: Record<Exclude<DiscResolution, ''>, string> = {
+export const RESOLUTION_LABELS: Record<Exclude<DiscResolution, ''>, string> = {
   refund: 'โอนคืนแล้ว',
   credit: 'เก็บเป็นเครดิต',
   chase: 'รอลูกค้าชำระเพิ่ม',

@@ -61,6 +61,7 @@ import {
   releaseSpend,
   removeGrant,
   replaceSpend,
+  type CreditTx,
 } from '../finance/customerCredit.js';
 
 // Owner decision 2026-07-13: the gm tier is default-deny inside Juno and may use only
@@ -156,6 +157,57 @@ function grossOf(p: { amount: string; whtAmount: string }): number {
 function sendCreditError(reply: FastifyReply, error: unknown) {
   if (!(error instanceof CustomerCreditError)) throw error;
   return reply.code(409).send({ error: error.code, message: error.message, ...error.detail });
+}
+
+type DiscResolution = (typeof DISC_RESOLUTIONS)[number];
+type DiscResolutionConflict = 'void_locked' | 'wrong_transfer_refund_only' | 'use_credit_under_only';
+
+class DiscResolutionTxError extends Error {
+  constructor(public code: DiscResolutionConflict) {
+    super(code);
+  }
+}
+
+// Shared FIN-resolution mutation. Callers own the payment row lock. `note === undefined` is the
+// verify-dialog path and preserves any existing note; /disc-resolve passes '' when its optional
+// note is omitted, retaining that route's existing clear-on-omit behavior.
+async function applyDiscResolutionTx(
+  tx: CreditTx,
+  paymentId: string,
+  resolution: DiscResolution,
+  note: string | undefined,
+  actor: string,
+) {
+  const current = await tx.payment.findUnique({ where: { id: paymentId } });
+  if (!current) return null;
+  if (current.status === 'void') return 'void_locked' as const;
+  if (current.wrongTransferAt && !['', 'refund', 'credit'].includes(resolution)) {
+    return 'wrong_transfer_refund_only' as const;
+  }
+  if (resolution === 'use_credit') {
+    const discrepancy = await getDiscrepancyForPayment(tx, current.id);
+    if (!discrepancy || discrepancy.diffSatang >= 0) return 'use_credit_under_only' as const;
+  }
+  await removeGrant(
+    tx,
+    current.id,
+    'เครดิตจากรายการนี้ถูกใช้ไปแล้ว จึงเปลี่ยนวิธีจัดการไม่ได้',
+  );
+  const clearing = resolution === '';
+  return tx.payment.update({
+    where: { id: current.id },
+    data: clearing ? {
+      discResolution: '', discNote: '', discResolvedAt: null, discResolvedBy: '',
+      discConfirmedAt: null, discConfirmedBy: '',
+    } : {
+      discResolution: resolution,
+      ...(note === undefined ? {} : { discNote: note.trim() }),
+      discResolvedAt: new Date(),
+      discResolvedBy: actor,
+      discConfirmedAt: null,
+      discConfirmedBy: '',
+    },
+  });
 }
 
 // The row shape the Juno UI consumes (the stored Payment plus a couple of derived fields).
@@ -995,6 +1047,58 @@ export async function junoRoutes(app: FastifyInstance) {
     };
   });
 
+  // GET /api/juno/re-expected?nums=&exclude= — lightweight RE total for the ตรวจแล้ว dialog.
+  // Only an all-RE, all-imported, exclusively-used input set is comparable; any bill/external
+  // document or RE already carried by another live payment makes the derived total unavailable.
+  const reExpectedQuerySchema = z.object({
+    nums: z.string().max(4000),
+    exclude: z.string().max(200).optional(),
+  });
+  app.get('/api/juno/re-expected', async (req, reply) => {
+    const parsed = reExpectedQuerySchema.safeParse(req.query ?? {});
+    if (!parsed.success) return reply.code(400).send({ error: 'invalid_query' });
+
+    // Preserve formatting spaces/dashes between a known alpha prefix and its number before
+    // splitting the same / , whitespace stream accepted by the chip input. Classification and
+    // canonical RE cores come exclusively from normalizeReceiptReference.
+    const separated = parsed.data.nums.replace(/([A-Za-z]{1,4})[\s-]+(?=\d{4,10}(?:[/,\s]|$))/g, '$1');
+    const inputs = separated.split(/[/,\s]+/).filter(Boolean);
+    const references = inputs.map(normalizeReceiptReference);
+    const allInputsAreRe = inputs.length > 0 && references.every((reference) => reference?.kind === 're');
+    const cores = [...new Set(references.flatMap((reference) => reference?.kind === 're' ? [reference.value] : []))];
+
+    const [receipts, otherPayments] = await Promise.all([
+      cores.length
+        ? prisma.reReceipt.findMany({
+            where: { reNumber: { in: cores } },
+            select: { reNumber: true, amount: true },
+          })
+        : Promise.resolve([]),
+      cores.length
+        ? prisma.payment.findMany({
+            where: {
+              status: { not: 'void' },
+              ...(parsed.data.exclude ? { id: { not: parsed.data.exclude } } : {}),
+              reNumbers: { hasSome: cores },
+            },
+            select: { id: true, reNumbers: true },
+          })
+        : Promise.resolve([]),
+    ]);
+    const amountByCore = new Map(receipts.map((receipt) => [receipt.reNumber, receipt.amount]));
+    const sharedCores = new Set(otherPayments.flatMap((payment) => payment.reNumbers.filter((core) => cores.includes(core))));
+    const rows = cores.map((core) => ({
+      core,
+      amount: amountByCore.get(core) ?? null,
+      shared: sharedCores.has(core),
+    }));
+    const usable = allInputsAreRe && rows.every((row) => row.amount !== null && !row.shared);
+    const derived = usable
+      ? satangToBaht(rows.reduce((sum, row) => sum + moneyToSatang(row.amount ?? ''), 0)).toFixed(2)
+      : null;
+    return { cores: rows, derived };
+  });
+
   // GET /api/juno/discrepancies — live single-payment discrepancy ledger plus preserved
   // resolution/confirmation audit rows. Every comparison uses gross = amount + whtAmount.
   app.get('/api/juno/discrepancies', async () => {
@@ -1035,36 +1139,13 @@ export async function junoRoutes(app: FastifyInstance) {
     try {
       const payment = await prisma.$transaction(async (tx) => {
         await lockPayment(tx, req.params.id);
-        const current = await tx.payment.findUnique({ where: { id: req.params.id } });
-        if (!current) return null;
-        if (current.status === 'void') return 'void_locked' as const;
-        if (current.wrongTransferAt && !['', 'refund', 'credit'].includes(body.data.resolution)) {
-          return 'wrong_transfer_refund_only' as const;
-        }
-        if (body.data.resolution === 'use_credit') {
-          const discrepancy = await getDiscrepancyForPayment(tx, current.id);
-          if (!discrepancy || discrepancy.diffSatang >= 0) return 'use_credit_under_only' as const;
-        }
-        await removeGrant(
+        return applyDiscResolutionTx(
           tx,
-          current.id,
-          'เครดิตจากรายการนี้ถูกใช้ไปแล้ว จึงเปลี่ยนวิธีจัดการไม่ได้',
+          req.params.id,
+          body.data.resolution,
+          body.data.note?.trim() ?? '',
+          req.agent?.email ?? req.agent?.id ?? '',
         );
-        const clearing = body.data.resolution === '';
-        return tx.payment.update({
-          where: { id: current.id },
-          data: clearing ? {
-            discResolution: '', discNote: '', discResolvedAt: null, discResolvedBy: '',
-            discConfirmedAt: null, discConfirmedBy: '',
-          } : {
-            discResolution: body.data.resolution,
-            discNote: body.data.note?.trim() ?? '',
-            discResolvedAt: new Date(),
-            discResolvedBy: req.agent?.email ?? req.agent?.id ?? '',
-            discConfirmedAt: null,
-            discConfirmedBy: '',
-          },
-        });
       });
       if (!payment) return reply.code(404).send({ error: 'not_found' });
       if (typeof payment === 'string') return reply.code(409).send({ error: payment });
@@ -1628,6 +1709,7 @@ export async function junoRoutes(app: FastifyInstance) {
     whtAmount: z.string().max(40).optional(),
     creditUsed: moneyStringSchema.optional(),
     discExpected: moneyStringSchema.optional(),
+    discResolution: z.enum(DISC_RESOLUTIONS).optional(),
   });
   app.post<{ Params: { id: string } }>('/api/juno/payments/:id/verify', async (req, reply) => {
     const body = verifyBodySchema.safeParse(req.body);
@@ -1691,6 +1773,28 @@ export async function junoRoutes(app: FastifyInstance) {
         // exist here; letting it through would leak a phantom row into the WHT report and books.
         if (cur.source === 'credit' && whtRate !== 0) return 'credit_wht_not_allowed' as const;
 
+        const withResolution = async (
+          payment: typeof cur,
+          meta: { clearWrongConfirmations: boolean; syncRecordedCorrection: boolean },
+        ) => {
+          // Existing /disc-resolve tests intentionally pin same-value re-apply as an edit that
+          // reopens CEO confirmation. The ตรวจแล้ว no-op therefore belongs here: compare against
+          // the POST-core-mutation row and never invoke the shared mutation for the same value.
+          if (body.data.discResolution === undefined || body.data.discResolution === payment.discResolution) {
+            return { payment, ...meta };
+          }
+          const resolved = await applyDiscResolutionTx(
+            tx,
+            payment.id,
+            body.data.discResolution,
+            undefined,
+            actor,
+          );
+          if (!resolved) throw new Error('payment_missing_after_verify');
+          if (typeof resolved === 'string') throw new DiscResolutionTxError(resolved);
+          return { payment: resolved, ...meta };
+        };
+
         const hasGrant = await paymentHasGrant(tx, cur.id);
         const arraysEqual = (left: string[], right: string[]) => left.length === right.length && left.every((value, i) => value === right[i]);
         const grantDrivingChange = wantsWrongTransfer !== (cur.wrongTransferAt !== null)
@@ -1705,6 +1809,7 @@ export async function junoRoutes(app: FastifyInstance) {
         if (hasGrant && grantDrivingChange) throw new CustomerCreditError('credit_grant_locked');
 
         if (wantsWrongTransfer) {
+          const markingWrongTransfer = cur.wrongTransferAt === null;
           const spendRemoved = await releaseSpend(tx, cur.id);
           const payment = await tx.payment.update({
             where: { id: cur.id },
@@ -1713,8 +1818,10 @@ export async function junoRoutes(app: FastifyInstance) {
               wrongTransferAt: now,
               wrongTransferBy: actor,
               discExpected: '0',
-              discResolution: '', discNote: '', discResolvedAt: null, discResolvedBy: '',
-              discConfirmedAt: null, discConfirmedBy: '',
+              ...(markingWrongTransfer ? {
+                discResolution: '', discNote: '', discResolvedAt: null, discResolvedBy: '',
+                discConfirmedAt: null, discConfirmedBy: '',
+              } : {}),
               reNumbers: [], reNumber: '', billNos: [], receiptName: '', customerType: '',
               whtRate: 0, whtAmount: '',
               ...(spendRemoved ? { creditUsed: '' } : {}),
@@ -1722,7 +1829,10 @@ export async function junoRoutes(app: FastifyInstance) {
               verifiedAt: now,
             },
           });
-          return { payment, clearWrongConfirmations: true, syncRecordedCorrection: cur.status === 'recorded' };
+          return withResolution(payment, {
+            clearWrongConfirmations: markingWrongTransfer,
+            syncRecordedCorrection: cur.status === 'recorded',
+          });
         }
 
         if (!hasRealDocuments) {
@@ -1740,7 +1850,7 @@ export async function junoRoutes(app: FastifyInstance) {
               verifiedById: null, verifiedAt: null,
             },
           });
-          return { payment, clearWrongConfirmations: false, syncRecordedCorrection: false };
+          return withResolution(payment, { clearWrongConfirmations: false, syncRecordedCorrection: false });
         }
 
         const correctingWrongTransfer = cur.wrongTransferAt !== null;
@@ -1775,7 +1885,10 @@ export async function junoRoutes(app: FastifyInstance) {
             ...(keepRecorded ? {} : { verifiedById: req.agent?.id ?? null, verifiedAt: now }),
           },
         });
-        return { payment, clearWrongConfirmations: false, syncRecordedCorrection: cur.status === 'recorded' && correctingWrongTransfer };
+        return withResolution(payment, {
+          clearWrongConfirmations: false,
+          syncRecordedCorrection: cur.status === 'recorded' && correctingWrongTransfer,
+        });
       });
       if (!result) return reply.code(404).send({ error: 'not_found' });
       if (typeof result === 'string') {
@@ -1784,7 +1897,10 @@ export async function junoRoutes(app: FastifyInstance) {
       p = result.payment;
       clearWrongConfirmations = result.clearWrongConfirmations;
       syncRecordedCorrection = result.syncRecordedCorrection;
-    } catch (error) { return sendCreditError(reply, error); }
+    } catch (error) {
+      if (error instanceof DiscResolutionTxError) return reply.code(409).send({ error: error.code });
+      return sendCreditError(reply, error);
+    }
 
     if (clearWrongConfirmations) await clearWrongOnlyExpressConfirmations(p.id);
     if (syncRecordedCorrection) {

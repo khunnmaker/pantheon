@@ -12,16 +12,16 @@ import {
   getSummary, getPayments, setStatus, setFlag, verifyPayment, getReport, downloadCsv, baht,
   logout, getBankSummary, createPayment, uploadSlip, fileToBase64, readManualSlip, readManualCheque,
   deletePayment, confirmReceived, getWhtSummary, updatePayment, getFinanceAudits, getManualBills,
-  getPaymentCreditBalance,
+  getPaymentCreditBalance, getReExpected,
   apiErrorMessage,
   type Agent, type Payment, type PaymentStatus, type Summary,
   type Report, type PaymentFilter, type CustomerType, type PaymentSource,
-  type WhtRate, type WhtSummary, type EditPaymentBody,
+  type WhtRate, type WhtSummary, type EditPaymentBody, type DiscResolution,
 } from './lib/api';
 import PrintCovers from './PrintCovers';
 import Recon from './Recon';
 import ReRecon from './ReRecon';
-import Discrepancies, { PaymentDiscrepancyBlock } from './Discrepancies';
+import Discrepancies, { PaymentDiscrepancyBlock, RESOLUTION_LABELS } from './Discrepancies';
 import Audit from './Audit';
 import Bills from './Bills';
 import AppSwitcher from './AppSwitcher';
@@ -2189,10 +2189,54 @@ function CheckDialog({ payment, onClose, onSaved }: {
     return () => { active = false; };
   }, [payment.id]);
   const [discExpected, setDiscExpected] = useState(payment.discExpected);
+  const [derivedExpected, setDerivedExpected] = useState<string | null>(null);
+  const reLookupKey = [...re.reNumbers, ...re.billNos, re.reInput.trim()].filter(Boolean).join(',');
+  useEffect(() => {
+    if (discExpected.trim() !== '' || re.wrongTransfer || !reLookupKey) {
+      setDerivedExpected(null);
+      return;
+    }
+    const controller = new AbortController();
+    setDerivedExpected(null);
+    const timer = setTimeout(() => {
+      getReExpected(reLookupKey.split(','), payment.id, controller.signal)
+        .then((result) => setDerivedExpected(result.derived))
+        .catch((error: Error) => {
+          if (error.name !== 'AbortError') setDerivedExpected(null);
+        });
+    }, 300);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [discExpected, payment.id, re.wrongTransfer, reLookupKey]);
   const creditPreview = re.wrongTransfer ? 0 : (parseFloat(creditUsed.replace(/,/g, '')) || 0);
   const creditTooHigh = creditAvailable !== null && creditPreview > creditAvailable + 0.001;
   const effectivePreview = round2(wht.grossPreview + creditPreview);
-  const discPreview = discExpected.trim() === '' ? 0 : round2(effectivePreview - (parseFloat(discExpected.replace(/,/g, '')) || 0));
+  const expectedPreview = discExpected.trim() !== ''
+    ? (parseFloat(discExpected.replace(/,/g, '')) || 0)
+    : derivedExpected === null ? null : (parseFloat(derivedExpected) || 0);
+  const discPreview = expectedPreview === null ? 0 : round2(effectivePreview - expectedPreview);
+  type PopupResolution = Extract<DiscResolution, 'credit' | 'refund' | 'writeoff'>;
+  const resolutionOptions: { value: PopupResolution; label: string }[] = re.wrongTransfer
+    ? [
+        { value: 'credit', label: 'เก็บเป็นเครดิตรอบหน้า' },
+        { value: 'refund', label: RESOLUTION_LABELS.refund },
+      ]
+    : discPreview > 0
+      ? (['credit', 'refund', 'writeoff'] as const).map((value) => ({ value, label: RESOLUTION_LABELS[value] }))
+      : [];
+  const resolutionKey = resolutionOptions.map((option) => option.value).join(',');
+  const [discResolution, setDiscResolution] = useState<PopupResolution>('credit');
+  useEffect(() => {
+    if (!resolutionOptions.length) return;
+    const values = resolutionOptions.map((option) => option.value);
+    setDiscResolution((previous) => {
+      const saved = payment.discResolution as PopupResolution;
+      if (values.includes(saved)) return saved;
+      return values.includes(previous) ? previous : 'credit';
+    });
+  }, [payment.discResolution, payment.id, resolutionKey]);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
   const resettingWrongTransfer = payment.wrongTransfer && !re.wrongTransfer &&
@@ -2217,6 +2261,7 @@ function CheckDialog({ payment, onClose, onSaved }: {
         ...wht.toBody(),
         creditUsed: documents.wrongTransfer ? '' : creditUsed.trim(),
         discExpected: discExpected.trim(),
+        ...(resolutionOptions.length ? { discResolution } : {}),
         undoConfirmed,
       });
       onSaved(res.payment);
@@ -2293,13 +2338,36 @@ function CheckDialog({ payment, onClose, onSaved }: {
             placeholder="เช่น 200.00"
             className="mt-1 w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400"
           />
-          {discExpected.trim() !== '' && discPreview !== 0 && (
+          {discExpected.trim() === '' && derivedExpected !== null && (
+            <div className="mt-1.5 text-[11px] font-medium text-sky-700">ยอดตาม RE (นำเข้าแล้ว) {baht(parseFloat(derivedExpected))}</div>
+          )}
+          {expectedPreview !== null && discPreview !== 0 && (
             <div className={`mt-1.5 text-xs font-semibold ${discPreview > 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
               {discPreview > 0 ? `เกิน +${baht(discPreview)}` : `ขาด −${baht(Math.abs(discPreview))}`}
               <span className="ml-1 font-normal text-slate-400">(รับ {baht(payment.amountNum)} + WHT {baht(wht.grossPreview - payment.amountNum)} + เครดิต {baht(creditPreview)} = {baht(effectivePreview)})</span>
             </div>
           )}
         </label>}
+
+        {resolutionOptions.length > 0 && <div className="rounded-lg border border-amber-200 bg-amber-50/50 p-2.5">
+          <div className="text-xs font-semibold text-amber-900">{re.wrongTransfer ? 'จัดการเงินโอนผิด' : 'จัดการยอดเกิน'}</div>
+          <div className="mt-1.5 flex flex-nowrap gap-1 overflow-x-auto">
+            {resolutionOptions.map((option) => (
+              <label key={option.value} className={`shrink-0 cursor-pointer rounded-full border px-2 py-1 text-[10px] font-medium ${discResolution === option.value ? 'border-amber-500 bg-amber-100 text-amber-900' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'}`}>
+                <input
+                  type="radio"
+                  name={`popup-resolution-${payment.id}`}
+                  value={option.value}
+                  checked={discResolution === option.value}
+                  onChange={() => setDiscResolution(option.value)}
+                  className="sr-only"
+                />
+                {option.label}
+              </label>
+            ))}
+          </div>
+          <div className="mt-1 text-[10px] text-slate-500">CEO จะยืนยันในแท็บ ยอดเกิน/ขาด</div>
+        </div>}
 
         {resettingWrongTransfer && <div className="rounded-lg border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800">บันทึกเพื่อยกเลิก “โอนเงินผิด” และส่งรายการกลับไปรอตรวจ</div>}
 
