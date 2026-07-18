@@ -48,6 +48,11 @@ export type ReReconStatus = 'unpaid' | 'matched' | 'mismatch' | 'closed';
 
 export interface ReReconPayment {
   reNumbers: string[];
+  // MB (9-lead) / XS / free-text refs from the ตรวจแล้ว chips. Entries found in the bill/XS
+  // registry are priced documents; anything else is an annotation and ignored for pricing —
+  // NEVER unpriceable, so legacy free-text refs can't freeze a group at ⏳ (doc-recon rule,
+  // 2026-07-19: strictly additive over the RE-only engine).
+  billNos?: string[];
   amount: string;
   whtAmount: string;
   creditUsed?: string;
@@ -98,7 +103,15 @@ function contributionOf(p: ReReconPayment): number {
 export function buildReReconIndex(
   payments: ReReconPayment[],
   reAmountByCore: Map<string, string>,
+  // Registered MB/XS documents: key = the exact Payment.billNos value (e.g. "9690009",
+  // "XS6900342"), value = the document's own total. Key spaces can't collide with RE cores
+  // (RE = 7 digits not starting 9; MB = 9-lead; XS = XS-prefixed).
+  billAmountByNo: Map<string, string> = new Map(),
 ): ReReconIndex {
+  const docRefsOf = (p: ReReconPayment): string[] => [
+    ...p.reNumbers,
+    ...(p.billNos ?? []).filter((b) => billAmountByNo.has(b)),
+  ];
   const parent = payments.map((_, i) => i);
   const find = (i: number): number => {
     while (parent[i] !== i) {
@@ -115,7 +128,7 @@ export function buildReReconIndex(
 
   const coreFirstPayment = new Map<string, number>();
   payments.forEach((p, i) => {
-    for (const core of p.reNumbers) {
+    for (const core of docRefsOf(p)) {
       const first = coreFirstPayment.get(core);
       if (first === undefined) coreFirstPayment.set(core, i);
       else union(first, i);
@@ -132,7 +145,7 @@ export function buildReReconIndex(
       cores = new Set();
       compCores.set(root, cores);
     }
-    for (const core of p.reNumbers) cores.add(core);
+    for (const core of docRefsOf(p)) cores.add(core);
   });
 
   const byCore = new Map<string, CoreVerdict>();
@@ -142,9 +155,9 @@ export function buildReReconIndex(
     let expected = 0;
     let allImported = true;
     for (const c of cores) {
-      const amt = reAmountByCore.get(c);
+      const amt = reAmountByCore.get(c) ?? billAmountByNo.get(c);
       if (amt === undefined) {
-        allImported = false; // a receipt this group pays isn't imported yet — can't price the group
+        allImported = false; // an RE this group pays isn't imported yet — can't price the group
         break;
       }
       expected += num(amt);
@@ -160,7 +173,7 @@ export function buildReReconIndex(
     });
   }
   for (const p of payments) {
-    for (const core of p.reNumbers) {
+    for (const core of docRefsOf(p)) {
       const v = byCore.get(core);
       if (v) v.directCount += 1;
     }

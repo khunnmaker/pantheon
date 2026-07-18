@@ -13,7 +13,8 @@ const reRow = (
   payments: ReReconPayment[],
   amounts: Map<string, string>,
   notPosted = true,
-) => computeReRow(core, own, buildReReconIndex(payments, amounts), notPosted);
+  bills: Map<string, string> = new Map(),
+) => computeReRow(core, own, buildReReconIndex(payments, amounts, bills), notPosted);
 import { buildDiscrepancyComponents, effectivePaidSatang, expectedForPayment, grossSatang, normalizeReCore } from '../src/finance/discrepancy.js';
 
 describe('normalizeAmount', () => {
@@ -154,6 +155,43 @@ describe('computeReRow split payments (group-level matching)', () => {
     const r = reRow('A', '2398.00', [pay(['A'], '1000.00'), pay(['A'], '1000.00')], amounts);
     expect(r.status).toBe('mismatch');
     expect(r.diff).toBe(-398);
+  });
+});
+
+describe('computeReRow unified documents (RE + MB + XS priced together)', () => {
+  const pay = (reNumbers: string[], amount: string, billNos: string[] = []): ReReconPayment =>
+    ({ reNumbers, billNos, amount, whtAmount: '' });
+
+  it('one transfer paying RE + MB prices BOTH documents (RE6908047 regression)', () => {
+    // 5,070.60 onto RE 4,440.60 + MB 9690009 (630.00) — the RE-only engine saw a false +630.
+    const res = new Map([['6908047', '4440.60']]);
+    const bills = new Map([['9690009', '630.00']]);
+    const payments = [pay(['6908047'], '5070.60', ['9690009'])];
+    const re = reRow('6908047', '4440.60', payments, res, true, bills);
+    expect(re.status).toBe('matched');
+    expect(re.paidGross).toBe(4440.6); // apportioned to its own share only
+    const mb = reRow('9690009', '630.00', payments, res, true, bills);
+    expect(mb.status).toBe('matched');
+    expect(mb.paidGross).toBe(630);
+  });
+
+  it('XS docs price the same way via the registry map', () => {
+    const bills = new Map([['XS6900342', '630.00']]);
+    const r = reRow('XS6900342', '630.00', [pay([], '630.00', ['XS6900342'])], new Map(), true, bills);
+    expect(r.status).toBe('matched');
+  });
+
+  it('an UNREGISTERED bill ref is an annotation — ignored, never freezes the group', () => {
+    // Legacy free-text refs (Shopee ids, paper bills never entered) must not price or unprice.
+    const res = new Map([['6908047', '4440.60']]);
+    const r = reRow('6908047', '4440.60', [pay(['6908047'], '4440.60', ['SHOPEE12345'])], res, true, new Map());
+    expect(r.status).toBe('matched'); // priced purely from the RE; the stray ref changed nothing
+  });
+
+  it('closed XS (clean-equivalent) + no payments → closed; open XS → unpaid', () => {
+    const bills = new Map([['XS6900343', '1925.00']]);
+    expect(reRow('XS6900343', '1925.00', [], new Map(), false, bills).status).toBe('closed');
+    expect(reRow('XS6900343', '1925.00', [], new Map(), true, bills).status).toBe('unpaid');
   });
 });
 

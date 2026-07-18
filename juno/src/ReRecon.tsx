@@ -4,8 +4,9 @@ import {
   ChevronDown, ChevronRight, Ban, FileText,
 } from 'lucide-react';
 import {
-  baht, fileToBase64, importReReceipts, getReReconciliation, getRePayments,
-  type ReReconRow, type ReReconSummary, type ReReconStatusFilter, type ReImportResult, type Payment,
+  baht, fileToBase64, importReReceipts, importXsDocs, getReReconciliation, getRePayments, closeDoc,
+  type ReReconRow, type ReReconSummary, type ReReconStatusFilter, type ReImportResult,
+  type XsImportResult, type Payment, type DocReconType,
 } from './lib/api';
 
 // กระทบยอด RE tab. Imports Express's periodic ARRCPDAT.TXT (AR-receipt report) and
@@ -25,21 +26,37 @@ const fmtReceiptDate = (dd: string): string => {
 
 const STATUS_FILTERS: { key: ReReconStatusFilter; label: string }[] = [
   { key: 'all', label: 'ทั้งหมด' },
-  { key: 'matched', label: 'จับ RE แล้ว' },
+  { key: 'matched', label: 'จับเอกสารแล้ว' },
   { key: 'mismatch', label: 'ยอดไม่ตรง' },
   { key: 'unpaid', label: 'ยังไม่จ่าย' },
-  { key: 'closed', label: 'ปิดใน Express' },
+  { key: 'closed', label: 'ปิดแล้ว' },
 ];
 
-function StatusBadge({ status }: { status: ReReconRow['status'] }) {
+const TYPE_FILTERS: { key: DocReconType | 'all'; label: string }[] = [
+  { key: 'all', label: 'ทุกประเภท' },
+  { key: 're', label: 'RE' },
+  { key: 'mb', label: 'บิลมือ' },
+  { key: 'xs', label: 'XS' },
+];
+
+// Document-number display + accent per family: RE emerald (Express receipts), MB sky (matches
+// the MB chips elsewhere), XS amber (ex-"external" chip colour).
+const docLabel = (r: ReReconRow): string =>
+  r.docType === 'mb' ? (r.reNumber.startsWith('MB') ? r.reNumber : `MB ${r.reNumber}`)
+  : r.docType === 'xs' ? r.reNumber
+  : `RE${r.reNumber}`;
+const docTone = (t: DocReconType): string =>
+  t === 'mb' ? 'text-sky-700' : t === 'xs' ? 'text-amber-700' : 'text-emerald-700';
+
+function StatusBadge({ status, docType }: { status: ReReconRow['status']; docType: DocReconType }) {
   if (status === 'matched') {
-    return <span className="px-1.5 py-0.5 rounded-full text-[11px] bg-emerald-100 text-emerald-700 whitespace-nowrap">✅ จับ RE แล้ว</span>;
+    return <span className="px-1.5 py-0.5 rounded-full text-[11px] bg-emerald-100 text-emerald-700 whitespace-nowrap">✅ {docType === 're' ? 'จับ RE แล้ว' : 'จับเอกสารแล้ว'}</span>;
   }
   if (status === 'mismatch') {
     return <span className="px-1.5 py-0.5 rounded-full text-[11px] bg-amber-100 text-amber-700 whitespace-nowrap">⚠️ ยอดไม่ตรง</span>;
   }
   if (status === 'closed') {
-    return <span className="px-1.5 py-0.5 rounded-full text-[11px] bg-slate-100 text-slate-500 whitespace-nowrap">✔ ปิดใน Express</span>;
+    return <span className="px-1.5 py-0.5 rounded-full text-[11px] bg-slate-100 text-slate-500 whitespace-nowrap">✔ {docType === 're' ? 'ปิดใน Express' : 'ปิดแล้ว'}</span>;
   }
   return <span className="px-1.5 py-0.5 rounded-full text-[11px] bg-rose-100 text-rose-700 whitespace-nowrap">⏳ ยังไม่จ่าย</span>;
 }
@@ -52,58 +69,68 @@ export default function ReRecon({ isCeo }: { isCeo: boolean }) {
     <div className="space-y-4">
       <div className="flex items-center gap-2 text-emerald-700">
         <FileCheck size={20} />
-        <h1 className="text-lg font-bold text-slate-800">กระทบยอด RE</h1>
+        <h1 className="text-lg font-bold text-slate-800">กระทบยอดเอกสาร (RE · บิลมือ · XS)</h1>
       </div>
 
-      {/* The RE FILE import (uploading ARRCPDAT.TXT) is CEO-only — server 403s
-          POST /api/juno/re/import for non-supervisor. The list below (viewing/searching/
-          filtering every imported RE and its live match status) stays visible to everyone. */}
+      {/* FILE imports (ARRCPDAT.TXT = RE, STTRNR6.TXT = XS) are CEO-only — server 403s the
+          import routes for non-supervisor. The list below (viewing/searching/filtering every
+          document and its live match status) stays visible to everyone. */}
       {isCeo && <ImportPanel onImported={bump} />}
-      <ReList refreshKey={refreshKey} />
+      <ReList refreshKey={refreshKey} isCeo={isCeo} />
     </div>
   );
 }
 
-// ── Import panel (CEO-only) ─────────────────────────────────────────────────
+// ── Import panel (CEO-only): RE + XS files side by side ─────────────────────
 function ImportPanel({ onImported }: { onImported: () => void }) {
-  const inputRef = useRef<HTMLInputElement>(null);
-  const [busy, setBusy] = useState(false);
+  const reInputRef = useRef<HTMLInputElement>(null);
+  const xsInputRef = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState<'' | 're' | 'xs'>('');
   const [error, setError] = useState('');
-  const [result, setResult] = useState<ReImportResult | null>(null);
+  const [reResult, setReResult] = useState<ReImportResult | null>(null);
+  const [xsResult, setXsResult] = useState<XsImportResult | null>(null);
 
-  async function handleFile(files: FileList | null) {
+  async function handleFile(kind: 're' | 'xs', files: FileList | null) {
     const file = files?.[0];
     if (!file) return;
-    setBusy(true);
+    setBusy(kind);
     setError('');
-    setResult(null);
     try {
       const dataB64 = await fileToBase64(file);
-      const r = await importReReceipts(dataB64, file.name);
-      setResult(r);
+      if (kind === 're') setReResult(await importReReceipts(dataB64, file.name));
+      else setXsResult(await importXsDocs(dataB64, file.name));
       onImported();
     } catch (e) {
       setError((e as Error).message === 'unauthorized' ? 'เซสชันหมดอายุ — กรุณาเข้าสู่ระบบใหม่' : `อ่านไฟล์ไม่สำเร็จ: ${file.name}`);
     } finally {
-      setBusy(false);
-      if (inputRef.current) inputRef.current.value = '';
+      setBusy('');
+      if (reInputRef.current) reInputRef.current.value = '';
+      if (xsInputRef.current) xsInputRef.current.value = '';
     }
   }
 
   return (
     <div className="bg-white rounded-xl border border-slate-200 p-4">
       <div className="flex items-center justify-between mb-2">
-        <div className="font-semibold text-slate-800">นำเข้าไฟล์ RE</div>
-        <div className="text-xs text-slate-400">ARRCPDAT.TXT — รายงานการรับชำระหนี้จาก Express</div>
+        <div className="font-semibold text-slate-800">นำเข้าไฟล์จาก Express</div>
+        <div className="text-xs text-slate-400">RE = ARRCPDAT.TXT (รับชำระหนี้) · XS = STTRNR6.TXT (จ่ายสินค้าภายใน)</div>
       </div>
-      <div className="flex items-center gap-2">
-        <input ref={inputRef} type="file" accept=".txt" className="hidden" onChange={(e) => handleFile(e.target.files)} />
+      <div className="flex flex-wrap items-center gap-2">
+        <input ref={reInputRef} type="file" accept=".txt" className="hidden" onChange={(e) => handleFile('re', e.target.files)} />
+        <input ref={xsInputRef} type="file" accept=".txt" className="hidden" onChange={(e) => handleFile('xs', e.target.files)} />
         <button
-          onClick={() => inputRef.current?.click()}
-          disabled={busy}
+          onClick={() => reInputRef.current?.click()}
+          disabled={busy !== ''}
           className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-emerald-600 text-white text-sm hover:bg-emerald-700 disabled:opacity-50"
         >
-          {busy ? <Loader2 size={15} className="animate-spin" /> : <Upload size={15} />} เลือกไฟล์ ARRCPDAT.TXT
+          {busy === 're' ? <Loader2 size={15} className="animate-spin" /> : <Upload size={15} />} ไฟล์ RE (ARRCPDAT.TXT)
+        </button>
+        <button
+          onClick={() => xsInputRef.current?.click()}
+          disabled={busy !== ''}
+          className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-amber-600 text-white text-sm hover:bg-amber-700 disabled:opacity-50"
+        >
+          {busy === 'xs' ? <Loader2 size={15} className="animate-spin" /> : <Upload size={15} />} ไฟล์ XS (STTRNR6.TXT)
         </button>
       </div>
 
@@ -113,17 +140,31 @@ function ImportPanel({ onImported }: { onImported: () => void }) {
         </div>
       )}
 
-      {result && (
+      {reResult && (
         <div className="mt-3 p-3 rounded-lg bg-emerald-50 text-emerald-700 text-xs space-y-1">
           <div className="flex items-center gap-1 font-medium">
-            <CheckCircle2 size={13} /> นำเข้าแล้ว {result.parsed} รายการ — ใหม่ {result.imported} / อัปเดต {result.updated}
-            {result.cancelledSkipped > 0 && ` / ข้ามใบยกเลิก ${result.cancelledSkipped}`}
+            <CheckCircle2 size={13} /> RE: นำเข้าแล้ว {reResult.parsed} รายการ — ใหม่ {reResult.imported} / อัปเดต {reResult.updated}
+            {reResult.cancelledSkipped > 0 && ` / ข้ามใบยกเลิก ${reResult.cancelledSkipped}`}
           </div>
-          {!result.totalsMatch && (
+          {!reResult.totalsMatch && (
             <div className="flex items-center gap-1 text-amber-700">
               <AlertTriangle size={12} />
-              ⚠️ ยอดรวมที่แยกได้ ({baht(result.totalAmount)}) ไม่ตรงกับยอดรวมท้ายไฟล์
-              {result.fileTotal !== null && ` (${baht(result.fileTotal)})`} — ตรวจสอบไฟล์อีกครั้ง
+              ⚠️ ยอดรวมที่แยกได้ ({baht(reResult.totalAmount)}) ไม่ตรงกับยอดรวมท้ายไฟล์
+              {reResult.fileTotal !== null && ` (${baht(reResult.fileTotal)})`} — ตรวจสอบไฟล์อีกครั้ง
+            </div>
+          )}
+        </div>
+      )}
+      {xsResult && (
+        <div className="mt-3 p-3 rounded-lg bg-amber-50 text-amber-700 text-xs space-y-1">
+          <div className="flex items-center gap-1 font-medium">
+            <CheckCircle2 size={13} /> XS: นำเข้าแล้ว {xsResult.parsed} เอกสาร — ใหม่ {xsResult.imported} / อัปเดต {xsResult.updated}
+          </div>
+          {!xsResult.totalsMatch && (
+            <div className="flex items-center gap-1">
+              <AlertTriangle size={12} />
+              ⚠️ ยอดรวมที่แยกได้ ({baht(xsResult.totalAmount)}) ไม่ตรงกับท้ายไฟล์
+              {xsResult.fileTotal !== null && ` (${baht(xsResult.fileTotal)})`} — ตรวจสอบไฟล์อีกครั้ง
             </div>
           )}
         </div>
@@ -135,8 +176,9 @@ function ImportPanel({ onImported }: { onImported: () => void }) {
 // ── Totals bar + RE list ─────────────────────────────────────────────────────
 const PAGE_SIZE = 100;
 
-function ReList({ refreshKey }: { refreshKey: number }) {
+function ReList({ refreshKey, isCeo }: { refreshKey: number; isCeo: boolean }) {
   const [status, setStatus] = useState<ReReconStatusFilter>('all');
+  const [docType, setDocType] = useState<DocReconType | 'all'>('all');
   const [q, setQ] = useState('');
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
@@ -159,7 +201,7 @@ function ReList({ refreshKey }: { refreshKey: number }) {
     if (replace) setLoading(true); else setLoadingMore(true);
     setError('');
     getReReconciliation({
-      status, q: q.trim() || undefined, from: from || undefined, to: to || undefined,
+      status, type: docType, q: q.trim() || undefined, from: from || undefined, to: to || undefined,
       limit: PAGE_SIZE, offset,
     })
       .then((r) => {
@@ -175,7 +217,7 @@ function ReList({ refreshKey }: { refreshKey: number }) {
         setLoading(false);
         setLoadingMore(false);
       });
-  }, [status, q, from, to]);
+  }, [status, docType, q, from, to]);
 
   useEffect(() => {
     const t = setTimeout(() => load(0), 250); // debounce the search box
@@ -202,6 +244,17 @@ function ReList({ refreshKey }: { refreshKey: number }) {
       <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
         <div className="p-3 border-b border-slate-100 flex flex-wrap items-center gap-2">
           <div className="flex rounded-lg border border-slate-300 overflow-hidden">
+            {TYPE_FILTERS.map((f) => (
+              <button
+                key={f.key}
+                onClick={() => setDocType(f.key)}
+                className={`px-2.5 py-1.5 text-xs ${docType === f.key ? 'bg-slate-700 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}
+              >
+                {f.label}
+              </button>
+            ))}
+          </div>
+          <div className="flex rounded-lg border border-slate-300 overflow-hidden">
             {STATUS_FILTERS.map((f) => (
               <button
                 key={f.key}
@@ -217,7 +270,7 @@ function ReList({ refreshKey }: { refreshKey: number }) {
             <input
               value={q}
               onChange={(e) => setQ(e.target.value)}
-              placeholder="ค้นหา RE / ชื่อลูกค้า"
+              placeholder="ค้นหาเลขเอกสาร / ชื่อลูกค้า"
               className="w-full pl-7 pr-2 py-1.5 rounded-lg border border-slate-300 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-400"
             />
           </div>
@@ -237,7 +290,7 @@ function ReList({ refreshKey }: { refreshKey: number }) {
         ) : (
           <div className="divide-y divide-slate-100">
             {rows.map((r) => (
-              <ReRow key={r.id} row={r} expanded={expanded === r.id} onToggle={() => setExpanded((e) => (e === r.id ? null : r.id))} />
+              <ReRow key={r.id} row={r} expanded={expanded === r.id} onToggle={() => setExpanded((e) => (e === r.id ? null : r.id))} isCeo={isCeo} onMutated={() => load(0)} />
             ))}
             {hasMore && (
               <div
@@ -266,10 +319,10 @@ function SummaryCards({ summary }: { summary: ReReconSummary | null }) {
     );
   }
   const cards = [
-    { label: '✅ จับ RE แล้ว', count: summary.matched, tone: 'text-emerald-600' },
+    { label: '✅ จับเอกสารแล้ว', count: summary.matched, tone: 'text-emerald-600' },
     { label: '⚠️ ยอดไม่ตรง', count: summary.mismatch, tone: 'text-amber-600' },
     { label: '⏳ ยังไม่จ่าย', count: summary.unpaid, tone: 'text-rose-600' },
-    { label: '✔ ปิดใน Express', count: summary.closed, tone: 'text-slate-500' },
+    { label: '✔ ปิดแล้ว', count: summary.closed, tone: 'text-slate-500' },
     { label: 'ยอดรวมทั้งหมด', count: summary.total, sum: summary.totalAmount, tone: 'text-slate-700' },
   ];
   return (
@@ -285,16 +338,16 @@ function SummaryCards({ summary }: { summary: ReReconSummary | null }) {
   );
 }
 
-function ReRow({ row, expanded, onToggle }: { row: ReReconRow; expanded: boolean; onToggle: () => void }) {
+function ReRow({ row, expanded, onToggle, isCeo, onMutated }: { row: ReReconRow; expanded: boolean; onToggle: () => void; isCeo: boolean; onMutated: () => void }) {
   return (
     <div>
       <div onClick={onToggle} className="px-3 py-2.5 flex items-center gap-2 cursor-pointer hover:bg-emerald-50/40 text-sm">
         {expanded ? <ChevronDown size={15} className="text-slate-400 shrink-0" /> : <ChevronRight size={15} className="text-slate-400 shrink-0" />}
-        <div className="w-24 shrink-0 font-semibold text-emerald-700 whitespace-nowrap">RE{row.reNumber}</div>
+        <div className={`w-24 shrink-0 font-semibold whitespace-nowrap ${docTone(row.docType)}`}>{docLabel(row)}</div>
         <div className="w-20 shrink-0 text-slate-500 whitespace-nowrap">{fmtReceiptDate(row.receiptDate)}</div>
         <div className="flex-1 min-w-0 truncate text-slate-600">
           {row.customerName}
-          {row.notPosted && <span className="ml-1.5 text-[11px] text-amber-500" title="*** ในไฟล์ Express = ยังไม่ได้รับเงิน / รายการยังไม่จบ">*** ไม่เรียบร้อย</span>}
+          {row.docType === 're' && row.notPosted && <span className="ml-1.5 text-[11px] text-amber-500" title="*** ในไฟล์ Express = ยังไม่ได้รับเงิน / รายการยังไม่จบ">*** ไม่เรียบร้อย</span>}
         </div>
         <div className="w-28 shrink-0 text-right font-semibold whitespace-nowrap">{baht(row.amount)}</div>
         <div className="shrink-0 flex items-center gap-1.5 flex-wrap justify-end max-w-[38%]">
@@ -306,10 +359,10 @@ function ReRow({ row, expanded, onToggle }: { row: ReReconRow; expanded: boolean
           {row.paymentCount > 0 && (
             <span className="px-1.5 py-0.5 rounded-full text-[11px] bg-slate-100 text-slate-500 whitespace-nowrap">{row.paymentCount} รายการรับเงิน</span>
           )}
-          <StatusBadge status={row.status} />
+          <StatusBadge status={row.status} docType={row.docType} />
         </div>
       </div>
-      {expanded && <ReDetail row={row} />}
+      {expanded && <ReDetail row={row} isCeo={isCeo} onMutated={onMutated} />}
     </div>
   );
 }
@@ -383,9 +436,10 @@ function PaymentMiniCard({ p, core }: { p: Payment; core: string }) {
   );
 }
 
-function ReDetail({ row }: { row: ReReconRow }) {
+function ReDetail({ row, isCeo, onMutated }: { row: ReReconRow; isCeo: boolean; onMutated: () => void }) {
   const [payments, setPayments] = useState<Payment[] | null>(row.paymentCount === 0 ? [] : null);
   const [payError, setPayError] = useState('');
+  const [closing, setClosing] = useState(false);
 
   useEffect(() => {
     if (row.paymentCount === 0) { setPayments([]); return; }
@@ -398,16 +452,57 @@ function ReDetail({ row }: { row: ReReconRow }) {
     return () => { alive = false; };
   }, [row.reNumber, row.paymentCount]);
 
+  // Manual ปิดเอกสาร for MB/XS: docs settled without a Juno payment (historic XS, valued
+  // samples/claims not being charged). Undo only offered on a manual stamp — a doc closed via
+  // its stage-4 payment un-closes by voiding that payment, not here.
+  const closable = row.docType !== 're' && isCeo;
+  async function toggleClose(nextClosed: boolean) {
+    let note: string | undefined;
+    if (nextClosed) {
+      const input = window.prompt('หมายเหตุการปิดเอกสาร (เช่น เครม / ตัวอย่าง / รับเงินนอกระบบ) — เว้นว่างได้', row.closeNote || '');
+      if (input === null) return; // cancelled
+      note = input.trim() || undefined;
+    }
+    setClosing(true);
+    try {
+      await closeDoc(row.reNumber, nextClosed, note);
+      onMutated();
+    } catch {
+      setPayError('บันทึกการปิดเอกสารไม่สำเร็จ');
+    } finally {
+      setClosing(false);
+    }
+  }
+
   return (
     <div className="px-4 pb-4 pt-1 bg-slate-50 border-t border-slate-100 text-sm">
-      <div className="mb-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500">
+      <div className="mb-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500">
         <span>พนักงานขาย: <span className="text-slate-700">{row.salesName || '—'}</span></span>
-        <span>ยอดตามใบกำกับ: <span className="text-slate-700 font-medium">{baht(row.amount)}</span></span>
+        <span>ยอดตามเอกสาร: <span className="text-slate-700 font-medium">{baht(row.amount)}</span></span>
         {row.paymentCount > 0 && (
           <span>รับเงินจริง (gross): <span className="text-slate-700 font-medium">{baht(row.paidGross)}</span></span>
         )}
         {row.paymentCount > 0 && (
           <span>ผลต่าง: <span className={`font-medium ${Math.abs(row.diff) < 0.01 ? 'text-emerald-600' : 'text-amber-600'}`}>{row.diff > 0 ? '+' : ''}{row.diff.toFixed(2)}</span></span>
+        )}
+        {row.closeNote && <span>หมายเหตุปิด: <span className="text-slate-700">{row.closeNote}</span></span>}
+        {closable && !row.manualClosed && row.status !== 'closed' && (
+          <button
+            onClick={(e) => { e.stopPropagation(); toggleClose(true); }}
+            disabled={closing}
+            className="px-2 py-1 rounded-lg border border-slate-300 text-slate-600 hover:bg-slate-100 disabled:opacity-50"
+          >
+            {closing ? '...' : '✔ ปิดเอกสาร (ไม่ผ่าน Juno)'}
+          </button>
+        )}
+        {closable && row.manualClosed && (
+          <button
+            onClick={(e) => { e.stopPropagation(); toggleClose(false); }}
+            disabled={closing}
+            className="px-2 py-1 rounded-lg border border-rose-200 text-rose-600 hover:bg-rose-50 disabled:opacity-50"
+          >
+            {closing ? '...' : 'ยกเลิกการปิดเอกสาร'}
+          </button>
         )}
       </div>
       {row.paymentCount > 0 && (

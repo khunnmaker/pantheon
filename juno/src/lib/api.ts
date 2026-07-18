@@ -873,14 +873,19 @@ export interface ReReceiptInvoice {
   amount: number;
 }
 
+export type DocReconType = 're' | 'mb' | 'xs';
+
 export interface ReReconRow {
   id: string;
-  reNumber: string;
+  docType: DocReconType;
+  reNumber: string; // the document number: RE core (bare), MB billNo, or XS xsNo (prefixed)
   receiptDate: string;
   customerName: string;
   salesName: string;
-  amount: number; // ยอดตามใบกำกับ
-  notPosted: boolean;
+  amount: number; // ยอดตามใบกำกับ / bill total / XS doc total
+  notPosted: boolean; // RE only (*** flag); always false for mb/xs
+  manualClosed: boolean; // mb/xs: a manual ปิดเอกสาร stamp exists (vs closed via stage-4 payment)
+  closeNote: string;
   invoices: ReReceiptInvoice[];
   status: ReReconStatus;
   paidGross: number; // this RE's apportioned share of the covering transfer(s) — its own receipt amount when the transfer ties out, NOT the whole payment
@@ -916,6 +921,9 @@ export const importReReceipts = (dataB64: string, fileName: string) =>
 
 export interface ReReconFilter {
   status?: ReReconStatusFilter;
+  // ALWAYS sent explicitly (even 'all') — the server defaults an absent type to 're' so that
+  // pre-doc-recon bundles keep their pure-RE behavior.
+  type?: DocReconType | 'all';
   q?: string;
   from?: string;
   to?: string;
@@ -925,6 +933,7 @@ export interface ReReconFilter {
 function reReconFilterQuery(f: ReReconFilter): string {
   const p = new URLSearchParams();
   if (f.status && f.status !== 'all') p.set('status', f.status);
+  if (f.type) p.set('type', f.type);
   if (f.q) p.set('q', f.q);
   if (f.from) p.set('from', f.from);
   if (f.to) p.set('to', f.to);
@@ -936,9 +945,32 @@ function reReconFilterQuery(f: ReReconFilter): string {
 export const getReReconciliation = (f: ReReconFilter) =>
   authed<{ rows: ReReconRow[]; summary: ReReconSummary; total: number; hasMore: boolean }>(`/api/juno/re${reReconFilterQuery(f)}`);
 
-// Drill-down for one Express-RE row: the covering payments (channel, slip, stage) — lazy per expand.
-export const getRePayments = (reNumber: string) =>
-  authed<{ payments: Payment[] }>(`/api/juno/re/${encodeURIComponent(reNumber)}/payments`);
+// Drill-down for one document row (RE/MB/XS): the covering payments — lazy per expand.
+export const getRePayments = (docNo: string) =>
+  authed<{ payments: Payment[] }>(`/api/juno/re/${encodeURIComponent(docNo)}/payments`);
+
+export interface XsImportResult {
+  parsed: number;
+  imported: number;
+  updated: number;
+  totalAmount: number;
+  fileCount: number | null;
+  fileTotal: number | null;
+  totalsMatch: boolean;
+}
+
+export const importXsDocs = (dataB64: string, fileName: string) =>
+  authed<XsImportResult>('/api/juno/xs/import', {
+    method: 'POST',
+    body: JSON.stringify({ dataB64, fileName }),
+  });
+
+// Manual ปิดเอกสาร mark for MB/XS documents (CEO-only server-side).
+export const closeDoc = (docNo: string, closed: boolean, note?: string) =>
+  authed<{ ok: boolean }>(`/api/juno/docs/${encodeURIComponent(docNo)}/close`, {
+    method: 'POST',
+    body: JSON.stringify({ closed, ...(note ? { note } : {}) }),
+  });
 
 // The imported Express receipt's customer name per RE core (only cores that are imported come
 // back). The ใบปะหน้า cover uses this so ชื่อบนใบเสร็จ shows the name on the actual RE, not the

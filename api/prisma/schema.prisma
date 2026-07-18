@@ -621,6 +621,11 @@ model ManualBill {
   status        String    @default("open")
   voidedAt      DateTime?
   voidedById    String?
+  // in-app payment-confirm mark (doc recon): MB has no Express payment tracking, so "closed"
+  // truth lives here — stamped manually (CEO) or implied by a covering payment reaching stage 4.
+  paymentConfirmedAt DateTime?
+  paymentConfirmedBy String @default("")
+  closeNote     String    @default("")
   createdAt     DateTime  @default(now())
   createdById   String?
   createdByName String    @default("")
@@ -628,6 +633,26 @@ model ManualBill {
 
   @@index([status])
   @@index([createdAt])
+}
+
+// Express XS (จ่ายสินค้าภายใน) documents, imported from the STTRNR6.TXT report. From XS6900340
+// onward the owner uses XS as a parallel SALES channel (customers Express can't invoice normally;
+// the report's note column carries the Express customer code) — those docs reconcile like REs.
+// Express tracks only the goods movement, never payment, so the payment-confirm mark lives here.
+model XsDoc {
+  id                 String    @id @default(cuid())
+  xsNo               String    @unique // compact incl. prefix ("XS6900342") — joins Payment.billNos directly
+  docDate            String    @default("") // as printed, dd/mm/yy Buddhist
+  note               String    @default("")
+  amount             String    @default("") // sum of the doc's line values from the report
+  paymentConfirmedAt DateTime?
+  paymentConfirmedBy String    @default("")
+  closeNote          String    @default("")
+  importedAt         DateTime  @default(now())
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  @@index([docDate])
 }
 
 // Staff quick-reply templates — canned messages (address, hours, payment, catalog,

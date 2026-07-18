@@ -22,6 +22,7 @@ import { readStaffUploadFile, readStaffUploadMeta, UPLOAD_ID_RE } from '../line/
 import { syncPaymentToJupiter } from '../jupiter/sync.js';
 import { readChequeFromBuffer, readSlipFromBuffer } from '../llm/readSlip.js';
 import { parseReReceipts, decodeExpressBytes } from '../finance/parseReReceipts.js';
+import { parseXsDocs } from '../finance/parseXsDocs.js';
 import { buildReReconIndex, computeReRow } from '../finance/reRecon.js';
 import { normalizeSlipDate } from '../finance/normalize.js';
 import {
@@ -2994,8 +2995,15 @@ export async function junoRoutes(app: FastifyInstance) {
   // cross-checked LIVE against current Payments (never stored — always up to date). Visible
   // to employee/supervisor users (no supervisor gate, unlike the import above). Built in ≤2 queries
   // total (ReReceipt list + one Payment scan), never one query per RE.
+  // The owner's XS docs are a SALES channel only from this number on (owner ruling 2026-07-19);
+  // earlier XS docs are genuine internal movements (samples/loans) and stay registry-only.
+  const XS_SALES_FROM = 'XS6900340';
+
   const reQuerySchema = z.object({
     status: z.enum(['all', 'matched', 'mismatch', 'unpaid', 'closed']).optional(),
+    // Document family. Old bundles never send it → 're' keeps the pure-RE legacy behavior;
+    // the current UI defaults to 'all' (RE + MB + XS unified doc recon).
+    type: z.enum(['all', 're', 'mb', 'xs']).optional(),
     q: z.string().max(120).optional(),
     from: z.string().max(20).optional(),
     to: z.string().max(20).optional(),
@@ -3006,10 +3014,12 @@ export async function junoRoutes(app: FastifyInstance) {
     const parsedQ = reQuerySchema.safeParse(req.query ?? {});
     if (!parsedQ.success) return reply.code(400).send({ error: 'invalid_query' });
     const q = parsedQ.data;
+    const docType = q.type ?? 're';
+    const needle = (q.q ?? '').trim();
+    const needleUp = needle.toUpperCase();
 
     const where: Record<string, unknown> = {};
-    if (q.q?.trim()) {
-      const needle = q.q.trim();
+    if (needle) {
       where.OR = [
         { reNumber: { contains: needle, mode: 'insensitive' } },
         { customerName: { contains: needle, mode: 'insensitive' } },
@@ -3029,24 +3039,33 @@ export async function junoRoutes(app: FastifyInstance) {
       return true;
     };
 
-    // Query 1: every RE row matching the text filter (status filtering happens after the
-    // live match computation below, since status isn't a stored column).
-    const receipts = await prisma.reReceipt.findMany({ where, orderBy: { reNumber: 'desc' } });
+    // Query 1: RE rows matching the text filter, only when the RE family is displayed (status
+    // filtering happens after the live match computation below, since status isn't stored).
+    const receipts = docType === 're' || docType === 'all'
+      ? await prisma.reReceipt.findMany({ where, orderBy: { reNumber: 'desc' } })
+      : [];
 
-    // Query 2: every candidate Payment that could possibly cover an RE — non-void, at least
-    // one reNumber — loaded ONCE and grouped in JS into a reCore -> payments[] map. This is
-    // the whole reason it's 2 queries instead of N: no per-RE lookup.
+    // MB + XS registries load in FULL regardless of the display filter — groups must be priced
+    // against every document a payment references, not just the ones on screen.
+    const bills = await prisma.manualBill.findMany({ where: { status: { not: 'void' } } });
+    const xsDocs = await prisma.xsDoc.findMany({ orderBy: { xsNo: 'desc' } });
+
+    // Query 2: every candidate Payment that could possibly cover a document — non-void, at
+    // least one RE or bill ref — loaded ONCE. This is the whole reason it's a handful of
+    // queries instead of N: no per-document lookup.
     const candidatePayments = await prisma.payment.findMany({
-      where: { status: { not: 'void' }, wrongTransferAt: null, reNumbers: { isEmpty: false } },
-      select: { id: true, reNumbers: true, amount: true, whtAmount: true, creditUsed: true, discExpected: true, customerName: true, status: true },
+      where: {
+        status: { not: 'void' },
+        wrongTransferAt: null,
+        OR: [{ reNumbers: { isEmpty: false } }, { billNos: { isEmpty: false } }],
+      },
+      select: { id: true, reNumbers: true, billNos: true, amount: true, whtAmount: true, creditUsed: true, discExpected: true, customerName: true, status: true },
     });
     const referencedCores = new Set<string>();
     for (const p of candidatePayments) for (const re of p.reNumbers) referencedCores.add(re);
 
-    // A payment group must be priced against the SUM of the receipts it pays, so we need the gross
-    // of EVERY covered RE core — including ones a text filter dropped from `receipts`.
-    // Seed the amount map from the rows we already loaded (free), then fetch only the missing cores
-    // (usually none → still 2 queries; the gap query is bounded by the cores a payment references).
+    // A payment group must be priced against the SUM of the documents it pays, so we need the
+    // gross of EVERY covered RE core — including ones a text/type filter dropped from `receipts`.
     const reAmountByCore = new Map<string, string>();
     for (const r of receipts) reAmountByCore.set(r.reNumber, r.amount);
     const missingCores = [...referencedCores].filter((c) => !reAmountByCore.has(c));
@@ -3057,32 +3076,84 @@ export async function junoRoutes(app: FastifyInstance) {
       });
       for (const rr of extra) reAmountByCore.set(rr.reNumber, rr.amount);
     }
+    const billAmountByNo = new Map<string, string>();
+    for (const b of bills) billAmountByNo.set(b.billNo, b.amount);
+    for (const x of xsDocs) billAmountByNo.set(x.xsNo, x.amount);
 
-    // Connected-group verdicts (one RE split across transfers, one transfer paying many REs) —
-    // built ONCE over all candidate payments; see buildReReconIndex.
-    const reIndex = buildReReconIndex(candidatePayments, reAmountByCore);
+    // Connected-group verdicts across ALL document families — see buildReReconIndex.
+    const reIndex = buildReReconIndex(candidatePayments, reAmountByCore, billAmountByNo);
 
-    const allRows = receipts
+    // MB/XS "closed" truth: a manual ปิดเอกสาร stamp OR any covering payment already at stage 4
+    // (ยืนยันใน Express) — computed live, so history self-heals exactly like the RE *** flag.
+    const recordedDocs = new Set<string>();
+    for (const p of candidatePayments) {
+      if (p.status === 'recorded') for (const b of p.billNos) recordedDocs.add(b);
+    }
+
+    type DocRow = {
+      id: string; docType: 're' | 'mb' | 'xs'; reNumber: string; receiptDate: string;
+      customerName: string; salesName: string; amount: number; notPosted: boolean;
+      manualClosed: boolean; closeNote: string;
+      invoices: { docNo: string; date: string; amount: number }[];
+      status: ReturnType<typeof computeReRow>['status'];
+      paidGross: number; diff: number; paymentCount: number;
+    };
+
+    const reRows: DocRow[] = receipts
       .filter((r) => receiptDateInRange(r.receiptDate))
       .map((r) => {
-        // Group-level verdict + this RE's apportioned share (double-count and split-payment fixes
-        // both live in reRecon.ts).
         const c = computeReRow(r.reNumber, r.amount, reIndex, r.notPosted);
         return {
-          id: r.id,
-          reNumber: r.reNumber,
-          receiptDate: r.receiptDate,
-          customerName: r.customerName,
-          salesName: r.salesName,
-          amount: num(r.amount),
-          notPosted: r.notPosted,
+          id: r.id, docType: 're' as const, reNumber: r.reNumber, receiptDate: r.receiptDate,
+          customerName: r.customerName, salesName: r.salesName, amount: num(r.amount),
+          notPosted: r.notPosted, manualClosed: false, closeNote: '',
           invoices: (r.invoices as unknown as { docNo: string; date: string; amount: number }[] | null) ?? [],
-          status: c.status,
-          paidGross: c.paidGross,
-          diff: c.diff,
-          paymentCount: c.paymentCount,
+          status: c.status, paidGross: c.paidGross, diff: c.diff, paymentCount: c.paymentCount,
         };
       });
+
+    const matchesNeedle = (...fields: string[]) =>
+      !needle || fields.some((f) => f.toUpperCase().includes(needleUp));
+
+    const mbRows: DocRow[] = docType === 'mb' || docType === 'all'
+      ? bills
+          .filter((b) => matchesNeedle(b.billNo, b.buyerName, b.customerCode))
+          .filter((b) => receiptDateInRange(b.billedAt))
+          .sort((a, b) => (a.billNo < b.billNo ? 1 : -1))
+          .map((b) => {
+            const closed = b.paymentConfirmedAt !== null || recordedDocs.has(b.billNo);
+            const c = computeReRow(b.billNo, b.amount, reIndex, !closed);
+            return {
+              id: b.id, docType: 'mb' as const, reNumber: b.billNo, receiptDate: b.billedAt,
+              customerName: [b.customerCode, b.buyerName].filter(Boolean).join(' '), salesName: b.createdByName,
+              amount: num(b.amount), notPosted: false,
+              manualClosed: b.paymentConfirmedAt !== null, closeNote: b.closeNote,
+              invoices: [], status: c.status, paidGross: c.paidGross, diff: c.diff, paymentCount: c.paymentCount,
+            };
+          })
+      : [];
+
+    const xsRows: DocRow[] = docType === 'xs' || docType === 'all'
+      ? xsDocs
+          .filter((x) => x.xsNo >= XS_SALES_FROM && num(x.amount) > 0)
+          .filter((x) => matchesNeedle(x.xsNo, x.note))
+          .filter((x) => receiptDateInRange(x.docDate))
+          .map((x) => {
+            const closed = x.paymentConfirmedAt !== null || recordedDocs.has(x.xsNo);
+            const c = computeReRow(x.xsNo, x.amount, reIndex, !closed);
+            return {
+              id: x.id, docType: 'xs' as const, reNumber: x.xsNo, receiptDate: x.docDate,
+              customerName: x.note, salesName: '',
+              amount: num(x.amount), notPosted: false,
+              manualClosed: x.paymentConfirmedAt !== null, closeNote: x.closeNote,
+              invoices: [], status: c.status, paidGross: c.paidGross, diff: c.diff, paymentCount: c.paymentCount,
+            };
+          })
+      : [];
+
+    // Small live families first, the 8k-row RE history last — with type chips available, the
+    // combined view exists to surface actionable MB/XS rows, not to bury them at offset 8000.
+    const allRows: DocRow[] = [...xsRows, ...mbRows, ...reRows];
 
     const rows = allRows.filter((r) => !q.status || q.status === 'all' || r.status === q.status);
 
@@ -3108,18 +3179,106 @@ export async function junoRoutes(app: FastifyInstance) {
     return { rows: page, summary, total: rows.length, hasMore: offset + page.length < rows.length };
   });
 
-  // GET /api/juno/re/:core/payments — drill-down for ONE Express-RE row: the covering payments
-  // (who paid, channel, slip) fetched lazily when the row expands. Same visibility as GET /re
-  // (any Juno user); same eligibility as the reconciliation math (non-void, not โอนเงินผิด) so
-  // what the user sees here is exactly what the row's status was computed from.
+  // GET /api/juno/re/:core/payments — drill-down for ONE document row: the covering payments
+  // (who paid, channel, slip) fetched lazily when the row expands. Accepts any doc family:
+  // an RE core matches reNumbers, everything else (MB/XS) matches billNos verbatim. Same
+  // visibility as GET /re (any Juno user); same eligibility as the reconciliation math
+  // (non-void, not โอนเงินผิด) so what the user sees is exactly what the status came from.
   app.get('/api/juno/re/:core/payments', async (req, reply) => {
-    const core = String((req.params as { core?: string }).core ?? '');
-    if (!/^\d{7}$/.test(core)) return reply.code(400).send({ error: 'invalid_re' });
+    const core = String((req.params as { core?: string }).core ?? '').trim();
+    if (!core || core.length > 80 || /[/,]/.test(core)) return reply.code(400).send({ error: 'invalid_doc' });
+    const refWhere = /^\d{7}$/.test(core) && !core.startsWith('9')
+      ? { reNumbers: { has: core } }
+      : { billNos: { has: core } };
     const rows = await prisma.payment.findMany({
-      where: { status: { not: 'void' }, wrongTransferAt: null, reNumbers: { has: core } },
+      where: { status: { not: 'void' }, wrongTransferAt: null, ...refWhere },
       orderBy: { createdAt: 'asc' },
     });
     return { payments: rows.map(toRow) };
+  });
+
+  // POST /api/juno/xs/import — Express's STTRNR6.TXT (รายงานจ่ายสินค้าภายใน / XS docs).
+  // CEO/supervisor-only, mirrors /re/import. Upserts by xsNo; re-imports refresh the document
+  // fields but NEVER touch the in-app payment-confirm mark (that truth lives here, not in
+  // Express — Express has no payment side for XS at all).
+  app.post('/api/juno/xs/import', {
+    onRequest: [requireAuth, requireRole('supervisor')], // XS import is CEO-only
+
+    bodyLimit: 17 * 1024 * 1024,
+    config: { rateLimit: { max: 10, timeWindow: '1 minute' } },
+  }, async (req, reply) => {
+    const body = z.object({ dataB64: z.string().min(1), fileName: z.string().max(200).optional() }).safeParse(req.body ?? {});
+    if (!body.success) return reply.code(400).send({ error: 'invalid_body' });
+    let buf: Buffer;
+    try {
+      buf = Buffer.from(body.data.dataB64, 'base64');
+    } catch {
+      return reply.code(400).send({ error: 'invalid_base64' });
+    }
+    if (buf.length === 0 || buf.length > 15 * 1024 * 1024) return reply.code(400).send({ error: 'invalid_size' });
+
+    let parsed: ReturnType<typeof parseXsDocs>;
+    try {
+      parsed = parseXsDocs(buf);
+    } catch (err) {
+      req.log.error({ err }, 'xs import parse failed');
+      return reply.code(422).send({ error: 'parse_failed' });
+    }
+    if (parsed.docs.length === 0) return reply.code(422).send({ error: 'no_docs' });
+
+    let imported = 0;
+    let updated = 0;
+    for (let i = 0; i < parsed.docs.length; i += 50) {
+      const chunk = parsed.docs.slice(i, i + 50);
+      const results = await prisma.$transaction(chunk.map((d) =>
+        prisma.xsDoc.upsert({
+          where: { xsNo: d.xsNo },
+          create: { xsNo: d.xsNo, docDate: d.docDate, note: d.note, amount: d.amount.toFixed(2) },
+          update: { docDate: d.docDate, note: d.note, amount: d.amount.toFixed(2), importedAt: new Date() },
+        }),
+      ));
+      for (const row of results) {
+        if (row.createdAt.getTime() === row.updatedAt.getTime()) imported += 1;
+        else updated += 1;
+      }
+    }
+
+    return {
+      parsed: parsed.docs.length,
+      imported,
+      updated,
+      totalAmount: parsed.totalAmount,
+      fileCount: parsed.fileCount,
+      fileTotal: parsed.fileTotal,
+      totalsMatch: parsed.totalsMatch,
+    };
+  });
+
+  // POST /api/juno/docs/:no/close { closed, note? } — the manual ปิดเอกสาร mark for MB/XS
+  // documents settled without a Juno payment (historic XS, samples/claims with value, cash
+  // taken before Juno). CEO/supervisor-only: it asserts money reality, like ได้รับแล้ว.
+  // REs are 404 here by construction — their closed truth is Express's *** flag.
+  app.post('/api/juno/docs/:no/close', {
+    onRequest: [requireAuth, requireRole('supervisor')], // asserts money reality — CEO-only
+  }, async (req, reply) => {
+    const no = String((req.params as { no?: string }).no ?? '').trim();
+    const body = z.object({ closed: z.boolean(), note: z.string().max(300).optional() }).safeParse(req.body ?? {});
+    if (!body.success) return reply.code(400).send({ error: 'invalid_body' });
+    const stamp = body.data.closed
+      ? { paymentConfirmedAt: new Date(), paymentConfirmedBy: req.agent?.email ?? '', closeNote: (body.data.note ?? '').trim() }
+      : { paymentConfirmedAt: null, paymentConfirmedBy: '', closeNote: '' };
+
+    const bill = await prisma.manualBill.findUnique({ where: { billNo: no } });
+    if (bill) {
+      await prisma.manualBill.update({ where: { billNo: no }, data: stamp });
+      return { ok: true, docType: 'mb', no };
+    }
+    const xs = await prisma.xsDoc.findUnique({ where: { xsNo: no } });
+    if (xs) {
+      await prisma.xsDoc.update({ where: { xsNo: no }, data: stamp });
+      return { ok: true, docType: 'xs', no };
+    }
+    return reply.code(404).send({ error: 'doc_not_found' });
   });
 
   // GET /api/juno/re/names?res=6907402,6907403 — the imported Express receipt's customer name

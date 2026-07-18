@@ -251,7 +251,7 @@ export default function Juno({ agent, onLogout }: { agent: Agent; onLogout: () =
           // the Express-side view of stage 4 — owner asked for 3 and 4 as separate sections.)
           caption: 'ขั้น 4 · ยืนยัน Express',
           tabs: [
-            { key: 'reRecon' as const, label: 'RE', icon: <FileCheck size={16} /> },
+            { key: 'reRecon' as const, label: 'เอกสาร', icon: <FileCheck size={16} /> },
           ],
         },
         {
