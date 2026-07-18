@@ -48,8 +48,10 @@ import {
   CustomerCreditError,
   customerBalanceSatang,
   customerCreditKey,
+  discrepancyConfirmGate,
   grantCredit,
   lockPayment,
+  netPendingUseCredit,
   normalizedCreditUsed,
   paymentHasCreditEntries,
   paymentHasGrant,
@@ -93,7 +95,7 @@ const EMPLOYEE_JUNO_DENIED_ROUTES = new Set([
 // Lifecycle Juno owns. `flagged` is a SEPARATE boolean (the flag queue), independent of status.
 const STATUSES = ['received', 'verified', 'recorded', 'void'] as const;
 const TAX_STATUSES = ['none', 'requested', 'issued'] as const;
-const DISC_RESOLUTIONS = ['', 'refund', 'credit', 'chase', 'writeoff'] as const;
+const DISC_RESOLUTIONS = ['', 'refund', 'credit', 'chase', 'use_credit', 'writeoff'] as const;
 const moneyStringSchema = z.string().max(40).refine((value) => isMoneyString(value), 'invalid_money');
 const manualBillNoSchema = z.string()
   .trim()
@@ -239,7 +241,10 @@ function toRow(p: {
 
 async function getDiscrepancySnapshot() {
   const [payments, receipts] = await Promise.all([
-    prisma.payment.findMany({ orderBy: { createdAt: 'desc' } }),
+    prisma.payment.findMany({
+      orderBy: { createdAt: 'desc' },
+      include: { bankMatches: { select: { id: true }, take: 1 } },
+    }),
     prisma.reReceipt.findMany({ select: { reNumber: true, amount: true } }),
   ]);
   const components = buildDiscrepancyComponents(payments, receipts);
@@ -277,6 +282,9 @@ async function getDiscrepancySnapshot() {
       customerName: payment.customerName,
       receiptName: payment.receiptName,
       source: payment.source,
+      reconciled: payment.reconciled,
+      bankGrounded: payment.reconciled || (payment.bankMatches?.length ?? 0) > 0,
+      receivedAt: payment.receivedAt?.toISOString() ?? null,
       hasSlip: !!payment.slipUrl,
       reNumbers: payment.reNumbers,
       status: payment.status,
@@ -1030,6 +1038,10 @@ export async function junoRoutes(app: FastifyInstance) {
         if (current.wrongTransferAt && !['', 'refund', 'credit'].includes(body.data.resolution)) {
           return 'wrong_transfer_refund_only' as const;
         }
+        if (body.data.resolution === 'use_credit') {
+          const discrepancy = await getDiscrepancyForPayment(tx, current.id);
+          if (!discrepancy || discrepancy.diffSatang >= 0) return 'use_credit_under_only' as const;
+        }
         await removeGrant(
           tx,
           current.id,
@@ -1068,12 +1080,32 @@ export async function junoRoutes(app: FastifyInstance) {
         if (!current) return null;
         if (current.status === 'void') return 'void_locked' as const;
         if (body.data.confirmed && !current.discResolution) return 'resolution_required' as const;
+        if (body.data.confirmed) {
+          const bankLinkCount = current.reconciled || current.source === 'cash' || current.source === 'cheque'
+            ? 0
+            : await tx.paymentBankMatch.count({ where: { paymentId: current.id } });
+          const gateError = discrepancyConfirmGate(current, bankLinkCount);
+          if (gateError) return gateError;
+        }
         if (body.data.confirmed && current.discResolution === 'credit') {
           const discrepancy = await getDiscrepancyForPayment(tx, current.id);
           if (!discrepancy || discrepancy.diffSatang <= 0) {
             throw new CustomerCreditError('credit_overpay_required');
           }
-          await grantCredit(tx, current, discrepancy.diffSatang, req.agent?.email ?? req.agent?.id ?? '');
+          const actor = req.agent?.email ?? req.agent?.id ?? '';
+          const grant = await grantCredit(tx, current, discrepancy.diffSatang, actor);
+          await netPendingUseCredit(tx, grant.customerKey, actor);
+        } else if (body.data.confirmed && current.discResolution === 'use_credit') {
+          if (current.wrongTransferAt) return 'wrong_transfer_refund_only' as const;
+          const discrepancy = await getDiscrepancyForPayment(tx, current.id);
+          if (!discrepancy || discrepancy.diffSatang >= 0) return 'use_credit_under_only' as const;
+          const totalSpend = moneyToSatang(current.creditUsed) - discrepancy.diffSatang;
+          const actor = req.agent?.email ?? req.agent?.id ?? '';
+          await replaceSpend(tx, current, totalSpend, actor);
+          await tx.payment.update({
+            where: { id: current.id },
+            data: { creditUsed: satangToBaht(totalSpend).toFixed(2) },
+          });
         } else if (!body.data.confirmed) {
           await removeGrant(
             tx,
@@ -1090,7 +1122,14 @@ export async function junoRoutes(app: FastifyInstance) {
         });
       });
       if (!payment) return reply.code(404).send({ error: 'not_found' });
-      if (typeof payment === 'string') return reply.code(409).send({ error: payment });
+      if (typeof payment === 'string') {
+        const messages: Record<string, string> = {
+          disc_confirm_needs_bank: 'ต้องจับคู่รายการธนาคารก่อนยืนยัน (สเตจ 3)',
+          disc_confirm_needs_receive: 'ต้องยืนยันรับเงิน (ได้รับแล้ว) ก่อนยืนยัน',
+          use_credit_under_only: 'หักจากเครดิตลูกค้าได้เฉพาะรายการยอดขาด',
+        };
+        return reply.code(409).send({ error: payment, ...(messages[payment] ? { message: messages[payment] } : {}) });
+      }
       return { ok: true, payment: toRow(payment) };
     } catch (error) { return sendCreditError(reply, error); }
   });

@@ -47,10 +47,11 @@ const basePayment = (overrides: Record<string, unknown> = {}) => ({
   id: 'payment-1', customerId: null, customerCode: 'C1', customerName: 'Customer', senderName: 'Sender',
   amount: '500.00', ocrAmount: '500.00', whtRate: 0, whtAmount: '', creditUsed: '', bank: 'KBANK', transferAt: '', ref: '',
   slipMessageId: null, slipUrl: '', taxInvoice: '', taxInvoiceStatus: 'none', salesAgentId: null, salesName: '', note: '',
-  status: 'received', flagged: false, reconciled: false, verifiedById: null, verifiedAt: null, createdAt: new Date('2026-07-18T00:00:00Z'),
+  status: 'received', flagged: false, reconciled: true, verifiedById: null, verifiedAt: null, createdAt: new Date('2026-07-18T00:00:00Z'),
   reNumber: '', reNumbers: [], billNos: [], receiptName: '', customerType: '', source: 'line', settleState: '', settledAt: null,
   receivedAt: null, receivedBy: null, chequeNo: '', chequeBank: '', chequeDueDate: '', discExpected: '', discResolution: '', discNote: '',
   discResolvedAt: null, discResolvedBy: '', discConfirmedAt: null, discConfirmedBy: '', wrongTransferAt: null, wrongTransferBy: '',
+  bankMatches: [],
   ...overrides,
 });
 
@@ -71,6 +72,9 @@ beforeEach(() => {
   mocks.customerCreditEntry.findMany.mockResolvedValue([]);
   mocks.customerCreditEntry.count.mockResolvedValue(0);
   mocks.customerCreditEntry.aggregate.mockResolvedValue({ _sum: { amountSatang: null } });
+  mocks.customerCreditEntry.create.mockImplementation(async ({ data }: any) => ({
+    id: 'grant-1', createdAt: new Date(), updatedAt: new Date(), ...data,
+  }));
   mocks.payment.count.mockResolvedValue(0);
   mocks.payment.findMany.mockResolvedValue([]);
   mocks.payment.updateMany.mockResolvedValue({ count: 0 });

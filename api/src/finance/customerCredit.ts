@@ -1,5 +1,6 @@
 import { Prisma, type Payment } from '@prisma/client';
-import { moneyToSatang, satangToBaht } from './discrepancy.js';
+import { paymentTimestamp } from '../bank/match.js';
+import { getDiscrepancyForPayment, moneyToSatang, satangToBaht } from './discrepancy.js';
 
 export type CreditErrorCode =
   | 'credit_customer_required'
@@ -34,6 +35,18 @@ export function customerCreditKey(payment: Pick<Payment, 'customerCode' | 'custo
 
 export type CreditTx = Prisma.TransactionClient;
 
+export type DiscrepancyConfirmGateError = 'disc_confirm_needs_bank' | 'disc_confirm_needs_receive';
+
+export function discrepancyConfirmGate(
+  payment: Pick<Payment, 'source' | 'reconciled' | 'receivedAt'>,
+  bankLinkCount: number,
+): DiscrepancyConfirmGateError | null {
+  if (payment.source === 'cash' || payment.source === 'cheque') {
+    return payment.receivedAt ? null : 'disc_confirm_needs_receive';
+  }
+  return payment.reconciled || bankLinkCount > 0 ? null : 'disc_confirm_needs_bank';
+}
+
 export async function lockPayment(tx: CreditTx, paymentId: string): Promise<void> {
   await tx.$queryRaw`SELECT "id" FROM "Payment" WHERE "id" = ${paymentId} FOR UPDATE`;
 }
@@ -61,7 +74,10 @@ export async function grantCredit(
   const existing = await tx.customerCreditEntry.findUnique({
     where: { paymentId_kind: { paymentId: payment.id, kind: 'grant' } },
   });
-  if (existing) return existing;
+  if (existing) {
+    await lockCustomer(tx, existing.customerKey);
+    return existing;
+  }
   if (amountSatang <= 0) throw new CustomerCreditError('credit_overpay_required');
   const customerKey = customerCreditKey(payment);
   if (!customerKey) throw new CustomerCreditError('credit_customer_required');
@@ -161,4 +177,69 @@ export async function paymentHasGrant(tx: CreditTx, paymentId: string): Promise<
 
 export function normalizedCreditUsed(value: string): string {
   return moneyToSatang(value) > 0 ? value.trim() : '';
+}
+
+function paymentOrderTime(payment: Pick<Payment, 'transferAt' | 'createdAt'>): number {
+  return paymentTimestamp(payment.transferAt, payment.createdAt).getTime();
+}
+
+/**
+ * Spend a newly available pooled balance against pending use-credit discrepancies.
+ * The caller already holds the same customer's advisory lock (grantCredit acquires it),
+ * but replaceSpend deliberately reuses the normal spend path and its non-overdraw check.
+ */
+export async function netPendingUseCredit(
+  tx: CreditTx,
+  customerKey: string,
+  actor: string,
+): Promise<{ fullyCovered: string[]; partiallyCovered: string[] }> {
+  const pending = await tx.payment.findMany({
+    where: {
+      status: { not: 'void' },
+      discResolution: 'use_credit',
+      discConfirmedAt: null,
+      wrongTransferAt: null,
+    },
+    include: { bankMatches: { select: { id: true }, take: 1 } },
+  });
+  const candidates = pending
+    .filter((payment) => payment.discResolution === 'use_credit'
+      && payment.discConfirmedAt === null
+      && payment.status !== 'void'
+      && payment.wrongTransferAt === null
+      && customerCreditKey(payment) === customerKey
+      && !discrepancyConfirmGate(payment, payment.bankMatches.length))
+    .sort((left, right) => paymentOrderTime(left) - paymentOrderTime(right) || left.createdAt.getTime() - right.createdAt.getTime());
+  const fullyCovered: string[] = [];
+  const partiallyCovered: string[] = [];
+
+  for (const payment of candidates) {
+    const discrepancy = await getDiscrepancyForPayment(tx, payment.id);
+    if (!discrepancy) continue;
+    if (discrepancy.diffSatang === 0) {
+      await tx.payment.update({
+        where: { id: payment.id },
+        data: { discConfirmedAt: new Date(), discConfirmedBy: actor },
+      });
+      fullyCovered.push(payment.id);
+      continue;
+    }
+    if (discrepancy.diffSatang > 0) continue;
+
+    const balance = await customerBalanceSatang(tx, customerKey, false);
+    if (balance <= 0) break;
+    const increment = Math.min(balance, -discrepancy.diffSatang);
+    const totalSpend = moneyToSatang(payment.creditUsed) + increment;
+    await replaceSpend(tx, payment, totalSpend, actor);
+    const covered = increment === -discrepancy.diffSatang;
+    await tx.payment.update({
+      where: { id: payment.id },
+      data: {
+        creditUsed: satangToBaht(totalSpend).toFixed(2),
+        ...(covered ? { discConfirmedAt: new Date(), discConfirmedBy: actor } : {}),
+      },
+    });
+    (covered ? fullyCovered : partiallyCovered).push(payment.id);
+  }
+  return { fullyCovered, partiallyCovered };
 }

@@ -21,6 +21,7 @@ const RESOLUTION_LABELS: Record<Exclude<DiscResolution, ''>, string> = {
   refund: 'โอนคืนแล้ว',
   credit: 'เก็บเป็นเครดิต',
   chase: 'รอลูกค้าชำระเพิ่ม',
+  use_credit: 'หักจากเครดิตลูกค้า',
   writeoff: 'ปิดส่วนต่าง (ปัดเศษ/ยกให้)',
 };
 
@@ -55,6 +56,21 @@ function StateBadge({ row }: { row: DiscrepancyRow }) {
   if (state === 'confirmed') return <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">เสร็จสิ้น</span>;
   if (state === 'resolved') return <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-700">รอ CEO ยืนยัน</span>;
   return <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-semibold text-rose-700">เปิดอยู่</span>;
+}
+
+type GroundablePayment = Pick<Payment, 'source' | 'reconciled' | 'receivedAt' | 'discConfirmedAt'> & { bankGrounded?: boolean };
+
+function groundingState(payment: GroundablePayment): { chip: string; title: string } | null {
+  if (payment.discConfirmedAt) return null;
+  if (payment.source === 'cash' || payment.source === 'cheque') {
+    return payment.receivedAt ? null : { chip: 'รอยืนยันรับเงิน', title: 'ต้องยืนยันรับเงิน (ได้รับแล้ว) ก่อนยืนยัน' };
+  }
+  return (payment.bankGrounded ?? payment.reconciled) ? null : { chip: 'รอจับคู่ธนาคาร', title: 'ต้องจับคู่รายการธนาคารก่อนยืนยัน (สเตจ 3)' };
+}
+
+function GroundingChip({ payment }: { payment: GroundablePayment }) {
+  const state = groundingState(payment);
+  return state ? <div title={state.title} className="mt-1 inline-flex rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-700">{state.chip}</div> : null;
 }
 
 export default function Discrepancies({ isCeo, onChanged }: { isCeo: boolean; onChanged: () => void }) {
@@ -137,7 +153,7 @@ export default function Discrepancies({ isCeo, onChanged }: { isCeo: boolean; on
                     <td className="px-3 py-3 text-right font-semibold whitespace-nowrap">{baht(row.gross)}{row.creditUsed > 0 && <div className="text-[10px] font-normal text-emerald-700">ใช้เครดิต {baht(row.creditUsed)}</div>}</td>
                     <td className="px-3 py-3 text-right whitespace-nowrap">{baht(row.expected)}<div className="text-[10px] text-slate-400">{row.wrongTransfer ? 'ไม่มีเอกสารขาย' : row.expectedSource === 'typed' ? 'FIN กรอก' : 'จาก RE'}</div></td>
                     <td className={`px-3 py-3 text-right font-bold whitespace-nowrap ${row.wrongTransfer ? row.discResolution === 'credit' ? 'text-emerald-700' : 'text-rose-700' : row.diff > 0 ? 'text-emerald-700' : row.diff < 0 ? 'text-rose-700' : 'text-sky-700'}`}>{row.wrongTransfer ? row.discResolution === 'credit' ? `เก็บเครดิต ${baht(row.gross)}` : `ต้องคืน ${baht(row.gross)}` : signedDiff(row.diff)}</td>
-                    <td className="px-3 py-3"><StateBadge row={row} />{!row.wrongTransfer && row.discResolution && <div className="mt-1 text-[11px] text-slate-500">{RESOLUTION_LABELS[row.discResolution]}</div>}</td>
+                    <td className="px-3 py-3"><StateBadge row={row} /><GroundingChip payment={row} />{!row.wrongTransfer && row.discResolution && <div className="mt-1 text-[11px] text-slate-500">{RESOLUTION_LABELS[row.discResolution]}</div>}</td>
                     <td className="px-3 py-3 text-right whitespace-nowrap">
                       {row.status === 'void' ? (
                         <button onClick={() => { void setStatus(row.id, 'received').then(changed); }} className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50">คืนค่ารายการ</button>
@@ -198,8 +214,10 @@ function ChipGroup<T extends string>({ value, onChange, options }: { value: T; o
 
 function ConfirmButton({ row, onChanged }: { row: DiscrepancyRow; onChanged: () => void }) {
   const [busy, setBusy] = useState(false);
+  const grounding = groundingState(row);
+  const blocked = !row.discConfirmedAt && !!grounding;
   async function run() { setBusy(true); try { await confirmDiscrepancy(row.id, !row.discConfirmedAt); onChanged(); } catch (error) { window.alert(apiErrorMessage(error, 'ยืนยันไม่สำเร็จ — ลองใหม่อีกครั้ง')); } finally { setBusy(false); } }
-  return <button disabled={busy} onClick={run} className="ml-1.5 rounded-lg border border-slate-200 px-2 py-1.5 text-xs text-slate-600 hover:bg-slate-50 disabled:opacity-50">{busy ? <Loader2 size={13} className="inline animate-spin" /> : row.discConfirmedAt ? <><Undo2 size={13} className="inline" /> ยกเลิกยืนยัน</> : <><Check size={13} className="inline" /> ยืนยัน</>}</button>;
+  return <button disabled={busy || blocked} title={grounding?.title} onClick={run} className="ml-1.5 rounded-lg border border-slate-200 px-2 py-1.5 text-xs text-slate-600 hover:bg-slate-50 disabled:opacity-50">{busy ? <Loader2 size={13} className="inline animate-spin" /> : row.discConfirmedAt ? <><Undo2 size={13} className="inline" /> ยกเลิกยืนยัน</> : <><Check size={13} className="inline" /> ยืนยัน</>}</button>;
 }
 
 function ResolutionDialog({ row, onClose, onChanged }: { row: DiscrepancyRow; onClose: () => void; onChanged: () => void }) {
@@ -209,7 +227,7 @@ function ResolutionDialog({ row, onClose, onChanged }: { row: DiscrepancyRow; on
   const [note, setNote] = useState(row.discNote);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const options: Exclude<DiscResolution, ''>[] = row.wrongTransfer ? ['credit', 'refund'] : row.direction === 'under' ? ['chase', 'writeoff'] : ['refund', 'credit', 'writeoff'];
+  const options: Exclude<DiscResolution, ''>[] = row.wrongTransfer ? ['credit', 'refund'] : row.direction === 'under' ? ['chase', 'use_credit', 'writeoff'] : ['refund', 'credit', 'writeoff'];
   async function save() {
     setBusy(true); setError('');
     try {
@@ -248,15 +266,17 @@ export function PaymentDiscrepancyBlock({ payment, isCeo, onUpdated }: { payment
   const hasStamps = !!(payment.discResolution || payment.discResolvedAt || payment.discConfirmedAt);
   if (!row && !hasStamps) return null;
   const direction = row?.direction ?? 'balanced';
-  const options: Exclude<DiscResolution, ''>[] = payment.wrongTransfer ? ['credit', 'refund'] : direction === 'under' ? ['chase', 'writeoff'] : ['refund', 'credit', 'writeoff'];
+  const options: Exclude<DiscResolution, ''>[] = payment.wrongTransfer ? ['credit', 'refund'] : direction === 'under' ? ['chase', 'use_credit', 'writeoff'] : ['refund', 'credit', 'writeoff'];
+  const grounding = groundingState(payment);
   async function run(key: string, action: () => Promise<{ payment: Payment }>) { setBusy(key); setErr(''); try { const result = await action(); onUpdated(result.payment); load(); } catch (caught) { setErr(apiErrorMessage(caught, 'บันทึกไม่สำเร็จ — ตรวจสอบยอดและลองใหม่')); } finally { setBusy(''); } }
   return <div className="mx-4 mt-3 space-y-2 rounded-lg border border-emerald-200 bg-emerald-50/40 p-3 text-xs">
     <div className="flex items-center justify-between"><span className="font-semibold text-slate-700">{payment.wrongTransfer ? 'โอนเงินผิด' : 'ส่วนต่างยอด'}</span>{row && <span className={`font-bold ${payment.wrongTransfer ? payment.discResolution === 'credit' ? 'text-emerald-700' : 'text-rose-700' : row.diff > 0 ? 'text-emerald-700' : row.diff < 0 ? 'text-rose-700' : 'text-sky-700'}`}>{payment.wrongTransfer ? payment.discResolution === 'credit' ? `เก็บเครดิต ${baht(row.gross)}` : `ต้องคืน ${baht(row.gross)}` : signedDiff(row.diff)}</span>}</div>
+    <GroundingChip payment={payment} />
     {row && <div className="text-slate-500">{payment.wrongTransfer ? payment.discResolution === 'credit' ? 'ไม่มีเอกสารขาย · ยอดรับเข้าทั้งหมดเก็บเป็นเครดิตลูกค้า' : payment.discResolution === 'refund' ? 'ไม่มีเอกสารขาย · ยอดรับเข้าทั้งหมดต้องโอนคืน' : 'ไม่มีเอกสารขาย · รอเลือกโอนคืนหรือเก็บเป็นเครดิต' : `ยอดเต็ม ${baht(row.gross)}${row.creditUsed > 0 ? ` · ใช้เครดิต ${baht(row.creditUsed)} · ชำระรวม ${baht(row.effectivePaid)}` : ''} · ยอดตาม RE ${baht(row.expected)} (${row.expectedSource === 'typed' ? 'FIN กรอก' : 'จาก RE'})`}</div>}
     {!payment.wrongTransfer && <div className="flex gap-1.5"><input value={expected} onChange={(e) => setExpected(e.target.value)} inputMode="decimal" placeholder="ยอดตาม RE" className="min-w-0 flex-1 rounded-lg border border-slate-300 px-2 py-1.5" /><button disabled={!!busy} onClick={() => run('expected', () => setDiscrepancyExpected(payment.id, expected.trim()))} className="rounded-lg bg-white px-2 py-1.5 text-emerald-700 border border-emerald-200">ปรับยอด</button>{payment.discExpected && <button disabled={!!busy} onClick={() => run('expected', () => setDiscrepancyExpected(payment.id, ''))} className="text-slate-500">ใช้ RE</button>}</div>}
     <select value={resolution} onChange={(e) => setResolution(e.target.value as DiscResolution)} className="w-full rounded-lg border border-slate-300 bg-white px-2 py-1.5"><option value="">เลือกวิธีจัดการ</option>{options.map((key) => <option key={key} value={key}>{RESOLUTION_LABELS[key]}</option>)}</select>
     <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2} placeholder="หมายเหตุ" className="w-full rounded-lg border border-slate-300 px-2 py-1.5" />
     {err && <div className="text-rose-600">{err}</div>}
-    <div className="flex justify-end gap-1.5"><button disabled={!!busy || !payment.discResolution} onClick={() => run('resolve', () => resolveDiscrepancy(payment.id, ''))} className="mr-auto text-rose-600 disabled:opacity-30">ล้าง</button><button disabled={!!busy || !resolution} onClick={() => run('resolve', () => resolveDiscrepancy(payment.id, resolution, note.trim() || undefined))} className="rounded-lg bg-emerald-600 px-3 py-1.5 font-medium text-white disabled:opacity-40">บันทึกการจัดการ</button>{isCeo && payment.discResolution && <button disabled={!!busy} onClick={() => run('confirm', () => confirmDiscrepancy(payment.id, !payment.discConfirmedAt))} className="rounded-lg border border-emerald-300 bg-white px-2 py-1.5 text-emerald-700">{payment.discConfirmedAt ? 'ยกเลิกยืนยัน' : 'ยืนยัน'}</button>}</div>
+    <div className="flex justify-end gap-1.5"><button disabled={!!busy || !payment.discResolution} onClick={() => run('resolve', () => resolveDiscrepancy(payment.id, ''))} className="mr-auto text-rose-600 disabled:opacity-30">ล้าง</button><button disabled={!!busy || !resolution} onClick={() => run('resolve', () => resolveDiscrepancy(payment.id, resolution, note.trim() || undefined))} className="rounded-lg bg-emerald-600 px-3 py-1.5 font-medium text-white disabled:opacity-40">บันทึกการจัดการ</button>{isCeo && payment.discResolution && <button disabled={!!busy || (!payment.discConfirmedAt && !!grounding)} title={grounding?.title} onClick={() => run('confirm', () => confirmDiscrepancy(payment.id, !payment.discConfirmedAt))} className="rounded-lg border border-emerald-300 bg-white px-2 py-1.5 text-emerald-700 disabled:opacity-40">{payment.discConfirmedAt ? 'ยกเลิกยืนยัน' : 'ยืนยัน'}</button>}</div>
   </div>;
 }

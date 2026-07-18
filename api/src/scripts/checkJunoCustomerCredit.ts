@@ -2,7 +2,9 @@ import {
   CustomerCreditError,
   customerBalanceSatang,
   customerCreditKey,
+  discrepancyConfirmGate,
   grantCredit,
+  netPendingUseCredit,
   releaseSpend,
   removeGrant,
   replaceSpend,
@@ -18,6 +20,8 @@ type Entry = {
 
 class MemoryCreditDb {
   entries: Entry[] = [];
+  payments: any[] = [];
+  receipts: any[] = [];
   private sequence = 0;
   private lockTails = new Map<string, Promise<void>>();
 
@@ -64,6 +68,16 @@ class MemoryCreditDb {
         },
         count: async ({ where }: any) => db.entries.filter((entry) => entry.paymentId === where.paymentId).length,
       },
+      payment: {
+        findMany: async () => db.payments,
+        update: async ({ where, data }: any) => {
+          const row = db.payments.find((candidate) => candidate.id === where.id);
+          if (!row) throw new Error(`payment not found: ${where.id}`);
+          Object.assign(row, data);
+          return row;
+        },
+      },
+      reReceipt: { findMany: async () => db.receipts },
     } as unknown as CreditTx;
     try { return await work(tx); }
     finally { for (const release of releases.reverse()) release(); }
@@ -79,6 +93,19 @@ const payment = (id: string, customerCode = 'C-1', customerName = 'Customer') =>
   id, customerCode, customerName, wrongTransferAt: null,
 });
 const isCode = (error: unknown, code: string) => error instanceof CustomerCreditError && error.code === code;
+
+check(
+  discrepancyConfirmGate({ source: 'line', reconciled: false, receivedAt: null } as any, 0) === 'disc_confirm_needs_bank',
+  'unlinked transfer confirmation is blocked by the stage-3 bank gate',
+);
+check(
+  discrepancyConfirmGate({ source: 'cheque', reconciled: false, receivedAt: null } as any, 0) === 'disc_confirm_needs_receive',
+  'unreceived cheque confirmation is blocked by the stage-3 receive gate',
+);
+check(
+  discrepancyConfirmGate({ source: 'line', reconciled: false, receivedAt: null } as any, 1) === null,
+  'an actual PaymentBankMatch link satisfies the transfer gate even if the mirror flag is stale',
+);
 
 const db = new MemoryCreditDb();
 await db.transaction(async (tx) => {
@@ -138,6 +165,29 @@ const raced = await Promise.allSettled([racer('race-a'), racer('race-b')]);
 check(raced.filter((result) => result.status === 'fulfilled').length === 1, 'same-customer barrier race allows exactly one oversubscribing spend');
 check(raceDb.entries.filter((entry) => entry.kind === 'spend').length === 1, 'unique payment/kind prevents duplicate spend rows');
 check(await raceDb.transaction((tx) => customerBalanceSatang(tx, 'C-1')) >= 0, 'race leaves final ledger balance nonnegative');
+
+const netDb = new MemoryCreditDb();
+const pendingPayment = (id: string, createdAt: string, expected: string) => ({
+  ...payment(id), amount: '0.00', whtAmount: '', creditUsed: '', reNumbers: [], status: 'verified',
+  discExpected: expected, discResolution: 'use_credit', discConfirmedAt: null, wrongTransferAt: null,
+  source: 'line', reconciled: true, receivedAt: null, bankMatches: [], transferAt: '', createdAt: new Date(createdAt),
+});
+netDb.payments = [
+  pendingPayment('newer-shortfall', '2026-07-12T00:00:00Z', '80.00'),
+  pendingPayment('older-shortfall', '2026-07-11T00:00:00Z', '60.00'),
+];
+await netDb.transaction((tx) => grantCredit(tx, payment('net-grant') as any, 10_000, 'supervisor'));
+const netted = await netDb.transaction((tx) => netPendingUseCredit(tx, 'C-1', 'supervisor'));
+check(netted.fullyCovered[0] === 'older-shortfall', 'auto-netting spends against the oldest pending shortfall first');
+check(netDb.entries.find((entry) => entry.paymentId === 'older-shortfall')?.amountSatang === -6_000, 'auto-netting fully covers the oldest row');
+check(netDb.entries.find((entry) => entry.paymentId === 'newer-shortfall')?.amountSatang === -4_000, 'auto-netting partially covers the next row with the remaining balance');
+check(netDb.payments.find((row) => row.id === 'older-shortfall').discConfirmedBy === 'supervisor', 'a fully covered row is confirmed by the grant action');
+check(netDb.payments.find((row) => row.id === 'newer-shortfall').discConfirmedAt === null, 'a partially covered row remains unconfirmed');
+check(await netDb.transaction((tx) => customerBalanceSatang(tx, 'C-1')) === 0, 'auto-netting never overdraws the customer balance');
+try {
+  await netDb.transaction((tx) => removeGrant(tx, 'net-grant'));
+  check(false, 'a fully spent auto-net grant cannot be un-confirmed');
+} catch (error) { check(isCode(error, 'credit_grant_spent'), 'auto-net spend preserves the credit_grant_spent un-confirm guard'); }
 
 if (failed) {
   console.error(`\n${failed} customer-credit check(s) FAILED`);

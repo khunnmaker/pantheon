@@ -45,7 +45,7 @@ const basePayment = (overrides: Record<string, unknown> = {}) => ({
   id: 'payment-1', customerId: null, customerCode: 'C1', customerName: 'Customer', senderName: 'Sender',
   amount: '200.00', ocrAmount: '200.00', whtRate: 0, whtAmount: '', creditUsed: '', bank: 'KBANK', transferAt: '', ref: '',
   slipMessageId: null, slipUrl: '', taxInvoice: '', taxInvoiceStatus: 'none', salesAgentId: null, salesName: '', note: '',
-  status: 'verified', flagged: false, reconciled: false, verifiedById: null, verifiedAt: null, createdAt: new Date('2026-07-18T00:00:00Z'),
+  status: 'verified', flagged: false, reconciled: true, verifiedById: null, verifiedAt: null, createdAt: new Date('2026-07-18T00:00:00Z'),
   reNumber: '6900001', reNumbers: ['6900001'], billNos: [], receiptName: '', customerType: '', source: 'line', settleState: '', settledAt: null,
   receivedAt: null, receivedBy: null, chequeNo: '', chequeBank: '', chequeDueDate: '', discExpected: '100.00', discResolution: 'credit', discNote: '',
   discResolvedAt: new Date(), discResolvedBy: 'fin', discConfirmedAt: null, discConfirmedBy: '', wrongTransferAt: null, wrongTransferBy: '',
@@ -89,6 +89,27 @@ beforeEach(() => {
 });
 
 describe('Juno customer-credit routes', () => {
+  it('gates CEO confirmation on bank evidence or physical receipt without gating FIN resolution', async () => {
+    const app = await server();
+    mocks.role.value = 'supervisor';
+    mocks.payment.findUnique.mockResolvedValue(basePayment({ reconciled: false, discResolution: 'refund' }));
+    const transfer = await app.inject({ method: 'POST', url: '/api/juno/payments/payment-1/disc-confirm', payload: { confirmed: true } });
+    expect(transfer.statusCode).toBe(409);
+    expect(transfer.json()).toEqual({ error: 'disc_confirm_needs_bank', message: 'ต้องจับคู่รายการธนาคารก่อนยืนยัน (สเตจ 3)' });
+
+    mocks.payment.findUnique.mockResolvedValue(basePayment({ source: 'cheque', receivedAt: null, discResolution: 'refund' }));
+    const cheque = await app.inject({ method: 'POST', url: '/api/juno/payments/payment-1/disc-confirm', payload: { confirmed: true } });
+    expect(cheque.statusCode).toBe(409);
+    expect(cheque.json()).toEqual({ error: 'disc_confirm_needs_receive', message: 'ต้องยืนยันรับเงิน (ได้รับแล้ว) ก่อนยืนยัน' });
+
+    mocks.payment.findUnique.mockResolvedValue(basePayment({ reconciled: false, discResolution: 'refund' }));
+    mocks.paymentBankMatch.count.mockResolvedValueOnce(1);
+    expect((await app.inject({ method: 'POST', url: '/api/juno/payments/payment-1/disc-confirm', payload: { confirmed: true } })).statusCode).toBe(200);
+    mocks.payment.findUnique.mockResolvedValue(basePayment({ reconciled: false, discResolution: '' }));
+    expect((await app.inject({ method: 'POST', url: '/api/juno/payments/payment-1/disc-resolve', payload: { resolution: 'refund' } })).statusCode).toBe(200);
+    await app.close();
+  });
+
   it('keeps supervisor authorization first and creates only one immutable grant on repeat confirmation', async () => {
     const app = await server();
     const forbidden = await app.inject({ method: 'POST', url: '/api/juno/payments/payment-1/disc-confirm', payload: { confirmed: true } });
@@ -272,6 +293,61 @@ describe('Juno customer-credit routes', () => {
     }]);
     const report = await app.inject({ method: 'GET', url: '/api/juno/reports?groupBy=customer' });
     expect(report.json().grandTotal).toBe(200);
+    await app.close();
+  });
+
+  it('guards use_credit direction and directly spends an existing balance only when sufficient', async () => {
+    const app = await server();
+    const under = basePayment({ amount: '80.00', discExpected: '100.00', discResolution: 'use_credit' });
+    mocks.payment.findUnique.mockResolvedValue(under);
+    mocks.payment.findMany.mockResolvedValue([under]);
+    expect((await app.inject({ method: 'POST', url: '/api/juno/payments/payment-1/disc-resolve', payload: { resolution: 'use_credit' } })).statusCode).toBe(200);
+
+    const over = basePayment({ amount: '120.00', discExpected: '100.00', discResolution: '' });
+    mocks.payment.findUnique.mockResolvedValue(over);
+    mocks.payment.findMany.mockResolvedValue([over]);
+    const invalid = await app.inject({ method: 'POST', url: '/api/juno/payments/payment-1/disc-resolve', payload: { resolution: 'use_credit' } });
+    expect(invalid.statusCode).toBe(409);
+    expect(invalid.json().error).toBe('use_credit_under_only');
+
+    mocks.role.value = 'supervisor';
+    mocks.payment.findUnique.mockResolvedValue(under);
+    mocks.payment.findMany.mockResolvedValue([under]);
+    mocks.customerCreditEntry.aggregate.mockResolvedValue({ _sum: { amountSatang: 2_000 } });
+    const confirmed = await app.inject({ method: 'POST', url: '/api/juno/payments/payment-1/disc-confirm', payload: { confirmed: true } });
+    expect(confirmed.statusCode).toBe(200);
+    expect(mocks.customerCreditEntry.upsert).toHaveBeenLastCalledWith(expect.objectContaining({ create: expect.objectContaining({ amountSatang: -2_000 }) }));
+    expect(mocks.customerCreditEntry.create).not.toHaveBeenCalled();
+
+    mocks.customerCreditEntry.aggregate.mockResolvedValue({ _sum: { amountSatang: 1_000 } });
+    const insufficient = await app.inject({ method: 'POST', url: '/api/juno/payments/payment-1/disc-confirm', payload: { confirmed: true } });
+    expect(insufficient.statusCode).toBe(409);
+    expect(insufficient.json()).toEqual(expect.objectContaining({ error: 'credit_insufficient', available: 10 }));
+    await app.close();
+  });
+
+  it('auto-nets a new grant oldest-first, fully confirms one row, partially covers the next, and never overdraws', async () => {
+    const app = await server();
+    mocks.role.value = 'supervisor';
+    const grantPayment = basePayment({ id: 'grant-payment', amount: '100.00', discExpected: '0', discResolution: 'credit' });
+    const older = basePayment({ id: 'older', amount: '0', discExpected: '60.00', discResolution: 'use_credit', createdAt: new Date('2026-07-11T00:00:00Z'), bankMatches: [] });
+    const newer = basePayment({ id: 'newer', amount: '0', discExpected: '80.00', discResolution: 'use_credit', createdAt: new Date('2026-07-12T00:00:00Z'), bankMatches: [] });
+    mocks.payment.findUnique.mockResolvedValue(grantPayment);
+    mocks.payment.findMany
+      .mockResolvedValueOnce([grantPayment])
+      .mockResolvedValueOnce([newer, older])
+      .mockResolvedValueOnce([grantPayment, older, newer])
+      .mockResolvedValueOnce([grantPayment, older, newer]);
+    mocks.customerCreditEntry.aggregate
+      .mockResolvedValueOnce({ _sum: { amountSatang: 10_000 } })
+      .mockResolvedValueOnce({ _sum: { amountSatang: 10_000 } })
+      .mockResolvedValueOnce({ _sum: { amountSatang: 4_000 } })
+      .mockResolvedValueOnce({ _sum: { amountSatang: 4_000 } });
+    const result = await app.inject({ method: 'POST', url: '/api/juno/payments/grant-payment/disc-confirm', payload: { confirmed: true } });
+    expect(result.statusCode).toBe(200);
+    expect(mocks.customerCreditEntry.upsert.mock.calls.map(([args]) => args.create.amountSatang)).toEqual([-6_000, -4_000]);
+    expect(mocks.payment.update).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 'older' }, data: expect.objectContaining({ creditUsed: '60.00', discConfirmedBy: 'fin@example.test' }) }));
+    expect(mocks.payment.update).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 'newer' }, data: { creditUsed: '40.00' } }));
     await app.close();
   });
 });
