@@ -5,6 +5,7 @@ import {
   expectedForPayment,
   grossSatang,
   mismatchedMultiPaymentComponentCount,
+  normalizeReCore,
 } from '../finance/discrepancy.js';
 import { computeReRow } from '../finance/reRecon.js';
 
@@ -50,6 +51,16 @@ for (const [label, amount, expectedDiff] of [
       computeReRow('100.00', [rePayment], amounts).status === 'matched',
     'GET /re helper marks both members of balanced 1-payment/2-RE coverage matched',
   );
+}
+
+{
+  const wrong = payment('wrong-transfer', '725.50', [], '', '0');
+  const expected = expectedForPayment(wrong);
+  check(expected?.expectedSatang === 0, 'wrong transfer uses typed expected zero without an RE');
+  check(grossSatang(wrong) - (expected?.expectedSatang ?? 0) === 72_550, 'wrong-transfer refund equals the whole incoming gross');
+  check(normalizeReCore('0000000') === null, 'wrong-transfer sentinel is excluded from RE components');
+  check(buildDiscrepancyComponents([payment('legacy', '10', ['0000000'])], []).length === 0, 'legacy sentinel cannot enter RE reconciliation');
+  check(buildDiscrepancyComponents([{ ...payment('void', '10', ['6900099']), status: 'void' }], [receipt('6900099', '10')]).length === 0, 'void payments stay outside active discrepancy components');
 }
 
 for (const [label, secondAmount, expectedHint] of [

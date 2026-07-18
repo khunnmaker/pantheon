@@ -465,6 +465,9 @@ model Payment {
   discResolvedBy   String             @default("")
   discConfirmedAt  DateTime?
   discConfirmedBy  String             @default("")
+  // Explicit mistaken-transfer classification. The discrepancy ledger owns its refund workflow.
+  wrongTransferAt  DateTime?
+  wrongTransferBy  String             @default("")
   // cheque details (source='cheque' only)
   chequeNo         String             @default("")
   chequeBank       String             @default("")
@@ -479,6 +482,7 @@ model Payment {
   @@index([reconciled])
   @@index([source])
   @@index([settleState])
+  @@index([wrongTransferAt])
 }
 
 // ─── Juno phase B (bank import + reconciliation) ─────────────────────────

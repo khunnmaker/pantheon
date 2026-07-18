@@ -5,6 +5,7 @@ import { describe, it, expect } from 'vitest';
 import { normalizeAmount } from '../src/finance/normalize.js';
 import { amountsEqual } from '../src/bank/match.js';
 import { computeReRow, type ReReconPayment } from '../src/finance/reRecon.js';
+import { buildDiscrepancyComponents, expectedForPayment, grossSatang, normalizeReCore } from '../src/finance/discrepancy.js';
 
 describe('normalizeAmount', () => {
   it('strips thousands commas to a 2-decimal string', () => {
@@ -100,5 +101,18 @@ describe('computeReRow (กระทบยอด RE apportionment)', () => {
     const r = computeReRow('400.00', [pay(['A', 'C'], '1000.00')], new Map([['A', '400.00']]));
     expect(r.status).toBe('unpaid');
     expect(r.paymentCount).toBe(1); // but the UI still knows a transfer exists
+  });
+});
+
+describe('wrong-transfer discrepancy invariants', () => {
+  const wrong = { id: 'wrong', amount: '125.50', whtAmount: '', reNumbers: [] as string[], discExpected: '0', status: 'verified' };
+  it('treats expected zero as the whole-gross refund even without an RE', () => {
+    expect(expectedForPayment(wrong)?.expectedSatang).toBe(0);
+    expect(grossSatang(wrong)).toBe(12_550);
+  });
+  it('keeps the sentinel and void rows out of RE components', () => {
+    expect(normalizeReCore('0000000')).toBeNull();
+    expect(buildDiscrepancyComponents([{ ...wrong, reNumbers: ['0000000'] }], [])).toEqual([]);
+    expect(buildDiscrepancyComponents([{ ...wrong, status: 'void', reNumbers: ['6900001'] }], [{ reNumber: '6900001', amount: '125.50' }])).toEqual([]);
   });
 });

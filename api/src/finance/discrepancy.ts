@@ -46,7 +46,7 @@ export function grossSatang(payment: Pick<DiscrepancyPaymentInput, 'amount' | 'w
 
 export function normalizeReCore(value: string): string | null {
   const core = value.trim().replace(/^re/i, '');
-  return /^\d{7}$/.test(core) ? core : null;
+  return /^\d{7}$/.test(core) && core !== '0000000' ? core : null;
 }
 
 export function isMoneyString(value: string, allowEmpty = true): boolean {

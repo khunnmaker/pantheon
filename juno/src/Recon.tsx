@@ -637,7 +637,7 @@ function TxnDetail({ txn, onChanged }: { txn: BankTxn; onChanged: (updated?: Ban
           <div className="flex flex-wrap gap-1.5 items-center">
             {txn.links.map((l) => (
               <span key={l.paymentId} className="flex items-center gap-1 px-2 py-1 rounded-lg bg-white border border-slate-200 text-xs">
-                <span className="font-semibold text-emerald-700">RE {l.reNumber || '—'}</span>
+                {l.wrongTransfer ? <span className="rounded bg-rose-100 px-1 py-0.5 font-semibold text-rose-700">โอนเงินผิด</span> : <span className="font-semibold text-emerald-700">RE {l.reNumber || '—'}</span>}
                 <span className="text-slate-400">·</span>
                 <span>{baht(parseFloat(l.amount || '0'))}</span>
                 {l.chequeNo && <>
@@ -754,7 +754,7 @@ function BankCandidateRow({ candidate, checked, onToggle }: {
   return (
     <label className="flex items-center gap-2 px-2 py-1.5 rounded-lg bg-white border border-slate-200 hover:border-emerald-300 cursor-pointer text-xs">
       <input type="checkbox" checked={checked} onChange={onToggle} className="accent-emerald-600" />
-      <span className="font-semibold text-emerald-700 shrink-0">RE {candidate.reNumber || '—'}</span>
+      {candidate.wrongTransfer ? <span className="shrink-0 rounded bg-rose-100 px-1 py-0.5 font-semibold text-rose-700">โอนเงินผิด</span> : <span className="font-semibold text-emerald-700 shrink-0">RE {candidate.reNumber || '—'}</span>}
       <span className="shrink-0">{baht(parseFloat(candidate.amount || '0'))}</span>
       {candidate.exactAmount ? (
         <span className="px-1 py-0.5 rounded bg-emerald-50 text-emerald-600 shrink-0">ยอดตรง</span>

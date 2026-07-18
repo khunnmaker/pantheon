@@ -105,6 +105,9 @@ export interface Payment {
   discResolvedBy: string;
   discConfirmedAt: string | null;
   discConfirmedBy: string;
+  wrongTransfer: boolean;
+  wrongTransferAt: string | null;
+  wrongTransferBy: string;
 }
 
 export interface Summary {
@@ -191,7 +194,10 @@ async function authed<T>(path: string, init?: RequestInit): Promise<T> {
     throw new Error('unauthorized');
   }
   if (res.status === 403) throw new Error('forbidden');
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  if (!res.ok) {
+    const payload = await res.json().catch(() => ({})) as { error?: string; message?: string };
+    throw new Error(payload.error || payload.message || `HTTP ${res.status}`);
+  }
   return res.json() as Promise<T>;
 }
 
@@ -401,6 +407,8 @@ export const verifyPayment = (
   data: {
     reNumbers: string[];
     billNos?: string[];
+    wrongTransfer?: boolean;
+    undoConfirmed?: boolean;
     receiptName?: string;
     customerType?: CustomerType;
     whtRate?: WhtRate;
@@ -426,6 +434,7 @@ export interface DiscrepancyRow {
   hasSlip: boolean;
   reNumbers: string[];
   status: PaymentStatus;
+  wrongTransfer: boolean;
   expected: number;
   expectedSource: 'typed' | 're';
   gross: number;
@@ -548,6 +557,7 @@ export interface BankTxnLink {
   receiptName: string;
   customerName: string;
   amount: string;
+  wrongTransfer: boolean;
 }
 
 export interface BankTxn {
@@ -608,6 +618,7 @@ export interface BankSuggestion {
   customerName: string;
   senderName: string;
   amount: string;
+  wrongTransfer: boolean;
   ref: string; // slip reference (OCR อ้างอิง) — eyeball-check vs the bank line's txn id
   dayDistance: number;
   exactAmount: boolean;

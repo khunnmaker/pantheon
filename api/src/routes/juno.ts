@@ -145,6 +145,7 @@ function toRow(p: {
   discExpected: string; discResolution: string; discNote: string;
   discResolvedAt: Date | null; discResolvedBy: string;
   discConfirmedAt: Date | null; discConfirmedBy: string;
+  wrongTransferAt: Date | null; wrongTransferBy: string;
 }) {
   return {
     id: p.id,
@@ -205,16 +206,20 @@ function toRow(p: {
     discResolvedBy: p.discResolvedBy,
     discConfirmedAt: p.discConfirmedAt?.toISOString() ?? null,
     discConfirmedBy: p.discConfirmedBy,
+    wrongTransfer: p.wrongTransferAt !== null,
+    wrongTransferAt: p.wrongTransferAt?.toISOString() ?? null,
+    wrongTransferBy: p.wrongTransferBy,
   };
 }
 
 async function getDiscrepancySnapshot() {
   const [payments, receipts] = await Promise.all([
-    prisma.payment.findMany({ where: { status: { not: 'void' } }, orderBy: { createdAt: 'desc' } }),
+    prisma.payment.findMany({ orderBy: { createdAt: 'desc' } }),
     prisma.reReceipt.findMany({ select: { reNumber: true, amount: true } }),
   ]);
   const components = buildDiscrepancyComponents(payments, receipts);
   const componentsByPayment = componentByPaymentId(components);
+  const receiptAmountByRe = new Map(receipts.map((receipt) => [receipt.reNumber, receipt.amount]));
 
   const rows = payments.flatMap((payment) => {
     let expected = expectedForPayment(payment, componentsByPayment.get(payment.id));
@@ -225,6 +230,13 @@ async function getDiscrepancySnapshot() {
 
     // A resolved auto row may cease to be a single-payment candidate when a completing payment
     // arrives. Keep its audit row visible and show the live self-healed diff as zero.
+    if (payment.wrongTransferAt) expected = { expectedSatang: 0, source: 'typed' as const };
+    if (!expected && payment.status === 'void' && payment.reNumbers.length > 0 && payment.reNumbers.every((re) => receiptAmountByRe.has(re))) {
+      expected = {
+        expectedSatang: payment.reNumbers.reduce((sum, re) => sum + grossSatang({ amount: receiptAmountByRe.get(re) ?? '0', whtAmount: '' }), 0),
+        source: 're' as const,
+      };
+    }
     if (!expected && hasStamps) expected = { expectedSatang: grossSatang(payment), source: 're' as const };
     if (!expected) return [];
 
@@ -242,6 +254,7 @@ async function getDiscrepancySnapshot() {
       hasSlip: !!payment.slipUrl,
       reNumbers: payment.reNumbers,
       status: payment.status,
+      wrongTransfer: payment.wrongTransferAt !== null,
       expected: satangToBaht(expected.expectedSatang),
       expectedSource: expected.source,
       gross: satangToBaht(gross),
@@ -258,7 +271,8 @@ async function getDiscrepancySnapshot() {
     }];
   });
 
-  const open = rows.filter((row) => row._diffSatang !== 0 && !row.discResolution);
+  const activeRows = rows.filter((row) => row.status !== 'void');
+  const open = activeRows.filter((row) => row._diffSatang !== 0 && !row.discResolution);
   const over = open.filter((row) => row._diffSatang > 0);
   const under = open.filter((row) => row._diffSatang < 0);
   return {
@@ -266,7 +280,7 @@ async function getDiscrepancySnapshot() {
     totals: {
       over: { count: over.length, sum: satangToBaht(over.reduce((sum, row) => sum + row._diffSatang, 0)) },
       under: { count: under.length, sum: satangToBaht(under.reduce((sum, row) => sum + row._diffSatang, 0)) },
-      pendingConfirm: rows.filter((row) => !!row.discResolution && !row.discConfirmedAt).length,
+      pendingConfirm: activeRows.filter((row) => !!row.discResolution && !row.discConfirmedAt).length,
     },
     groupHints: mismatchedMultiPaymentComponentCount(components),
     openCount: open.length,
@@ -376,7 +390,7 @@ function toBankTxnRow(
     description: string; details: string; payerName: string; payerBank: string; matchStatus: string;
     refText: string; expressConfirmedAt: Date | null; expressConfirmedById: string | null;
   },
-  links: { paymentId: string; reNumber: string; chequeNo: string; receiptName: string; customerName: string; amount: string }[] = [],
+  links: { paymentId: string; reNumber: string; chequeNo: string; receiptName: string; customerName: string; amount: string; wrongTransfer: boolean }[] = [],
 ) {
   const linkedSum = links.reduce((s, l) => s + txnAmountNum(l.amount), 0);
   return {
@@ -395,7 +409,7 @@ function toBankTxnRow(
     refText: t.refText,
     expressConfirmedAt: t.expressConfirmedAt ? t.expressConfirmedAt.toISOString() : null,
     expressConfirmedById: t.expressConfirmedById,
-    links: links.map((l) => ({ paymentId: l.paymentId, reNumber: l.reNumber, chequeNo: l.chequeNo, receiptName: l.receiptName, customerName: l.customerName, amount: l.amount })),
+    links: links.map((l) => ({ paymentId: l.paymentId, reNumber: l.reNumber, chequeNo: l.chequeNo, receiptName: l.receiptName, customerName: l.customerName, amount: l.amount, wrongTransfer: l.wrongTransfer })),
     linkedSum,
     sumDelta: links.length ? Number((linkedSum - txnAmountNum(t.amount)).toFixed(2)) : null,
   };
@@ -416,6 +430,23 @@ async function recomputeTxnMatchStatus(bankTxnId: string): Promise<void> {
 async function recomputePaymentReconciled(paymentId: string): Promise<void> {
   const linkCount = await prisma.paymentBankMatch.count({ where: { paymentId } });
   await prisma.payment.update({ where: { id: paymentId }, data: { reconciled: linkCount > 0 } });
+}
+
+// A bank credit remains linked as audit evidence, but Express confirmation belongs only to
+// regular income. Clear a line's stamp when the newly-classified payment was its last regular link.
+async function clearWrongOnlyExpressConfirmations(paymentId: string): Promise<void> {
+  const links = await prisma.paymentBankMatch.findMany({ where: { paymentId }, select: { bankTxnId: true } });
+  for (const { bankTxnId } of links) {
+    const regularLinks = await prisma.paymentBankMatch.count({
+      where: { bankTxnId, paymentId: { not: paymentId }, payment: { wrongTransferAt: null } },
+    });
+    if (regularLinks === 0) {
+      await prisma.bankTxn.update({
+        where: { id: bankTxnId },
+        data: { expressConfirmedAt: null, expressConfirmedById: null },
+      });
+    }
+  }
 }
 
 // A KBiz credit line is a cheque deposit when its Description is exactly "Cheque Deposit",
@@ -457,7 +488,7 @@ async function runAutoMatcher(txnIds?: string[]): Promise<{ matched: number; che
       where: { direction: 'in', matchStatus: 'unmatched' },
     }),
     prisma.payment.findMany({
-      where: { status: 'verified', reconciled: false, source: { not: 'cheque' } },
+      where: { status: 'verified', reconciled: false, source: { not: 'cheque' }, wrongTransferAt: null },
       select: {
         id: true,
         amount: true,
@@ -469,7 +500,7 @@ async function runAutoMatcher(txnIds?: string[]): Promise<{ matched: number; che
       },
     }),
     prisma.payment.findMany({
-      where: { source: 'cheque', reconciled: false, status: { not: 'void' } },
+      where: { source: 'cheque', reconciled: false, status: { not: 'void' }, wrongTransferAt: null },
       select: { id: true, amount: true, chequeNo: true },
     }),
   ]);
@@ -594,16 +625,17 @@ export async function junoRoutes(app: FastifyInstance) {
 
   // GET /api/juno/summary — headline counts for the Juno dashboard / login landing.
   app.get('/api/juno/summary', async () => {
+    const regular = { wrongTransferAt: null };
     const [total, received, verified, recorded, flagged, taxRequested, awaitingReceive, discrepancy] = await Promise.all([
-      prisma.payment.count(),
-      prisma.payment.count({ where: { status: 'received' } }),
-      prisma.payment.count({ where: { status: 'verified' } }),
-      prisma.payment.count({ where: { status: 'recorded' } }),
-      prisma.payment.count({ where: { flagged: true, status: { not: 'void' } } }),
-      prisma.payment.count({ where: { taxInvoiceStatus: 'requested', status: { not: 'void' } } }),
+      prisma.payment.count({ where: regular }),
+      prisma.payment.count({ where: { ...regular, status: 'received' } }),
+      prisma.payment.count({ where: { ...regular, status: 'verified' } }),
+      prisma.payment.count({ where: { ...regular, status: 'recorded' } }),
+      prisma.payment.count({ where: { ...regular, flagged: true, status: { not: 'void' } } }),
+      prisma.payment.count({ where: { ...regular, taxInvoiceStatus: 'requested', status: { not: 'void' } } }),
       // รอยืนยันรับเงิน tab badge (task 1): cash/cheque the CEO hasn't yet confirmed he
       // physically received.
-      prisma.payment.count({ where: { source: { in: ['cash', 'cheque'] }, receivedAt: null, status: { not: 'void' } } }),
+      prisma.payment.count({ where: { ...regular, source: { in: ['cash', 'cheque'] }, receivedAt: null, status: { not: 'void' } } }),
       getDiscrepancySnapshot(),
     ]);
     return {
@@ -627,7 +659,7 @@ export async function junoRoutes(app: FastifyInstance) {
     // unpaid+mismatch badge even while the open tab has a search/filter applied.
     const bills = await prisma.manualBill.findMany({ orderBy: { createdAt: 'desc' } });
     const candidatePayments = await prisma.payment.findMany({
-      where: { status: { not: 'void' }, billNos: { isEmpty: false } },
+      where: { status: { not: 'void' }, wrongTransferAt: null, billNos: { isEmpty: false } },
       select: {
         id: true, billNos: true, amount: true, whtAmount: true, status: true, source: true,
         createdAt: true, customerName: true,
@@ -883,9 +915,10 @@ export async function junoRoutes(app: FastifyInstance) {
   app.post<{ Params: { id: string } }>('/api/juno/payments/:id/discrepancy', async (req, reply) => {
     const body = z.object({ expected: moneyStringSchema }).safeParse(req.body);
     if (!body.success) return reply.code(400).send({ error: 'invalid_body' });
-    const current = await prisma.payment.findUnique({ where: { id: req.params.id }, select: { id: true, status: true } });
+    const current = await prisma.payment.findUnique({ where: { id: req.params.id }, select: { id: true, status: true, wrongTransferAt: true } });
     if (!current) return reply.code(404).send({ error: 'not_found' });
     if (current.status === 'void') return reply.code(409).send({ error: 'void_locked' });
+    if (current.wrongTransferAt) return reply.code(409).send({ error: 'wrong_transfer_expected_locked' });
     const payment = await prisma.payment.update({
       where: { id: req.params.id },
       data: { discExpected: body.data.expected.trim() },
@@ -900,9 +933,12 @@ export async function junoRoutes(app: FastifyInstance) {
       note: z.string().max(600).optional(),
     }).safeParse(req.body);
     if (!body.success) return reply.code(400).send({ error: 'invalid_body' });
-    const current = await prisma.payment.findUnique({ where: { id: req.params.id }, select: { id: true, status: true } });
+    const current = await prisma.payment.findUnique({ where: { id: req.params.id }, select: { id: true, status: true, wrongTransferAt: true } });
     if (!current) return reply.code(404).send({ error: 'not_found' });
     if (current.status === 'void') return reply.code(409).send({ error: 'void_locked' });
+    if (current.wrongTransferAt && body.data.resolution !== '' && body.data.resolution !== 'refund') {
+      return reply.code(409).send({ error: 'wrong_transfer_refund_only' });
+    }
 
     const clearing = body.data.resolution === '';
     const payment = await prisma.payment.update({
@@ -960,7 +996,7 @@ export async function junoRoutes(app: FastifyInstance) {
     if (!parsed.success) return reply.code(400).send({ error: 'invalid_query' });
     const q = parsed.data;
 
-    const where: Record<string, unknown> = { whtAmount: { not: '' }, status: { not: 'void' } };
+    const where: Record<string, unknown> = { whtAmount: { not: '' }, status: { not: 'void' }, wrongTransferAt: null };
     const range = thaiDayRange(q.from, q.to);
     if (range) where.createdAt = range;
 
@@ -1246,12 +1282,20 @@ export async function junoRoutes(app: FastifyInstance) {
   app.post<{ Params: { id: string } }>('/api/juno/payments/:id/status', async (req, reply) => {
     const body = z.object({ status: z.enum(STATUSES) }).safeParse(req.body);
     if (!body.success) return reply.code(400).send({ error: 'invalid_status' });
-    if (body.data.status === 'verified') return reply.code(409).send({ error: 'use_verify' });
     const cur = await prisma.payment.findUnique({
       where: { id: req.params.id },
-      select: { id: true, status: true, source: true, receivedAt: true },
+      select: { id: true, status: true, source: true, receivedAt: true, wrongTransferAt: true },
     });
     if (!cur) return reply.code(404).send({ error: 'not_found' });
+    // A marked row can only be reclassified through /verify. Lifecycle exceptions: soft-void
+    // (archiving keeps the marker + audit stamps) and restoring an archived row, which resumes
+    // the dedicated wrong-transfer stage as verified.
+    const restoringWrongTransfer = cur.status === 'void' && cur.wrongTransferAt !== null && body.data.status === 'received';
+    const voidingWrongTransfer = cur.wrongTransferAt !== null && cur.status !== 'void' && body.data.status === 'void';
+    if (cur.wrongTransferAt && !restoringWrongTransfer && !voidingWrongTransfer) {
+      return reply.code(409).send({ error: 'wrong_transfer' });
+    }
+    if (body.data.status === 'verified') return reply.code(409).send({ error: 'use_verify' });
     if (cur.status === 'void' && body.data.status === 'recorded') {
       return reply.code(409).send({ error: 'void_locked' });
     }
@@ -1262,12 +1306,15 @@ export async function junoRoutes(app: FastifyInstance) {
     ) {
       return reply.code(409).send({ error: 'received_required' });
     }
-    const advancing = body.data.status === 'recorded';
+    const nextStatus = restoringWrongTransfer ? 'verified' : body.data.status;
+    const advancing = nextStatus === 'recorded';
     const p = await prisma.payment.update({
       where: { id: req.params.id },
       data: {
-        status: body.data.status,
-        ...(advancing
+        status: nextStatus,
+        ...(restoringWrongTransfer || voidingWrongTransfer
+          ? {} // preserve the original verification audit stamps across void/restore
+          : advancing
           ? { verifiedById: req.agent?.id ?? null, verifiedAt: new Date() }
           : { verifiedById: null, verifiedAt: null }),   // received/void clear the stamps
       },
@@ -1290,6 +1337,8 @@ export async function junoRoutes(app: FastifyInstance) {
   const verifyBodySchema = z.object({
     reNumbers: z.array(z.string()).max(50),
     billNos: z.array(z.string()).max(20).optional(),
+    wrongTransfer: z.boolean().optional(),
+    undoConfirmed: z.boolean().optional(),
     receiptName: z.string().max(200).optional(),
     customerType: customerTypeSchema.optional(),
     whtRate: z.union([z.literal(0), z.literal(1), z.literal(2), z.literal(3), z.literal(5)]).optional(),
@@ -1303,10 +1352,12 @@ export async function junoRoutes(app: FastifyInstance) {
     // Client and API share the same normalization contract: formatting spaces/dashes collapse,
     // MB + a canonical 9-leading number becomes its bare ManualBill key, while bounded alpha
     // document refs remain billNos. Dedupe preserving order and reject cross-filed RE/bill data.
+    let hasSentinel = false;
     const seen = new Set<string>();
     const normalized: string[] = [];
     for (const raw of body.data.reNumbers) {
       const reference = normalizeReceiptReference(raw);
+      if (reference?.kind === 'wrong_transfer') { hasSentinel = true; continue; }
       if (!reference || reference.kind !== 're') {
         return reply.code(400).send({ error: 'invalid_re' });
       }
@@ -1316,13 +1367,16 @@ export async function junoRoutes(app: FastifyInstance) {
     const normalizedBills: string[] = [];
     for (const raw of body.data.billNos ?? []) {
       const reference = normalizeReceiptReference(raw);
+      if (reference?.kind === 'wrong_transfer') { hasSentinel = true; continue; }
       if (!reference || reference.kind !== 'bill') {
         return reply.code(400).send({ error: 'invalid_bill_no', message: 'รูปแบบเลขเอกสารไม่ถูกต้อง' });
       }
       if (!seenBills.has(reference.value)) { seenBills.add(reference.value); normalizedBills.push(reference.value); }
     }
-    if (normalized.length === 0 && normalizedBills.length === 0) {
-      return reply.code(400).send({ error: 'receipt_required' });
+    const hasRealDocuments = normalized.length > 0 || normalizedBills.length > 0;
+    const wantsWrongTransfer = body.data.wrongTransfer === true || hasSentinel;
+    if (hasSentinel && hasRealDocuments || body.data.wrongTransfer === true && hasRealDocuments) {
+      return reply.code(409).send({ error: 'wrong_transfer_mixed' });
     }
 
     // whtRate defaults to 0 (no WHT) when omitted; whtAmount only makes sense alongside a
@@ -1331,14 +1385,64 @@ export async function junoRoutes(app: FastifyInstance) {
     const whtRate: (typeof WHT_RATES)[number] = body.data.whtRate ?? 0;
     const whtAmount = whtRate === 0 ? '' : (body.data.whtAmount?.trim() ?? '');
 
-    const cur = await prisma.payment.findUnique({ where: { id: req.params.id }, select: { id: true, status: true } });
+    const cur = await prisma.payment.findUnique({
+      where: { id: req.params.id },
+      select: {
+        id: true, status: true, wrongTransferAt: true, discResolution: true,
+        discResolvedAt: true, discConfirmedAt: true,
+      },
+    });
     if (!cur) return reply.code(404).send({ error: 'not_found' });
     if (cur.status === 'void') return reply.code(409).send({ error: 'void_locked' });
 
-    // Editing the check data on an already-recorded (ยืนยันใน Express) payment must NOT
-    // demote it back to 'verified' or re-stamp — the owner's Express confirmation stands;
-    // only the field values are refreshed.
-    const keepRecorded = cur.status === 'recorded';
+    const actor = req.agent?.email ?? req.agent?.id ?? '';
+    const now = new Date();
+    if (wantsWrongTransfer) {
+      const payment = await prisma.payment.update({
+        where: { id: req.params.id },
+        data: {
+          status: 'verified',
+          wrongTransferAt: now,
+          wrongTransferBy: actor,
+          discExpected: '0',
+          discResolution: '', discNote: '', discResolvedAt: null, discResolvedBy: '',
+          discConfirmedAt: null, discConfirmedBy: '',
+          reNumbers: [], reNumber: '', billNos: [], receiptName: '', customerType: '',
+          whtRate: 0, whtAmount: '',
+          verifiedById: req.agent?.id ?? null,
+          verifiedAt: now,
+        },
+      });
+      await clearWrongOnlyExpressConfirmations(payment.id);
+      if (cur.status === 'recorded') {
+        void syncPaymentToJupiter(payment.id).catch((err) => req.log.error({ err }, 'jupiter sync failed'));
+      }
+      return { ok: true, payment: toRow(payment) };
+    }
+
+    if (!hasRealDocuments) {
+      if (!cur.wrongTransferAt) return reply.code(400).send({ error: 'receipt_required' });
+      const hasResolution = !!(cur.discResolution || cur.discResolvedAt || cur.discConfirmedAt);
+      if (hasResolution && !body.data.undoConfirmed) {
+        return reply.code(409).send({ error: 'wrong_transfer_resolution_locked' });
+      }
+      const payment = await prisma.payment.update({
+        where: { id: req.params.id },
+        data: {
+          status: 'received', wrongTransferAt: null, wrongTransferBy: '',
+          discExpected: '', discResolution: '', discNote: '', discResolvedAt: null,
+          discResolvedBy: '', discConfirmedAt: null, discConfirmedBy: '',
+          verifiedById: null, verifiedAt: null,
+        },
+      });
+      return { ok: true, payment: toRow(payment) };
+    }
+
+    // Routine document edits on a normally-recorded payment preserve its Express state and
+    // original verification audit stamps. Only correcting a marked wrong transfer demotes it
+    // and asks Jupiter to remove the former income projection.
+    const correctingWrongTransfer = cur.wrongTransferAt !== null;
+    const keepRecorded = cur.status === 'recorded' && !correctingWrongTransfer;
     const p = await prisma.payment.update({
       where: { id: req.params.id },
       data: {
@@ -1350,10 +1454,20 @@ export async function junoRoutes(app: FastifyInstance) {
         customerType: body.data.customerType ?? '',
         whtRate,
         whtAmount,
-        ...(body.data.discExpected === undefined ? {} : { discExpected: body.data.discExpected.trim() }),
-        ...(keepRecorded ? {} : { verifiedById: req.agent?.id ?? null, verifiedAt: new Date() }),
+        ...(correctingWrongTransfer
+          ? {
+              wrongTransferAt: null, wrongTransferBy: '',
+              discExpected: '', discResolution: '', discNote: '', discResolvedAt: null,
+              discResolvedBy: '', discConfirmedAt: null, discConfirmedBy: '',
+            }
+          : body.data.discExpected === undefined ? {} : { discExpected: body.data.discExpected.trim() }),
+        ...(keepRecorded ? {} : { verifiedById: req.agent?.id ?? null, verifiedAt: now }),
       },
     });
+
+    if (cur.status === 'recorded' && correctingWrongTransfer) {
+      void syncPaymentToJupiter(p.id).catch((err) => req.log.error({ err }, 'jupiter sync failed'));
+    }
 
     return { ok: true, payment: toRow(p) };
   });
@@ -1408,7 +1522,7 @@ export async function junoRoutes(app: FastifyInstance) {
     if (!parsed.success) return reply.code(400).send({ error: 'invalid_query' });
     const q = parsed.data;
 
-    const where: Record<string, unknown> = { status: { not: 'void' } };
+    const where: Record<string, unknown> = { status: { not: 'void' }, wrongTransferAt: null };
     const range = thaiDayRange(q.from, q.to);
     if (range) where.createdAt = range;
 
@@ -1468,6 +1582,7 @@ export async function junoRoutes(app: FastifyInstance) {
       'transferAt', 'ref', 'sales', 'status', 'reNumber', 'บิลมือ', 'receiptName', 'customerType',
       'flagged', 'taxInvoiceStatus', 'taxInvoice', 'note',
       'source', 'settleState', 'chequeNo', 'chequeBank', 'chequeDueDate',
+      'wrongTransfer',
     ];
     const esc = (v: unknown): string => {
       const raw = String(v ?? '');
@@ -1484,6 +1599,7 @@ export async function junoRoutes(app: FastifyInstance) {
         p.bank, p.transferAt, p.ref, p.salesName, p.status, p.reNumber, p.billNos.join('/'), p.receiptName, p.customerType,
         p.flagged ? 'yes' : '', p.taxInvoiceStatus, p.taxInvoice, p.note,
         p.source, p.settleState, p.chequeNo, p.chequeBank, p.chequeDueDate,
+        p.wrongTransferAt ? 'yes' : '',
       ].map(esc).join(','));
     }
     reply.header('content-type', 'text/csv; charset=utf-8');
@@ -1659,24 +1775,35 @@ export async function junoRoutes(app: FastifyInstance) {
     const where: Record<string, unknown> = {};
     where.direction = q.dir && q.dir !== 'all' ? q.dir : 'in';
     if (q.status === 'unmatched') where.matchStatus = 'unmatched';
-    else if (q.status === 'matched') { where.matchStatus = 'matched'; where.expressConfirmedAt = null; }
+    else if (q.status === 'matched') {
+      where.matchStatus = 'matched';
+      where.expressConfirmedAt = null;
+      where.OR = [
+        { refText: { not: '' } },
+        { matches: { some: { payment: { wrongTransferAt: null } } } },
+      ];
+    }
     else if (q.status === 'confirmed') where.expressConfirmedAt = { not: null };
     const range = thaiDayRange(q.from, q.to);
     if (range) where.txnAt = range;
     const term = q.q?.trim();
     if (term) {
-      where.OR = [
+      const search = [
         { details: { contains: term, mode: 'insensitive' } },
         { payerName: { contains: term, mode: 'insensitive' } },
         { refText: { contains: term, mode: 'insensitive' } },
         { amount: { contains: term } },
       ];
+      if (where.OR) {
+        where.AND = [{ OR: where.OR }, { OR: search }];
+        delete where.OR;
+      } else where.OR = search;
     }
 
     const txns = await prisma.bankTxn.findMany({ where, orderBy: { txnAt: 'desc' }, take: q.limit ?? 200 });
     const links = await prisma.paymentBankMatch.findMany({
       where: { bankTxnId: { in: txns.map((t) => t.id) } },
-      select: { bankTxnId: true, payment: { select: { id: true, reNumber: true, chequeNo: true, receiptName: true, customerName: true, amount: true } } },
+      select: { bankTxnId: true, payment: { select: { id: true, reNumber: true, chequeNo: true, receiptName: true, customerName: true, amount: true, wrongTransferAt: true } } },
     });
     const byTxn = new Map<string, typeof links>();
     for (const l of links) byTxn.set(l.bankTxnId, [...(byTxn.get(l.bankTxnId) ?? []), l]);
@@ -1687,7 +1814,7 @@ export async function junoRoutes(app: FastifyInstance) {
           t,
           (byTxn.get(t.id) ?? []).map((l) => ({
             paymentId: l.payment.id, reNumber: l.payment.reNumber, chequeNo: l.payment.chequeNo, receiptName: l.payment.receiptName,
-            customerName: l.payment.customerName, amount: l.payment.amount,
+            customerName: l.payment.customerName, amount: l.payment.amount, wrongTransfer: l.payment.wrongTransferAt !== null,
           })),
         ),
       ),
@@ -1714,12 +1841,12 @@ export async function junoRoutes(app: FastifyInstance) {
     //   all       = union of the three (the receipt-side universe of bank reconciliation).
     // The old two-state design lumped confirmed into matched, so ตามใบเสร็จ showed fewer
     // filters than ตามเงินเข้า for no workflow reason.
-    const pendingWhere = { status: 'verified', reconciled: false, source: { not: 'cash' } };
+    const pendingWhere = { status: 'verified', reconciled: false, source: { not: 'cash' }, wrongTransferAt: null };
     const where: Record<string, unknown> =
       state === 'pending' ? { ...pendingWhere }
-      : state === 'matched' ? { reconciled: true, status: 'verified' }
-      : state === 'confirmed' ? { reconciled: true, status: 'recorded' }
-      : { OR: [{ ...pendingWhere }, { reconciled: true, status: { in: ['verified', 'recorded'] } }] };
+      : state === 'matched' ? { reconciled: true, status: 'verified', wrongTransferAt: null }
+      : state === 'confirmed' ? { reconciled: true, status: 'recorded', wrongTransferAt: null }
+      : { OR: [{ ...pendingWhere }, { reconciled: true, status: { in: ['verified', 'recorded'] }, wrongTransferAt: null }] };
     const term = parsed.data.q?.trim();
     if (term) {
       const search = [
@@ -1966,7 +2093,7 @@ export async function junoRoutes(app: FastifyInstance) {
 
     const candidates = await prisma.payment.findMany({
       where: { status: 'verified', id: { notIn: [...excludeIds] } },
-      select: { id: true, reNumber: true, chequeNo: true, receiptName: true, customerName: true, senderName: true, amount: true, transferAt: true, createdAt: true, ref: true },
+      select: { id: true, reNumber: true, chequeNo: true, receiptName: true, customerName: true, senderName: true, amount: true, transferAt: true, createdAt: true, ref: true, wrongTransferAt: true },
       take: 500, // ranked below; a bound keeps this cheap even on a large backlog
     });
 
@@ -2003,6 +2130,7 @@ export async function junoRoutes(app: FastifyInstance) {
         customerName: s.p.customerName,
         senderName: s.p.senderName,
         amount: s.p.amount,
+        wrongTransfer: s.p.wrongTransferAt !== null,
         // slip reference (OCR อ้างอิง) — lets FIN eyeball a QR payment against the K SHOP
         // line's transaction id, the one reference both sides actually share
         ref: s.p.ref,
@@ -2066,7 +2194,7 @@ export async function junoRoutes(app: FastifyInstance) {
       },
       select: {
         id: true, reNumber: true, chequeNo: true, receiptName: true, customerName: true,
-        senderName: true, amount: true, transferAt: true, createdAt: true, ref: true,
+        senderName: true, amount: true, transferAt: true, createdAt: true, ref: true, wrongTransferAt: true,
       },
       take: 60,
     });
@@ -2097,6 +2225,7 @@ export async function junoRoutes(app: FastifyInstance) {
         customerName: payment.customerName,
         senderName: payment.senderName,
         amount: payment.amount,
+        wrongTransfer: payment.wrongTransferAt !== null,
         ref: payment.ref,
         dayDistance: Number(days.toFixed(2)),
         exactAmount: amountsEqual(txn.amount, payment.amount),
@@ -2183,7 +2312,14 @@ export async function junoRoutes(app: FastifyInstance) {
     if (!txn) return reply.code(404).send({ error: 'not_found' });
     if (txn.matchStatus !== 'matched') return reply.code(409).send({ error: 'not_matched' });
 
-    const links = await prisma.paymentBankMatch.findMany({ where: { bankTxnId: txn.id }, select: { paymentId: true } });
+    const links = await prisma.paymentBankMatch.findMany({
+      where: { bankTxnId: txn.id },
+      select: { paymentId: true, payment: { select: { wrongTransferAt: true } } },
+    });
+    const regularLinks = links.filter((link) => link.payment.wrongTransferAt === null);
+    if (links.length > 0 && regularLinks.length === 0) {
+      return reply.code(409).send({ error: 'wrong_transfer_only' });
+    }
     const now = new Date();
     await prisma.$transaction([
       prisma.bankTxn.update({ where: { id: txn.id }, data: { expressConfirmedAt: now, expressConfirmedById: req.agent?.id ?? null } }),
@@ -2191,8 +2327,9 @@ export async function junoRoutes(app: FastifyInstance) {
         // Task 1 gate: cash/cheque can't be booked to Express until the CEO has confirmed
         // physical receipt (receivedAt) — transfers advance as before. Mirrors POST /status.
         where: {
-          id: { in: links.map((l) => l.paymentId) },
+          id: { in: regularLinks.map((l) => l.paymentId) },
           status: 'verified',
+          wrongTransferAt: null,
           OR: [{ source: { notIn: ['cash', 'cheque'] } }, { receivedAt: { not: null } }],
         },
         data: { status: 'recorded', verifiedById: req.agent?.id ?? null, verifiedAt: now },
@@ -2213,6 +2350,10 @@ export async function junoRoutes(app: FastifyInstance) {
     const range = thaiDayRange(undefined, body.data.to);
     const where: Record<string, unknown> = {
       direction: 'in', matchStatus: 'matched', expressConfirmedAt: null,
+      OR: [
+        { refText: { not: '' } },
+        { matches: { some: { payment: { wrongTransferAt: null } } } },
+      ],
     };
     if (range?.lte) where.txnAt = { lte: range.lte };
 
@@ -2220,7 +2361,7 @@ export async function junoRoutes(app: FastifyInstance) {
     if (!txns.length) return { ok: true, txnsConfirmed: 0, paymentsAdvanced: 0 };
 
     const links = await prisma.paymentBankMatch.findMany({
-      where: { bankTxnId: { in: txns.map((t) => t.id) } },
+      where: { bankTxnId: { in: txns.map((t) => t.id) }, payment: { wrongTransferAt: null } },
       select: { paymentId: true },
     });
     const paymentIds = [...new Set(links.map((l) => l.paymentId))];
@@ -2237,6 +2378,7 @@ export async function junoRoutes(app: FastifyInstance) {
         where: {
           id: { in: paymentIds },
           status: 'verified',
+          wrongTransferAt: null,
           OR: [{ source: { notIn: ['cash', 'cheque'] } }, { receivedAt: { not: null } }],
         },
         data: { status: 'recorded', verifiedById: req.agent?.id ?? null, verifiedAt: now },
@@ -2256,8 +2398,14 @@ export async function junoRoutes(app: FastifyInstance) {
     const [unmatchedIn, unmatchedInRecent, matchedUnconfirmed, unreconciledVerified, lastKbiz, lastKshop] = await Promise.all([
       prisma.bankTxn.findMany({ where: { direction: 'in', matchStatus: 'unmatched' }, select: { amount: true } }),
       prisma.bankTxn.count({ where: { direction: 'in', matchStatus: 'unmatched', txnAt: { gte: recentCutoff } } }),
-      prisma.bankTxn.findMany({ where: { direction: 'in', matchStatus: 'matched', expressConfirmedAt: null }, select: { amount: true } }),
-      prisma.payment.findMany({ where: { status: 'verified', reconciled: false }, select: { amount: true, verifiedAt: true, createdAt: true } }),
+      prisma.bankTxn.findMany({
+        where: {
+          direction: 'in', matchStatus: 'matched', expressConfirmedAt: null,
+          OR: [{ refText: { not: '' } }, { matches: { some: { payment: { wrongTransferAt: null } } } }],
+        },
+        select: { amount: true },
+      }),
+      prisma.payment.findMany({ where: { status: 'verified', reconciled: false, wrongTransferAt: null }, select: { amount: true, verifiedAt: true, createdAt: true } }),
       prisma.bankImport.findFirst({ where: { source: 'kbiz' }, orderBy: { importedAt: 'desc' } }),
       prisma.bankImport.findFirst({ where: { source: 'kshop' }, orderBy: { importedAt: 'desc' } }),
     ]);
@@ -2282,7 +2430,7 @@ export async function junoRoutes(app: FastifyInstance) {
   app.get('/api/juno/bank/watchlist', async (req) => {
     const limit = Math.min(Math.max(Number((req.query as { limit?: string }).limit) || 100, 1), 500);
     const rows = await prisma.payment.findMany({
-      where: { status: 'verified', reconciled: false },
+      where: { status: 'verified', reconciled: false, wrongTransferAt: null },
       orderBy: { createdAt: 'asc' },
       take: limit,
     });
@@ -2422,7 +2570,7 @@ export async function junoRoutes(app: FastifyInstance) {
     // one reNumber — loaded ONCE and grouped in JS into a reCore -> payments[] map. This is
     // the whole reason it's 2 queries instead of N: no per-RE lookup.
     const candidatePayments = await prisma.payment.findMany({
-      where: { status: { not: 'void' }, reNumbers: { isEmpty: false } },
+      where: { status: { not: 'void' }, wrongTransferAt: null, reNumbers: { isEmpty: false } },
       select: { id: true, reNumbers: true, amount: true, whtAmount: true, customerName: true, status: true },
     });
     const byRe = new Map<string, typeof candidatePayments>();

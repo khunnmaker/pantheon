@@ -1,11 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import {
   isManualBillReference,
+  displayReceiptReference,
   normalizeBillReference,
   normalizeReceiptReference,
 } from './receiptReferences.js';
 
 describe('receipt reference normalization', () => {
+  it('reserves only the exact all-zero sentinel for a wrong transfer', () => {
+    expect(normalizeReceiptReference('0000000')).toEqual({ kind: 'wrong_transfer', value: '0000000' });
+    expect(normalizeReceiptReference('0000001')).toEqual({ kind: 're', value: '0000001' });
+    expect(normalizeReceiptReference('RE 0000000')).toEqual({ kind: 're', value: '0000000' });
+  });
+
   it.each(['9690001', 'MB9690001', 'MB 9690001', 'mb-9690001'])(
     'canonicalizes manual bill %s to its bare number',
     (raw) => {
@@ -38,5 +45,14 @@ describe('receipt reference normalization', () => {
     expect(isManualBillReference('9699999')).toBe(true);
     expect(isManualBillReference('XS000001')).toBe(false);
     expect(isManualBillReference('6900025')).toBe(false);
+  });
+
+  it.each([
+    [{ kind: 're', value: '6907674' } as const, 'RE 6907674'],
+    [{ kind: 'bill', billKind: 'manual', value: '9690001' } as const, 'MB 9690001'],
+    [{ kind: 'bill', billKind: 'external', value: 'MB690001' } as const, 'MB69-0001'],
+    [{ kind: 'bill', billKind: 'external', value: 'XS000001' } as const, 'XS000001'],
+  ])('formats stored references without guessing their kind', (reference, label) => {
+    expect(displayReceiptReference(reference)).toBe(label);
   });
 });

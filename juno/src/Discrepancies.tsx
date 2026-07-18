@@ -6,6 +6,8 @@ import {
   getDiscrepancies,
   resolveDiscrepancy,
   setDiscrepancyExpected,
+  setStatus,
+  verifyPayment,
   type DiscResolution,
   type DiscrepancyResponse,
   type DiscrepancyRow,
@@ -50,7 +52,7 @@ export default function Discrepancies({ isCeo, onChanged }: { isCeo: boolean; on
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [direction, setDirection] = useState<'all' | 'over' | 'under'>('all');
-  const [state, setState] = useState<'open' | 'resolved' | 'confirmed'>('open');
+  const [state, setState] = useState<'open' | 'resolved' | 'confirmed' | 'archived'>('open');
   const [editing, setEditing] = useState<DiscrepancyRow | null>(null);
 
   const load = useCallback(() => {
@@ -64,7 +66,8 @@ export default function Discrepancies({ isCeo, onChanged }: { isCeo: boolean; on
   useEffect(load, [load]);
 
   const rows = useMemo(() => (data?.rows ?? []).filter((row) => (
-    (direction === 'all' || row.direction === direction) && stateOf(row) === state
+    (direction === 'all' || row.direction === direction) &&
+    (state === 'archived' ? row.status === 'void' : row.status !== 'void' && stateOf(row) === state)
   )), [data, direction, state]);
 
   const changed = () => { load(); onChanged(); };
@@ -90,7 +93,7 @@ export default function Discrepancies({ isCeo, onChanged }: { isCeo: boolean; on
       <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
         <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 p-3">
           <ChipGroup value={direction} onChange={setDirection} options={[['all', 'ทั้งหมด'], ['over', 'เกิน'], ['under', 'ขาด']]} />
-          <ChipGroup value={state} onChange={setState} options={[['open', 'เปิดอยู่'], ['resolved', 'รอ CEO ยืนยัน'], ['confirmed', 'เสร็จสิ้น']]} />
+          <ChipGroup value={state} onChange={setState} options={[['open', 'เปิดอยู่'], ['resolved', 'รอ CEO ยืนยัน'], ['confirmed', 'เสร็จสิ้น'], ['archived', 'ยกเลิก/เก็บถาวร']]} />
           <button onClick={load} className="ml-auto rounded-lg border border-slate-300 p-1.5 text-slate-500 hover:bg-slate-50" title="รีเฟรช"><RefreshCw size={14} /></button>
         </div>
 
@@ -116,14 +119,17 @@ export default function Discrepancies({ isCeo, onChanged }: { isCeo: boolean; on
                     <td className="px-3 py-3 whitespace-nowrap text-slate-500">{row.transferAt || fmtDate(row.createdAt)}</td>
                     <td className="px-3 py-3">
                       <div className="font-medium text-slate-800">{row.receiptName || row.customerName || '—'}</div>
+                      {row.wrongTransfer && <div className="mt-1 inline-flex rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-semibold text-rose-700">โอนเงินผิด</div>}
                       <div className="mt-1 flex flex-wrap gap-1">{row.reNumbers.map((re) => <span key={re} className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-600">RE {re}</span>)}</div>
                     </td>
                     <td className="px-3 py-3 text-right font-semibold whitespace-nowrap">{baht(row.gross)}</td>
-                    <td className="px-3 py-3 text-right whitespace-nowrap">{baht(row.expected)}<div className="text-[10px] text-slate-400">{row.expectedSource === 'typed' ? 'FIN กรอก' : 'จาก RE'}</div></td>
-                    <td className={`px-3 py-3 text-right font-bold whitespace-nowrap ${row.diff > 0 ? 'text-emerald-700' : row.diff < 0 ? 'text-rose-700' : 'text-sky-700'}`}>{signedDiff(row.diff)}</td>
+                    <td className="px-3 py-3 text-right whitespace-nowrap">{baht(row.expected)}<div className="text-[10px] text-slate-400">{row.wrongTransfer ? 'ไม่มีเอกสารขาย' : row.expectedSource === 'typed' ? 'FIN กรอก' : 'จาก RE'}</div></td>
+                    <td className={`px-3 py-3 text-right font-bold whitespace-nowrap ${row.wrongTransfer ? 'text-rose-700' : row.diff > 0 ? 'text-emerald-700' : row.diff < 0 ? 'text-rose-700' : 'text-sky-700'}`}>{row.wrongTransfer ? `ต้องคืน ${baht(row.gross)}` : signedDiff(row.diff)}</td>
                     <td className="px-3 py-3"><StateBadge row={row} />{row.discResolution && <div className="mt-1 text-[11px] text-slate-500">{RESOLUTION_LABELS[row.discResolution]}</div>}</td>
                     <td className="px-3 py-3 text-right whitespace-nowrap">
-                      <button onClick={() => setEditing(row)} className="rounded-lg border border-emerald-200 px-2.5 py-1.5 text-xs font-medium text-emerald-700 hover:bg-emerald-50">บันทึกการจัดการ</button>
+                      {row.status === 'void' ? (
+                        <button onClick={() => { void setStatus(row.id, 'received').then(changed); }} className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50">คืนค่ารายการ</button>
+                      ) : <button onClick={() => setEditing(row)} className="rounded-lg border border-emerald-200 px-2.5 py-1.5 text-xs font-medium text-emerald-700 hover:bg-emerald-50">{row.wrongTransfer ? 'บันทึกว่าโอนคืนแล้ว' : 'บันทึกการจัดการ'}</button>}
                       {isCeo && row.discResolution && (
                         <ConfirmButton row={row} onChanged={changed} />
                       )}
@@ -158,26 +164,26 @@ function ConfirmButton({ row, onChanged }: { row: DiscrepancyRow; onChanged: () 
 function ResolutionDialog({ row, onClose, onChanged }: { row: DiscrepancyRow; onClose: () => void; onChanged: () => void }) {
   const [expected, setExpected] = useState(row.discExpected || String(row.expected));
   // Owner default (2026-07-12): pre-select the common case — เครดิตรอบหน้า (รอชำระเพิ่ม for ขาด).
-  const [resolution, setResolution] = useState<DiscResolution>(row.discResolution || (row.direction === 'under' ? 'chase' : 'credit'));
+  const [resolution, setResolution] = useState<DiscResolution>(row.wrongTransfer ? 'refund' : row.discResolution || (row.direction === 'under' ? 'chase' : 'credit'));
   const [note, setNote] = useState(row.discNote);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const options: Exclude<DiscResolution, ''>[] = row.direction === 'under' ? ['chase', 'writeoff'] : ['refund', 'credit', 'writeoff'];
+  const options: Exclude<DiscResolution, ''>[] = row.wrongTransfer ? ['refund'] : row.direction === 'under' ? ['chase', 'writeoff'] : ['refund', 'credit', 'writeoff'];
   async function save() {
     setBusy(true); setError('');
     try {
-      await setDiscrepancyExpected(row.id, expected.trim());
+      if (!row.wrongTransfer) await setDiscrepancyExpected(row.id, expected.trim());
       await resolveDiscrepancy(row.id, resolution, note.trim() || undefined);
       onChanged();
     } catch { setError('บันทึกไม่สำเร็จ — ตรวจสอบยอดและลองใหม่'); } finally { setBusy(false); }
   }
   return <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/50 p-4" onClick={onClose}><div className="w-full max-w-md space-y-3 rounded-2xl bg-white p-4" onClick={(e) => e.stopPropagation()}>
-    <div className="font-semibold text-slate-800">บันทึกการจัดการส่วนต่าง</div>
-    <label className="block text-xs text-slate-500">ยอดตาม RE (ก่อนหัก)<input value={expected} onChange={(e) => setExpected(e.target.value)} inputMode="decimal" className="mt-1 w-full rounded-lg border border-slate-300 px-2.5 py-2 text-sm" /></label>
+    <div className="font-semibold text-slate-800">{row.wrongTransfer ? `โอนเงินผิด — ต้องคืน ${baht(row.gross)}` : 'บันทึกการจัดการส่วนต่าง'}</div>
+    {!row.wrongTransfer && <label className="block text-xs text-slate-500">ยอดตาม RE (ก่อนหัก)<input value={expected} onChange={(e) => setExpected(e.target.value)} inputMode="decimal" className="mt-1 w-full rounded-lg border border-slate-300 px-2.5 py-2 text-sm" /></label>}
     <div><div className="mb-1 text-xs text-slate-500">วิธีจัดการ</div><div className="grid gap-1.5">{options.map((key) => <button key={key} onClick={() => setResolution(key)} className={`rounded-lg border px-3 py-2 text-left text-sm ${resolution === key ? 'border-emerald-500 bg-emerald-50 text-emerald-700' : 'border-slate-200 text-slate-600'}`}>{RESOLUTION_LABELS[key]}</button>)}</div></div>
     <label className="block text-xs text-slate-500">หมายเหตุ<textarea value={note} onChange={(e) => setNote(e.target.value)} rows={3} className="mt-1 w-full rounded-lg border border-slate-300 px-2.5 py-2 text-sm" /></label>
     {error && <div className="text-xs text-rose-600">{error}</div>}
-    <div className="flex justify-between gap-2"><button disabled={busy || !row.discResolution} onClick={() => { setResolution(''); setNote(''); }} className="text-xs text-rose-600 disabled:opacity-30">ล้างการจัดการ</button><div className="flex gap-2"><button onClick={onClose} className="rounded-lg bg-slate-100 px-3 py-1.5 text-sm text-slate-600">ยกเลิก</button><button disabled={busy} onClick={save} className="flex items-center gap-1 rounded-lg bg-emerald-600 px-4 py-1.5 text-sm font-semibold text-white disabled:opacity-50">{busy ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />} บันทึก</button></div></div>
+    <div className="flex justify-between gap-2">{row.wrongTransfer ? <button disabled={busy} onClick={() => { if (window.confirm('ยกเลิกการจัดประเภทโอนเงินผิดและกลับไปรอตรวจ?')) { setBusy(true); verifyPayment(row.id, { reNumbers: [], billNos: [], wrongTransfer: false, undoConfirmed: true }).then(onChanged).catch(() => setError('ล้างการจัดประเภทไม่สำเร็จ')).finally(() => setBusy(false)); } }} className="text-xs text-rose-600 disabled:opacity-30">ไม่ใช่โอนเงินผิด / กลับไปรอตรวจ</button> : <button disabled={busy || !row.discResolution} onClick={() => { setResolution(''); setNote(''); }} className="text-xs text-rose-600 disabled:opacity-30">ล้างการจัดการ</button>}<div className="flex gap-2"><button onClick={onClose} className="rounded-lg bg-slate-100 px-3 py-1.5 text-sm text-slate-600">ยกเลิก</button><button disabled={busy} onClick={save} className="flex items-center gap-1 rounded-lg bg-emerald-600 px-4 py-1.5 text-sm font-semibold text-white disabled:opacity-50">{busy ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />} {row.wrongTransfer ? 'บันทึกว่าโอนคืนแล้ว' : 'บันทึก'}</button></div></div>
   </div></div>;
 }
 
@@ -201,12 +207,12 @@ export function PaymentDiscrepancyBlock({ payment, isCeo, onUpdated }: { payment
   const hasStamps = !!(payment.discResolution || payment.discResolvedAt || payment.discConfirmedAt);
   if (!row && !hasStamps) return null;
   const direction = row?.direction ?? 'balanced';
-  const options: Exclude<DiscResolution, ''>[] = direction === 'under' ? ['chase', 'writeoff'] : ['refund', 'credit', 'writeoff'];
+  const options: Exclude<DiscResolution, ''>[] = payment.wrongTransfer ? ['refund'] : direction === 'under' ? ['chase', 'writeoff'] : ['refund', 'credit', 'writeoff'];
   async function run(key: string, action: () => Promise<{ payment: Payment }>) { setBusy(key); setErr(''); try { const result = await action(); onUpdated(result.payment); load(); } catch { setErr('บันทึกไม่สำเร็จ — ตรวจสอบยอดและลองใหม่'); } finally { setBusy(''); } }
   return <div className="mx-4 mt-3 space-y-2 rounded-lg border border-emerald-200 bg-emerald-50/40 p-3 text-xs">
-    <div className="flex items-center justify-between"><span className="font-semibold text-slate-700">ส่วนต่างยอด</span>{row && <span className={`font-bold ${row.diff > 0 ? 'text-emerald-700' : row.diff < 0 ? 'text-rose-700' : 'text-sky-700'}`}>{signedDiff(row.diff)}</span>}</div>
-    {row && <div className="text-slate-500">ยอดเต็ม {baht(row.gross)} · ยอดตาม RE {baht(row.expected)} ({row.expectedSource === 'typed' ? 'FIN กรอก' : 'จาก RE'})</div>}
-    <div className="flex gap-1.5"><input value={expected} onChange={(e) => setExpected(e.target.value)} inputMode="decimal" placeholder="ยอดตาม RE" className="min-w-0 flex-1 rounded-lg border border-slate-300 px-2 py-1.5" /><button disabled={!!busy} onClick={() => run('expected', () => setDiscrepancyExpected(payment.id, expected.trim()))} className="rounded-lg bg-white px-2 py-1.5 text-emerald-700 border border-emerald-200">ปรับยอด</button>{payment.discExpected && <button disabled={!!busy} onClick={() => run('expected', () => setDiscrepancyExpected(payment.id, ''))} className="text-slate-500">ใช้ RE</button>}</div>
+    <div className="flex items-center justify-between"><span className="font-semibold text-slate-700">{payment.wrongTransfer ? 'โอนเงินผิด' : 'ส่วนต่างยอด'}</span>{row && <span className={`font-bold ${payment.wrongTransfer ? 'text-rose-700' : row.diff > 0 ? 'text-emerald-700' : row.diff < 0 ? 'text-rose-700' : 'text-sky-700'}`}>{payment.wrongTransfer ? `ต้องคืน ${baht(row.gross)}` : signedDiff(row.diff)}</span>}</div>
+    {row && <div className="text-slate-500">{payment.wrongTransfer ? 'ไม่มีเอกสารขาย · ยอดรับเข้าทั้งหมดต้องโอนคืน' : `ยอดเต็ม ${baht(row.gross)} · ยอดตาม RE ${baht(row.expected)} (${row.expectedSource === 'typed' ? 'FIN กรอก' : 'จาก RE'})`}</div>}
+    {!payment.wrongTransfer && <div className="flex gap-1.5"><input value={expected} onChange={(e) => setExpected(e.target.value)} inputMode="decimal" placeholder="ยอดตาม RE" className="min-w-0 flex-1 rounded-lg border border-slate-300 px-2 py-1.5" /><button disabled={!!busy} onClick={() => run('expected', () => setDiscrepancyExpected(payment.id, expected.trim()))} className="rounded-lg bg-white px-2 py-1.5 text-emerald-700 border border-emerald-200">ปรับยอด</button>{payment.discExpected && <button disabled={!!busy} onClick={() => run('expected', () => setDiscrepancyExpected(payment.id, ''))} className="text-slate-500">ใช้ RE</button>}</div>}
     <select value={resolution} onChange={(e) => setResolution(e.target.value as DiscResolution)} className="w-full rounded-lg border border-slate-300 bg-white px-2 py-1.5"><option value="">เลือกวิธีจัดการ</option>{options.map((key) => <option key={key} value={key}>{RESOLUTION_LABELS[key]}</option>)}</select>
     <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2} placeholder="หมายเหตุ" className="w-full rounded-lg border border-slate-300 px-2 py-1.5" />
     {err && <div className="text-rose-600">{err}</div>}

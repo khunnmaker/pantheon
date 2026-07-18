@@ -74,7 +74,7 @@ async function upsertSynced(data: Prisma.JupiterTxnUncheckedCreateInput): Promis
 export async function syncPaymentToJupiter(paymentId: string): Promise<void> {
   const p = await prisma.payment.findUnique({ where: { id: paymentId } });
   if (!p) return;
-  if (p.status === 'recorded') {
+  if (p.status === 'recorded' && p.wrongTransferAt === null) {
     await upsertSynced(paymentToTxn(p));
   } else {
     await prisma.jupiterTxn.deleteMany({ where: { source: SOURCE, sourceRef: paymentId } });
@@ -85,7 +85,7 @@ export async function syncPaymentToJupiter(paymentId: string): Promise<void> {
 // currently-'recorded' payments — upsert every recorded payment, and delete any leftover synced
 // row whose payment is no longer recorded (voided/undone). Returns counts. Supervisor-triggered.
 export async function syncAllJunoToJupiter(): Promise<{ synced: number; removed: number }> {
-  const recorded = await prisma.payment.findMany({ where: { status: 'recorded' } });
+  const recorded = await prisma.payment.findMany({ where: { status: 'recorded', wrongTransferAt: null } });
   for (const p of recorded) await upsertSynced(paymentToTxn(p));
 
   const recordedIds = new Set(recorded.map((p) => p.id));

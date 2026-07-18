@@ -61,6 +61,22 @@ for (const a of ['web', 'juno', 'vesta', 'pantheon', 'jupiter', 'mercury', 'cere
   if (unknown.length) fail(`${a}/src/lib/api.ts AppName lists value(s) not in the server SSOT (api/src/auth/jwt.ts): ${unknown.join(', ')}`);
 }
 
+// 3) Receipt-reference normalization is intentionally duplicated because Juno's Docker build
+// cannot import API source. Compare executable contracts after removing comments/whitespace.
+const apiReceiptRefs = read('api/src/finance/receiptReferences.ts');
+const junoReceiptRefs = read('juno/src/lib/receiptReferences.ts');
+if (apiReceiptRefs && junoReceiptRefs) {
+  const normalizeContract = (source) => source.replace(/\/\/.*$/gm, '').replace(/\s+/g, '');
+  if (normalizeContract(apiReceiptRefs) !== normalizeContract(junoReceiptRefs)) {
+    fail('juno/src/lib/receiptReferences.ts contract differs from authoritative api/src/finance/receiptReferences.ts');
+  }
+  for (const required of ["kind: 'wrong_transfer'", 'export function displayReceiptReference']) {
+    if (!apiReceiptRefs.includes(required) || !junoReceiptRefs.includes(required)) {
+      fail(`receipt-reference copies must both include ${required}`);
+    }
+  }
+}
+
 if (drift) {
   console.error(`\n${drift} drift(s) found — reconcile the copies (types SSOT: api/src/auth/jwt.ts).`);
   process.exit(1);

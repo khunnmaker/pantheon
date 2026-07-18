@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { X } from 'lucide-react';
 import { baht, getReNames, type Payment } from './lib/api';
+import { displayReceiptReference, normalizeBillReference } from './lib/receiptReferences';
 
 // Printable A6 cover letters — FIN staples one to every printed RE for the physical file.
 // The owner may adjust the legal name later; keep it in ONE constant.
@@ -49,9 +50,8 @@ export default function PrintCovers({ payments, onDone }: { payments: Payment[];
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [namesReady]);
 
-  // One cover per payment that carries at least one RE (the caller already filters to
-  // reNumbers.length > 0, but stay defensive here) — one A6 page each.
-  const items: Payment[] = payments.filter((p) => p.reNumbers.length > 0);
+  // One cover per payment carrying any supported document (RE, manual bill, or external ref).
+  const items: Payment[] = payments.filter((p) => p.reNumbers.length + p.billNos.length > 0);
 
   return (
     <div className="print-covers">
@@ -99,9 +99,15 @@ export default function PrintCovers({ payments, onDone }: { payments: Payment[];
 }
 
 function Cover({ payment: p, reNames }: { payment: Payment; reNames: Record<string, string> }) {
-  const multi = p.reNumbers.length > 1;
-  // one RE → text-4xl (matches รหัสลูกค้า + จำนวนเงิน); several REs scale down & wrap right.
-  const reSize = p.reNumbers.length === 1 ? 'text-4xl' : p.reNumbers.length <= 3 ? 'text-2xl' : 'text-lg';
+  const documentLabels = [
+    ...p.reNumbers.map((value) => displayReceiptReference({ kind: 're', value })),
+    ...p.billNos.map((value) => {
+      const normalized = normalizeBillReference(value);
+      return normalized ? displayReceiptReference(normalized) : value;
+    }),
+  ];
+  const multi = documentLabels.length > 1;
+  const reSize = documentLabels.length === 1 ? 'text-4xl' : documentLabels.length <= 3 ? 'text-2xl' : 'text-lg';
   const big = 'text-4xl font-bold leading-tight';
   // ชื่อบนใบเสร็จ = the customer name on the ACTUAL matched RE (first reNumber that's been
   // imported), falling back to the FIN-typed receiptName (which prefills from the LINE display
@@ -115,11 +121,11 @@ function Cover({ payment: p, reNames }: { payment: Payment; reNames: Record<stri
           three figures staff match a cover to its receipt on — RE, รหัสลูกค้า, จำนวนเงิน — share
           the same big size on the right. */}
       <Line
-        label={`เลขที่ใบเสร็จ${multi ? ` (${p.reNumbers.length} เลข)` : ''}`}
+        label={`เลขที่เอกสาร${multi ? ` (${documentLabels.length} เลข)` : ''}`}
         valueClass={`${reSize} font-bold leading-tight`}
         value={
           <span className="inline-flex flex-wrap justify-end gap-x-3">
-            {p.reNumbers.map((re) => <span key={re}>RE {re}</span>)}
+            {documentLabels.map((label) => <span key={label}>{label}</span>)}
           </span>
         }
       />
