@@ -106,7 +106,7 @@ export default function Discrepancies({ isCeo, onChanged }: { isCeo: boolean; on
         ) : (
           <div className="overflow-x-auto">
             <table className="min-w-[980px] w-full text-sm">
-              <thead className="sticky top-[104px] z-10 bg-slate-50 text-xs text-slate-500">
+              <thead className="bg-slate-50 text-xs text-slate-500">
                 <tr>
                   <th className="px-3 py-2 text-left">วันที่โอน</th><th className="px-3 py-2 text-left">ลูกค้า / RE</th>
                   <th className="px-3 py-2 text-right">ยอดเต็ม</th><th className="px-3 py-2 text-right">ยอดตาม RE</th>
