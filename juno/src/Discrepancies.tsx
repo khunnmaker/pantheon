@@ -204,12 +204,12 @@ function ConfirmButton({ row, onChanged }: { row: DiscrepancyRow; onChanged: () 
 
 function ResolutionDialog({ row, onClose, onChanged }: { row: DiscrepancyRow; onClose: () => void; onChanged: () => void }) {
   const [expected, setExpected] = useState(row.discExpected || String(row.expected));
-  // Owner default (2026-07-12): pre-select the common case — เครดิตรอบหน้า (รอชำระเพิ่ม for ขาด).
-  const [resolution, setResolution] = useState<DiscResolution>(row.wrongTransfer ? row.discResolution || 'refund' : row.discResolution || (row.direction === 'under' ? 'chase' : 'credit'));
+  // Owner default (2026-07-12, extended 2026-07-18 to โอนเงินผิด): pre-select เครดิตรอบหน้า (รอชำระเพิ่ม for ขาด).
+  const [resolution, setResolution] = useState<DiscResolution>(row.discResolution || (!row.wrongTransfer && row.direction === 'under' ? 'chase' : 'credit'));
   const [note, setNote] = useState(row.discNote);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const options: Exclude<DiscResolution, ''>[] = row.wrongTransfer ? ['refund', 'credit'] : row.direction === 'under' ? ['chase', 'writeoff'] : ['refund', 'credit', 'writeoff'];
+  const options: Exclude<DiscResolution, ''>[] = row.wrongTransfer ? ['credit', 'refund'] : row.direction === 'under' ? ['chase', 'writeoff'] : ['refund', 'credit', 'writeoff'];
   async function save() {
     setBusy(true); setError('');
     try {
@@ -242,13 +242,13 @@ export function PaymentDiscrepancyBlock({ payment, isCeo, onUpdated }: { payment
     const canHaveRow = payment.reNumbers.length > 0 || !!payment.discExpected ||
       !!(payment.discResolution || payment.discResolvedAt || payment.discConfirmedAt);
     if (!canHaveRow) { setRow(null); return; }
-    getDiscrepancies().then((result) => { const found = result.rows.find((item) => item.id === payment.id) ?? null; setRow(found); setExpected(payment.discExpected || (found ? String(found.expected) : '')); setResolution((prev) => prev || (payment.wrongTransfer ? 'refund' : found?.direction === 'under' ? 'chase' : 'credit')); }).catch(() => setRow(null));
+    getDiscrepancies().then((result) => { const found = result.rows.find((item) => item.id === payment.id) ?? null; setRow(found); setExpected(payment.discExpected || (found ? String(found.expected) : '')); setResolution((prev) => prev || (!payment.wrongTransfer && found?.direction === 'under' ? 'chase' : 'credit')); }).catch(() => setRow(null));
   }, [payment]);
   useEffect(() => { load(); }, [load]);
   const hasStamps = !!(payment.discResolution || payment.discResolvedAt || payment.discConfirmedAt);
   if (!row && !hasStamps) return null;
   const direction = row?.direction ?? 'balanced';
-  const options: Exclude<DiscResolution, ''>[] = payment.wrongTransfer ? ['refund', 'credit'] : direction === 'under' ? ['chase', 'writeoff'] : ['refund', 'credit', 'writeoff'];
+  const options: Exclude<DiscResolution, ''>[] = payment.wrongTransfer ? ['credit', 'refund'] : direction === 'under' ? ['chase', 'writeoff'] : ['refund', 'credit', 'writeoff'];
   async function run(key: string, action: () => Promise<{ payment: Payment }>) { setBusy(key); setErr(''); try { const result = await action(); onUpdated(result.payment); load(); } catch (caught) { setErr(apiErrorMessage(caught, 'บันทึกไม่สำเร็จ — ตรวจสอบยอดและลองใหม่')); } finally { setBusy(''); } }
   return <div className="mx-4 mt-3 space-y-2 rounded-lg border border-emerald-200 bg-emerald-50/40 p-3 text-xs">
     <div className="flex items-center justify-between"><span className="font-semibold text-slate-700">{payment.wrongTransfer ? 'โอนเงินผิด' : 'ส่วนต่างยอด'}</span>{row && <span className={`font-bold ${payment.wrongTransfer ? payment.discResolution === 'credit' ? 'text-emerald-700' : 'text-rose-700' : row.diff > 0 ? 'text-emerald-700' : row.diff < 0 ? 'text-rose-700' : 'text-sky-700'}`}>{payment.wrongTransfer ? payment.discResolution === 'credit' ? `เก็บเครดิต ${baht(row.gross)}` : `ต้องคืน ${baht(row.gross)}` : signedDiff(row.diff)}</span>}</div>
