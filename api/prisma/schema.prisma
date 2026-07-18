@@ -1365,7 +1365,7 @@ model VenusCard {
 // is a single-line income/expense record — money as String baht to match
 // Payment/CeresExpense's free-text/OCR convention (sums parse on read). Supervisor-only.
 model JupiterCompany {
-  code      String       @id // group entity code: PROM | TONR | DENC | DENL | KPKF
+  code      String       @id // group entity code; APPT is the inactive paper-only legal entity
   name      String       @default("") // Prominent, Tonmai Residence, DentalPort Clinic, …
   nameTh    String       @default("")
   kind      String       @default("") // free label: distribution | property | clinic | lab | fnb …
@@ -1374,7 +1374,17 @@ model JupiterCompany {
   vatReg    Boolean      @default(true) // จดทะเบียนภาษีมูลค่าเพิ่ม?
   active    Boolean      @default(true)
   sortOrder Int          @default(0)
+  baseCurrency      String    @default("THB")
+  ledgerMode        String    @default("cockpit") // cockpit | shadow | book_of_record | paper_only
+  ledgerCutoverDate DateTime? @db.Date
+  ledgerLockDate    DateTime? @db.Date
+
   txns      JupiterTxn[]
+  ledgerAccounts  JupiterLedgerAccount[]
+  ledgerJournals  JupiterLedgerJournal[]
+  ledgerTaxes     JupiterLedgerTax[]
+  journalEntries  JupiterJournalEntry[]
+  journalSequences JupiterJournalSequence[]
 }
 
 model JupiterTxn {
@@ -1406,11 +1416,245 @@ model JupiterTxn {
   createdById   String?
   createdByName String         @default("")
   createdAt     DateTime       @default(now())
+  ledgerEntry   JupiterJournalEntry?
 
   @@index([companyCode, date])
   @@index([direction])
   @@index([source])
   @@index([sourceRef])
+}
+
+model JupiterLedgerAccount {
+  id            String   @id @default(cuid())
+  companyCode   String
+  code          String
+  name          String
+  accountType   String
+  accountClass  String
+  normalBalance String
+  reconcile     Boolean  @default(false)
+  active        Boolean  @default(true)
+  currencyCode  String?
+  source        String   @default("manual")
+  sourceRef     String?
+  contentHash   String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  company            JupiterCompany         @relation(fields: [companyCode], references: [code])
+  defaultForJournals  JupiterLedgerJournal[] @relation("JupiterJournalDefaultAccount")
+  lines               JupiterJournalLine[]
+
+  @@unique([companyCode, code])
+  @@unique([companyCode, source, sourceRef])
+  @@index([companyCode, accountClass, active])
+}
+
+model JupiterLedgerJournal {
+  id               String   @id @default(cuid())
+  companyCode      String
+  code             String
+  name             String
+  journalType      String
+  active           Boolean  @default(true)
+  defaultAccountId String?
+  source           String   @default("manual")
+  sourceRef        String?
+  contentHash      String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  company        JupiterCompany       @relation(fields: [companyCode], references: [code])
+  defaultAccount JupiterLedgerAccount? @relation("JupiterJournalDefaultAccount", fields: [defaultAccountId], references: [id])
+  entries        JupiterJournalEntry[]
+  sequences      JupiterJournalSequence[]
+
+  @@unique([companyCode, code])
+  @@unique([companyCode, source, sourceRef])
+}
+
+model JupiterLedgerTax {
+  id            String   @id @default(cuid())
+  companyCode   String
+  name          String
+  description   String   @default("")
+  taxKind       String   @default("unclassified")
+  usage         String   @default("none")
+  amountType    String   @default("percent")
+  rate          Decimal  @db.Decimal(9, 6)
+  priceIncluded Boolean  @default(false)
+  active        Boolean  @default(true)
+  source        String   @default("manual")
+  sourceRef     String?
+  contentHash   String?
+
+  company   JupiterCompany          @relation(fields: [companyCode], references: [code])
+  lineTaxes JupiterJournalLineTax[]
+
+  @@unique([companyCode, source, sourceRef])
+  @@index([companyCode, taxKind, active])
+}
+
+model JupiterLedgerPartner {
+  id          String   @id @default(cuid())
+  displayName String
+  legalName   String   @default("")
+  taxId       String   @default("")
+  partnerType String   @default("other")
+  address     String   @default("")
+  partyId     String?
+  source      String   @default("manual")
+  sourceRef   String?
+  contentHash String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  party   Party?                 @relation(fields: [partyId], references: [id])
+  entries JupiterJournalEntry[]
+  lines   JupiterJournalLine[]
+
+  @@unique([source, sourceRef])
+  @@index([taxId])
+  @@index([partyId])
+}
+
+model JupiterJournalEntry {
+  id                String    @id @default(cuid())
+  companyCode       String
+  journalId         String
+  entryNo           String?
+  entryDate         DateTime  @db.Date
+  state             String    @default("draft")
+  entryType         String    @default("general")
+  ref               String    @default("")
+  memo              String    @default("")
+  partnerId         String?
+  documentNo        String    @default("")
+  documentDate      DateTime? @db.Date
+  dueDate           DateTime? @db.Date
+  paymentReference  String    @default("")
+  paymentState      String    @default("")
+  taxInvoiceNo      String    @default("")
+  taxInvoiceDate    DateTime? @db.Date
+  whtCertificateNo  String    @default("")
+  currencyCode      String    @default("THB")
+  version           Int       @default(1)
+  source            String    @default("manual")
+  sourceRef         String?
+  sourceSnapshotRef String?
+  contentHash       String?
+  originTxnId       String?   @unique
+  reversalOfId      String?   @unique
+  createdById       String?
+  createdByName     String    @default("")
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  postedById        String?
+  postedByName      String    @default("")
+  postedAt          DateTime?
+  voidedAt          DateTime?
+
+  company     JupiterCompany        @relation(fields: [companyCode], references: [code])
+  journal     JupiterLedgerJournal  @relation(fields: [journalId], references: [id])
+  partner     JupiterLedgerPartner? @relation(fields: [partnerId], references: [id])
+  originTxn   JupiterTxn?            @relation(fields: [originTxnId], references: [id])
+  reversalOf  JupiterJournalEntry?   @relation("JupiterEntryReversal", fields: [reversalOfId], references: [id], onDelete: Restrict)
+  reversedBy  JupiterJournalEntry?   @relation("JupiterEntryReversal")
+  lines       JupiterJournalLine[]
+
+  @@unique([companyCode, entryNo])
+  @@unique([companyCode, source, sourceRef])
+  @@index([companyCode, entryDate, state])
+  @@index([journalId, entryDate])
+  @@index([partnerId, entryDate])
+}
+
+model JupiterJournalLine {
+  id                   String    @id @default(cuid())
+  entryId              String
+  lineNo               Int
+  accountId            String
+  partnerId            String?
+  label                String    @default("")
+  debit                Decimal   @default(0) @db.Decimal(18, 2)
+  credit               Decimal   @default(0) @db.Decimal(18, 2)
+  amountCurrency       Decimal?  @db.Decimal(18, 2)
+  currencyCode         String?
+  maturityDate         DateTime? @db.Date
+  reconciled           Boolean   @default(false)
+  externalReconcileRef String?
+  sourceRef            String?
+  createdAt            DateTime  @default(now())
+
+  entry   JupiterJournalEntry    @relation(fields: [entryId], references: [id])
+  account JupiterLedgerAccount   @relation(fields: [accountId], references: [id])
+  partner JupiterLedgerPartner?  @relation(fields: [partnerId], references: [id])
+  taxes   JupiterJournalLineTax[]
+
+  @@unique([entryId, lineNo])
+  @@unique([entryId, sourceRef])
+  @@index([accountId, entryId])
+  @@index([partnerId, entryId])
+}
+
+model JupiterJournalLineTax {
+  id         String   @id @default(cuid())
+  lineId     String
+  taxId      String
+  role       String
+  baseAmount Decimal? @db.Decimal(18, 2)
+  taxAmount  Decimal? @db.Decimal(18, 2)
+
+  line JupiterJournalLine @relation(fields: [lineId], references: [id])
+  tax  JupiterLedgerTax   @relation(fields: [taxId], references: [id])
+
+  @@unique([lineId, taxId, role])
+}
+
+model JupiterJournalSequence {
+  id          String @id @default(cuid())
+  companyCode String
+  journalId   String
+  fiscalYear  Int
+  nextNo      Int    @default(1)
+
+  company JupiterCompany       @relation(fields: [companyCode], references: [code])
+  journal JupiterLedgerJournal @relation(fields: [journalId], references: [id])
+
+  @@unique([companyCode, journalId, fiscalYear])
+}
+
+model JupiterLedgerImportBatch {
+  id                 String    @id @default(cuid())
+  source             String
+  snapshotRef        String
+  manifestSha256     String
+  status             String
+  requestedCompanies Json
+  result             Json?
+  startedAt          DateTime  @default(now())
+  completedAt        DateTime?
+  createdByName      String    @default("cli")
+
+  @@unique([source, manifestSha256])
+}
+
+model JupiterLedgerAudit {
+  id          String   @id @default(cuid())
+  companyCode String?
+  entityType  String
+  entityId    String
+  action      String
+  reason      String   @default("")
+  before      Json?
+  after       Json?
+  actorId     String?
+  actorName   String   @default("")
+  requestId   String?
+  createdAt   DateTime @default(now())
+
+  @@index([entityType, entityId, createdAt])
+  @@index([companyCode, createdAt])
 }
 
 // OA read-sync — surfaces LINE OA Manager "Read"/"อ่านแล้ว" status inside Minerva.
@@ -1453,6 +1697,7 @@ model Party {
   createdAt    DateTime        @default(now())
   updatedAt    DateTime        @updatedAt
   identities   PartyIdentity[]
+  ledgerPartners JupiterLedgerPartner[]
 
   @@index([kind])
   @@index([mergedIntoId])

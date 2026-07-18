@@ -269,7 +269,8 @@ export async function backfillKbEmbeddings(): Promise<void> {
 // The group's companies — the JupiterCompany dimension for the accounting layer. This
 // FORMALISES the ad-hoc `entity` code (PROM|DENL) already on CeresExpense/CashMovement into
 // the full group. CREATE-IF-MISSING only (update:{}), so once a row exists the supervisor can
-// freely rename / recolour it or add a 6th company in-app without a boot overwriting them.
+// freely rename / recolour it without a boot overwriting changes. APPT is retained as an
+// inactive paper-only legal entity and deliberately stays outside GROUP_COMPANY_CODES.
 // (DENL/KPKF kind + KPKF Thai name left blank pending owner confirmation.)
 const JUPITER_COMPANIES = [
   { code: 'PROM', name: 'Prominent', nameTh: 'พรอมิเนนต์', kind: 'distribution', color: '#0EA5E9', sortOrder: 1 },
@@ -277,6 +278,10 @@ const JUPITER_COMPANIES = [
   { code: 'DENC', name: 'DentalPort Dental Clinic', nameTh: 'เดนทัลพอร์ต คลินิกทันตกรรม', kind: 'clinic', color: '#8B5CF6', sortOrder: 3 },
   { code: 'DENL', name: 'DentalPort', nameTh: 'เดนทัลพอร์ต', kind: 'lab', color: '#EC4899', sortOrder: 4 },
   { code: 'KPKF', name: 'Khun Phua Khun', nameTh: '', kind: 'manufacturing', color: '#F59E0B', sortOrder: 5 }, // factory — fabricates product for PROM
+  {
+    code: 'APPT', name: 'Appoint Alliance', nameTh: 'แอพพอยท์ อัลไลแอนซ์', kind: 'holding',
+    color: '#64748B', sortOrder: 6, active: false, ledgerMode: 'paper_only',
+  },
 ];
 
 async function syncCompanies(): Promise<void> {

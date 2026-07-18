@@ -20,6 +20,7 @@ import { dianaRoutes } from './routes/diana.js';
 import { junoRoutes } from './routes/juno.js';
 import { pantheonRoutes } from './routes/pantheon.js';
 import { jupiterAccountingRoutes } from './routes/jupiterAccounting.js';
+import { jupiterLedgerRoutes } from './routes/jupiterLedger.js';
 import { tokenUsageRoutes } from './routes/tokenUsage.js';
 import { venusRoutes } from './routes/venus.js';
 import { initIo } from './ws/io.js';
@@ -100,6 +101,7 @@ async function buildServer() {
   await app.register(junoRoutes);
   await app.register(pantheonRoutes);
   await app.register(jupiterAccountingRoutes);
+  await app.register(jupiterLedgerRoutes);
   await app.register(tokenUsageRoutes);
   await app.register(ceresRoutes);
   // Nightly CEO digest scheduler (fire-and-forget; self-rechaining + .unref()'d — see
