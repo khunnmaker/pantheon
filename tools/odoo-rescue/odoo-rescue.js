@@ -25,6 +25,15 @@ const CONFIG = Object.freeze({
   requestTimeoutMs: 120000,
 });
 
+const ODOO_STRING_TYPES = new Set(['char', 'text', 'html', 'selection', 'date', 'datetime']);
+const STORED_STRING_FIELDS = new Set([
+  'code', 'name', 'display_name', 'ref', 'date', 'move_name', 'date_maturity',
+  'invoice_date', 'invoice_date_due', 'create_date', 'write_date',
+  'export_account_code', 'export_account_name', 'export_partner_name',
+  'export_journal_name', 'export_move_name',
+]);
+const MISSING_POSTED_ACCOUNT_CODE_WARNING = 'posted_move_line_account_missing_code';
+
 const GLOBAL_SPECS = [
   spec('res.company', [
     'id', 'name', 'active', 'currency_id', 'partner_id', 'vat', 'company_registry',
@@ -225,6 +234,7 @@ function safeRpcMessage(value, secret) {
   } else {
     message = String(value || 'unknown RPC failure');
   }
+  message = String(message);
   if (secret) message = message.split(secret).join('[REDACTED]');
   return message.slice(0, 2000);
 }
@@ -305,8 +315,8 @@ async function discoverCompanies(rpc) {
   return mapped;
 }
 
-function companyContext(allIds, companyId) {
-  return { allowed_company_ids: allIds, company_id: companyId, active_test: false };
+function companyContext(companyId) {
+  return { allowed_company_ids: [companyId], company_id: companyId, active_test: false };
 }
 
 async function fieldsFor(rpc, model, requested, required, context) {
@@ -320,7 +330,32 @@ async function fieldsFor(rpc, model, requested, required, context) {
   return {
     fields: requested.filter((field) => available.has(field)),
     omittedFields: requested.filter((field) => !available.has(field)),
+    fieldTypes: Object.fromEntries(requested
+      .filter((field) => available.has(field))
+      .map((field) => [field, metadata[field].type])),
   };
+}
+
+function normalizeOdooString(value) {
+  return value === false ? null : value;
+}
+
+function normalizeOdooRecord(row, fieldTypes = null) {
+  let normalized = row;
+  for (const [field, value] of Object.entries(row)) {
+    const type = fieldTypes?.[field];
+    const isKnownString = ODOO_STRING_TYPES.has(type) || (!fieldTypes && STORED_STRING_FIELDS.has(field));
+    let next = value;
+    if (isKnownString) next = normalizeOdooString(value);
+    else if ((type === 'many2one' || !fieldTypes) && Array.isArray(value) && value.length > 1 && value[1] === false) {
+      next = [value[0], null, ...value.slice(2)];
+    }
+    if (next !== value) {
+      if (normalized === row) normalized = { ...row };
+      normalized[field] = next;
+    }
+  }
+  return normalized;
 }
 
 async function companyDomain(rpc, model, companyId, context) {
@@ -372,7 +407,7 @@ async function extractModel({
   await fsp.mkdir(outDir, { recursive: true });
   const jsonlFile = path.join(outDir, `${modelSpec.model}.jsonl`);
   const checkpointFile = path.join(runDir, '.checkpoints', checkpointName(scope, modelSpec.model));
-  const { fields, omittedFields } = await fieldsFor(
+  const { fields, omittedFields, fieldTypes } = await fieldsFor(
     rpc, modelSpec.model, modelSpec.fields, modelSpec.required, context
   );
   const serverCountBefore = await rpc.execute(modelSpec.model, 'search_count', [domain], { context });
@@ -422,7 +457,8 @@ async function extractModel({
       }
       previous = row.id;
     }
-    const exported = transform ? batch.map(transform) : batch;
+    const ingested = batch.map((row) => normalizeOdooRecord(row, fieldTypes));
+    const exported = transform ? ingested.map(transform) : ingested;
     const chunk = `${exported.map((row) => JSON.stringify(row)).join('\n')}\n`;
     const handle = await fsp.open(jsonlFile, 'a');
     try {
@@ -431,7 +467,7 @@ async function extractModel({
     } finally {
       await handle.close();
     }
-    if (afterBatchAppend) await afterBatchAppend({ batch, chunk, checkpoint: { ...checkpoint } });
+    if (afterBatchAppend) await afterBatchAppend({ batch: ingested, chunk, checkpoint: { ...checkpoint } });
     checkpoint.lastId = previous;
     checkpoint.rows += batch.length;
     checkpoint.bytes += Buffer.byteLength(chunk, 'utf8');
@@ -472,7 +508,7 @@ async function* jsonlRecords(file) {
     lineNo += 1;
     if (!line.trim()) continue;
     try {
-      yield JSON.parse(line);
+      yield normalizeOdooRecord(JSON.parse(line));
     } catch (error) {
       throw new Error(`Invalid JSONL at ${file}:${lineNo}: ${error.message}`);
     }
@@ -520,7 +556,7 @@ function relationId(value) {
 }
 
 function relationName(value) {
-  return Array.isArray(value) ? value[1] : '';
+  return Array.isArray(value) ? normalizeOdooString(value[1]) : null;
 }
 
 function enrichMoveLine(row, accounts) {
@@ -528,11 +564,11 @@ function enrichMoveLine(row, accounts) {
   const account = accounts.get(accountId);
   return {
     ...row,
-    export_account_code: account?.code ?? '',
-    export_account_name: account?.name ?? relationName(row.account_id),
+    export_account_code: normalizeOdooString(account?.code),
+    export_account_name: normalizeOdooString(account?.name) ?? relationName(row.account_id),
     export_partner_name: relationName(row.partner_id),
     export_journal_name: relationName(row.journal_id),
-    export_move_name: row.move_name || relationName(row.move_id),
+    export_move_name: normalizeOdooString(row.move_name) ?? relationName(row.move_id),
   };
 }
 
@@ -569,8 +605,8 @@ function addTbLine(groups, line, precision) {
   let group = groups.get(accountId);
   if (!group) {
     group = {
-      accountId, accountCode: line.export_account_code || '',
-      accountName: line.export_account_name || relationName(line.account_id),
+      accountId, accountCode: normalizeOdooString(line.export_account_code),
+      accountName: normalizeOdooString(line.export_account_name) ?? relationName(line.account_id),
       debit: 0n, credit: 0n, balance: 0n, lineCount: 0,
     };
     groups.set(accountId, group);
@@ -581,9 +617,15 @@ function addTbLine(groups, line, precision) {
   group.lineCount += 1;
 }
 
+function compareNullableStrings(left, right, locale) {
+  if (left === null || left === undefined) return right === null || right === undefined ? 0 : 1;
+  if (right === null || right === undefined) return -1;
+  return String(left).localeCompare(String(right), locale);
+}
+
 function tbRows(groups, precision) {
   return [...groups.values()].sort((a, b) =>
-    a.accountCode.localeCompare(b.accountCode, 'en') || a.accountId - b.accountId
+    compareNullableStrings(a.accountCode, b.accountCode, 'en') || a.accountId - b.accountId
   ).map((g) => ({
     account_id: g.accountId, account_code: g.accountCode, account_name: g.accountName,
     debit: fromUnits(g.debit, precision), credit: fromUnits(g.credit, precision),
@@ -598,7 +640,8 @@ function trialBalanceDiffRows(clientGroups, serverGroups, accounts, precision) {
     const server = serverGroups.get(id) || { debit: 0n, credit: 0n, balance: 0n };
     const account = accounts.get(id);
     return {
-      account_id: id, account_code: account?.code ?? '', account_name: account?.name ?? '',
+      account_id: id, account_code: normalizeOdooString(account?.code),
+      account_name: normalizeOdooString(account?.name),
       client_debit: fromUnits(client.debit, precision), server_debit: fromUnits(server.debit, precision),
       diff_debit: fromUnits(client.debit - server.debit, precision),
       client_credit: fromUnits(client.credit, precision), server_credit: fromUnits(server.credit, precision),
@@ -705,15 +748,17 @@ const LEDGER_HEADERS = [
   'line_id', 'parent_state',
 ];
 
-async function deriveCompany({ rpc, runDir, company, allIds, accounts, precision }) {
-  const context = companyContext(allIds, company.id);
+async function deriveCompany({ rpc, runDir, company, accounts, precision }) {
+  const context = companyContext(company.id);
   const dir = path.join(runDir, company.code);
   const linesFile = path.join(dir, 'account.move.line.jsonl');
   const clientGroups = new Map();
   let totalDebit = 0n;
   let totalCredit = 0n;
+  const warnings = new Map();
   for await (const line of jsonlRecords(linesFile)) {
     addTbLine(clientGroups, line, precision);
+    noteMissingPostedAccountCode(warnings, line, accounts, company.code);
     if (line.parent_state === 'posted') {
       totalDebit += toUnits(line.debit, precision);
       totalCredit += toUnits(line.credit, precision);
@@ -733,7 +778,8 @@ async function deriveCompany({ rpc, runDir, company, allIds, accounts, precision
     if (!accountId) continue;
     const account = accounts.get(accountId);
     serverGroups.set(accountId, {
-      accountId, accountCode: account?.code ?? '', accountName: account?.name ?? relationName(row.account_id),
+      accountId, accountCode: normalizeOdooString(account?.code),
+      accountName: normalizeOdooString(account?.name) ?? relationName(row.account_id),
       debit: toUnits(row.debit, precision), credit: toUnits(row.credit, precision),
       balance: toUnits(row.balance, precision), lineCount: row.__count || row.account_id_count || 0,
     });
@@ -760,8 +806,30 @@ async function deriveCompany({ rpc, runDir, company, allIds, accounts, precision
     postedDebit: fromUnits(totalDebit, precision), postedCredit: fromUnits(totalCredit, precision),
     trialBalanceAccounts: clientRows.length, trialBalanceNonzeroDiffs: nonzeroDiffs.length,
     partnerLedgerLines: ledgerResult.detailRows, partnerLedgerPartners: ledgerResult.partnerCount,
-    failures,
+    failures, warnings: [...warnings.values()].sort((a, b) => a.accountId - b.accountId),
   };
+}
+
+function noteMissingPostedAccountCode(warnings, line, accounts, companyCode) {
+  if (line.parent_state !== 'posted') return;
+  const accountId = relationId(line.account_id);
+  const account = accounts.get(accountId);
+  if (!account || normalizeOdooString(account.code) !== null || warnings.has(accountId)) return;
+  warnings.set(accountId, {
+    type: MISSING_POSTED_ACCOUNT_CODE_WARNING,
+    company: companyCode,
+    accountId,
+    accountName: normalizeOdooString(account.name) ?? relationName(line.account_id),
+  });
+}
+
+function replaceCompanyWarnings(manifest, companyCode, warnings) {
+  manifest.warnings = [
+    ...(Array.isArray(manifest.warnings) ? manifest.warnings : []).filter((warning) =>
+      warning.type !== MISSING_POSTED_ACCOUNT_CODE_WARNING || warning.company !== companyCode
+    ),
+    ...warnings,
+  ];
 }
 
 async function writePartnerLedger(dir, linesFile, accounts, precision) {
@@ -787,7 +855,9 @@ async function writePartnerLedger(dir, linesFile, accounts, precision) {
       const accountId = relationId(line.account_id);
       if (line.parent_state !== 'posted' || !eligible.has(accountId)) continue;
       const partnerId = relationId(line.partner_id) || 0;
-      const partnerName = relationName(line.partner_id) || '(No partner)';
+      const partnerName = partnerId
+        ? normalizeOdooString(line.export_partner_name) ?? relationName(line.partner_id)
+        : '(No partner)';
       const account = accounts.get(accountId);
       let total = totals.get(partnerId);
       if (!total) total = { partnerId, partnerName, debit: 0n, credit: 0n, balance: 0n, lines: 0 };
@@ -800,14 +870,16 @@ async function writePartnerLedger(dir, linesFile, accounts, precision) {
       await emit({
         row_type: 'detail', partner_id: partnerId || '', partner_name: partnerName,
         date: line.date, move_name: line.export_move_name, ref: line.ref,
-        journal_name: line.export_journal_name, account_code: account?.code ?? '',
-        account_name: account?.name ?? '', account_type: account?.account_type ?? '', label: line.name,
+        journal_name: normalizeOdooString(line.export_journal_name),
+        account_code: normalizeOdooString(account?.code),
+        account_name: normalizeOdooString(account?.name), account_type: account?.account_type ?? '',
+        label: normalizeOdooString(line.name),
         debit: line.debit, credit: line.credit, balance: line.balance, line_id: line.id,
         parent_state: line.parent_state,
       });
     }
     for (const total of [...totals.values()].sort((a, b) =>
-      a.partnerName.localeCompare(b.partnerName, 'th') || a.partnerId - b.partnerId
+      compareNullableStrings(a.partnerName, b.partnerName, 'th') || a.partnerId - b.partnerId
     )) {
       await emit({
         row_type: 'partner_total', partner_id: total.partnerId || '', partner_name: total.partnerName,
@@ -838,7 +910,7 @@ async function smoke(rpc, companies) {
   });
   console.log(`Visible partners (global): ${globalPartners}`);
   for (const company of companies) {
-    const context = companyContext(allIds, company.id);
+    const context = companyContext(company.id);
     for (const model of keyModels) {
       const domain = await companyDomain(rpc, model, company.id, context);
       const count = await rpc.execute(model, 'search_count', [domain], { context });
@@ -885,7 +957,7 @@ async function runFull(rpc, companies, args) {
     manifest = {
       schemaVersion: 1, status: 'running', startedAt: new Date().toISOString(), outputDirectory: runDir,
       companies: companies.map(({ id, name, code, active }) => ({ id, name, code, active })),
-      entries: [], beYearFlags: [], verification: [], errors: [],
+      entries: [], beYearFlags: [], verification: [], warnings: [], errors: [],
     };
   } else {
     const prior = JSON.stringify(manifest.companies.map((x) => [x.id, x.name, x.code]));
@@ -894,6 +966,7 @@ async function runFull(rpc, companies, args) {
     manifest.status = 'running';
     manifest.resumedAt = new Date().toISOString();
   }
+  if (!Array.isArray(manifest.warnings)) manifest.warnings = [];
   await atomicWriteJson(manifestFile, manifest);
 
   const upsertEntry = async (entry, stats) => {
@@ -919,7 +992,7 @@ async function runFull(rpc, companies, args) {
     }
 
     for (const company of companies) {
-      const context = companyContext(allIds, company.id);
+      const context = companyContext(company.id);
       const accountsFile = path.join(runDir, company.code, 'account.account.jsonl');
       let accounts = new Map();
       for (const modelSpec of COMPANY_SPECS) {
@@ -938,10 +1011,11 @@ async function runFull(rpc, companies, args) {
       }
       const precision = await currencyPrecision(rpc, company, context);
       console.log(`Building and verifying ${company.code} ledgers ...`);
-      const verification = await deriveCompany({ rpc, runDir, company, allIds, accounts, precision });
+      const verification = await deriveCompany({ rpc, runDir, company, accounts, precision });
       const index = manifest.verification.findIndex((x) => x.company === company.code);
       if (index >= 0) manifest.verification[index] = verification;
       else manifest.verification.push(verification);
+      replaceCompanyWarnings(manifest, company.code, verification.warnings);
       await atomicWriteJson(manifestFile, manifest);
     }
 
@@ -975,19 +1049,32 @@ async function runFull(rpc, companies, args) {
 }
 
 class FakeRpc {
-  constructor(rows, { failOnSearchRead = null, groupMethod = null, groupRows = [] } = {}) {
+  constructor(rows, {
+    failOnSearchRead = null, groupMethod = null, groupRows = [], expectedCompanyId = null,
+    fieldsByModel = {},
+  } = {}) {
     this.rows = rows;
     this.failOnSearchRead = failOnSearchRead;
     this.groupMethod = groupMethod;
     this.groupRows = groupRows;
+    this.expectedCompanyId = expectedCompanyId;
+    this.fieldsByModel = fieldsByModel;
     this.searchReadCalls = 0;
   }
 
   async execute(model, method, args, kwargs) {
+    if (this.expectedCompanyId !== null) {
+      const context = kwargs?.context;
+      assert(Array.isArray(context?.allowed_company_ids) && context.allowed_company_ids.length === 1 &&
+        context.allowed_company_ids[0] === this.expectedCompanyId && context.company_id === this.expectedCompanyId,
+      `${model}.${method} must use only company ${this.expectedCompanyId} in its context`);
+    }
     if (method === 'fields_get') {
-      return { id: { type: 'integer' }, date: { type: 'date' }, account_id: { type: 'many2one' },
+      return this.fieldsByModel[model] || {
+        id: { type: 'integer' }, date: { type: 'date' }, account_id: { type: 'many2one' },
         parent_state: { type: 'selection' }, debit: { type: 'monetary' }, credit: { type: 'monetary' },
-        balance: { type: 'monetary' } };
+        balance: { type: 'monetary' },
+      };
     }
     if (method === 'search_count') return this.rows.length;
     if (method === 'search_read') {
@@ -1023,6 +1110,30 @@ async function selftest() {
       'id', 'date', 'account_id', 'parent_state', 'debit', 'credit', 'balance', 'optional_note',
     ],
       ['id', 'date', 'account_id', 'parent_state', 'debit', 'credit', 'balance']);
+
+    const expectedCompanyId = 37;
+    const scopedContext = companyContext(expectedCompanyId);
+    const fieldsByModel = Object.fromEntries(COMPANY_SPECS.map((modelSpec) => [
+      modelSpec.model,
+      Object.fromEntries(modelSpec.fields
+        .filter((field) => modelSpec.model !== 'account.account' || field !== 'company_id')
+        .map((field) => [field, { type: field === 'id' ? 'integer' :
+          field === 'company_ids' ? 'many2many' : field === 'company_id' ? 'many2one' : 'char' }])),
+    ]));
+    for (const modelSpec of COMPANY_SPECS) {
+      const scopedRpc = new FakeRpc([], { expectedCompanyId, fieldsByModel });
+      const domain = await companyDomain(scopedRpc, modelSpec.model, expectedCompanyId, scopedContext);
+      const expectedDomainField = modelSpec.model === 'account.account' ? 'company_ids' : 'company_id';
+      const domainCompanyId = Array.isArray(domain[0][2]) ? domain[0][2][0] : domain[0][2];
+      assert(domain[0][0] === expectedDomainField && domainCompanyId === expectedCompanyId,
+        `${modelSpec.model} must retain its company domain`);
+      await extractModel({
+        rpc: scopedRpc, runDir: scratch, scope: 'COMPANY_CONTEXT',
+        outDir: path.join(scratch, 'COMPANY_CONTEXT'), modelSpec, domain,
+        context: scopedContext, batchSize: 2,
+      });
+    }
+
     const outDir = path.join(scratch, 'TEST');
     const firstRpc = new FakeRpc(rows, { failOnSearchRead: 2 });
     let crashed = false;
@@ -1080,14 +1191,63 @@ async function selftest() {
 
     const groups = new Map();
     for (const row of recovered) {
-      row.export_account_code = relationName(row.account_id).split(' ')[0];
-      row.export_account_name = relationName(row.account_id);
+      const accountDisplayName = relationName(row.account_id);
+      row.export_account_code = String(accountDisplayName ?? '').split(' ')[0] || null;
+      row.export_account_name = accountDisplayName;
       addTbLine(groups, row, 2);
     }
     const grouped = tbRows(groups, 2);
     assert(grouped.length === 2, 'TB must contain two posted accounts');
     assert(grouped.find((x) => x.account_id === 10).debit === '125.25', 'TB debit grouping');
     assert(grouped.find((x) => x.account_id === 20).credit === '125.25', 'TB credit grouping');
+
+    const falseScalarAccounts = new Map([
+      [30, { id: 30, code: false, name: 'Receivable Without Code', account_type: 'asset_receivable' }],
+      [40, { id: 40, code: '4000', name: 'Named Account', account_type: 'asset_receivable' }],
+    ]);
+    const falseScalarLines = [
+      { id: 30, date: false, account_id: [30, 'Receivable Without Code'], partner_id: [300, false],
+        name: false, move_name: false, export_move_name: false, ref: false, export_journal_name: false,
+        export_account_code: false, export_account_name: 'Receivable Without Code',
+        export_partner_name: false, parent_state: 'posted', debit: 1, credit: 0, balance: 1 },
+      { id: 40, date: '2025-01-04', account_id: [40, '4000 Named Account'], partner_id: [400, 'Named Partner'],
+        name: 'Named line', export_move_name: 'MOVE/40', ref: 'REF/40', export_journal_name: 'Journal',
+        export_account_code: '4000', export_account_name: 'Named Account',
+        export_partner_name: 'Named Partner', parent_state: 'posted', debit: 0, credit: 1, balance: -1 },
+    ];
+    const falseScalarLinesFile = path.join(scratch, 'false-scalars.jsonl');
+    await writeJsonl(falseScalarLinesFile, falseScalarLines);
+    const falseScalarGroups = new Map();
+    const warningMap = new Map();
+    for await (const line of jsonlRecords(falseScalarLinesFile)) {
+      addTbLine(falseScalarGroups, line, 2);
+      noteMissingPostedAccountCode(warningMap, line, falseScalarAccounts, 'TEST');
+    }
+    const falseScalarTb = tbRows(falseScalarGroups, 2);
+    assert(falseScalarTb.length === 2 && falseScalarTb[1].account_id === 30 &&
+      falseScalarTb[1].account_code === null, 'TB must sort a false/null account code last');
+    const falseScalarTbCsv = path.join(scratch, 'false-scalar-tb.csv');
+    await writeCsv(falseScalarTbCsv, TB_HEADERS, falseScalarTb);
+    assert(!(await fsp.readFile(falseScalarTbCsv, 'utf8')).includes('false'),
+      'TB CSV must render normalized false string fields as empty');
+    await writePartnerLedger(scratch, falseScalarLinesFile, falseScalarAccounts, 2);
+    const ledgerRows = [];
+    for await (const row of jsonlRecords(path.join(scratch, 'partner_ledger.jsonl'))) ledgerRows.push(row);
+    const ledgerTotals = ledgerRows.filter((row) => row.row_type === 'partner_total');
+    assert(ledgerTotals.length === 2 && ledgerTotals[1].partner_id === 300 &&
+      ledgerTotals[1].partner_name === null, 'partner ledger must sort a false/null partner name last');
+    assert(!(await fsp.readFile(path.join(scratch, 'partner_ledger.csv'), 'utf8')).includes('false'),
+      'partner-ledger CSV must render normalized false string fields as empty');
+    const warningManifest = { warnings: [] };
+    replaceCompanyWarnings(warningManifest, 'TEST', [...warningMap.values()]);
+    const warningManifestFile = path.join(scratch, 'warning-manifest.json');
+    await atomicWriteJson(warningManifestFile, warningManifest);
+    const writtenWarningManifest = await readJsonIfExists(warningManifestFile);
+    assert(writtenWarningManifest.warnings.length === 1 &&
+      writtenWarningManifest.warnings[0].accountId === 30 &&
+      writtenWarningManifest.warnings[0].accountName === 'Receivable Without Code',
+    'manifest must warn with the id and name of a posted-line account whose code was false');
+
     const formattedGroupRows = [
       { account_id: [10, '1000 Cash'], 'debit:sum': 125.25, 'credit:sum': 0, 'balance:sum': 125.25, __count: 2 },
       { account_id: [20, '2000 Equity'], 'debit:sum': 0, 'credit:sum': 125.25, 'balance:sum': -125.25, __count: 2 },
@@ -1131,8 +1291,8 @@ async function selftest() {
 
     const checkpoint = await readJsonIfExists(path.join(scratch, '.checkpoints', checkpointName('TEST', 'fixture.line')));
     assert(checkpoint.complete && checkpoint.rows === 5 && checkpoint.lastId === 5, 'checkpoint must finish at id 5');
-    console.log('SELFTEST PASS: pager, both crash/resume paths, field omissions, both group APIs, TB grouping/diffs, ' +
-      'JSONL writer, CSV BOM/escaping, and checkpoints.');
+    console.log('SELFTEST PASS: single-company contexts/domains, pager, both crash/resume paths, field omissions, both group APIs, TB grouping/diffs, ' +
+      'false-string normalization/warnings, partner ledger, JSONL writer, CSV BOM/escaping, and checkpoints.');
   } finally {
     const resolved = path.resolve(scratch);
     const tempRoot = path.resolve(os.tmpdir());
