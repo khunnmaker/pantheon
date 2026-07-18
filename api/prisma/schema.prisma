@@ -1161,6 +1161,7 @@ model CeresStatementLine {
 model CeresCategory {
   id                String  @id @default(cuid())
   name              String  @unique
+  group             String  @default("")
   kind              String  @default("general") // shipping | fuel | toll | general
   ceiling           String  @default("") // per-item baht ceiling for AI policy; "" = none
   needsCustomerNote Boolean @default(false)

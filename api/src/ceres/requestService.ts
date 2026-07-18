@@ -56,12 +56,14 @@ function evidencePurposes(type: V2RequestType): readonly CeresMediaPurpose[] {
   return type === 'reimbursement' ? ['reimbursement_receipt'] : ['request_photo'];
 }
 
-async function validateReferences(input: V2RequestInput, agent: AuthedAgent) {
+async function validateReferences(input: V2RequestInput, agent: AuthedAgent, validateCategory = true) {
   if (!(GROUP_COMPANY_CODES as readonly string[]).includes(input.entity)) {
     throw new CeresRequestError('invalid_entity');
   }
-  const category = await prisma.ceresCategory.findUnique({ where: { name: input.category } });
-  if (!category?.active) throw new CeresRequestError('invalid_category');
+  if (validateCategory) {
+    const category = await prisma.ceresCategory.findUnique({ where: { name: input.category } });
+    if (!category?.active) throw new CeresRequestError('invalid_category');
+  }
   if (input.requestType === 'reimbursement' && !input.requestPhotoUploadId) {
     throw new CeresRequestError('receipt_required');
   }
@@ -185,7 +187,7 @@ export async function editStaffRequest(
       ? existing.requestPhotoUploadId
       : patch.requestPhotoUploadId,
   };
-  const { media, receiptMeta } = await validateReferences(merged, agent);
+  const { media, receiptMeta } = await validateReferences(merged, agent, merged.category !== existing.category);
 
   const updated = await prisma.$transaction(async (tx) => {
     const changed = await tx.ceresPaymentRequest.updateMany({

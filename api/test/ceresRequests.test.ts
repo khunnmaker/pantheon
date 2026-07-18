@@ -150,6 +150,37 @@ describe('Ceres v2 request submission and AI pre-screen', () => {
     }));
   });
 
+  it('accepts a newly added active category name', async () => {
+    mocks.findCategory.mockResolvedValue({
+      name: 'ค่าอาหารและเครื่องดื่ม', active: true, ceiling: '',
+    });
+    mocks.llmAvailable.mockReturnValue(false);
+
+    await createStaffRequest({
+      requestType: 'advance', entity: 'PROM', category: 'ค่าอาหารและเครื่องดื่ม',
+      amount: '500.00', reason: 'อาหารประชุมทีม',
+    }, {
+      id: 'staff-1', email: 'staff@example.test', name: 'Staff', role: 'employee', apps: ['ceres'], authVersion: 0,
+    });
+
+    expect(mocks.createRequest).toHaveBeenCalledWith({
+      data: expect.objectContaining({ category: 'ค่าอาหารและเครื่องดื่ม' }),
+    });
+  });
+
+  it.each([
+    ['an inactive category', { name: 'Inactive', active: false }],
+    ['an unknown category', null],
+  ])('rejects %s with invalid_category', async (_label, categoryRow) => {
+    mocks.findCategory.mockResolvedValue(categoryRow);
+    await expect(createStaffRequest({
+      requestType: 'advance', entity: 'PROM', category: 'Unavailable', amount: '100.00', reason: 'test',
+    }, {
+      id: 'staff-1', email: 'staff@example.test', name: 'Staff', role: 'employee', apps: ['ceres'], authVersion: 0,
+    })).rejects.toMatchObject<CeresRequestError>({ code: 'invalid_category' });
+    expect(mocks.transaction).not.toHaveBeenCalled();
+  });
+
   it('turns an AI outage into escalation and never approval', async () => {
     mocks.llmAvailable.mockReturnValue(false);
     await expect(reviewStaffRequest('request-1')).resolves.toMatchObject({ verdict: 'escalate' });

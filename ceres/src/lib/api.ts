@@ -163,6 +163,7 @@ function queryString(q: Record<string, string | number | boolean | undefined>): 
 export interface Category {
   id: string;
   name: string;
+  group: string;
   kind: string;
   ceiling: number | null;
   needsCustomerNote: boolean;
@@ -188,6 +189,60 @@ export interface Bootstrap {
   ceoThreshold: number;
 }
 export const getBootstrap = () => authed<Bootstrap>('/api/ceres/bootstrap');
+
+// ---------------------------------------------------------------------------
+// Category admin (GM/CEO only) — see api/src/routes/ceres/categories.ts. Full
+// Prisma rows on the wire (incl. inactive, incl. the raw string `ceiling`) — a
+// different shape from the bootstrap-trimmed `Category` above, so it gets its
+// own type rather than overloading `Category`.
+// ---------------------------------------------------------------------------
+
+export interface AdminCategory {
+  id: string;
+  name: string;
+  group: string;
+  kind: string;
+  ceiling: string;
+  needsCustomerNote: boolean;
+  active: boolean;
+  sortOrder: number;
+}
+
+export const adminListCategories = () =>
+  authed<{ categories: AdminCategory[] }>('/api/ceres/admin/categories');
+
+export const adminCreateCategory = (body: {
+  name: string;
+  group: string;
+  ceiling?: string;
+  needsCustomerNote?: boolean;
+}) => authed<{ category: AdminCategory }>('/api/ceres/admin/categories', { method: 'POST', body: JSON.stringify(body) });
+
+export const adminUpdateCategory = (
+  id: string,
+  body: Partial<{ name: string; group: string; ceiling: string; needsCustomerNote: boolean; active: boolean }>,
+) => authed<{ category: AdminCategory }>(`/api/ceres/admin/categories/${id}`, { method: 'PATCH', body: JSON.stringify(body) });
+
+export const adminMoveCategory = (id: string, direction: 'up' | 'down') =>
+  authed<{ category: AdminCategory }>(`/api/ceres/admin/categories/${id}/move`, {
+    method: 'POST',
+    body: JSON.stringify({ direction }),
+  });
+
+const CATEGORY_ERROR_TH: Record<string, string> = {
+  duplicate_name: 'ชื่อหมวดหมู่นี้มีอยู่แล้ว',
+  invalid_body: 'ข้อมูลไม่ถูกต้อง กรุณาตรวจสอบอีกครั้ง',
+  invalid_ceiling: 'เพดานต่อรายการไม่ถูกต้อง',
+  last_active_category: 'ต้องมีหมวดหมู่ที่เปิดใช้งานอย่างน้อย 1 รายการ',
+  not_found: 'ไม่พบหมวดหมู่นี้',
+};
+export function describeCategoryError(err: unknown): string {
+  if (err instanceof ApiError && err.body && typeof err.body === 'object' && 'error' in err.body) {
+    const code = String((err.body as { error: unknown }).error);
+    return CATEGORY_ERROR_TH[code] ?? 'บันทึกไม่สำเร็จ ลองใหม่อีกครั้ง';
+  }
+  return 'บันทึกไม่สำเร็จ ลองใหม่อีกครั้ง';
+}
 
 export interface LoginName {
   email: string;

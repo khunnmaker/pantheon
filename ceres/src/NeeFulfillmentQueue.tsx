@@ -273,7 +273,9 @@ function FulfillForm({
   onCancel: () => void;
   onDone: (msg: string) => void;
 }) {
-  const [lane, setLane] = useState<RequestMoneyLane>('cash');
+  // NO lazy default (owner rule, 2026-07-18) — no lane pre-selected; an explicit tap is
+  // required before this can submit (see the missing-lane check in submit() below).
+  const [lane, setLane] = useState<RequestMoneyLane | null>(null);
   const [slipId, setSlipId] = useState<string | null>(null);
   const [slipPreview, setSlipPreview] = useState<string | null>(null);
   const [receiptId, setReceiptId] = useState<string | null>(null);
@@ -313,6 +315,7 @@ function FulfillForm({
 
   async function submit() {
     setError('');
+    if (!lane) return setError('กรุณาเลือกช่องทางจ่ายเงิน');
     if (missingSlip) return setError('ต้องแนบสลิปโอนก่อนบันทึก');
     if (missingReceipt) return setError('ต้องแนบใบเสร็จซื้อของก่อนบันทึก');
     setBusy(true);
