@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   upsert: vi.fn(),
   findUnique: vi.fn(),
   deleteMany: vi.fn(),
+  hashPassword: vi.fn(async (value: string) => `test-hash-for:${value}`),
   env: { AGENT_PINS: '', EMPLOYEE_PINS: '' },
 }));
 
@@ -17,7 +18,7 @@ vi.mock('../src/db/prisma.js', () => ({
   },
 }));
 vi.mock('../src/auth/password.js', () => ({
-  hashPassword: vi.fn(async () => 'test-password-hash'),
+  hashPassword: mocks.hashPassword,
   verifyPassword: vi.fn(async () => false),
 }));
 vi.mock('../src/kb/historyKb.js', () => ({ HISTORY_KB: [] }));
@@ -29,7 +30,7 @@ vi.mock('../src/llm/prewarm.js', () => ({ prewarmDraftCache: vi.fn() }));
 vi.mock('../src/env.js', () => ({ env: mocks.env }));
 vi.mock('../src/catalog/productEmbeddings.js', () => ({ backfillProductEmbeddings: vi.fn() }));
 
-import { syncStaff } from '../src/db/ensureSeeded.js';
+import { EMPLOYEES, syncStaff } from '../src/db/ensureSeeded.js';
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -46,19 +47,47 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllEnvs());
 
 describe('syncStaff role seeding', () => {
-  it('upserts Noon as gm and the three new PIN-auth staff as agm', async () => {
-    mocks.env.EMPLOYEE_PINS = 'nun:184263,poopae:295374,win:306485,mail:417596';
+  it('upserts Noon from GM_PASSWORD as gm and the three PIN-auth staff as agm', async () => {
+    mocks.env.EMPLOYEE_PINS = 'poopae:295374,win:306485,mail:417596';
 
     await syncStaff();
 
     const writes = mocks.upsert.mock.calls.map(([args]) => args);
-    expect(writes.find((w) => w.where.email === 'nun@prominent.local')?.update.role).toBe('gm');
+    const noon = writes.find((w) => w.where.email === 'nun@prominent.local');
+    expect(noon?.update).toMatchObject({ role: 'gm', passwordHash: 'test-hash-for:test-gm-password' });
+    expect(noon?.create).toMatchObject({
+      email: 'nun@prominent.local',
+      role: 'gm',
+      passwordHash: 'test-hash-for:test-gm-password',
+      apps: [],
+    });
     for (const slug of ['poopae', 'win', 'mail']) {
       const write = writes.find((w) => w.where.email === `${slug}@prominent.local`);
       expect(write?.update.role).toBe('agm');
       expect(write?.create.role).toBe('agm');
     }
     expect(mocks.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['missing', ''],
+    ['present but deprecated', ',nun:928374'],
+  ])('a %s nun PIN neither skips Noon nor freezes pruning', async (_label, nunPin) => {
+    const allEmployeePins = EMPLOYEES
+      .filter((employee) => employee.slug !== 'nun')
+      .map((employee, index) => `${employee.slug}:${200000 + index}`)
+      .join(',');
+    mocks.env.EMPLOYEE_PINS = `${allEmployeePins}${nunPin}`;
+
+    await syncStaff();
+
+    expect(EMPLOYEES.some((employee) => employee.slug === 'nun')).toBe(false);
+    const noonWrites = mocks.upsert.mock.calls
+      .map(([args]) => args)
+      .filter((write) => write.where.email === 'nun@prominent.local');
+    expect(noonWrites).toHaveLength(1);
+    expect(noonWrites[0].update.passwordHash).toBe('test-hash-for:test-gm-password');
+    expect(mocks.deleteMany).toHaveBeenCalledOnce();
   });
 
   it('skips the new agm accounts while their PINs are absent and keeps pruning paused', async () => {

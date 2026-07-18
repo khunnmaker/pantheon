@@ -23,10 +23,12 @@ export const TIER_ACCOUNTS = [
   { email: 'drm@prominent.local', name: 'Dr. M', role: 'supervisor', pwEnvs: ['SEED_PASSWORD'], group: 'ceo', gender: 'male' },
   // KEEP this legacy email: Nee's Agent row id is referenced by bills/audit history; changing it would orphan it.
   { email: 'md@prominent.local', name: 'Nee', role: 'gm', pwEnvs: ['GM_PASSWORD', 'MD_PASSWORD'], group: 'gm', gender: 'female' },
+  // KEEP this email: Noon's Agent row id is referenced by bills/audit history; changing it would orphan it.
+  { email: 'nun@prominent.local', name: 'นุ่น', role: 'gm', pwEnvs: ['GM_PASSWORD', 'MD_PASSWORD'], group: 'gm', gender: 'female' },
 ] as const;
 
 // Every employee, each with their own 6-digit PIN (EMPLOYEE_PINS) and a per-person set of
-// app grants. NOTE: นี (Nee) is the GM tier account above — she is NOT an employee row (the
+// app grants. NOTE: Nee and Noon are GM tier accounts above — they are NOT employee rows (the
 // old MESSENGERS list wrongly included her under a "nee" slug; fixed here).
 // `group` + `gender`: DISPLAY metadata for the login screens (see TIER_ACCOUNTS note). The
 // group mirrors Pantheon's portal grouping — note นุ่น displays under GM and พิณ/เล็ก under Others.
@@ -34,7 +36,7 @@ type EmployeeSeed = {
   slug: string;
   name: string;
   apps: readonly string[];
-  role?: 'gm' | 'agm' | 'employee';
+  role?: 'agm' | 'employee';
   group: string;
   gender: 'male' | 'female';
 };
@@ -54,7 +56,6 @@ export const EMPLOYEES: readonly EmployeeSeed[] = [
   { slug: 'lungko', name: 'ลุงโก๊ะ', apps: ['ceres', 'apollo'], group: 'messengers', gender: 'male' },
   { slug: 'wong', name: 'วง', apps: ['ceres', 'apollo'], group: 'messengers', gender: 'male' },
   { slug: 'paeng', name: 'แป๋ง', apps: ['ceres', 'apollo'], group: 'messengers', gender: 'male' },
-  { slug: 'nun', name: 'นุ่น', apps: ['minerva', 'juno', 'ceres', 'apollo'], role: 'gm', group: 'gm', gender: 'female' }, // Noon — GM, same access as Nee
   { slug: 'poopae', name: 'ปูเป้', apps: ['minerva', 'ceres', 'apollo'], role: 'agm', group: 'agm', gender: 'female' },
   { slug: 'win', name: 'วิน', apps: ['minerva', 'ceres', 'apollo'], role: 'agm', group: 'agm', gender: 'male' },
   { slug: 'mail', name: 'เมล', apps: ['minerva', 'ceres', 'apollo'], role: 'agm', group: 'agm', gender: 'female' },
@@ -109,7 +110,7 @@ export function parseAgentPins(raw: string, label = 'AGENT_PINS'): Map<string, s
 // misconfigured env can never delete the last working login.
 //
 // Staff credentials come from env: SEED_PASSWORD (Dr. M), GM_PASSWORD or fallback MD_PASSWORD
-// (Nee), EMPLOYEE_PINS (all
+// (Nee and Noon), EMPLOYEE_PINS (all
 // employees, "slug:pin,…"). An account with no configured secret is skipped — never seeded with
 // a blank/default — and a fully-unprovisioned env can never prune/lock everyone out (see the
 // allProvisioned guard below). The old AGENT_PINS / STAFF_PASSWORD / CERES_MD_PASSWORD transition
@@ -153,6 +154,10 @@ export async function syncStaff(): Promise<void> {
   const employeePins = parseAgentPins(env.AGENT_PINS, 'AGENT_PINS');
   for (const [slug, pin] of parseAgentPins(env.EMPLOYEE_PINS, 'EMPLOYEE_PINS')) {
     employeePins.set(slug, pin);
+  }
+  if (employeePins.delete('nun')) {
+    // eslint-disable-next-line no-console
+    console.warn('[staff] PIN entry for "nun" is deprecated and ignored; Noon uses GM_PASSWORD');
   }
   for (const e of EMPLOYEES) {
     const email = employeeEmail(e.slug);

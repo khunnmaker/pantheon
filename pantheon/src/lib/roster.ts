@@ -1,6 +1,6 @@
 // The people shown on the portal login screen, grouped into collapsible ROLE sections
-// (suite login standard: no credential box until a name is tapped — then Dr. M & Nee-GM type a
-// password, everyone else a masked auto-submit 6-digit PIN).
+// (suite login standard: no credential box until a name is tapped — then Dr. M, Nee, and Noon
+// type a password; everyone else uses a masked auto-submit 6-digit PIN).
 //
 // Emails follow the suite convention (<slug>@prominent.local) and MUST mirror the seeded
 // accounts in api/src/db/ensureSeeded.ts (TIER_ACCOUNTS + EMPLOYEES) — that seed is the single
@@ -11,7 +11,7 @@
 // backend tier/apps. Intentional display moves vs the old flat list: นุ่น → GM, พิณ + เล็ก →
 // Others (all three were formerly lumped under messengers).
 
-export type Cred = 'password' | 'pin';   // Dr. M & Nee (GM) use a password; everyone else a 6-digit PIN.
+export type Cred = 'password' | 'pin';   // Dr. M and both GMs use a password; everyone else a 6-digit PIN.
 
 // Drives the cute avatar's look (feminine vs masculine hair). Display-only — nothing to do with
 // auth. Sales are female, messengers are male (owner-specified); the rest are set per person.
@@ -61,7 +61,7 @@ export const ROLE_GROUPS: RoleGroup[] = [
     members: [
       // Legacy-but-kept email: changing Nee's Agent identity would orphan bills/audit history.
       { email: 'md@prominent.local', label: 'Nee (นี)', cred: 'password', gender: 'female' },
-      { email: slugEmail('nun'), label: 'Noon (นุ่น)', cred: 'pin', gender: 'female' },
+      { email: slugEmail('nun'), label: 'Noon (นุ่น)', cred: 'password', gender: 'female' },
     ],
   },
   {
