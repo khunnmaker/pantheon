@@ -21,6 +21,49 @@ export function paymentTimestamp(transferAt: string, createdAt: Date): Date {
   return createdAt;
 }
 
+// Strict counterpart for high-confidence matching: the slip timestamp must contain a real
+// calendar date + minute. Unlike paymentTimestamp, this never falls back to createdAt.
+export function strictPaymentTimestamp(transferAt: string): Date | null {
+  const m = transferAt.trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})\s+(\d{1,2}):(\d{2})$/);
+  if (!m) return null;
+
+  const [, dd, mm, year, hh, min] = m;
+  let y = parseInt(year, 10);
+  if (year.length <= 2) y = y >= 50 ? 2500 + y : 2000 + y;
+  if (y >= 2500) y -= 543;
+
+  const day = parseInt(dd, 10);
+  const month = parseInt(mm, 10);
+  const hour = parseInt(hh, 10);
+  const minute = parseInt(min, 10);
+  if (month < 1 || month > 12 || hour < 0 || hour > 23 || minute < 0 || minute > 59) return null;
+  const daysInMonth = new Date(Date.UTC(y, month, 0)).getUTCDate();
+  if (day < 1 || day > daysInMonth) return null;
+
+  const parsed = new Date(
+    `${y}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}T${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}:00+07:00`,
+  );
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+const BANGKOK_MINUTE_FORMAT = new Intl.DateTimeFormat('en', {
+  timeZone: 'Asia/Bangkok',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  hourCycle: 'h23',
+});
+
+// Calendar-minute identity in Bangkok; seconds and milliseconds are deliberately discarded.
+export function bangkokMinuteKey(timestamp: Date): string {
+  const parts = Object.fromEntries(
+    BANGKOK_MINUTE_FORMAT.formatToParts(timestamp).map((part) => [part.type, part.value]),
+  );
+  return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}`;
+}
+
 // 2dp-normalized numeric compare so "1234.5" and "1234.50" (both valid house-String
 // amounts) are treated as equal, and floating point never causes a false mismatch.
 export function amountsEqual(a: string, b: string): boolean {

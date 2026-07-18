@@ -8,6 +8,8 @@ import { parseKshop } from '../bank/parseKshop.js';
 import { makeUniqueDedupeKeys } from '../bank/dedupe.js';
 import {
   paymentTimestamp,
+  strictPaymentTimestamp,
+  bangkokMinuteKey,
   amountsEqual,
   dayDistance,
   nameAgreement,
@@ -464,22 +466,24 @@ function normChq(s: string): string {
   return chequeSearchDigits(s) ?? '';
 }
 
-// The auto-matcher (see spec B3): runs in TWO passes over the in-scope unmatched "in" lines.
+// The auto-matcher (see spec B3): runs in THREE passes over the in-scope unmatched "in" lines.
 //   Pass 1 (cheque): a KBiz "Cheque Deposit … Cheque No. N" line is linked to its hand-added
 //     cheque Payment by cheque number + amount. This is bank-side bookkeeping only.
-//   Pass 2 (generic): owner's "date + name + amount" rule for every OTHER credit line ↔
+//   Pass B (exact minute): amount + Bangkok calendar minute, using only a strictly parsed
+//     transferAt. Names are deliberately ignored, but ambiguity is still guarded both ways.
+//   Pass 3 (generic): owner's "date + name + amount" rule for every OTHER credit line ↔
 //     Payment status='verified', not void, reconciled=false. Amount + ≤3-day window creates a
 //     candidate only when names do not conflict; name agreement then narrows ambiguity, so an
 //     agreeing pair can beat a name-unknown alternative. All-unknown behaves exactly as before.
 //     Cheque-deposit lines and source='cheque' payments are excluded here — a cheque can ONLY
 //     link via its number, never by amount.
-// Both passes link ONLY when the effective pairing is unambiguous in BOTH directions —
+// All passes link ONLY when the effective pairing is unambiguous in BOTH directions —
 // everything else is left for the UI's ranked suggestions. Runs over a
 // specific set of new txn ids (import apply) or ALL unmatched in-txns (manual re-run via
 // /bank/automatch). createdById is left null on every link this function creates — a
 // deliberate marker distinguishing "the system auto-matched this" from a FIN-driven manual
-// match (POST /match, which stamps req.agent.id). Returns both link counts.
-async function runAutoMatcher(txnIds?: string[]): Promise<{ matched: number; chequeMatched: number }> {
+// match (POST /match, which stamps req.agent.id). Returns all link counts.
+async function runAutoMatcher(txnIds?: string[]): Promise<{ matched: number; chequeMatched: number; timeMatched: number }> {
   // Ambiguity is judged against ALL unmatched in-lines, not just the ones this run may link:
   // an import-scoped run would otherwise miss that an OLDER unmatched line is an equally
   // plausible home for the payment, and link the new line with false confidence.
@@ -506,7 +510,7 @@ async function runAutoMatcher(txnIds?: string[]): Promise<{ matched: number; che
   ]);
   const linkTargets = txnIds ? new Set(txnIds) : null;
   const linkable = linkTargets ? allTxns.filter((t) => linkTargets.has(t.id)) : allTxns;
-  if (!linkable.length) return { matched: 0, chequeMatched: 0 };
+  if (!linkable.length) return { matched: 0, chequeMatched: 0, timeMatched: 0 };
 
   // ── Pass 1: cheques ──────────────────────────────────────────────────────
   // Match cheque-deposit lines to cheque payments by cheque number + amount, unambiguous
@@ -550,14 +554,64 @@ async function runAutoMatcher(txnIds?: string[]): Promise<{ matched: number; che
     }
   }
 
-  // ── Pass 2: generic amount + day-window ───────────────────────────────────
-  // Excludes cheque-deposit lines and anything the cheque pass already linked; the payment
-  // pool already excludes source='cheque' (a cheque must never amount-match a transfer line).
-  const genericTxns = allTxns.filter((t) => !isChequeDeposit(t) && !chequeMatchedTxnIds.has(t.id));
-  const genericLinkable = linkable.filter((t) => !isChequeDeposit(t) && !chequeMatchedTxnIds.has(t.id));
+  // ── Pass B: exact amount + Bangkok calendar minute ────────────────────────
+  // Use only a real slip timestamp: blank, date-only, and invalid transferAt values never enter
+  // this pass. Name agreement is intentionally irrelevant for legitimate third-party payers.
+  // Candidate uniqueness is computed over ALL unmatched non-cheque lines and eligible payments.
+  const timeTxns = allTxns.filter((t) => !isChequeDeposit(t) && !chequeMatchedTxnIds.has(t.id));
+  const timeLinkable = linkable.filter((t) => !isChequeDeposit(t) && !chequeMatchedTxnIds.has(t.id));
+  const timeCandidateTxnIds = new Set<string>();
+  const timeCandidatePaymentIds = new Set<string>();
+  let timeMatched = 0;
+  if (timeLinkable.length && payments.length) {
+    const paymentMinuteKeys = new Map<string, string>();
+    for (const p of payments) {
+      const timestamp = strictPaymentTimestamp(p.transferAt);
+      if (timestamp) paymentMinuteKeys.set(p.id, bangkokMinuteKey(timestamp));
+    }
+
+    const timeTxnCandidates = new Map<string, string[]>();
+    const timePaymentCandidates = new Map<string, string[]>();
+    for (const t of timeTxns) {
+      const txnMinuteKey = bangkokMinuteKey(t.txnAt);
+      const matches: string[] = [];
+      for (const p of payments) {
+        if (!amountsEqual(t.amount, p.amount)) continue;
+        if (paymentMinuteKeys.get(p.id) !== txnMinuteKey) continue;
+        matches.push(p.id);
+      }
+      timeTxnCandidates.set(t.id, matches);
+      if (matches.length) timeCandidateTxnIds.add(t.id);
+      for (const pid of matches) {
+        timeCandidatePaymentIds.add(pid);
+        timePaymentCandidates.set(pid, [...(timePaymentCandidates.get(pid) ?? []), t.id]);
+      }
+    }
+
+    for (const t of timeLinkable) {
+      const matches = timeTxnCandidates.get(t.id) ?? [];
+      if (matches.length !== 1) continue;
+      const pid = matches[0];
+      const reverseMatches = timePaymentCandidates.get(pid) ?? [];
+      if (reverseMatches.length !== 1 || reverseMatches[0] !== t.id) continue;
+      await prisma.$transaction([
+        prisma.paymentBankMatch.create({ data: { paymentId: pid, bankTxnId: t.id, createdById: null } }),
+        prisma.bankTxn.update({ where: { id: t.id }, data: { matchStatus: 'matched' } }),
+        prisma.payment.update({ where: { id: pid }, data: { reconciled: true } }),
+      ]);
+      timeMatched++;
+    }
+  }
+
+  // ── Pass 3: generic amount + day-window ───────────────────────────────────
+  // Exact-minute candidates are resolved only by Pass B's raw symmetric guard. Participants in
+  // an ambiguous exact-minute set stay manual instead of letting generic name narrowing choose.
+  const genericTxns = timeTxns.filter((t) => !timeCandidateTxnIds.has(t.id));
+  const genericLinkable = timeLinkable.filter((t) => !timeCandidateTxnIds.has(t.id));
+  const genericPayments = payments.filter((p) => !timeCandidatePaymentIds.has(p.id));
   let autoMatched = 0;
-  if (genericLinkable.length && payments.length) {
-    const paymentTimes = new Map(payments.map((p) => [p.id, paymentTimestamp(p.transferAt, p.createdAt)]));
+  if (genericLinkable.length && genericPayments.length) {
+    const paymentTimes = new Map(genericPayments.map((p) => [p.id, paymentTimestamp(p.transferAt, p.createdAt)]));
 
     // candidates[txnId] = payments that pass amount + day-window without a name conflict.
     // WHY: owner's rule is date + name + amount. Agreement is retained to narrow ambiguity,
@@ -567,7 +621,7 @@ async function runAutoMatcher(txnIds?: string[]): Promise<{ matched: number; che
     const paymentCandidates = new Map<string, { id: string; agree: boolean }[]>();
     for (const t of genericTxns) {
       const matches: { id: string; agree: boolean }[] = [];
-      for (const p of payments) {
+      for (const p of genericPayments) {
         // The payment `amount` is already the net the customer sent, so it equals the bank
         // credit directly — WHT needs no adjustment here (see grossOf's note).
         if (!amountsEqual(t.amount, p.amount)) continue;
@@ -600,7 +654,7 @@ async function runAutoMatcher(txnIds?: string[]): Promise<{ matched: number; che
     }
   }
 
-  return { matched: autoMatched, chequeMatched };
+  return { matched: autoMatched, chequeMatched, timeMatched };
 }
 
 export async function junoRoutes(app: FastifyInstance) {
@@ -1738,7 +1792,7 @@ export async function junoRoutes(app: FastifyInstance) {
       insertedIds.push(...created.filter((c) => c.direction === 'in').map((c) => c.id));
     }
 
-    const { matched, chequeMatched } = await runAutoMatcher(insertedIds);
+    const { matched, chequeMatched, timeMatched } = await runAutoMatcher(insertedIds);
 
     return {
       ok: true,
@@ -1747,14 +1801,15 @@ export async function junoRoutes(app: FastifyInstance) {
       counts: { parsed: staged.parsed, new: newIdx.length, dup: staged.rows.length - newIdx.length, excluded: staged.excluded },
       autoMatched: matched,
       chequeMatched,
+      timeMatched,
     };
   });
 
   // POST /api/juno/bank/automatch — re-run the auto-matcher over ALL currently-unmatched
   // "in" bank txns (e.g. after FIN checks a backlog of payments post-import).
   app.post('/api/juno/bank/automatch', async () => {
-    const { matched, chequeMatched } = await runAutoMatcher();
-    return { ok: true, autoMatched: matched, chequeMatched };
+    const { matched, chequeMatched, timeMatched } = await runAutoMatcher();
+    return { ok: true, autoMatched: matched, chequeMatched, timeMatched };
   });
 
   // GET /api/juno/bank/txns?status=&dir=&from=&to=&q= — the เงินเข้า/เงินออก list, with

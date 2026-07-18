@@ -7,7 +7,7 @@ import {
   baht, fileToBase64, previewBankImport, applyBankImport, getBankTxns, getBankSuggestions,
   searchBankPayments,
   matchBankTxn, unmatchBankTxn, setBankTxnRef, confirmBankTxn, confirmAllMatched, getBankSummary,
-  getPaymentsRecon, getPaymentTxnSuggestions, searchPaymentTxns, matchPaymentTxns,
+  getPaymentsRecon, getPaymentTxnSuggestions, searchPaymentTxns, matchPaymentTxns, runBankAutomatch,
   type BankTxn, type BankTxnStatusFilter, type BankImportPreview,
   type BankSuggestion, type BankSummary, type PaymentReconRow, type PaymentReconState,
   type TxnSuggestion,
@@ -19,9 +19,33 @@ import {
 // (advancing matched payments to "recorded") happens.
 
 const fmtDateTime = (iso: string) =>
-  new Date(iso).toLocaleString('th-TH', { day: '2-digit', month: 'short', year: '2-digit', hour: '2-digit', minute: '2-digit' });
+  new Date(iso).toLocaleString('th-TH', { day: '2-digit', month: 'short', year: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Bangkok' });
 const fmtDate = (iso: string) =>
-  new Date(iso).toLocaleDateString('th-TH', { day: '2-digit', month: 'short', year: '2-digit' });
+  new Date(iso).toLocaleDateString('th-TH', { day: '2-digit', month: 'short', year: '2-digit', timeZone: 'Asia/Bangkok' });
+
+function parseTransferAt(raw: string): Date | null {
+  const match = raw.trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})\s+(\d{1,2}):(\d{2})$/);
+  if (!match) return null;
+  const [, dayText, monthText, yearText, hourText, minuteText] = match;
+  let year = Number(yearText);
+  if (yearText.length <= 2) year = year >= 50 ? 2500 + year : 2000 + year;
+  if (year >= 2500) year -= 543;
+  const day = Number(dayText);
+  const month = Number(monthText);
+  const hour = Number(hourText);
+  const minute = Number(minuteText);
+  if (month < 1 || month > 12 || hour < 0 || hour > 23 || minute < 0 || minute > 59) return null;
+  if (day < 1 || day > new Date(Date.UTC(year, month, 0)).getUTCDate()) return null;
+  const parsed = new Date(
+    `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}T${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}:00+07:00`,
+  );
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function receiptTimestamp(transferAt: string, createdAt: string): string {
+  const transfer = parseTransferAt(transferAt);
+  return transfer ? fmtDateTime(transfer.toISOString()) : `ส่งเข้า ${fmtDateTime(createdAt)}`;
+}
 
 const STATUS_FILTERS: { key: BankTxnStatusFilter; label: string }[] = [
   { key: 'all', label: 'ทั้งหมด' },
@@ -47,6 +71,31 @@ export default function Recon({ isCeo }: { isCeo: boolean }) {
   const [view, setView] = useState<'receipt' | 'txn'>('receipt');
   const bump = useCallback(() => setRefreshKey((k) => k + 1), []);
 
+  const [automatchBusy, setAutomatchBusy] = useState(false);
+  const [automatchMsg, setAutomatchMsg] = useState('');
+  const [automatchError, setAutomatchError] = useState('');
+
+  async function runAutomatch() {
+    setAutomatchBusy(true);
+    setAutomatchError('');
+    setAutomatchMsg('');
+    try {
+      const result = await runBankAutomatch();
+      setAutomatchMsg(
+        result.autoMatched === 0 && result.timeMatched === 0 && result.chequeMatched === 0
+          ? 'ไม่พบคู่ใหม่'
+          : `จับคู่อัตโนมัติแล้ว ${result.autoMatched} รายการ` +
+            (result.timeMatched > 0 ? ` · จับคู่เวลาตรง ${result.timeMatched} รายการ` : '') +
+            (result.chequeMatched > 0 ? ` · จับคู่เช็คธนาคาร ${result.chequeMatched} รายการ` : ''),
+      );
+      bump();
+    } catch {
+      setAutomatchError('จับคู่อัตโนมัติไม่สำเร็จ — ลองใหม่อีกครั้ง');
+    } finally {
+      setAutomatchBusy(false);
+    }
+  }
+
   useEffect(() => {
     getBankSummary().then(setSummary).catch(() => setSummary(null));
   }, [refreshKey]);
@@ -59,21 +108,41 @@ export default function Recon({ isCeo }: { isCeo: boolean }) {
       </div>
 
       <SummaryCards summary={summary} />
-      <div className="flex justify-center">
-        <div className="flex rounded-lg border border-slate-300 overflow-hidden bg-white">
+      <div className="flex flex-col items-center gap-2">
+        <div className="flex items-center gap-2">
+          <div className="flex rounded-lg border border-slate-300 overflow-hidden bg-white">
+            <button
+              onClick={() => setView('receipt')}
+              className={`px-4 py-1.5 text-sm ${view === 'receipt' ? 'bg-emerald-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}
+            >
+              ตามใบเสร็จ
+            </button>
+            <button
+              onClick={() => setView('txn')}
+              className={`px-4 py-1.5 text-sm ${view === 'txn' ? 'bg-emerald-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}
+            >
+              ตามเงินเข้า
+            </button>
+          </div>
           <button
-            onClick={() => setView('receipt')}
-            className={`px-4 py-1.5 text-sm ${view === 'receipt' ? 'bg-emerald-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}
+            onClick={runAutomatch}
+            disabled={automatchBusy}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white border border-slate-300 text-emerald-700 text-sm hover:bg-emerald-50 disabled:opacity-50"
+            title="รันตัวจับคู่อัตโนมัติซ้ำกับรายการเงินเข้าที่ยังไม่จับคู่ทั้งหมด"
           >
-            ตามใบเสร็จ
-          </button>
-          <button
-            onClick={() => setView('txn')}
-            className={`px-4 py-1.5 text-sm ${view === 'txn' ? 'bg-emerald-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}
-          >
-            ตามเงินเข้า
+            {automatchBusy ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />} จับคู่อัตโนมัติ
           </button>
         </div>
+        {automatchMsg && (
+          <div className="text-xs text-emerald-700 flex items-center gap-1">
+            <CheckCircle2 size={13} /> {automatchMsg}
+          </div>
+        )}
+        {automatchError && (
+          <div className="text-xs text-rose-600 flex items-center gap-1">
+            <AlertTriangle size={13} /> {automatchError}
+          </div>
+        )}
       </div>
       {/* The bank-file IMPORT (uploading KBIZ / K SHOP) is CEO-only — server 403s the preview/apply
           endpoints for non-supervisor. The rest of reconciliation below (viewing txns, matching,
@@ -168,6 +237,7 @@ function ImportPanel({ onImported }: { onImported: () => void }) {
       setApplyResult(
         `นำเข้า ${result.source === 'kbiz' ? 'KBIZ' : 'K SHOP'}: ใหม่ ${result.counts.new} / ซ้ำ ${result.counts.dup} / ยกเว้น ${result.counts.excluded}` +
         (result.autoMatched > 0 ? ` — จับคู่อัตโนมัติแล้ว ${result.autoMatched} รายการ` : '') +
+        (result.timeMatched > 0 ? ` · จับคู่เวลาตรง ${result.timeMatched} รายการ` : '') +
         (result.chequeMatched > 0 ? ` · จับคู่เช็คธนาคาร ${result.chequeMatched} รายการ` : ''),
       );
       onImported();
@@ -879,7 +949,7 @@ function ReceiptRow({ payment, expanded, onToggle, onChanged }: {
     <div>
       <div onClick={onToggle} className="px-3 py-2.5 flex items-center gap-2 cursor-pointer hover:bg-emerald-50/40 text-sm">
         {expanded ? <ChevronDown size={15} className="text-slate-400 shrink-0" /> : <ChevronRight size={15} className="text-slate-400 shrink-0" />}
-        <div className="w-24 shrink-0 text-slate-500 whitespace-nowrap">{fmtDate(payment.createdAt)}</div>
+        <div className="w-44 shrink-0 text-slate-500 whitespace-nowrap">{receiptTimestamp(payment.transferAt, payment.createdAt)}</div>
         <div className="w-28 shrink-0 font-semibold text-emerald-700 truncate">RE {payment.reNumber || '—'}</div>
         {payment.chequeNo && <span className="shrink-0 px-1.5 py-0.5 rounded-full text-[11px] bg-slate-100 text-slate-600">เช็ค {payment.chequeNo}</span>}
         {payment.ref && <span className="shrink-0 px-1.5 py-0.5 rounded-full text-[11px] font-mono bg-slate-100 text-slate-600 truncate max-w-[130px]" title="เลขอ้างอิงบนสลิป (จาก OCR)">อ้างอิง {payment.ref}</span>}

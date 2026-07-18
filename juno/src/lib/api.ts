@@ -608,6 +608,7 @@ export interface BankImportApplyResult {
   counts: { parsed: number; new: number; dup: number; excluded: number };
   autoMatched: number;
   chequeMatched: number; // cheque number + amount links created by the cheque pass
+  timeMatched: number; // exact amount + Bangkok calendar-minute links created by pass B
 }
 
 export interface BankSuggestion {
@@ -694,7 +695,7 @@ export const applyBankImport = (token: string) =>
   });
 
 export const runBankAutomatch = () =>
-  authed<{ ok: boolean; autoMatched: number; chequeMatched: number }>('/api/juno/bank/automatch', { method: 'POST' });
+  authed<{ ok: boolean; autoMatched: number; chequeMatched: number; timeMatched: number }>('/api/juno/bank/automatch', { method: 'POST' });
 
 export interface BankTxnFilter {
   status?: BankTxnStatusFilter;
