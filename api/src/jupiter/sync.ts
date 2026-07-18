@@ -30,7 +30,7 @@ function dec(s: string | null | undefined): Prisma.Decimal | null {
 
 // A recorded Payment → the JupiterTxn write payload (income for PROM). amount = the NET received
 // (Juno's corrected model), whtAmount = the withheld slice; both mirrored into the Decimal shadow.
-function paymentToTxn(p: Payment) {
+export function paymentToTxn(p: Payment) {
   const net = p.amount || '';
   const wht = p.whtAmount || '';
   const re = p.reNumbers?.length ? `RE ${p.reNumbers.join('/')}` : '';

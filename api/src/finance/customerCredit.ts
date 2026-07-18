@@ -7,6 +7,8 @@ export type CreditErrorCode =
   | 'credit_overpay_required'
   | 'credit_insufficient'
   | 'credit_wrong_transfer'
+  | 'credit_wrong_transfer_source'
+  | 'credit_amount_fixed'
   | 'credit_grant_spent'
   | 'credit_grant_locked'
   | 'credit_customer_locked';
@@ -16,6 +18,8 @@ const CREDIT_MESSAGES: Record<CreditErrorCode, string> = {
   credit_overpay_required: 'สร้างเครดิตได้เฉพาะรายการยอดเกินที่มากกว่า 0',
   credit_insufficient: 'เครดิตลูกค้าคงเหลือไม่พอ',
   credit_wrong_transfer: 'รายการโอนเงินผิดไม่สามารถใช้เครดิตลูกค้าได้',
+  credit_wrong_transfer_source: 'รายการใช้เครดิตล้วนไม่ใช่การโอนเงิน จึงทำเป็นโอนเงินผิดไม่ได้',
+  credit_amount_fixed: 'รายการใช้เครดิตล้วนต้องมียอดรับเงินเท่ากับ 0',
   credit_grant_spent: 'เครดิตจากรายการนี้ถูกใช้ไปแล้ว',
   credit_grant_locked: 'กรุณายกเลิกยืนยันเครดิตก่อนแก้ยอดตามเอกสาร',
   credit_customer_locked: 'กรุณาล้างการใช้เครดิตหรือยกเลิกยืนยันเครดิตก่อนแก้ข้อมูลลูกค้า',
@@ -37,10 +41,25 @@ export type CreditTx = Prisma.TransactionClient;
 
 export type DiscrepancyConfirmGateError = 'disc_confirm_needs_bank' | 'disc_confirm_needs_receive';
 
+// Cash never enters bank reconciliation; credit-only sales have no new money to reconcile.
+// Keep this shared constant at every route/query boundary so amount=0 can never be the accidental
+// reason a credit row stays out of the matcher.
+export const BANK_RECON_EXCLUDED_SOURCES = ['cash', 'credit'] as const;
+
+export function isBankReconEligibleSource(source: string): boolean {
+  return !BANK_RECON_EXCLUDED_SOURCES.some((excluded) => excluded === source);
+}
+
+export function assertWrongTransferSource(source: string): void {
+  if (source === 'credit') throw new CustomerCreditError('credit_wrong_transfer_source');
+}
+
 export function discrepancyConfirmGate(
   payment: Pick<Payment, 'source' | 'reconciled' | 'receivedAt'>,
   bankLinkCount: number,
 ): DiscrepancyConfirmGateError | null {
+  // The incoming money was bank-grounded when the original customer credit was granted.
+  if (payment.source === 'credit') return null;
   if (payment.source === 'cash' || payment.source === 'cheque') {
     return payment.receivedAt ? null : 'disc_confirm_needs_receive';
   }

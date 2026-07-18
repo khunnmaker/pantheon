@@ -27,7 +27,7 @@ export function normalizeBillReference(raw: string): Extract<ReceiptReference, {
 
 export function normalizeReceiptReference(raw: string): ReceiptReference | null {
   const compact = compactReference(raw);
-  if (compact === '0000000') return { kind: 'wrong_transfer', value: '0000000' };
+  if (compact === '0' || compact === '0000000') return { kind: 'wrong_transfer', value: '0000000' };
   const reValue = compact.replace(/^RE/, '');
   if (/^\d{7}$/.test(reValue) && !reValue.startsWith('9')) {
     return { kind: 're', value: reValue };

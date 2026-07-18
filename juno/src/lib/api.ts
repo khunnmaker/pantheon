@@ -40,7 +40,7 @@ export type TaxStatus = 'none' | 'requested' | 'issued';
 export type CustomerType = 'โอนก่อนส่ง' | 'เครดิต' | 'เก็บปลายทาง' | '';
 // how a Payment entered Juno: 'line' = Minerva LINE-slip hook (default); the rest are
 // hand-added in Juno (see JUNO_MANUAL_ENTRY_BRIEF.md).
-export type PaymentSource = 'line' | 'manual_transfer' | 'cash' | 'cheque';
+export type PaymentSource = 'line' | 'manual_transfer' | 'cash' | 'cheque' | 'credit';
 // cash/cheque banking state: '' (รอ) -> cash 'deposited' (ฝากธนาคารแล้ว) / cheque 'cleared' (เคลียร์แล้ว)
 export type SettleState = '' | 'deposited' | 'cleared';
 export type DiscResolution = '' | 'refund' | 'credit' | 'chase' | 'use_credit' | 'writeoff';
@@ -208,9 +208,13 @@ const API_ERROR_MESSAGES: Record<string, string> = {
   credit_overpay_required: 'สร้างเครดิตได้เฉพาะรายการยอดเกินที่มากกว่า 0',
   credit_insufficient: 'เครดิตลูกค้าคงเหลือไม่พอ',
   credit_wrong_transfer: 'รายการโอนเงินผิดไม่สามารถใช้เครดิตลูกค้าได้',
+  credit_wrong_transfer_source: 'รายการใช้เครดิตล้วนทำเป็นโอนเงินผิดไม่ได้',
+  credit_amount_fixed: 'รายการใช้เครดิตล้วนต้องมียอดรับเงินเท่ากับ 0',
+  credit_required: 'ต้องบันทึกยอดใช้เครดิตก่อนยืนยันใน Express',
   credit_grant_spent: 'เครดิตจากรายการนี้ถูกใช้ไปแล้ว',
   credit_grant_locked: 'กรุณายกเลิกยืนยันเครดิตก่อนแก้ยอดตามเอกสาร',
   credit_customer_locked: 'กรุณาล้างการใช้เครดิตหรือยกเลิกยืนยันเครดิตก่อนแก้ข้อมูลลูกค้า',
+  credit_wht_not_allowed: 'รายการใช้เครดิตล้วนไม่มีหัก ณ ที่จ่าย',
   disc_confirm_needs_bank: 'ต้องจับคู่รายการธนาคารก่อนยืนยัน (สเตจ 3)',
   disc_confirm_needs_receive: 'ต้องยืนยันรับเงิน (ได้รับแล้ว) ก่อนยืนยัน',
   use_credit_under_only: 'หักจากเครดิตลูกค้าได้เฉพาะรายการยอดขาด',
@@ -300,13 +304,14 @@ export const getSummary = () => authed<Summary>('/api/juno/summary');
 export const getPayments = (f: PaymentFilter) =>
   authed<{ payments: Payment[] }>(`/api/juno/payments${filterQuery(f)}`);
 
-// Hand-add a payment that didn't arrive via the LINE hook (โอนเงิน / เงินสด / เช็คธนาคาร —
+// Hand-add a payment that didn't arrive via the LINE hook (โอนเงิน / เงินสด / เช็คธนาคาร / ใช้เครดิต —
 // see AddPaymentModal). 'line' is never sent from here — that source is Minerva-only.
 export interface CreatePaymentBody {
   source: Exclude<PaymentSource, 'line'>;
   customerCode?: string;
   customerName?: string;
-  amount: string;
+  amount?: string;
+  receiptName?: string;
   note?: string;
   senderName?: string;
   bank?: string;

@@ -45,11 +45,14 @@ import {
   satangToBaht,
 } from '../finance/discrepancy.js';
 import {
+  BANK_RECON_EXCLUDED_SOURCES,
   CustomerCreditError,
+  assertWrongTransferSource,
   customerBalanceSatang,
   customerCreditKey,
   discrepancyConfirmGate,
   grantCredit,
+  isBankReconEligibleSource,
   lockPayment,
   netPendingUseCredit,
   normalizedCreditUsed,
@@ -335,7 +338,7 @@ const listFilterSchema = z.object({
   to: z.string().max(40).optional(),
   // 'transfer' = line + manual_transfer (reconciles in กระทบยอด); 'cashcheque' = cash + cheque
   // (verified in the เงินสด/เช็ค tab); a concrete value narrows to exactly that source.
-  source: z.enum(['all', 'transfer', 'cashcheque', 'line', 'manual_transfer', 'cash', 'cheque']).optional(),
+  source: z.enum(['all', 'transfer', 'cashcheque', 'line', 'manual_transfer', 'cash', 'cheque', 'credit']).optional(),
   // CEO-only "รอยืนยันรับเงิน" tab (task 1): unconfirmed cash/cheque. Forces its own
   // source/receivedAt/status filter and ignores status/source below — see buildListWhere.
   pendingReceive: z.enum(['true']).optional(),
@@ -526,7 +529,12 @@ async function runAutoMatcher(txnIds?: string[]): Promise<{ matched: number; che
       where: { direction: 'in', matchStatus: 'unmatched' },
     }),
     prisma.payment.findMany({
-      where: { status: 'verified', reconciled: false, source: { not: 'cheque' }, wrongTransferAt: null },
+      where: {
+        status: 'verified',
+        reconciled: false,
+        source: { notIn: ['cheque', ...BANK_RECON_EXCLUDED_SOURCES] },
+        wrongTransferAt: null,
+      },
       select: {
         id: true,
         amount: true,
@@ -1361,6 +1369,12 @@ export async function junoRoutes(app: FastifyInstance) {
           customerCode: data.customerCode ?? existing.customerCode,
           customerName: data.customerName ?? existing.customerName,
         });
+        if (existing.source === 'credit' && !nextKey) {
+          throw new CustomerCreditError('credit_customer_required');
+        }
+        if (existing.source === 'credit' && data.amount !== undefined && data.amount !== existing.amount) {
+          throw new CustomerCreditError('credit_amount_fixed');
+        }
         if (nextKey !== customerCreditKey(existing) && await paymentHasCreditEntries(tx, existing.id)) {
           throw new CustomerCreditError('credit_customer_locked');
         }
@@ -1400,10 +1414,10 @@ export async function junoRoutes(app: FastifyInstance) {
   // Minerva-only. ocrAmount is left '' so the OCR-mismatch flag never fires on a manual row.
   // taxInvoice mirrors /to-finance: non-empty sets taxInvoiceStatus 'requested', else 'none'.
   const createPaymentBodySchema = z.object({
-    source: z.enum(['manual_transfer', 'cash', 'cheque']),
+    source: z.enum(['manual_transfer', 'cash', 'cheque', 'credit']),
     customerCode: z.string().max(40).default(''),
     customerName: z.string().max(200).default(''),
-    amount: z.string().max(40),
+    amount: z.string().max(40).optional(),
     note: z.string().max(600).optional(),
     senderName: z.string().max(200).optional(),
     // transfer-only
@@ -1415,21 +1429,30 @@ export async function junoRoutes(app: FastifyInstance) {
     chequeNo: z.string().max(60).optional(),
     chequeBank: z.string().max(120).optional(),
     chequeDueDate: z.string().max(60).optional(),
+    // credit-only sale: optional name to carry into FIN's receipt check dialog
+    receiptName: z.string().max(200).optional(),
     // shared (all methods) — ใบกำกับภาษี captured off the slip/customer, mirrors /to-finance
     taxInvoice: z.string().max(600).optional(),
   });
   app.post('/api/juno/payments', async (req, reply) => {
     const body = createPaymentBodySchema.safeParse(req.body);
     if (!body.success) return reply.code(400).send({ error: 'invalid_body' });
-    const amountNum = parseFloat(body.data.amount.trim());
-    if (!Number.isFinite(amountNum) || amountNum <= 0) return reply.code(400).send({ error: 'invalid_amount' });
+    const isCreditOnly = body.data.source === 'credit';
+    if (isCreditOnly && !customerCreditKey(body.data)) {
+      return sendCreditError(reply, new CustomerCreditError('credit_customer_required'));
+    }
+    const amount = isCreditOnly ? '0' : (body.data.amount?.trim() ?? '');
+    const amountNum = parseFloat(amount);
+    if (!isCreditOnly && (!Number.isFinite(amountNum) || amountNum <= 0)) {
+      return reply.code(400).send({ error: 'invalid_amount' });
+    }
 
     const p = await prisma.payment.create({
       data: {
         source: body.data.source,
         customerCode: body.data.customerCode,
         customerName: body.data.customerName,
-        amount: body.data.amount.trim(),
+        amount,
         note: body.data.note?.trim() ?? '',
         senderName: body.data.senderName?.trim() ?? '',
         bank: body.data.bank?.trim() ?? '',
@@ -1439,6 +1462,7 @@ export async function junoRoutes(app: FastifyInstance) {
         chequeNo: body.data.chequeNo?.trim() ?? '',
         chequeBank: body.data.chequeBank?.trim() ?? '',
         chequeDueDate: body.data.chequeDueDate?.trim() ?? '',
+        receiptName: body.data.receiptName?.trim() ?? '',
         taxInvoice: body.data.taxInvoice?.trim() ?? '',
         taxInvoiceStatus: body.data.taxInvoice?.trim() ? 'requested' : 'none',
         status: 'received',
@@ -1544,6 +1568,9 @@ export async function junoRoutes(app: FastifyInstance) {
         if (cur.status === 'void' && body.data.status === 'recorded') return 'void_locked' as const;
         if (body.data.status === 'recorded' && (cur.source === 'cash' || cur.source === 'cheque') && cur.receivedAt === null) {
           return 'received_required' as const;
+        }
+        if (body.data.status === 'recorded' && cur.source === 'credit' && moneyToSatang(cur.creditUsed) <= 0) {
+          return 'credit_required' as const;
         }
         const nextStatus = restoringWrongTransfer ? 'verified' : body.data.status;
         const advancing = nextStatus === 'recorded';
@@ -1659,6 +1686,10 @@ export async function junoRoutes(app: FastifyInstance) {
         const cur = await tx.payment.findUnique({ where: { id: req.params.id } });
         if (!cur) return null;
         if (cur.status === 'void') return 'void_locked' as const;
+        if (wantsWrongTransfer) assertWrongTransferSource(cur.source);
+        // Credit-only sales move no money — WHT explains a bank-net vs gross gap, which cannot
+        // exist here; letting it through would leak a phantom row into the WHT report and books.
+        if (cur.source === 'credit' && whtRate !== 0) return 'credit_wht_not_allowed' as const;
 
         const hasGrant = await paymentHasGrant(tx, cur.id);
         const arraysEqual = (left: string[], right: string[]) => left.length === right.length && left.every((value, i) => value === right[i]);
@@ -2132,12 +2163,13 @@ export async function junoRoutes(app: FastifyInstance) {
     //   all       = union of the three (the receipt-side universe of bank reconciliation).
     // The old two-state design lumped confirmed into matched, so ตามใบเสร็จ showed fewer
     // filters than ตามเงินเข้า for no workflow reason.
-    const pendingWhere = { status: 'verified', reconciled: false, source: { not: 'cash' }, wrongTransferAt: null };
+    const bankReconSource = { notIn: [...BANK_RECON_EXCLUDED_SOURCES] };
+    const pendingWhere = { status: 'verified', reconciled: false, source: bankReconSource, wrongTransferAt: null };
     const where: Record<string, unknown> =
       state === 'pending' ? { ...pendingWhere }
-      : state === 'matched' ? { reconciled: true, status: 'verified', wrongTransferAt: null }
-      : state === 'confirmed' ? { reconciled: true, status: 'recorded', wrongTransferAt: null }
-      : { OR: [{ ...pendingWhere }, { reconciled: true, status: { in: ['verified', 'recorded'] }, wrongTransferAt: null }] };
+      : state === 'matched' ? { reconciled: true, status: 'verified', source: bankReconSource, wrongTransferAt: null }
+      : state === 'confirmed' ? { reconciled: true, status: 'recorded', source: bankReconSource, wrongTransferAt: null }
+      : { OR: [{ ...pendingWhere }, { reconciled: true, status: { in: ['verified', 'recorded'] }, source: bankReconSource, wrongTransferAt: null }] };
     const term = parsed.data.q?.trim();
     if (term) {
       const search = [
@@ -2193,6 +2225,7 @@ export async function junoRoutes(app: FastifyInstance) {
   app.get<{ Params: { id: string } }>('/api/juno/payments/:id/txn-suggestions', async (req, reply) => {
     const payment = await prisma.payment.findUnique({ where: { id: req.params.id } });
     if (!payment) return reply.code(404).send({ error: 'not_found' });
+    if (!isBankReconEligibleSource(payment.source)) return { suggestions: [] };
 
     const linked = await prisma.paymentBankMatch.findMany({ where: { paymentId: payment.id }, select: { bankTxnId: true } });
     const candidates = await prisma.bankTxn.findMany({
@@ -2258,6 +2291,7 @@ export async function junoRoutes(app: FastifyInstance) {
 
     const payment = await prisma.payment.findUnique({ where: { id: req.params.id } });
     if (!payment) return reply.code(404).send({ error: 'not_found' });
+    if (!isBankReconEligibleSource(payment.source)) return { results: [] };
 
     const term = parsed.data.q;
     const amount = searchedAmount(term);
@@ -2350,8 +2384,9 @@ export async function junoRoutes(app: FastifyInstance) {
     const body = z.object({ bankTxnIds: z.array(z.string().min(1)).min(1).max(20) }).safeParse(req.body);
     if (!body.success) return reply.code(400).send({ error: 'invalid_body' });
 
-    const payment = await prisma.payment.findUnique({ where: { id: req.params.id }, select: { id: true, amount: true } });
+    const payment = await prisma.payment.findUnique({ where: { id: req.params.id }, select: { id: true, amount: true, source: true } });
     if (!payment) return reply.code(404).send({ error: 'not_found' });
+    if (!isBankReconEligibleSource(payment.source)) return reply.code(409).send({ error: 'not_bank_recon_source' });
 
     const bankTxnIds = [...new Set(body.data.bankTxnIds)];
     const txns = await prisma.bankTxn.findMany({ where: { id: { in: bankTxnIds }, direction: 'in' }, select: { id: true } });
@@ -2383,7 +2418,11 @@ export async function junoRoutes(app: FastifyInstance) {
     const excludeIds = new Set(linked.map((l) => l.paymentId));
 
     const candidates = await prisma.payment.findMany({
-      where: { status: 'verified', id: { notIn: [...excludeIds] } },
+      where: {
+        status: 'verified',
+        source: { notIn: [...BANK_RECON_EXCLUDED_SOURCES] },
+        id: { notIn: [...excludeIds] },
+      },
       select: { id: true, reNumber: true, chequeNo: true, receiptName: true, customerName: true, senderName: true, amount: true, transferAt: true, createdAt: true, ref: true, wrongTransferAt: true },
       take: 500, // ranked below; a bound keeps this cheap even on a large backlog
     });
@@ -2480,6 +2519,7 @@ export async function junoRoutes(app: FastifyInstance) {
     const candidates = await prisma.payment.findMany({
       where: {
         status: 'verified',
+        source: { notIn: [...BANK_RECON_EXCLUDED_SOURCES] },
         bankMatches: { none: { bankTxnId: txn.id } },
         OR: [...textSearch, ...(hitIds.length ? [{ id: { in: hitIds } }] : [])],
       },
@@ -2538,8 +2578,14 @@ export async function junoRoutes(app: FastifyInstance) {
     const txn = await prisma.bankTxn.findUnique({ where: { id: req.params.id } });
     if (!txn) return reply.code(404).send({ error: 'not_found' });
 
-    const payments = await prisma.payment.findMany({ where: { id: { in: body.data.paymentIds } }, select: { id: true, amount: true } });
+    const payments = await prisma.payment.findMany({
+      where: { id: { in: body.data.paymentIds } },
+      select: { id: true, amount: true, source: true },
+    });
     if (payments.length !== body.data.paymentIds.length) return reply.code(400).send({ error: 'unknown_payment' });
+    if (payments.some((payment) => !isBankReconEligibleSource(payment.source))) {
+      return reply.code(409).send({ error: 'not_bank_recon_source' });
+    }
 
     // createMany + skipDuplicates so re-adding an already-linked payment (e.g. a double
     // click) is idempotent rather than 500ing on the @@unique([paymentId, bankTxnId]).
@@ -2605,9 +2651,10 @@ export async function junoRoutes(app: FastifyInstance) {
 
     const links = await prisma.paymentBankMatch.findMany({
       where: { bankTxnId: txn.id },
-      select: { paymentId: true, payment: { select: { wrongTransferAt: true } } },
+      select: { paymentId: true, payment: { select: { source: true, wrongTransferAt: true } } },
     });
-    const regularLinks = links.filter((link) => link.payment.wrongTransferAt === null);
+    const regularLinks = links.filter((link) =>
+      link.payment.wrongTransferAt === null && isBankReconEligibleSource(link.payment.source));
     if (links.length > 0 && regularLinks.length === 0) {
       return reply.code(409).send({ error: 'wrong_transfer_only' });
     }
@@ -2621,7 +2668,7 @@ export async function junoRoutes(app: FastifyInstance) {
           id: { in: regularLinks.map((l) => l.paymentId) },
           status: 'verified',
           wrongTransferAt: null,
-          OR: [{ source: { notIn: ['cash', 'cheque'] } }, { receivedAt: { not: null } }],
+          OR: [{ source: { notIn: ['cash', 'cheque', 'credit'] } }, { source: { in: ['cash', 'cheque'] }, receivedAt: { not: null } }],
         },
         data: { status: 'recorded', verifiedById: req.agent?.id ?? null, verifiedAt: now },
       }),
@@ -2670,7 +2717,7 @@ export async function junoRoutes(app: FastifyInstance) {
           id: { in: paymentIds },
           status: 'verified',
           wrongTransferAt: null,
-          OR: [{ source: { notIn: ['cash', 'cheque'] } }, { receivedAt: { not: null } }],
+          OR: [{ source: { notIn: ['cash', 'cheque', 'credit'] } }, { source: { in: ['cash', 'cheque'] }, receivedAt: { not: null } }],
         },
         data: { status: 'recorded', verifiedById: req.agent?.id ?? null, verifiedAt: now },
       }),
@@ -2696,7 +2743,14 @@ export async function junoRoutes(app: FastifyInstance) {
         },
         select: { amount: true },
       }),
-      prisma.payment.findMany({ where: { status: 'verified', reconciled: false, wrongTransferAt: null }, select: { amount: true, verifiedAt: true, createdAt: true } }),
+      prisma.payment.findMany({
+        where: {
+          status: 'verified', reconciled: false,
+          source: { notIn: [...BANK_RECON_EXCLUDED_SOURCES] },
+          wrongTransferAt: null,
+        },
+        select: { amount: true, verifiedAt: true, createdAt: true },
+      }),
       prisma.bankImport.findFirst({ where: { source: 'kbiz' }, orderBy: { importedAt: 'desc' } }),
       prisma.bankImport.findFirst({ where: { source: 'kshop' }, orderBy: { importedAt: 'desc' } }),
     ]);
@@ -2721,7 +2775,11 @@ export async function junoRoutes(app: FastifyInstance) {
   app.get('/api/juno/bank/watchlist', async (req) => {
     const limit = Math.min(Math.max(Number((req.query as { limit?: string }).limit) || 100, 1), 500);
     const rows = await prisma.payment.findMany({
-      where: { status: 'verified', reconciled: false, wrongTransferAt: null },
+      where: {
+        status: 'verified', reconciled: false,
+        source: { notIn: [...BANK_RECON_EXCLUDED_SOURCES] },
+        wrongTransferAt: null,
+      },
       orderBy: { createdAt: 'asc' },
       take: limit,
     });

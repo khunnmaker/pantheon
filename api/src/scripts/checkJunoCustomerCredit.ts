@@ -1,9 +1,11 @@
 import {
+  assertWrongTransferSource,
   CustomerCreditError,
   customerBalanceSatang,
   customerCreditKey,
   discrepancyConfirmGate,
   grantCredit,
+  isBankReconEligibleSource,
   netPendingUseCredit,
   releaseSpend,
   removeGrant,
@@ -106,6 +108,18 @@ check(
   discrepancyConfirmGate({ source: 'line', reconciled: false, receivedAt: null } as any, 1) === null,
   'an actual PaymentBankMatch link satisfies the transfer gate even if the mirror flag is stale',
 );
+check(
+  discrepancyConfirmGate({ source: 'credit', reconciled: false, receivedAt: null } as any, 0) === null,
+  'credit-only sale is grounded without a new bank line or receive stamp',
+);
+check(!isBankReconEligibleSource('credit'), 'credit-only source is explicitly excluded from every bank matcher/query');
+check(isBankReconEligibleSource('cheque'), 'cheque stays eligible for its dedicated bank-deposit matcher');
+try {
+  assertWrongTransferSource('credit');
+  check(false, 'credit-only source cannot be marked as wrong transfer');
+} catch (error) {
+  check(isCode(error, 'credit_wrong_transfer_source'), 'wrong-transfer marking on credit-only source returns a pinned 409 credit error');
+}
 
 const db = new MemoryCreditDb();
 await db.transaction(async (tx) => {
@@ -150,6 +164,30 @@ try {
 await db.transaction((tx) => releaseSpend(tx, 'dependent'));
 check(await db.transaction((tx) => customerBalanceSatang(tx, 'C-1')) === 10_000, 'void-style spend release restores availability');
 
+// Credit-only sale lifecycle: create stores zero money without spending/checking balance;
+// verify performs the normal guarded spend; the resulting effective payment can then record.
+const creditOnlyDb = new MemoryCreditDb();
+const creditOnlySale = {
+  ...payment('credit-only-sale', 'C-CREDIT', 'Credit Customer'),
+  source: 'credit', amount: '0', whtAmount: '', creditUsed: '', reNumbers: ['6900100'],
+  discExpected: '50.00', status: 'received', reconciled: false, receivedAt: null,
+};
+check(creditOnlySale.amount === '0' && creditOnlyDb.entries.length === 0, 'credit-only create forces zero money and does not require/spend balance');
+await creditOnlyDb.transaction((tx) => grantCredit(tx, payment('prior-credit', 'C-CREDIT', 'Credit Customer') as any, 5_000, 'supervisor'));
+await creditOnlyDb.transaction((tx) => replaceSpend(tx, creditOnlySale as any, 5_000, 'fin'));
+creditOnlySale.creditUsed = '50.00';
+creditOnlySale.status = 'verified';
+check(effectivePaidSatang(creditOnlySale) === 5_000, 'credit-only verify balances expected using 0 new money plus customer credit');
+check(await creditOnlyDb.transaction((tx) => customerBalanceSatang(tx, 'C-CREDIT')) === 0, 'credit-only verify uses the normal non-overdraw ledger guard');
+try {
+  await creditOnlyDb.transaction((tx) => replaceSpend(tx, { ...creditOnlySale, id: 'credit-only-overdraw' } as any, 1, 'fin'));
+  check(false, 'credit-only verify cannot overdraw customer balance');
+} catch (error) {
+  check(isCode(error, 'credit_insufficient'), 'credit-only verify keeps the normal insufficient-balance 409');
+}
+creditOnlySale.status = 'recorded';
+check(creditOnlySale.status === 'recorded' && creditOnlySale.amount === '0', 'credit-only lifecycle reaches recorded while income remains zero');
+
 const raceDb = new MemoryCreditDb();
 await raceDb.transaction((tx) => grantCredit(tx, payment('race-grant') as any, 10_000, 'supervisor'));
 let ready = 0;
@@ -167,14 +205,14 @@ check(raceDb.entries.filter((entry) => entry.kind === 'spend').length === 1, 'un
 check(await raceDb.transaction((tx) => customerBalanceSatang(tx, 'C-1')) >= 0, 'race leaves final ledger balance nonnegative');
 
 const netDb = new MemoryCreditDb();
-const pendingPayment = (id: string, createdAt: string, expected: string) => ({
+const pendingPayment = (id: string, createdAt: string, expected: string, source = 'line', reconciled = true) => ({
   ...payment(id), amount: '0.00', whtAmount: '', creditUsed: '', reNumbers: [], status: 'verified',
   discExpected: expected, discResolution: 'use_credit', discConfirmedAt: null, wrongTransferAt: null,
-  source: 'line', reconciled: true, receivedAt: null, bankMatches: [], transferAt: '', createdAt: new Date(createdAt),
+  source, reconciled, receivedAt: null, bankMatches: [], transferAt: '', createdAt: new Date(createdAt),
 });
 netDb.payments = [
   pendingPayment('newer-shortfall', '2026-07-12T00:00:00Z', '80.00'),
-  pendingPayment('older-shortfall', '2026-07-11T00:00:00Z', '60.00'),
+  pendingPayment('older-shortfall', '2026-07-11T00:00:00Z', '60.00', 'credit', false),
 ];
 await netDb.transaction((tx) => grantCredit(tx, payment('net-grant') as any, 10_000, 'supervisor'));
 const netted = await netDb.transaction((tx) => netPendingUseCredit(tx, 'C-1', 'supervisor'));
@@ -182,6 +220,7 @@ check(netted.fullyCovered[0] === 'older-shortfall', 'auto-netting spends against
 check(netDb.entries.find((entry) => entry.paymentId === 'older-shortfall')?.amountSatang === -6_000, 'auto-netting fully covers the oldest row');
 check(netDb.entries.find((entry) => entry.paymentId === 'newer-shortfall')?.amountSatang === -4_000, 'auto-netting partially covers the next row with the remaining balance');
 check(netDb.payments.find((row) => row.id === 'older-shortfall').discConfirmedBy === 'supervisor', 'a fully covered row is confirmed by the grant action');
+check(netDb.payments.find((row) => row.id === 'older-shortfall').source === 'credit', 'auto-netting covers a credit-source shortfall without bank grounding');
 check(netDb.payments.find((row) => row.id === 'newer-shortfall').discConfirmedAt === null, 'a partially covered row remains unconfirmed');
 check(await netDb.transaction((tx) => customerBalanceSatang(tx, 'C-1')) === 0, 'auto-netting never overdraws the customer balance');
 try {

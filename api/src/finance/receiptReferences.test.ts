@@ -7,7 +7,8 @@ import {
 } from './receiptReferences.js';
 
 describe('receipt reference normalization', () => {
-  it('reserves only the exact all-zero sentinel for a wrong transfer', () => {
+  it('canonicalizes both exact wrong-transfer sentinels', () => {
+    expect(normalizeReceiptReference('0')).toEqual({ kind: 'wrong_transfer', value: '0000000' });
     expect(normalizeReceiptReference('0000000')).toEqual({ kind: 'wrong_transfer', value: '0000000' });
     expect(normalizeReceiptReference('0000001')).toEqual({ kind: 're', value: '0000001' });
     expect(normalizeReceiptReference('RE 0000000')).toEqual({ kind: 're', value: '0000000' });
@@ -48,6 +49,7 @@ describe('receipt reference normalization', () => {
   });
 
   it.each([
+    [{ kind: 'wrong_transfer', value: '0000000' } as const, 'โอนเงินผิด 0000000'],
     [{ kind: 're', value: '6907674' } as const, 'RE 6907674'],
     [{ kind: 'bill', billKind: 'manual', value: '9690001' } as const, 'MB 9690001'],
     [{ kind: 'bill', billKind: 'external', value: 'MB690001' } as const, 'MB69-0001'],

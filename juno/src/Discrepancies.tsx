@@ -62,6 +62,7 @@ type GroundablePayment = Pick<Payment, 'source' | 'reconciled' | 'receivedAt' | 
 
 function groundingState(payment: GroundablePayment): { chip: string; title: string } | null {
   if (payment.discConfirmedAt) return null;
+  if (payment.source === 'credit') return null;
   if (payment.source === 'cash' || payment.source === 'cheque') {
     return payment.receivedAt ? null : { chip: 'รอยืนยันรับเงิน', title: 'ต้องยืนยันรับเงิน (ได้รับแล้ว) ก่อนยืนยัน' };
   }

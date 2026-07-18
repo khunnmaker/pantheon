@@ -9,6 +9,7 @@ import {
   normalizeReCore,
 } from '../finance/discrepancy.js';
 import { computeReRow } from '../finance/reRecon.js';
+import { displayReceiptReference, normalizeReceiptReference } from '../finance/receiptReferences.js';
 
 let failed = 0;
 function check(condition: boolean, label: string): void {
@@ -67,6 +68,21 @@ for (const [label, amount, expectedDiff] of [
       computeReRow('100.00', [rePayment], amounts).status === 'matched',
     'GET /re helper marks both members of balanced 1-payment/2-RE coverage matched',
   );
+}
+
+{
+  const compact = normalizeReceiptReference('0');
+  const long = normalizeReceiptReference('0000000');
+  check(JSON.stringify(compact) === JSON.stringify(long), '0 and 0000000 are equivalent wrong-transfer sentinels');
+  check(compact?.kind === 'wrong_transfer' && displayReceiptReference(compact) === 'โอนเงินผิด 0000000', 'compact sentinel displays with the canonical 0000000 label');
+  check(normalizeReCore('0') === null && normalizeReCore('0000000') === null, 'both wrong-transfer sentinels are rejected as RE cores');
+}
+
+{
+  const p = payment('credit-only', '0', ['6900012'], '', '', '5000.00');
+  const [component] = buildDiscrepancyComponents([p], [receipt('6900012', '5000.00')]);
+  check(component.diffSatang === 0, 'credit-only payment settles its RE with no new money');
+  check(grossSatang(p) === 0 && effectivePaidSatang(p) === 500_000, 'credit-only spend stays out of income/WHT totals while covering the sale');
 }
 
 {
