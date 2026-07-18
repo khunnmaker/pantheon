@@ -254,10 +254,15 @@ describe('computeReRow ปิดใน Express (clean *** flag = Express already
     expect(reRow('A', '400.00', [pay(['A'], '400.00')], oneRe, true).status).toBe('matched');
   });
 
-  it('clean + genuinely mismatched payments → mismatch wins over closed (never silenced)', () => {
+  it('clean + mismatched payments → STILL closed (Express is authoritative; owner 2026-07-19)', () => {
+    // Supersedes the 07-18 mismatch-wins guard: a closed document is settled history even when
+    // Juno's linked amounts disagree. The diff stays in the payload for the detail view.
     const r = reRow('A', '400.00', [pay(['A'], '300.00')], oneRe, false);
-    expect(r.status).toBe('mismatch');
-    expect(r.diff).toBe(-100);
+    expect(r.status).toBe('closed');
+    expect(r.diff).toBe(-100); // forensics survive on the row
+
+    // The alarm still fires while the document is LIVE (***):
+    expect(reRow('A', '400.00', [pay(['A'], '300.00')], oneRe, true).status).toBe('mismatch');
   });
 
   it('clean + unpriceable group (co-receipt missing) → closed, Express is authoritative', () => {

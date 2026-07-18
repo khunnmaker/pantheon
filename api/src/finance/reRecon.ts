@@ -14,11 +14,12 @@
 //     gross to EVERY RE it lists made each look over-paid. Each RE reports only its apportioned
 //     share: group paid × (own amount / group expected).
 //
-// 'closed' = ปิดใน Express, the terminal state (owner semantics 2026-07-18): a clean line in
-// ARRCPDAT (no ***) means Express already received the money and finished the entry, so a clean
-// RE closes automatically — UNLESS the group's numbers genuinely contradict (mismatch wins, a
-// human must look before the row disappears into the closed pile). `***` = money not received
-// yet, so *** rows stay in the live unpaid/matched flow until a later import shows them clean.
+// 'closed' = ปิดใน Express / ปิดแล้ว, the terminal state. Express (or the in-app confirm for
+// MB/XS) is AUTHORITATIVE (owner ruling 2026-07-19): a closed document is closed even when
+// Juno's linked amounts disagree — the diff stays visible in the row detail, but ยอดไม่ตรง is
+// a LIVE-document alarm only. (This supersedes the 07-18 "mismatch wins over closed" guard:
+// real data showed clean-but-mismatched rows are settled history, not open cases.) `***` /
+// unconfirmed = money not received yet → the live unpaid/matched/mismatch flow.
 //
 // Kept pure (no Prisma/Fastify) so the math is unit-testable — see api/test/money.test.ts.
 
@@ -215,7 +216,9 @@ export function computeReRow(
   const paidGross = Number((v.paid * (own / v.expected)).toFixed(2));
   const diff = Number((paidGross - own).toFixed(2));
   if (!v.matched) {
-    return { status: 'mismatch', paidGross, diff, paymentCount: v.directCount };
+    // ยอดไม่ตรง is a live-document alarm only — a closed document stays closed (Express /
+    // the in-app confirm is authoritative); the diff remains in the payload for the detail view.
+    return { status: notPosted ? 'mismatch' : 'closed', paidGross, diff, paymentCount: v.directCount };
   }
   return { status: notPosted ? 'matched' : 'closed', paidGross, diff, paymentCount: v.directCount };
 }
