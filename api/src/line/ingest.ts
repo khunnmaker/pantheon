@@ -2,6 +2,7 @@ import type { Customer, Message, Session } from '@prisma/client';
 import { prisma } from '../db/prisma.js';
 import { fetchDisplayName, fetchGroupName, fetchPictureUrl } from './client.js';
 import { maybeRefreshCustomerPicture } from './picture.js';
+import { cancelAutosendForCustomer } from '../autosend/scheduler.js';
 
 export interface IngestInput {
   lineUserId: string;
@@ -67,6 +68,9 @@ export async function ingestCustomerText(input: IngestInput): Promise<IngestResu
   if (!session) {
     session = await prisma.session.create({ data: { customerId: customer.id } });
   }
+
+  // Any fresh inbound message permanently cancels a pending supervised auto-send.
+  await cancelAutosendForCustomer(customer.id, 'new_inbound');
 
   const message = await prisma.message.create({
     data: {

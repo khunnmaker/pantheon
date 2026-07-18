@@ -13,6 +13,7 @@ import {
   getFinanceAudits, resolveFinanceAudit, type FinanceAudit,
   getQuickReplies, addQuickReply, deleteQuickReply, sendQuickReply, sendMessage, sendPhotoNow, searchCatalog, addProductToDraft, readSlip, sendToFinance,
   draftNow, clearDrafts,
+  cancelAutosend, getAutosendConfig, setAutosendConfig,
   type Agent, type CustomerLite, type CustomerDetail, type Message, type LearnedAnswer, type LearnedMetrics, type PendingProduct, type QuickReply,
 } from './lib/api';
 import { getSocket, disconnectSocket } from './lib/socket';
@@ -656,6 +657,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
   const [cameraOpen, setCameraOpen] = useState(false);
   const [financeMsg, setFinanceMsg] = useState<string | null>(null);
   const [error, setError] = useState('');
+  const [countdownNow, setCountdownNow] = useState(Date.now());
 
   const [learned, setLearned] = useState<LearnedAnswer[]>([]);
   const [flaggedLearned, setFlaggedLearned] = useState<LearnedAnswer[]>([]);
@@ -728,6 +730,20 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
     if (agent.role !== 'supervisor') return;
     try { setAudits((await getFinanceAudits('open')).audits); } catch { /* ignore */ }
   }, [agent.role]);
+
+  useEffect(() => {
+    if (!detail?.autosendSchedule) return;
+    setCountdownNow(Date.now());
+    const timer = window.setInterval(() => setCountdownNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [detail?.autosendSchedule]);
+
+  const stopAutosend = useCallback(async () => {
+    const schedule = detail?.autosendSchedule;
+    if (!schedule) return;
+    setDetail((current) => current ? { ...current, autosendSchedule: null } : current);
+    await cancelAutosend(schedule.draftId).catch(() => undefined);
+  }, [detail?.autosendSchedule]);
 
   async function doResolveAudit(id: string) {
     try {
@@ -803,6 +819,17 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
       setForceDrafting(false);
       flashToast('ร่างคำตอบไม่สำเร็จ');
     };
+    const onAutosendScheduled = (payload: { customerId: string; draftId: string; sendAt: number }) => {
+      if (selectedRef.current !== payload.customerId) return;
+      setCountdownNow(Date.now());
+      setDetail((current) => current ? { ...current, autosendSchedule: payload } : current);
+    };
+    const onAutosendCanceled = (payload: { customerId: string; draftId: string }) => {
+      if (selectedRef.current !== payload.customerId) return;
+      setDetail((current) => current?.autosendSchedule?.draftId === payload.draftId
+        ? { ...current, autosendSchedule: null }
+        : current);
+    };
     // The 👁 read chip updates live when the extension (or another staff's console) syncs a new
     // OA read marker for the currently-open customer, without needing a manual refresh.
     const onOaRead = (payload: {
@@ -837,6 +864,8 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
     socket.on('draft:queued', onDraftQueued);
     socket.on('draft:cleared', onDraftCleared);
     socket.on('draft:failed', onDraftFailed);
+    socket.on('autosend:scheduled', onAutosendScheduled);
+    socket.on('autosend:canceled', onAutosendCanceled);
     socket.on('conversation:update', onConversation);
     socket.on('oa:read', onOaRead);
     return () => {
@@ -846,6 +875,8 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
       socket.off('draft:queued', onDraftQueued);
       socket.off('draft:cleared', onDraftCleared);
       socket.off('draft:failed', onDraftFailed);
+      socket.off('autosend:scheduled', onAutosendScheduled);
+      socket.off('autosend:canceled', onAutosendCanceled);
       socket.off('conversation:update', onConversation);
       socket.off('oa:read', onOaRead);
     };
@@ -1774,6 +1805,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                           <div className={'text-[10px] mt-0.5 flex items-baseline justify-between gap-3 ' + (m.role === 'customer' ? 'text-slate-400' : 'text-sky-100')}>
                             <span className="flex items-center gap-1 flex-wrap">
                               {fmtTime(m.createdAt)}
+                              {m.autoSent && <span title="ส่งอัตโนมัติ" className="text-[10px]">🤖</span>}
                               {canReply && <CornerUpLeft size={11} className={isReplying ? 'text-sky-500' : 'text-slate-300'} />}
                               {/* แจ้งการเงิน sits inline right after the time + reply icon — customer images
                                   AND PDF file messages (bank apps export slips as PDF; the api's isSlipCapable
@@ -1919,7 +1951,16 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                             </div>
                       )}
                       {replyBar}
-                      <textarea value={editText} onChange={(e) => { setEditText(e.target.value); setNeedsConfirm(false); setRewriteNote(null); }} rows={4}
+                      {detail?.autosendSchedule && (
+                        <div className="w-fit rounded-full border border-amber-300 bg-amber-50 px-2.5 py-1 text-[11px] text-amber-800">
+                          🤖 จะส่งอัตโนมัติใน {Math.max(0, Math.ceil((detail.autosendSchedule.sendAt - countdownNow) / 1000))} วิ ·{' '}
+                          <button type="button" onClick={() => void stopAutosend()} className="font-semibold underline hover:text-amber-950">ยกเลิก</button>
+                        </div>
+                      )}
+                      <textarea value={editText} onChange={(e) => {
+                        if (detail?.autosendSchedule && e.target.value !== editText) void stopAutosend();
+                        setEditText(e.target.value); setNeedsConfirm(false); setRewriteNote(null);
+                      }} rows={4}
                         className="w-full flex-1 min-h-[120px] p-3 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-sky-400 resize-none" placeholder="พิมพ์/แก้คำตอบก่อนส่ง… (วางรูป Ctrl+V ได้)" />
                       {rewriteNote && (
                         <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-2 flex items-start gap-1.5">
@@ -2128,6 +2169,34 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
 }
 
 // Stage-1b dashboard: AI accuracy from /api/learned/metrics (supervisor only).
+function AutosendSettings() {
+  const [config, setConfig] = useState<{ enabled: boolean; delaySeconds: number } | null>(null);
+  const [saving, setSaving] = useState(false);
+  useEffect(() => { getAutosendConfig().then(setConfig).catch(() => setConfig(null)); }, []);
+  if (!config) return null;
+  const save = async (next = config) => {
+    setSaving(true);
+    const safe = { ...next, delaySeconds: Math.min(300, Math.max(15, Math.round(next.delaySeconds || 60))) };
+    try { setConfig(await setAutosendConfig(safe)); } catch { setConfig(safe); } finally { setSaving(false); }
+  };
+  return (
+    <div className="mb-4 flex flex-wrap items-center gap-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+      <span className="font-semibold">🤖 ตอบรับสลิปอัตโนมัติ</span>
+      <label className="flex items-center gap-1.5">
+        <input type="checkbox" checked={config.enabled} disabled={saving}
+          onChange={(event) => { const next = { ...config, enabled: event.target.checked }; setConfig(next); void save(next); }} />
+        {config.enabled ? 'เปิด' : 'ปิด'}
+      </label>
+      <label className="flex items-center gap-1">หน่วง
+        <input type="number" min={15} max={300} value={config.delaySeconds} disabled={saving}
+          onChange={(event) => setConfig({ ...config, delaySeconds: Number(event.target.value) })}
+          onBlur={() => void save()} className="w-16 rounded-md border border-amber-300 bg-white px-2 py-1" /> วินาที
+      </label>
+      {saving && <Loader2 size={13} className="animate-spin" />}
+    </div>
+  );
+}
+
 function LearningMetrics() {
   const [m, setM] = useState<LearnedMetrics | null>(null);
   const [loading, setLoading] = useState(true);
@@ -2144,6 +2213,7 @@ function LearningMetrics() {
         <span className="font-bold text-slate-700 flex items-center gap-2"><GraduationCap size={18} className="text-sky-600" /> ความแม่นยำของ AI</span>
         <button onClick={load} className="text-xs text-slate-500 hover:text-slate-700 flex items-center gap-1"><RefreshCw size={12} /> รีเฟรช</button>
       </div>
+      <AutosendSettings />
       {loading && !m ? (
         <div className="flex justify-center py-6 text-slate-400"><Loader2 size={18} className="animate-spin" /></div>
       ) : !m || m.overall.total === 0 ? (
@@ -2154,6 +2224,10 @@ function LearningMetrics() {
             <div>
               <div className="text-3xl font-bold text-sky-700 leading-none">{pct(m.overall.acceptRate)}</div>
               <div className="text-[11px] text-slate-400 mt-1">ส่งเลยโดยไม่แก้ (จากที่ AI ตอบเอง)</div>
+            </div>
+            <div>
+              <div className="text-xl font-bold text-emerald-700 leading-none">{pct(m.overall.effectiveAcceptRate)}</div>
+              <div className="text-[11px] text-slate-400 mt-1">ยอมรับ+แก้เล็กน้อย</div>
             </div>
             <div className="text-xs text-slate-500 pb-1">
               จาก {m.overall.total} ดราฟ · ส่งเอง {m.overall.accepted} · แก้ {m.overall.edited} · ให้คนตอบ {m.overall.escalated}
@@ -2169,6 +2243,7 @@ function LearningMetrics() {
                   <div className="h-full bg-sky-500 rounded-full" style={{ width: `${(c.acceptRate ?? 0) * 100}%` }} />
                 </div>
                 <div className="w-9 text-right text-slate-700 font-medium">{pct(c.acceptRate)}</div>
+                <div className="w-24 text-right text-[10px] text-emerald-700">ยอมรับ+แก้เล็กน้อย {pct(c.effectiveAcceptRate)}</div>
                 <div className="hidden sm:block w-36 shrink-0 text-[10px] text-slate-400">ส่งเอง {c.accepted}·แก้ {c.edited}·คน {c.escalated}</div>
               </div>
             ))}
@@ -2186,6 +2261,10 @@ function LearningMetrics() {
               </div>
             </div>
           )}
+          <div className="text-[10px] text-slate-400">
+            ส่งอัตโนมัติ {m.autosend.sent} · ยกเลิก {m.autosend.canceled}
+            {m.autosend.lastSentAt ? ` · ล่าสุด ${fmtTime(m.autosend.lastSentAt)}` : ''}
+          </div>
           <div className="text-[10px] text-slate-400 leading-snug">ส่งเลยโดยไม่แก้ = AI ถูกต้อง · แก้ = ต้องปรับก่อนส่ง · ให้คนตอบ = AI ส่งต่อให้คน (ราคา/สต็อก/คลินิก)</div>
         </div>
       )}

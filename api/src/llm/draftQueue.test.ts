@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock('../env.js', () => ({ env: mocks.env }));
 vi.mock('./draft.js', () => ({ generateDraftForMessage: mocks.generateDraftForMessage }));
 vi.mock('../ws/io.js', () => ({ pushToConsole: mocks.pushToConsole }));
+vi.mock('../autosend/scheduler.js', () => ({ maybeScheduleAutosend: vi.fn().mockResolvedValue(false) }));
 vi.mock('../db/prisma.js', () => ({
   prisma: { draft: { deleteMany: mocks.draftDeleteMany, upsert: mocks.draftUpsert } },
 }));

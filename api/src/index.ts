@@ -37,6 +37,7 @@ import { oaSyncRoutes } from './routes/oaSync.js';
 import { apolloRoutes } from './routes/apollo.js';
 import { startApolloSchedulers } from './apollo/scheduler.js';
 import { staffLineRoutes } from './routes/staffLine.js';
+import { autosendRoutes } from './routes/autosend.js';
 
 // Raw body is needed to verify the LINE webhook signature.
 declare module 'fastify' {
@@ -89,6 +90,7 @@ async function buildServer() {
   await app.register(consoleRoutes);
   await app.register(kbRoutes);
   await app.register(messageRoutes);
+  await app.register(autosendRoutes);
   await app.register(learningRoutes);
   await app.register(catalogRoutes);
   await app.register(quickReplyRoutes);

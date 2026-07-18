@@ -13,6 +13,7 @@ import { embeddingsAvailable, embedMessage, embedOne, retrieveSimilarMessages } 
 import { selectRelevantKb } from '../memory/kbRetrieval.js';
 import { collectBurstImages, renderBurstQuestion } from './draftImages.js';
 import { runVisionPasses } from './visionDraft.js';
+import { classifyDraftLane } from '../autosend/lane.js';
 import {
   collectProductPhotoSkus,
   productNamesByPhotoSku,
@@ -275,6 +276,12 @@ export async function generateDraftForMessage(
     matchedSku = products.find((p) => p.price > 0 && flat.includes(`${p.price}บาท`))?.sku;
   }
   const productSku = guarded.result.type === 'draft' ? matchedSku ?? null : null;
+  const lane = classifyDraftLane({
+    messages: unanswered,
+    imageCaptions: attachedImages.map((_, index) => (result.image_captions?.[index] || firstPassCaptions[index] || '').trim()),
+    draftType: guarded.result.type,
+    draftText: guarded.result.draft,
+  });
 
   // On a cross-sell regenerate (suggestSkus given) the staff already picked photos from
   // the shown picker — keep it STABLE so their selection can't vanish: reuse the existing
@@ -310,6 +317,7 @@ export async function generateDraftForMessage(
       productSku,
       candidateSkus,
       crossSellSkus,
+      lane,
     },
     create: {
       messageId,
@@ -321,6 +329,7 @@ export async function generateDraftForMessage(
       productSku,
       candidateSkus,
       crossSellSkus,
+      lane,
     },
   });
 

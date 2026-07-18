@@ -14,6 +14,7 @@ import { pushToConsole } from '../ws/io.js';
 import { isLow } from '../stock/helpers.js';
 import { hasPrice } from '../llm/guardrails.js';
 import { captionStaffUpload } from '../llm/captionImage.js';
+import { cancelAutosendForCustomer, getActiveAutosend } from '../autosend/scheduler.js';
 import {
   bumpClearEpoch,
   cancelPending,
@@ -275,6 +276,7 @@ export async function consoleRoutes(app: FastifyInstance) {
     }));
 
     const queuedDraft = getPending(id);
+    const autosendSchedule = getActiveAutosend(id);
     return {
       customer,
       messages,
@@ -285,6 +287,7 @@ export async function consoleRoutes(app: FastifyInstance) {
       pendingMessageId,
       draftQueued: queuedDraft ? { fireAt: queuedDraft.fireAt } : null,
       generating: isGenerating(id),
+      autosendSchedule,
       memory: memory ? { summary: memory.summary, updatedAt: memory.updatedAt } : null,
       oaRead,
       stats: {
@@ -323,6 +326,7 @@ export async function consoleRoutes(app: FastifyInstance) {
     const { id } = req.params;
     cancelPending(id);
     bumpClearEpoch(id);
+    await cancelAutosendForCustomer(id, 'draft_cleared');
 
     const customer = await prisma.customer.findUnique({
       where: { id },
@@ -359,6 +363,7 @@ export async function consoleRoutes(app: FastifyInstance) {
   app.post<{ Params: { id: string } }>('/api/customers/:id/end-session', async (req, reply) => {
     const customer = await prisma.customer.findUnique({ where: { id: req.params.id } });
     if (!customer) return reply.code(404).send({ error: 'not_found' });
+    await cancelAutosendForCustomer(req.params.id, 'conversation_closed');
     const summary = await endSession(req.params.id);
     const stamp = new Date();
     // "ตอบแล้ว": stamp the cutoff so the AI drafts only from later messages. The chat STAYS
@@ -456,6 +461,7 @@ export async function consoleRoutes(app: FastifyInstance) {
     if (!parsed.data.confirmNumbers && hasPrice(qr.body)) {
       return reply.code(428).send({ error: 'needs_confirm' });
     }
+    await cancelAutosendForCustomer(customer.id, 'staff_message');
 
     let sendResult;
     try {
@@ -559,6 +565,7 @@ export async function consoleRoutes(app: FastifyInstance) {
     if (!parsed.data.confirmNumbers && hasPrice(sendText)) {
       return reply.code(428).send({ error: 'needs_confirm' });
     }
+    await cancelAutosendForCustomer(customer.id, 'staff_message');
 
     let sendResult;
     try {
@@ -605,6 +612,7 @@ export async function consoleRoutes(app: FastifyInstance) {
     if (!customer) return reply.code(404).send({ error: 'not_found' });
     const base = `${(req.headers['x-forwarded-proto'] as string) || req.protocol}://${req.headers.host}`;
     const url = `${base}/content/upload/${uploadId}`;
+    await cancelAutosendForCustomer(customer.id, 'staff_message');
     let sendResult;
     try {
       sendResult = await sendLineImages(customer.lineUserId, [url]);

@@ -14,6 +14,10 @@ const mocks = vi.hoisted(() => ({
   countEmbeddings: vi.fn(),
   findSimilar: vi.fn(),
   embed: vi.fn(),
+  queryRaw: vi.fn(),
+  messageCount: vi.fn(),
+  messageFindFirst: vi.fn(),
+  settingFindUnique: vi.fn(),
 }));
 
 vi.mock('../src/auth/middleware.js', () => ({
@@ -40,7 +44,9 @@ vi.mock('../src/db/prisma.js', () => ({
     },
     kbEntry: { count: mocks.kbCount },
     $transaction: mocks.transaction,
-    $queryRaw: vi.fn(),
+    message: { count: mocks.messageCount, findFirst: mocks.messageFindFirst },
+    setting: { findUnique: mocks.settingFindUnique },
+    $queryRaw: mocks.queryRaw,
   },
 }));
 vi.mock('../src/llm/distill.js', () => ({ distillKnowledge: mocks.distill }));
@@ -82,6 +88,10 @@ beforeEach(() => {
   mocks.kbCount.mockResolvedValue(0);
   mocks.countEmbeddings.mockResolvedValue(0);
   mocks.findSimilar.mockResolvedValue(null);
+  mocks.queryRaw.mockResolvedValue([]);
+  mocks.messageCount.mockResolvedValue(0);
+  mocks.messageFindFirst.mockResolvedValue(null);
+  mocks.settingFindUnique.mockResolvedValue(null);
   mocks.txKbCreate.mockResolvedValue({ id: 'kb-1', answer: 'สินค้านำเข้าจากญี่ปุ่น' });
   mocks.txLearnedUpdate.mockResolvedValue({ ...learnedRecord, status: 'approved' });
   mocks.transaction.mockImplementation(async (callback: (tx: unknown) => unknown) =>
@@ -93,6 +103,33 @@ beforeEach(() => {
 });
 
 describe('learning hardening routes', () => {
+  it('adds effective-accept and autosend metrics without changing the existing counts', async () => {
+    mocks.queryRaw
+      .mockResolvedValueOnce([{
+        category: 'general', accepted: 2, edited: 2, escalated: 1, total: 5, effectiveAccepted: 3,
+      }])
+      .mockResolvedValueOnce([{
+        week: '2026-07-13', accepted: 2, edited: 2, escalated: 1, total: 5, effectiveAccepted: 3,
+      }]);
+    mocks.messageCount.mockResolvedValue(4);
+    mocks.messageFindFirst.mockResolvedValue({ createdAt: new Date('2026-07-18T01:00:00.000Z') });
+    mocks.settingFindUnique.mockResolvedValue({ value: '3' });
+    const app = await buildApp();
+    const res = await app.inject({ method: 'GET', url: '/api/learned/metrics' });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({
+      overall: {
+        accepted: 2, edited: 2, escalated: 1, total: 5, acceptRate: 0.5,
+        effectiveAccepted: 3, effectiveAcceptRate: 0.75,
+      },
+      byCategory: [{ category: 'general', effectiveAccepted: 3, effectiveAcceptRate: 0.75 }],
+      byWeek: [{ week: '2026-07-13', effectiveAccepted: 3, effectiveAcceptRate: 0.75 }],
+      autosend: { sent: 4, canceled: 3, lastSentAt: '2026-07-18T01:00:00.000Z' },
+    });
+    await app.close();
+  });
+
   it('queries the durable flagged lane', async () => {
     const app = await buildApp();
     const res = await app.inject({ method: 'GET', url: '/api/learned?status=flagged' });

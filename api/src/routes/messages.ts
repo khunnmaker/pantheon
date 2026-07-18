@@ -2,21 +2,16 @@ import type { FastifyInstance } from 'fastify';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
-import { Prisma } from '@prisma/client';
 import { prisma } from '../db/prisma.js';
 import { requireAuth, requireApp } from '../auth/middleware.js';
-import { sendLineReply } from '../line/send.js';
 import { fetchDisplayName, fetchGroupName } from '../line/client.js';
 import { generateDraftForMessage } from '../llm/draft.js';
 import { rewriteText } from '../llm/rewrite.js';
 import { hasPrice } from '../llm/guardrails.js';
-import { embedMessage } from '../memory/embeddings.js';
 import { readImageContent } from '../line/contentStore.js';
 import { PRODUCT_PHOTO_DIR } from './content.js';
 import { saveStaffUpload, readStaffUploadMeta, UPLOAD_ID_RE } from '../line/staffUploads.js';
 import { recordCrossSellOutcome } from '../catalog/crossSell.js';
-import { recordReplyOutcome } from '../learning/recordOutcome.js';
-import { learningCaptureDecision } from '../learning/captureFilter.js';
 import { recordProductKeywords } from '../catalog/match.js';
 import { readSlip } from '../llm/readSlip.js';
 import { sendToFinance } from '../finance/sendToFinance.js';
@@ -24,6 +19,8 @@ import { buildSlipUrl, isPdfSlip, isSlipCapable } from '../finance/slipLink.js';
 import { normalizeSlipDate, normalizeAmount, resolveSlipTransferAt } from '../finance/normalize.js';
 import { pushToConsole } from '../ws/io.js';
 import { captionStaffUpload } from '../llm/captionImage.js';
+import { sendDraftReply } from '../reply/sendDraftReply.js';
+import { cancelAutosendForCustomer, maybeScheduleAutosend } from '../autosend/scheduler.js';
 
 // The customer's name for finance/display: assigned nickname if set, else the LINE app name.
 // If NEITHER is stored (e.g. a customer imported with only a code, or a failed profile lookup
@@ -104,12 +101,15 @@ export async function messageRoutes(app: FastifyInstance) {
     const agentText = at.success && at.data.trim() ? at.data : undefined;
     const opts = suggestSkus || mainSkus || agentText ? { suggestSkus, mainSkus, agentText } : undefined;
     try {
+      const triggering = await prisma.message.findUnique({ where: { id: req.params.id }, select: { customerId: true } });
+      if (triggering) await cancelAutosendForCustomer(triggering.customerId, 'draft_regenerated');
       const out = await generateDraftForMessage(req.params.id, opts);
       pushToConsole('draft:new', {
         messageId: req.params.id,
         draft: out.draft,
         guardrailReason: out.guardrailReason,
       });
+      if (triggering) await maybeScheduleAutosend(triggering.customerId, out.draft).catch(() => undefined);
       return { draft: out.draft, guardrailReason: out.guardrailReason };
     } catch {
       return reply.code(404).send({ error: 'not_found' });
@@ -131,6 +131,7 @@ export async function messageRoutes(app: FastifyInstance) {
     if (!product) return reply.code(404).send({ error: 'product_not_found' });
     const draft = await prisma.draft.findUnique({ where: { messageId: customerMsg.id } });
     if (!draft) return reply.code(404).send({ error: 'no_draft' });
+    await cancelAutosendForCustomer(customerMsg.customerId, 'draft_edited');
 
     if (role === 'main') {
       const next = draft.candidateSkus.includes(sku) ? draft.candidateSkus : [...draft.candidateSkus, sku];
@@ -287,7 +288,7 @@ export async function messageRoutes(app: FastifyInstance) {
   });
 
   // POST /api/messages/:id/reply — approve & send a reply to the customer.
-  // Human-in-the-loop: this is the ONLY path that sends to LINE.
+  // Manual approval path; supervised lanes reuse the same delivery service below.
   app.post<{ Params: { id: string } }>('/api/messages/:id/reply', async (req, reply) => {
     const parsed = replyBody.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: 'invalid_body' });
@@ -367,100 +368,34 @@ export async function messageRoutes(app: FastifyInstance) {
     // Claim this customer message atomically BEFORE sending. The unique
     // answersMessageId means a double-click / retry / concurrent request can't
     // double-send — only the first create wins; the rest get 409 already_replied.
-    let agentMessage;
-    try {
-      agentMessage = await prisma.message.create({
-        data: {
-          customerId: customer.id,
-          sessionId: customerMsg.sessionId,
-          role: 'agent',
-          text: finalText,
-          agentId: agent.id,
-          kbIds: draft?.usedKb ?? [],
-          answersMessageId: customerMsg.id,
-          ...(quotedMessageId ? { quotedMessageId } : {}),
-          ...(attach ?? {}),
-        },
-      });
-    } catch (err) {
-      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
-        return reply.code(409).send({ error: 'already_replied' });
-      }
-      throw err;
-    }
-
-    // Send via LINE (or dry-run). On failure, release the claim so it can retry.
-    let sendResult;
-    try {
-      sendResult = await sendLineReply(customer.lineUserId, sendText, imageUrls, quoteToken);
-    } catch (err) {
-      req.log.error({ err }, 'LINE send failed');
-      await prisma.message.delete({ where: { id: agentMessage.id } }).catch(() => undefined);
+    await cancelAutosendForCustomer(customer.id, 'staff_reply');
+    const result = await sendDraftReply({
+      customer,
+      customerMessage: customerMsg,
+      draft,
+      finalText,
+      sendText,
+      agentId: agent.id,
+      imageUrls,
+      quoteToken,
+      quotedMessageId,
+      attachment: attach,
+      attachProductSkus: parsed.data.attachProductSkus,
+    });
+    if (!result.ok) {
+      if (result.reason === 'already_replied') return reply.code(409).send({ error: 'already_replied' });
+      req.log.error({ err: result.error }, 'LINE send failed');
       return reply.code(502).send({ error: 'line_send_failed' });
     }
-    if (sendResult.channelMsgId || sendResult.quoteToken) {
-      agentMessage = await prisma.message.update({
-        where: { id: agentMessage.id },
-        data: {
-          ...(sendResult.channelMsgId ? { channelMsgId: sendResult.channelMsgId } : {}),
-          ...(sendResult.quoteToken ? { quoteToken: sendResult.quoteToken } : {}),
-        },
-      });
-    }
     if (attach?.attachmentType === 'image' && parsed.data.uploadId) {
-      void captionStaffUpload(agentMessage.id, parsed.data.uploadId);
+      void captionStaffUpload(result.message.id, parsed.data.uploadId);
     }
-
-    // Embed the sent reply so it's retrievable in future drafts (best-effort).
-    void embedMessage(agentMessage.id, finalText).catch(() => undefined);
-
-    // Cross-sell learning — only when staff engaged the picker (attached >=1 catalog
-    // photo): strengthen the cross-sells they attached, demote ones shown but skipped.
-    const anchorSku = draft?.productSku ?? draft?.candidateSkus?.[0] ?? null;
-    if (anchorSku && draft?.crossSellSkus?.length && parsed.data.attachProductSkus?.length) {
-      void recordCrossSellOutcome(anchorSku, draft.crossSellSkus, parsed.data.attachProductSkus).catch(() => undefined);
-    }
-
-    // Learning loop: capture edits (final differs from the AI draft). Best-effort — this runs
-    // AFTER the LINE send already succeeded, so a DB hiccup here must never 500 the route and
-    // skip the metrics/socket updates below; the customer already has their reply.
-    let learnedCaptured = false;
-    if (
-      draft &&
-      finalText.trim() !== draft.draftText.trim() &&
-      learningCaptureDecision(draft.draftText, finalText).capture
-    ) {
-      try {
-        await prisma.learnedAnswer.create({
-          data: {
-            customerQuestion: customerMsg.text,
-            aiDraft: draft.draftText,
-            finalAnswer: finalText,
-            agentId: agent.id,
-            edited: true,
-            status: 'pending',
-          },
-        });
-        learnedCaptured = true;
-      } catch (err) {
-        req.log.warn({ err }, 'learned capture failed');
-      }
-    }
-
-    // Stage-1 learning instrumentation: record EVERY drafted send's outcome (accepted_verbatim
-    // / edited / escalated) so per-category AI-accuracy becomes measurable. Best-effort.
-    void recordReplyOutcome({ customerMessageId: customerMsg.id, customerQuestion: customerMsg.text, draft: draft ?? null, finalText, agentId: agent.id });
-
-    await prisma.customer.update({ where: { id: customer.id }, data: { lastSeen: new Date() } });
-
-    pushToConsole('conversation:update', { customerId: customer.id, message: agentMessage });
-
     return {
       ok: true,
-      sent: sendResult.sent,
-      dryRun: sendResult.dryRun,
-      message: agentMessage,
-      learnedCaptured,
+      sent: result.sent,
+      dryRun: result.dryRun,
+      message: result.message,
+      learnedCaptured: result.learnedCaptured,
     };
   });
 

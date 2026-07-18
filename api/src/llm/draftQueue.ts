@@ -2,6 +2,7 @@ import { env } from '../env.js';
 import { prisma } from '../db/prisma.js';
 import { generateDraftForMessage } from './draft.js';
 import { pushToConsole } from '../ws/io.js';
+import { maybeScheduleAutosend } from '../autosend/scheduler.js';
 
 export type Kind = 'text' | 'image' | 'sticker';
 
@@ -106,6 +107,7 @@ export async function runDraft(customerId: string, messageId: string, kind: Kind
       return;
     }
     pushToConsole('draft:new', { messageId, customerId, draft: out.draft, guardrailReason: out.guardrailReason });
+    await maybeScheduleAutosend(customerId, out.draft).catch(() => undefined);
   } catch (err) {
     // eslint-disable-next-line no-console
     console.warn('[draft] scheduled draft failed for', messageId, err);

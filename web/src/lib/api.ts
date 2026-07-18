@@ -50,6 +50,7 @@ export interface Message {
   attachmentName: string | null; // original filename for received files
   aiCaption?: string | null; // AI-generated caption for an image attachment (names it in a quote snippet)
   financeSentAt: string | null; // when a slip was forwarded to finance
+  autoSent?: boolean;
   quotedMessageId?: string | null; // our Message.id this bubble quote-replies to (both directions)
   quotable?: boolean; // customer text/sticker bubble carrying a quoteToken → tap to LINE-quote it
   createdAt: string;
@@ -83,7 +84,9 @@ export interface Draft {
   usedKb: string[];
   note: string | null;
   productSku?: string | null;
+  lane?: string | null;
   createdAt: string;
+  updatedAt?: string;
 }
 export interface PendingProduct {
   sku: string;
@@ -106,6 +109,7 @@ export interface CustomerDetail {
   pendingMessageId: string | null;
   draftQueued: { fireAt: number } | null;
   generating: boolean;
+  autosendSchedule?: { customerId: string; draftId: string; sendAt: number } | null;
   memory: { summary: string; updatedAt: string } | null;
   // Latest LINE OA Manager "Read" status synced by the Chrome extension (null = none/unmatched).
   oaRead?: { readLabel: string | null; readSeenAt: string | null; oaChatId: string } | null;
@@ -501,10 +505,20 @@ export interface MetricsBucket {
   escalated: number;
   total: number;
   acceptRate: number | null; // accepted / (accepted + edited); null when none attempted
+  effectiveAccepted: number;
+  effectiveAcceptRate: number | null;
 }
 export interface LearnedMetrics {
   overall: MetricsBucket;
   byCategory: (MetricsBucket & { category: string })[];
   byWeek: (MetricsBucket & { week: string })[];
+  autosend: { sent: number; canceled: number; lastSentAt: string | null };
 }
 export const getLearnedMetrics = () => authed<LearnedMetrics>('/api/learned/metrics');
+
+export interface AutosendConfig { enabled: boolean; delaySeconds: number }
+export const getAutosendConfig = () => authed<AutosendConfig>('/api/autosend/config');
+export const setAutosendConfig = (config: AutosendConfig) =>
+  authed<AutosendConfig>('/api/autosend/config', { method: 'POST', body: JSON.stringify(config) });
+export const cancelAutosend = (draftId: string) =>
+  authed<{ canceled: boolean }>(`/api/messages/${draftId}/autosend-cancel`, { method: 'POST' });

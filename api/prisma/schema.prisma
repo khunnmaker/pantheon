@@ -109,6 +109,8 @@ model Message {
   // the amount the AI OCR read off the slip (server-set, tamper-proof) — compared to the
   // staff-entered amount on forward; a mismatch is logged to the admin audit report.
   slipAmount       String?
+  // True only for server-authoritative supervised auto-send lanes.
+  autoSent         Boolean   @default(false)
   createdAt        DateTime  @default(now())
 
   customer Customer @relation(fields: [customerId], references: [id])
@@ -117,6 +119,7 @@ model Message {
 
   @@index([customerId])
   @@index([sessionId])
+  @@index([autoSent, createdAt])
 }
 
 model CustomerMemory {
@@ -329,7 +332,18 @@ model Draft {
   candidateSkus   String[]
   // AI-suggested cross-sell/complementary product SKUs (with photos)
   crossSellSkus   String[]
+  // Conservative automation classification. null means manual review/send only.
+  lane            String?
   createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+// Small DB-backed runtime configuration/counter store. Values are JSON or decimal strings;
+// each key's parser owns its safe default.
+model Setting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
 }
 
 // Learned cross-sell relationship: when a customer asks about anchorSku, how good

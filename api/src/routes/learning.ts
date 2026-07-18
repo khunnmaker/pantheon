@@ -2,6 +2,8 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { prisma } from '../db/prisma.js';
 import { requireAuth, requireApp, requireRole } from '../auth/middleware.js';
+import { EFFECTIVE_ACCEPT_THRESHOLD, acceptRate, effectiveAcceptRate } from '../learning/metrics.js';
+import { getAutosendCanceled } from '../autosend/config.js';
 import { distillKnowledge } from '../llm/distill.js';
 import { embedKbEntry, kbEmbeddingText, findSimilarKb, countActiveKbEmbeddings } from '../memory/embeddings.js';
 import { hasPriceContent } from '../learning/policy.js';
@@ -216,11 +218,12 @@ export async function learningRoutes(app: FastifyInstance) {
   // / edit / escalation counts + rate, plus a weekly trend, from the Stage-1 ReplyOutcome table.
   app.get('/api/learned/metrics', supervisorOnly, async () => {
     const cats = await prisma.$queryRaw<
-      { category: string; accepted: number; edited: number; escalated: number; total: number }[]
+      { category: string; accepted: number; edited: number; escalated: number; total: number; effectiveAccepted: number }[]
     >`
       SELECT coalesce(category, 'general') AS category,
         count(*) FILTER (WHERE outcome = 'accepted_verbatim')::int AS accepted,
         count(*) FILTER (WHERE outcome = 'edited')::int AS edited,
+        count(*) FILTER (WHERE outcome = 'accepted_verbatim' OR (outcome = 'edited' AND similarity >= ${EFFECTIVE_ACCEPT_THRESHOLD}))::int AS "effectiveAccepted",
         count(*) FILTER (WHERE outcome = 'escalated')::int AS escalated,
         count(*)::int AS total
       FROM "ReplyOutcome"
@@ -229,24 +232,37 @@ export async function learningRoutes(app: FastifyInstance) {
     // before truncating to a week — otherwise a Monday-morning Bangkok send can land in the
     // prior UTC week and get bucketed under the wrong week.
     const weekly = await prisma.$queryRaw<
-      { week: string; accepted: number; edited: number; escalated: number; total: number }[]
+      { week: string; accepted: number; edited: number; escalated: number; total: number; effectiveAccepted: number }[]
     >`
       SELECT to_char(date_trunc('week', "sentAt" + interval '7 hours'), 'YYYY-MM-DD') AS week,
         count(*) FILTER (WHERE outcome = 'accepted_verbatim')::int AS accepted,
         count(*) FILTER (WHERE outcome = 'edited')::int AS edited,
+        count(*) FILTER (WHERE outcome = 'accepted_verbatim' OR (outcome = 'edited' AND similarity >= ${EFFECTIVE_ACCEPT_THRESHOLD}))::int AS "effectiveAccepted",
         count(*) FILTER (WHERE outcome = 'escalated')::int AS escalated,
         count(*)::int AS total
       FROM "ReplyOutcome"
       WHERE "sentAt" > now() - interval '84 days'
       GROUP BY 1 ORDER BY 1`;
-    const rate = (r: { accepted: number; edited: number }) =>
-      r.accepted + r.edited > 0 ? r.accepted / (r.accepted + r.edited) : null;
-    const sum = (k: 'accepted' | 'edited' | 'escalated' | 'total') => cats.reduce((a, c) => a + c[k], 0);
-    const overall = { accepted: sum('accepted'), edited: sum('edited'), escalated: sum('escalated'), total: sum('total') };
+    const sum = (k: 'accepted' | 'edited' | 'escalated' | 'total' | 'effectiveAccepted') => cats.reduce((a, c) => a + c[k], 0);
+    const overall = {
+      accepted: sum('accepted'), edited: sum('edited'), escalated: sum('escalated'),
+      total: sum('total'), effectiveAccepted: sum('effectiveAccepted'),
+    };
+    const [autoSent, lastAutoSent, canceled] = await Promise.all([
+      prisma.message.count({ where: { autoSent: true } }),
+      prisma.message.findFirst({ where: { autoSent: true }, orderBy: { createdAt: 'desc' }, select: { createdAt: true } }),
+      getAutosendCanceled(),
+    ]);
+    const withRates = <T extends { accepted: number; edited: number; effectiveAccepted: number }>(bucket: T) => ({
+      ...bucket,
+      acceptRate: acceptRate(bucket),
+      effectiveAcceptRate: effectiveAcceptRate(bucket),
+    });
     return {
-      overall: { ...overall, acceptRate: rate(overall) },
-      byCategory: cats.map((c) => ({ ...c, acceptRate: rate(c) })),
-      byWeek: weekly.map((w) => ({ ...w, acceptRate: rate(w) })),
+      overall: withRates(overall),
+      byCategory: cats.map(withRates),
+      byWeek: weekly.map(withRates),
+      autosend: { sent: autoSent, canceled, lastSentAt: lastAutoSent?.createdAt ?? null },
     };
   });
 }
