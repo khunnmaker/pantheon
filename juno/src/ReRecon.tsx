@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   FileCheck, Upload, Loader2, AlertTriangle, CheckCircle2, RefreshCw, Search,
-  ChevronDown, ChevronRight, Ban,
+  ChevronDown, ChevronRight, Ban, FileText,
 } from 'lucide-react';
 import {
-  baht, fileToBase64, importReReceipts, getReReconciliation,
-  type ReReconRow, type ReReconSummary, type ReReconStatusFilter, type ReImportResult,
+  baht, fileToBase64, importReReceipts, getReReconciliation, getRePayments,
+  type ReReconRow, type ReReconSummary, type ReReconStatusFilter, type ReImportResult, type Payment,
 } from './lib/api';
 
 // กระทบยอด RE tab. Imports Express's periodic ARRCPDAT.TXT (AR-receipt report) and
@@ -314,7 +314,90 @@ function ReRow({ row, expanded, onToggle }: { row: ReReconRow; expanded: boolean
   );
 }
 
+const PAY_STATUS_TH: Record<string, string> = {
+  received: 'รอตรวจ', verified: 'ตรวจแล้ว', recorded: 'ยืนยันใน Express', void: 'ยกเลิก',
+};
+
+function channelLabel(p: Payment): string {
+  if (p.source === 'cash') return 'เงินสด';
+  if (p.source === 'cheque') return p.chequeNo ? `เช็ค #${p.chequeNo}` : 'เช็คธนาคาร';
+  if (p.source === 'credit') return 'ใช้เครดิต';
+  return 'โอนเงิน';
+}
+
+// One covering payment inside an expanded RE row: slip thumbnail (click = full view), channel,
+// who paid, the money math (net → +WHT → +credit), stage chips, and every document the payment
+// carries — a multi-RE/MB chip list is exactly how a split/bundled transfer explains its diff.
+function PaymentMiniCard({ p, core }: { p: Payment; core: string }) {
+  const isPdf = p.slipUrl.endsWith('#pdf');
+  const whtBaht = p.grossAmount - p.amountNum;
+  const creditBaht = Number(p.creditUsed || 0);
+  return (
+    <div className="flex gap-3 bg-white rounded-lg border border-slate-200 p-2.5">
+      {p.slipUrl ? (
+        <a href={p.slipUrl} target="_blank" rel="noreferrer" className="shrink-0 block" title="เปิดสลิปเต็มจอ">
+          {isPdf ? (
+            <span className="flex flex-col items-center justify-center w-16 h-20 rounded-md border border-slate-200 bg-slate-50 text-slate-500 text-[10px] gap-1">
+              <FileText size={18} /> PDF
+            </span>
+          ) : (
+            <img src={p.slipUrl} alt="สลิป" className="w-16 h-20 object-cover rounded-md border border-slate-200 bg-slate-50" />
+          )}
+        </a>
+      ) : (
+        <span className="shrink-0 flex items-center justify-center w-16 h-20 rounded-md border border-dashed border-slate-200 text-slate-300 text-[10px]">ไม่มีสลิป</span>
+      )}
+      <div className="min-w-0 flex-1 text-xs space-y-1">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="font-medium text-slate-700">{channelLabel(p)}</span>
+          {p.bank && <span className="text-slate-500">{p.bank}</span>}
+          {p.transferAt && <span className="text-slate-500">{p.transferAt}</span>}
+          <span className={`px-1.5 py-0.5 rounded-full text-[10px] whitespace-nowrap ${p.status === 'recorded' ? 'bg-emerald-100 text-emerald-700' : p.status === 'verified' ? 'bg-sky-100 text-sky-700' : 'bg-slate-100 text-slate-600'}`}>
+            {PAY_STATUS_TH[p.status] ?? p.status}
+          </span>
+          {p.reconciled && <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-teal-50 text-teal-700 whitespace-nowrap">จับคู่ธนาคารแล้ว</span>}
+          {p.receivedAt && <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-teal-50 text-teal-700 whitespace-nowrap">ได้รับเงินแล้ว</span>}
+        </div>
+        <div className="text-slate-600 truncate">
+          {p.senderName && <>ผู้โอน: <span className="text-slate-700">{p.senderName}</span> · </>}
+          ลูกค้า: <span className="text-slate-700">{[p.customerCode, p.customerName].filter(Boolean).join(' ') || p.receiptName || '—'}</span>
+          {p.ref && <> · อ้างอิง {p.ref}</>}
+        </div>
+        <div className="text-slate-600">
+          รับจริง <span className="font-semibold text-slate-800">{baht(p.amountNum)}</span>
+          {whtBaht > 0.004 && <> · หัก {p.whtRate}% {baht(whtBaht)} → เต็ม <span className="font-medium text-slate-800">{baht(p.grossAmount)}</span></>}
+          {creditBaht > 0 && <> · เครดิต {baht(creditBaht)} → รวม <span className="font-medium text-slate-800">{baht(p.effectivePaidAmount)}</span></>}
+        </div>
+        {(p.reNumbers.length > 1 || p.billNos.length > 0) && (
+          <div className="flex flex-wrap gap-1">
+            {p.reNumbers.map((re) => (
+              <span key={re} className={`px-1 py-0.5 rounded text-[10px] whitespace-nowrap ${re === core ? 'bg-emerald-100 text-emerald-700 font-semibold' : 'bg-slate-100 text-slate-500'}`}>RE{re}</span>
+            ))}
+            {p.billNos.map((b) => (
+              <span key={b} className="px-1 py-0.5 rounded text-[10px] whitespace-nowrap bg-sky-50 text-sky-600">MB {b}</span>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function ReDetail({ row }: { row: ReReconRow }) {
+  const [payments, setPayments] = useState<Payment[] | null>(row.paymentCount === 0 ? [] : null);
+  const [payError, setPayError] = useState('');
+
+  useEffect(() => {
+    if (row.paymentCount === 0) { setPayments([]); return; }
+    let alive = true;
+    setPayments(null);
+    setPayError('');
+    getRePayments(row.reNumber)
+      .then((r) => { if (alive) setPayments(r.payments); })
+      .catch(() => { if (alive) setPayError('โหลดรายการรับเงินไม่สำเร็จ'); });
+    return () => { alive = false; };
+  }, [row.reNumber, row.paymentCount]);
+
   return (
     <div className="px-4 pb-4 pt-1 bg-slate-50 border-t border-slate-100 text-sm">
       <div className="mb-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500">
@@ -327,9 +410,25 @@ function ReDetail({ row }: { row: ReReconRow }) {
           <span>ผลต่าง: <span className={`font-medium ${Math.abs(row.diff) < 0.01 ? 'text-emerald-600' : 'text-amber-600'}`}>{row.diff > 0 ? '+' : ''}{row.diff.toFixed(2)}</span></span>
         )}
       </div>
+      {row.paymentCount > 0 && (
+        <div className="mb-3">
+          <div className="text-xs font-medium text-slate-500 mb-1.5">รายการรับเงิน ({row.paymentCount})</div>
+          {payError ? (
+            <div className="text-xs text-rose-600 flex items-center gap-1"><AlertTriangle size={12} /> {payError}</div>
+          ) : payments === null ? (
+            <div className="py-2"><Loader2 className="animate-spin text-slate-300" size={16} /></div>
+          ) : (
+            <div className="space-y-2">
+              {payments.map((p) => <PaymentMiniCard key={p.id} p={p} core={row.reNumber} />)}
+            </div>
+          )}
+        </div>
+      )}
       {row.invoices.length === 0 ? (
         <div className="text-xs text-slate-400 flex items-center gap-1"><Ban size={12} /> ไม่มีรายละเอียดใบแจ้งหนี้</div>
       ) : (
+        <>
+        <div className="text-xs font-medium text-slate-500 mb-1">ใบแจ้งหนี้ใน RE (จาก Express)</div>
         <table className="w-full text-xs">
           <thead className="text-slate-400">
             <tr>
@@ -348,6 +447,7 @@ function ReDetail({ row }: { row: ReReconRow }) {
             ))}
           </tbody>
         </table>
+        </>
       )}
     </div>
   );

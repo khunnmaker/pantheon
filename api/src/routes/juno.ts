@@ -3108,6 +3108,20 @@ export async function junoRoutes(app: FastifyInstance) {
     return { rows: page, summary, total: rows.length, hasMore: offset + page.length < rows.length };
   });
 
+  // GET /api/juno/re/:core/payments — drill-down for ONE Express-RE row: the covering payments
+  // (who paid, channel, slip) fetched lazily when the row expands. Same visibility as GET /re
+  // (any Juno user); same eligibility as the reconciliation math (non-void, not โอนเงินผิด) so
+  // what the user sees here is exactly what the row's status was computed from.
+  app.get('/api/juno/re/:core/payments', async (req, reply) => {
+    const core = String((req.params as { core?: string }).core ?? '');
+    if (!/^\d{7}$/.test(core)) return reply.code(400).send({ error: 'invalid_re' });
+    const rows = await prisma.payment.findMany({
+      where: { status: { not: 'void' }, wrongTransferAt: null, reNumbers: { has: core } },
+      orderBy: { createdAt: 'asc' },
+    });
+    return { payments: rows.map(toRow) };
+  });
+
   // GET /api/juno/re/names?res=6907402,6907403 — the imported Express receipt's customer name
   // per RE core, for just the cores asked about (any Juno user). The ใบปะหน้า cover uses this so
   // ชื่อบนใบเสร็จ prints the name on the ACTUAL RE (ReReceipt.customerName) instead of the LINE
