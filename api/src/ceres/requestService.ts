@@ -12,7 +12,7 @@ import {
 } from './aiReview.js';
 import { ceresRole } from './auth.js';
 import { notifyCeoEscalation } from './notifyCeo.js';
-import { num } from '../routes/ceres/common.js';
+import { num, parseRequestCategoryGroups } from '../routes/ceres/common.js';
 import { notifyRequesterForEvent } from './notifyRequester.js';
 
 export const V2_REQUEST_TYPES = ['advance', 'reimbursement', 'purchase'] as const;
@@ -27,6 +27,8 @@ export class CeresRequestError extends Error {
       | 'forbidden'
       | 'invalid_entity'
       | 'invalid_category'
+      | 'invalid_group'
+      | 'invalid_reason'
       | 'no_party'
       | 'receipt_required'
       | 'media_not_owned'
@@ -44,7 +46,18 @@ export class CeresRequestError extends Error {
 export interface V2RequestInput {
   requestType: V2RequestType;
   entity: string;
+  category?: string;
+  categoryGroups?: string[];
+  amount: string;
+  reason?: string;
+  requestPhotoUploadId?: string | null;
+}
+
+interface NormalizedV2RequestInput {
+  requestType: V2RequestType;
+  entity: string;
   category: string;
+  categoryGroups: string[];
   amount: string;
   reason: string;
   requestPhotoUploadId?: string | null;
@@ -56,11 +69,49 @@ function evidencePurposes(type: V2RequestType): readonly CeresMediaPurpose[] {
   return type === 'reimbursement' ? ['reimbursement_receipt'] : ['request_photo'];
 }
 
-async function validateReferences(input: V2RequestInput, agent: AuthedAgent, validateCategory = true) {
+function normalizeRequestInput(input: V2RequestInput): NormalizedV2RequestInput {
+  const advance = input.requestType === 'advance';
+  return {
+    ...input,
+    category: advance ? (input.category ?? '').trim() : (input.category ?? ''),
+    categoryGroups: [...new Set((input.categoryGroups ?? []).map((group) => group.trim()))],
+    reason: advance ? (input.reason ?? '').trim() : (input.reason ?? ''),
+  };
+}
+
+function sameGroups(left: string[], right: string[]): boolean {
+  return left.length === right.length && left.every((group, index) => group === right[index]);
+}
+
+async function validateReferences(
+  input: NormalizedV2RequestInput,
+  agent: AuthedAgent,
+  validateCategory = true,
+  validateGroups = true,
+) {
   if (!(GROUP_COMPANY_CODES as readonly string[]).includes(input.entity)) {
     throw new CeresRequestError('invalid_entity');
   }
-  if (validateCategory) {
+  if (input.requestType === 'advance') {
+    if (input.categoryGroups.length < 1 || input.categoryGroups.length > 7 || input.categoryGroups.some((group) => !group)) {
+      throw new CeresRequestError('invalid_group');
+    }
+    if (validateGroups) {
+      const activeGroups = await prisma.ceresCategory.findMany({
+        where: { active: true },
+        select: { group: true },
+        distinct: ['group'],
+      });
+      const valid = new Set(activeGroups.map((row) => row.group));
+      if (input.categoryGroups.some((group) => !valid.has(group))) {
+        throw new CeresRequestError('invalid_group');
+      }
+    }
+  } else {
+    if (input.categoryGroups.length > 0) throw new CeresRequestError('invalid_group');
+    if (!input.reason) throw new CeresRequestError('invalid_reason');
+  }
+  if (input.requestType !== 'advance' && validateCategory) {
     const category = await prisma.ceresCategory.findUnique({ where: { name: input.category } });
     if (!category?.active) throw new CeresRequestError('invalid_category');
   }
@@ -83,6 +134,7 @@ function snapshot(row: RequestRow): Prisma.InputJsonObject {
     requestType: row.requestType,
     entity: row.entity,
     category: row.category,
+    categoryGroups: parseRequestCategoryGroups(row.categoryGroups),
     amount: row.amount,
     reason: row.detail,
     requestPhotoUploadId: row.requestPhotoUploadId,
@@ -126,7 +178,8 @@ async function applyAIResult(requestId: string, expectedRowVersion: number) {
 }
 
 export async function createStaffRequest(input: V2RequestInput, agent: AuthedAgent) {
-  const { media, receiptMeta } = await validateReferences(input, agent);
+  const normalized = normalizeRequestInput(input);
+  const { media, receiptMeta } = await validateReferences(normalized, agent);
   const party = await prisma.ceresParty.findFirst({ where: { agentEmail: agent.email, active: true } });
   if (ceresRole(agent) === 'messenger' && !party) throw new CeresRequestError('no_party');
 
@@ -136,21 +189,22 @@ export async function createStaffRequest(input: V2RequestInput, agent: AuthedAge
         requestedById: agent.id,
         requestedByName: agent.name,
         requesterPartyId: party?.id ?? null,
-        entity: input.entity,
+        entity: normalized.entity,
         payee: agent.name,
-        category: input.category,
-        amount: input.amount,
-        detail: input.reason,
+        category: normalized.requestType === 'advance' ? '' : normalized.category,
+        categoryGroups: normalized.requestType === 'advance' ? JSON.stringify(normalized.categoryGroups) : '',
+        amount: normalized.amount,
+        detail: normalized.reason,
         workflowVersion: 2,
-        requestType: input.requestType,
+        requestType: normalized.requestType,
         approvalStatus: 'pending_nee',
         fulfillmentStatus: 'unfulfilled',
-        requestPhotoUploadId: input.requestPhotoUploadId ?? null,
+        requestPhotoUploadId: normalized.requestPhotoUploadId ?? null,
         requestPhotoSha: media?.sha256 ?? '',
         ocrAmount: receiptMeta?.ocrAmount ?? '',
         ocrVendor: receiptMeta?.ocrVendor ?? '',
         ocrDate: receiptMeta?.ocrDate ?? '',
-        aiScreenStatus: 'pending',
+        aiScreenStatus: normalized.requestType === 'advance' ? 'clear' : 'pending',
       },
     });
     await tx.ceresRequestEvent.create({
@@ -159,12 +213,16 @@ export async function createStaffRequest(input: V2RequestInput, agent: AuthedAge
         kind: 'submitted',
         actorId: agent.id,
         actorName: agent.name,
-        payload: snapshot(request),
+        payload: normalized.requestType === 'advance'
+          ? { ...snapshot(request), ai: 'skipped_by_policy' }
+          : snapshot(request),
       },
     });
     return request;
   });
-  return applyAIResult(created.id, created.rowVersion);
+  return normalized.requestType === 'advance'
+    ? created
+    : applyAIResult(created.id, created.rowVersion);
 }
 
 export async function editStaffRequest(
@@ -177,17 +235,22 @@ export async function editStaffRequest(
   if (existing.requestedById !== agent.id) throw new CeresRequestError('forbidden');
   if (existing.approvalStatus !== 'pending_nee') throw new CeresRequestError('not_editable');
 
-  const merged: V2RequestInput = {
+  const existingGroups = parseRequestCategoryGroups(existing.categoryGroups);
+  const merged = normalizeRequestInput({
     requestType: (patch.requestType ?? existing.requestType) as V2RequestType,
     entity: patch.entity ?? existing.entity,
     category: patch.category ?? existing.category,
+    categoryGroups: patch.categoryGroups
+      ?? ((patch.requestType ?? existing.requestType) === existing.requestType ? existingGroups : []),
     amount: patch.amount ?? existing.amount,
     reason: patch.reason ?? existing.detail,
     requestPhotoUploadId: patch.requestPhotoUploadId === undefined
       ? existing.requestPhotoUploadId
       : patch.requestPhotoUploadId,
-  };
-  const { media, receiptMeta } = await validateReferences(merged, agent, merged.category !== existing.category);
+  });
+  const categoryChanged = merged.requestType !== existing.requestType || merged.category !== existing.category;
+  const groupsChanged = merged.requestType !== existing.requestType || !sameGroups(merged.categoryGroups, existingGroups);
+  const { media, receiptMeta } = await validateReferences(merged, agent, categoryChanged, groupsChanged);
 
   const updated = await prisma.$transaction(async (tx) => {
     const changed = await tx.ceresPaymentRequest.updateMany({
@@ -196,6 +259,7 @@ export async function editStaffRequest(
         requestType: merged.requestType,
         entity: merged.entity,
         category: merged.category,
+        categoryGroups: merged.requestType === 'advance' ? JSON.stringify(merged.categoryGroups) : '',
         amount: merged.amount,
         detail: merged.reason,
         payee: agent.name,
@@ -204,7 +268,7 @@ export async function editStaffRequest(
         ocrAmount: receiptMeta?.ocrAmount ?? '',
         ocrVendor: receiptMeta?.ocrVendor ?? '',
         ocrDate: receiptMeta?.ocrDate ?? '',
-        aiScreenStatus: 'pending',
+        aiScreenStatus: merged.requestType === 'advance' ? 'clear' : 'pending',
         aiReviewId: null,
         rowVersion: { increment: 1 },
       },
@@ -230,13 +294,17 @@ export async function editStaffRequest(
           kind: 'edited',
           actorId: agent.id,
           actorName: agent.name,
-          payload: { before: snapshot(existing), after: snapshot(request) },
+          payload: merged.requestType === 'advance'
+            ? { before: snapshot(existing), after: snapshot(request), ai: 'skipped_by_policy' }
+            : { before: snapshot(existing), after: snapshot(request) },
         },
       }),
     ]);
     return request;
   });
-  return applyAIResult(updated.id, updated.rowVersion);
+  return merged.requestType === 'advance'
+    ? updated
+    : applyAIResult(updated.id, updated.rowVersion);
 }
 
 export function neeApprovalTarget(request: Pick<RequestRow, 'amount' | 'aiScreenStatus'>): 'pending_ceo' | 'approved' {

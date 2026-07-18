@@ -224,11 +224,15 @@ export async function reviewPaymentRequest(
 // Every path writes an immutable CeresAIReview and V2 never writes an `approve` verdict.
 export async function reviewStaffRequest(
   requestId: string,
-): Promise<{ verdict: 'clear' | 'escalate'; reasoning: string; reviewId: string }> {
+): Promise<{ verdict: 'clear' | 'escalate'; reasoning: string; reviewId: string | null }> {
   const request = await prisma.ceresPaymentRequest.findUnique({ where: { id: requestId } });
   if (!request || request.workflowVersion !== 2) {
     const review = await writeStaffRequestEscalation(requestId, 'ไม่พบคำขอเวอร์ชัน 2 — ส่งต่อผู้บริหาร (fail-closed)');
     return { verdict: 'escalate', reasoning: review.reasoning, reviewId: review.id };
+  }
+  if (request.requestType === 'advance') {
+    console.warn({ event: 'ceres_ai_review_skipped_by_policy', requestId }, '[ceres] advance AI review skipped by policy');
+    return { verdict: 'clear', reasoning: 'skipped_by_policy', reviewId: null };
   }
 
   const amount = num(request.amount);

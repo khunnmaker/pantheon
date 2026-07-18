@@ -355,7 +355,11 @@ export default function RequestDetail({
           editing={null}
           advanceRequestId={request.id}
           defaultEntity={request.entity}
-          defaultCategory={request.category}
+          // request.category is the server-JOINED groups label for a group-based advance
+          // (e.g. "กลุ่ม A · กลุ่ม B") — not a real category name, so don't prefill it;
+          // staff picks the exact category per expense. Old (pre-migration) advances keep
+          // a single real category (categoryGroups empty) and still prefill it as before.
+          defaultCategory={request.categoryGroups.length > 0 ? undefined : request.category}
           partyId={bootstrap.role !== 'messenger' ? bootstrap.party?.id : undefined}
           onClose={() => setExpenseSheetOpen(false)}
           onSaved={() => notify('เพิ่มค่าใช้จ่ายเบิกแล้ว')}

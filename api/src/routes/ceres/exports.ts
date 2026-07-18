@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { prisma } from '../../db/prisma.js';
 import { requireCeresRole } from '../../ceres/auth.js';
-import { thaiDayKey, thaiDayRange } from './common.js';
+import { requestCategoryLabel, thaiDayKey, thaiDayRange } from './common.js';
 
 // P5 — weekly export pack (CERES_BRIEF §2 P5 step 3: "Ceres provides a weekly export
 // pack" for the CEO's physical cross-check). House CSV style copied exactly from
@@ -109,7 +109,7 @@ export function exportsRoutes(app: FastifyInstance) {
         ? 'not_applicable'
         : events.every((event) => event.lane === 'cash' || matchedEventIds.has(event.id)) ? 'matched' : 'unmatched';
       return [
-        fmtDate(r.createdAt), r.requestType, r.payee, r.entity, r.category, r.amount, r.billPeriod,
+        fmtDate(r.createdAt), r.requestType, r.payee, r.entity, requestCategoryLabel(r), r.amount, r.billPeriod,
         r.status, r.approvalStatus, r.fulfillmentStatus, r.requestedByName, r.neeDecidedByName,
         r.decidedById ?? '', r.decidedAt ? fmtDate(r.decidedAt) : '', r.decisionNote,
         r.paidAt ? fmtDate(r.paidAt) : '', r.paidRef, lanes,

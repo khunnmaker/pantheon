@@ -29,13 +29,36 @@ export function isValidAmount(s: string): boolean {
   return AMOUNT_RE.test(s) && num(s) > 0;
 }
 
+export function parseRequestCategoryGroups(value: string): string[] {
+  if (!value) return [];
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return Array.isArray(parsed) && parsed.every((group) => typeof group === 'string')
+      ? parsed
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+export function requestCategoryLabel(request: {
+  requestType: string;
+  category: string;
+  categoryGroups: string;
+}): string {
+  const groups = request.requestType === 'advance'
+    ? parseRequestCategoryGroups(request.categoryGroups)
+    : [];
+  return groups.length > 0 ? groups.join(' · ') : request.category;
+}
+
 // Workflow-v2 projection. Keep this separate from the legacy mapper in requests.ts:
 // old clients continue to read `status`, while v2 clients read the split approval,
 // fulfillment, and AI-screen fields below.
 export function toStaffRequestRow(
   r: {
     id: string; requestedById: string | null; requestedByName: string; requesterPartyId: string | null;
-    entity: string; payee: string; category: string; amount: string; detail: string;
+    entity: string; payee: string; category: string; categoryGroups: string; amount: string; detail: string;
     requestType: string; approvalStatus: string; fulfillmentStatus: string;
     requestPhotoUploadId: string | null; ocrAmount: string; ocrVendor: string; ocrDate: string;
     aiScreenStatus: string; aiReviewId: string | null; neeDecidedById: string | null;
@@ -54,7 +77,8 @@ export function toStaffRequestRow(
     requesterPartyId: r.requesterPartyId,
     entity: r.entity,
     payee: r.payee,
-    category: r.category,
+    category: requestCategoryLabel(r),
+    categoryGroups: parseRequestCategoryGroups(r.categoryGroups),
     amount: r.amount,
     amountNum: num(r.amount),
     reason: r.detail,

@@ -24,7 +24,7 @@ import {
 import { useMediaUrl } from './lib/media';
 import { downscaleImage } from './lib/image';
 import { useCeres } from './lib/bootstrapContext';
-import CategoryPicker from './components/CategoryPicker';
+import CategoryPicker, { groupByCategoryGroup } from './components/CategoryPicker';
 
 const AMOUNT_RE = /^\d+(\.\d{1,2})?$/;
 
@@ -50,6 +50,9 @@ export default function RequestSheet({
   const { bootstrap } = useCeres();
   const entities = bootstrap.entities.length ? bootstrap.entities : ['PROM', 'TONR', 'DENC', 'DENL', 'KPKF'];
   const categories = [...bootstrap.categories].filter((c) => c.active).sort((a, b) => a.sortOrder - b.sortOrder);
+  // Distinct group labels in sortOrder (first-appearance), same order the two-stage
+  // CategoryPicker shows its group chips in — advance's multi-select row reuses it.
+  const groupOptions = groupByCategoryGroup(categories).map((g) => g.group);
 
   const [step, setStep] = useState<'type' | 'form'>(editing ? 'form' : 'type');
   const [requestType, setRequestType] = useState<V2RequestType>(editing?.requestType ?? 'advance');
@@ -64,6 +67,19 @@ export default function RequestSheet({
     }
     return '';
   });
+  // Advance-only multi-group selection. NO lazy default on a NEW advance (starts empty).
+  // Editing an OLD advance (has a real category, empty categoryGroups) prefills the
+  // group that category belongs to — the one CategoryPicker-style exception for a
+  // pre-filled value (see components/CategoryPicker.tsx's own comment on this rule).
+  const [categoryGroups, setCategoryGroups] = useState<string[]>(() => {
+    if (editing?.requestType === 'advance') {
+      if (editing.categoryGroups.length > 0) return editing.categoryGroups;
+      const match = categories.find((c) => c.name === editing.category);
+      if (match) return [match.group];
+    }
+    return [];
+  });
+  const [groupsError, setGroupsError] = useState('');
   const [amount, setAmount] = useState(editing?.amount || '');
   const [amountError, setAmountError] = useState('');
   const [reason, setReason] = useState(editing?.reason || '');
@@ -125,11 +141,21 @@ export default function RequestSheet({
     e.target.value = '';
   }
 
+  function toggleGroup(group: string) {
+    setCategoryGroups((current) => (current.includes(group) ? current.filter((g) => g !== group) : [...current, group]));
+    setGroupsError('');
+  }
+
   function validate(): string {
     if (!AMOUNT_RE.test(amount.trim()) || Number(amount) <= 0) return 'invalid_amount';
-    if (!reason.trim()) return 'missing_reason';
+    // Reason is optional for advance only — the precise detail comes at liquidation.
+    if (requestType !== 'advance' && !reason.trim()) return 'missing_reason';
     if (!entity) return 'invalid_entity';
-    if (!selectedCategory) return 'invalid_category';
+    if (requestType === 'advance') {
+      if (categoryGroups.length === 0) return 'invalid_group';
+    } else if (!selectedCategory) {
+      return 'invalid_category';
+    }
     if (requestType === 'reimbursement' && !photoUploadId) return 'missing_receipt';
     return '';
   }
@@ -147,23 +173,35 @@ export default function RequestSheet({
               ? 'กรุณาเลือกบริษัท'
               : problem === 'invalid_category'
                 ? 'กรุณาเลือกหมวดหมู่'
-                : 'กรุณาถ่ายรูปใบเสร็จก่อนส่งคำขอ',
+                : problem === 'invalid_group'
+                  ? 'เลือกกลุ่มอย่างน้อย 1 กลุ่ม'
+                  : 'กรุณาถ่ายรูปใบเสร็จก่อนส่งคำขอ',
       );
       if (problem === 'invalid_amount') setAmountError('กรอกจำนวนเงินให้ถูกต้อง');
+      if (problem === 'invalid_group') setGroupsError('เลือกกลุ่มอย่างน้อย 1 กลุ่ม');
       return;
     }
-    if (!selectedCategory) return;
+    if (requestType !== 'advance' && !selectedCategory) return;
 
     setSubmitBusy(true);
     try {
-      const body = {
-        requestType,
-        entity,
-        category: selectedCategory.name,
-        amount: amount.trim(),
-        reason: reason.trim(),
-        requestPhotoUploadId: photoUploadId,
-      };
+      const body = requestType === 'advance'
+        ? {
+            requestType,
+            entity,
+            categoryGroups,
+            amount: amount.trim(),
+            reason: reason.trim(),
+            requestPhotoUploadId: photoUploadId,
+          }
+        : {
+            requestType,
+            entity,
+            category: selectedCategory!.name,
+            amount: amount.trim(),
+            reason: reason.trim(),
+            requestPhotoUploadId: photoUploadId,
+          };
       const result = editing
         ? await editStaffRequest(editing.id, body)
         : await createStaffRequest(body);
@@ -247,9 +285,12 @@ export default function RequestSheet({
                 {ocrDiffers && <div className="text-xs text-amber-700 mt-1">AI อ่านได้ ฿{ocr?.amount}</div>}
               </div>
 
-              {/* Reason — primary input #2 */}
+              {/* Reason — primary input #2 (optional for advance; the precise detail is
+                  captured per-expense at liquidation instead) */}
               <div>
-                <div className="text-xs font-semibold text-slate-500 mb-1.5">เหตุผล / รายละเอียด</div>
+                <div className="text-xs font-semibold text-slate-500 mb-1.5">
+                  {requestType === 'advance' ? 'เหตุผล (ไม่บังคับ)' : 'เหตุผล / รายละเอียด'}
+                </div>
                 <textarea
                   value={reason}
                   onChange={(e) => setReason(e.target.value)}
@@ -348,11 +389,42 @@ export default function RequestSheet({
                 </div>
               </div>
 
-              {/* Category — no default; explicit tap required */}
-              <div>
-                <div className="text-xs font-semibold text-slate-500 mb-1.5">หมวดหมู่</div>
-                <CategoryPicker categories={categories} value={categoryId} onChange={setCategoryId} />
-              </div>
+              {/* Category — no default; explicit tap required. Advance replaces the
+                  single-category picker with a multi-select GROUP chip row (Ceres
+                  advance simplify, 2026-07-19): the requester only narrows down to
+                  group(s); the exact category is picked per expense at liquidation. */}
+              {requestType === 'advance' ? (
+                <div>
+                  <div className="text-xs font-semibold text-slate-500 mb-1.5">กลุ่มหมวดหมู่</div>
+                  <div className="flex flex-wrap gap-2">
+                    {groupOptions.map((group) => (
+                      <button
+                        key={group}
+                        type="button"
+                        onClick={() => toggleGroup(group)}
+                        className={`px-3 py-2 rounded-full text-sm font-semibold border min-h-[40px] ${
+                          categoryGroups.includes(group)
+                            ? 'bg-amber-100 border-amber-300 text-amber-800'
+                            : 'border-slate-300 text-slate-600 hover:bg-slate-50'
+                        }`}
+                      >
+                        {group}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="text-xs text-slate-400 mt-1.5">เลือกได้มากกว่า 1 กลุ่ม</div>
+                  {groupsError && (
+                    <div className="flex items-center gap-1 text-rose-600 text-xs mt-1">
+                      <AlertTriangle size={12} /> {groupsError}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div>
+                  <div className="text-xs font-semibold text-slate-500 mb-1.5">หมวดหมู่</div>
+                  <CategoryPicker categories={categories} value={categoryId} onChange={setCategoryId} />
+                </div>
+              )}
 
               {submitError && (
                 <div className="flex items-center gap-1 text-rose-600 text-sm">

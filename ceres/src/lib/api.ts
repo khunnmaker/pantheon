@@ -794,7 +794,15 @@ export interface StaffRequest {
   requesterPartyId: string | null;
   entity: string;
   payee: string;
+  // For advances with a group-based selection, this is the server-joined label
+  // (groups joined with " · ") — see requestCategoryLabel() in
+  // api/src/routes/ceres/common.ts. Old advances keep their single category name.
   category: string;
+  // Raw group list (advance only; empty for reimbursement/purchase and for pre-migration
+  // advances that still carry a single `category`). Prefer `category` for display — this
+  // is only needed where the UI must distinguish "group-based advance" from "has a real
+  // category name" (e.g. RequestDetail's liquidation defaultCategory).
+  categoryGroups: string[];
   amount: string;
   amountNum: number;
   reason: string;
@@ -826,9 +834,13 @@ export interface RequestEvent {
 export const createStaffRequest = (body: {
   requestType: V2RequestType;
   entity: string;
-  category: string;
+  // advance: omit/empty (categoryGroups carries the selection instead).
+  // reimbursement/purchase: required, categoryGroups stays absent — see
+  // api/src/routes/ceres/requests.ts's v2CreateBody discriminated union.
+  category?: string;
+  categoryGroups?: string[];
   amount: string;
-  reason: string;
+  reason?: string;
   requestPhotoUploadId?: string | null;
 }) => authed<{ request: StaffRequest }>('/api/ceres/requests', { method: 'POST', body: JSON.stringify(body) });
 
@@ -848,6 +860,7 @@ export const editStaffRequest = (
     requestType: V2RequestType;
     entity: string;
     category: string;
+    categoryGroups: string[];
     amount: string;
     reason: string;
     requestPhotoUploadId: string | null;

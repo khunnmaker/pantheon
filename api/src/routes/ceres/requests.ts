@@ -26,7 +26,7 @@ import {
   V2_REQUEST_TYPES,
 } from '../../ceres/requestService.js';
 import { notifyRequesterForMoneyEvent } from '../../ceres/notifyRequester.js';
-import { isValidAmount, num, thaiDayKey, thaiDayRange, toStaffRequestRow } from './common.js';
+import { isValidAmount, num, parseRequestCategoryGroups, thaiDayKey, thaiDayRange, toStaffRequestRow } from './common.js';
 import { GROUP_COMPANY_CODES } from '../../jupiter/companies.js';
 
 const ENTITIES = GROUP_COMPANY_CODES; // 5 group companies (SSOT: jupiter/companies.ts)
@@ -208,14 +208,35 @@ export async function computeTemplateDue(): Promise<TemplateDue[]> {
 // P2/P3 routes — GM's pre-approval payment requests + recurring templates. Mounted
 // inside the requireCeresAuth scope (see routes/ceres/index.ts).
 export function requestsRoutes(app: FastifyInstance) {
-  const v2CreateBody = z.object({
-    requestType: z.enum(V2_REQUEST_TYPES),
-    entity: z.enum(ENTITIES),
-    category: z.string().min(1).max(200),
-    amount: z.string().refine(isValidAmount, 'invalid_amount'),
-    reason: z.string().min(1).max(600),
-    requestPhotoUploadId: z.string().min(1).nullable().optional(),
-  }).strict();
+  const v2CreateBody = z.discriminatedUnion('requestType', [
+    z.object({
+      requestType: z.literal('advance'),
+      entity: z.enum(ENTITIES),
+      category: z.string().max(200).optional(),
+      categoryGroups: z.array(z.string().trim().min(1).max(200)).min(1).max(7),
+      amount: z.string().refine(isValidAmount, 'invalid_amount'),
+      reason: z.string().max(600).optional(),
+      requestPhotoUploadId: z.string().min(1).nullable().optional(),
+    }).strict(),
+    z.object({
+      requestType: z.literal('reimbursement'),
+      entity: z.enum(ENTITIES),
+      category: z.string().min(1).max(200),
+      categoryGroups: z.array(z.string()).max(0).optional(),
+      amount: z.string().refine(isValidAmount, 'invalid_amount'),
+      reason: z.string().min(1).max(600),
+      requestPhotoUploadId: z.string().min(1).nullable().optional(),
+    }).strict(),
+    z.object({
+      requestType: z.literal('purchase'),
+      entity: z.enum(ENTITIES),
+      category: z.string().min(1).max(200),
+      categoryGroups: z.array(z.string()).max(0).optional(),
+      amount: z.string().refine(isValidAmount, 'invalid_amount'),
+      reason: z.string().min(1).max(600),
+      requestPhotoUploadId: z.string().min(1).nullable().optional(),
+    }).strict(),
+  ]);
 
   // POST /api/ceres/requests — GM submits a payment for pre-approval (P2/P3 step 1).
   // The AI gate runs SYNCHRONOUSLY: the GM needs the answer now, before paying.
@@ -379,9 +400,10 @@ export function requestsRoutes(app: FastifyInstance) {
   const v2PatchBody = z.object({
     requestType: z.enum(V2_REQUEST_TYPES).optional(),
     entity: z.enum(ENTITIES).optional(),
-    category: z.string().min(1).max(200).optional(),
+    category: z.string().max(200).optional(),
+    categoryGroups: z.array(z.string().trim().min(1).max(200)).max(7).optional(),
     amount: z.string().refine(isValidAmount, 'invalid_amount').optional(),
-    reason: z.string().min(1).max(600).optional(),
+    reason: z.string().max(600).optional(),
     requestPhotoUploadId: z.string().min(1).nullable().optional(),
   }).strict().refine((value) => Object.keys(value).length > 0);
   app.patch<{ Params: { id: string } }>(
@@ -392,6 +414,21 @@ export function requestsRoutes(app: FastifyInstance) {
       if (!parsed.success) {
         const amountIssue = parsed.error.issues.some((i) => i.message === 'invalid_amount');
         return reply.code(400).send({ error: amountIssue ? 'invalid_amount' : 'invalid_body' });
+      }
+      const existing = await prisma.ceresPaymentRequest.findUnique({ where: { id: req.params.id } });
+      if (existing) {
+        const finalType = parsed.data.requestType ?? existing.requestType;
+        if (finalType !== 'advance') {
+          const finalCategory = parsed.data.category ?? existing.category;
+          const finalReason = parsed.data.reason ?? existing.detail;
+          // Type change away from advance: stored groups are dropped, not inherited —
+          // otherwise converting a group-based advance to purchase/reimbursement can never pass.
+          const finalGroups = parsed.data.categoryGroups
+            ?? (finalType === existing.requestType ? parseRequestCategoryGroups(existing.categoryGroups) : []);
+          if (!finalCategory || !finalReason || finalGroups.length > 0) {
+            return reply.code(400).send({ error: 'invalid_body' });
+          }
+        }
       }
       try {
         const request = await editStaffRequest(req.params.id, parsed.data, req.agent!);

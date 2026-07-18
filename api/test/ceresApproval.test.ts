@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
-  findRequest: vi.fn(), findCategory: vi.fn(), transaction: vi.fn(), updateMany: vi.fn(), txFindRequest: vi.fn(),
+  findRequest: vi.fn(), findCategory: vi.fn(), findGroups: vi.fn(), transaction: vi.fn(), updateMany: vi.fn(), txFindRequest: vi.fn(),
   createRevision: vi.fn(), createEvent: vi.fn(), reviewStaffRequest: vi.fn(), findReview: vi.fn(),
   notifyRequester: vi.fn(),
 }));
@@ -25,7 +25,7 @@ vi.mock('../src/db/prisma.js', () => ({
   prisma: {
     $transaction: mocks.transaction,
     ceresPaymentRequest: { findUnique: mocks.findRequest },
-    ceresCategory: { findUnique: mocks.findCategory },
+    ceresCategory: { findUnique: mocks.findCategory, findMany: mocks.findGroups },
     ceresAIReview: { findUnique: mocks.findReview },
   },
 }));
@@ -37,7 +37,7 @@ const apiRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
 const pendingRequest = {
   id: 'request-race', workflowVersion: 2, requestedById: 'staff-1', requestedByName: 'Staff', requesterPartyId: 'party-1',
-  requestType: 'advance', entity: 'PROM', category: 'general', amount: '100.00', detail: 'supplies', payee: 'Staff',
+  requestType: 'advance', entity: 'PROM', category: '', categoryGroups: '["Operations"]', amount: '100.00', detail: 'supplies', payee: 'Staff',
   requestPhotoUploadId: null, requestPhotoSha: '', ocrAmount: '', ocrVendor: '', ocrDate: '',
   aiScreenStatus: 'clear', aiReviewId: null, approvalStatus: 'pending_nee', fulfillmentStatus: 'unfulfilled',
   neeDecidedById: null, neeDecidedByName: '', neeDecidedAt: null, neeDecisionNote: '',
@@ -59,7 +59,7 @@ async function approvalApp() {
 describe('Ceres v2 approval binding', () => {
   it('blocks every Nee decision while the AI review is pending', async () => {
     vi.clearAllMocks();
-    mocks.findRequest.mockResolvedValue({ ...pendingRequest, aiScreenStatus: 'pending' });
+    mocks.findRequest.mockResolvedValue({ ...pendingRequest, requestType: 'purchase', category: 'general', categoryGroups: '', aiScreenStatus: 'pending' });
     const app = await approvalApp();
 
     for (const decision of ['approve', 'reject'] as const) {
@@ -102,8 +102,8 @@ describe('Ceres v2 approval binding', () => {
   });
 
   it.each([
-    ['a clear GM-authored request strictly over 5,000 THB', { amount: '5000.01', aiScreenStatus: 'clear' }],
-    ['a GM-authored AI escalation at any amount', { amount: '100.00', aiScreenStatus: 'escalate' }],
+    ['a clear GM-authored advance strictly over 5,000 THB', { amount: '5001.00', aiScreenStatus: 'clear' }],
+    ['a GM-authored purchase AI escalation at any amount', { requestType: 'purchase', category: 'general', categoryGroups: '', amount: '100.00', aiScreenStatus: 'escalate' }],
   ])('routes %s to the CEO when the GM approves', async (_label, overrides) => {
     vi.clearAllMocks();
     const ownRequest = { ...pendingRequest, requestedById: 'gm-1', requestedByName: 'GM', ...overrides };
@@ -191,7 +191,7 @@ describe('Ceres v2 approval binding', () => {
     const now = new Date('2026-07-17T00:00:00Z');
     const existing = {
       id: 'request-1', workflowVersion: 2, requestedById: 'staff-1', requestedByName: 'Staff', requesterPartyId: 'party-1',
-      requestType: 'advance', entity: 'PROM', category: 'general', amount: '100.00', detail: 'before', payee: 'Staff',
+      requestType: 'purchase', entity: 'PROM', category: 'general', categoryGroups: '', amount: '100.00', detail: 'before', payee: 'Staff',
       requestPhotoUploadId: null, requestPhotoSha: '', ocrAmount: '', ocrVendor: '', ocrDate: '',
       aiScreenStatus: 'clear', aiReviewId: 'old-review', approvalStatus: 'pending_nee', fulfillmentStatus: 'unfulfilled',
       neeDecidedById: null, neeDecidedByName: '', neeDecidedAt: null, neeDecisionNote: '',
@@ -224,12 +224,47 @@ describe('Ceres v2 approval binding', () => {
     expect(mocks.findCategory).not.toHaveBeenCalled();
   });
 
+  it('accepts unchanged advance groups even when they are no longer active and skips AI again', async () => {
+    vi.clearAllMocks();
+    const existing = {
+      ...pendingRequest,
+      id: 'request-groups', requestedById: 'staff-1', categoryGroups: '["Retired Group"]', detail: '', rowVersion: 1,
+    };
+    const edited = { ...existing, amount: '200.00', rowVersion: 2, aiScreenStatus: 'clear', aiReviewId: null };
+    mocks.findRequest.mockResolvedValue(existing);
+    mocks.updateMany.mockResolvedValue({ count: 1 });
+    mocks.txFindRequest.mockResolvedValue(edited);
+    mocks.createRevision.mockResolvedValue({ id: 'revision-groups' });
+    mocks.createEvent.mockResolvedValue({ id: 'event-groups' });
+    mocks.transaction.mockImplementation(async (callback) => callback({
+      ceresPaymentRequest: { updateMany: mocks.updateMany, findUnique: mocks.txFindRequest },
+      ceresRevision: { create: mocks.createRevision },
+      ceresRequestEvent: { create: mocks.createEvent },
+    }));
+
+    const result = await editStaffRequest('request-groups', { amount: '200.00' }, {
+      id: 'staff-1', email: 'staff@example.test', name: 'Staff', role: 'employee', apps: ['ceres'], authVersion: 0,
+    });
+    expect(result).toEqual(edited);
+    expect(mocks.findGroups).not.toHaveBeenCalled();
+    expect(mocks.reviewStaffRequest).not.toHaveBeenCalled();
+    expect(mocks.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ categoryGroups: '["Retired Group"]', aiScreenStatus: 'clear', aiReviewId: null }),
+    }));
+    expect(mocks.createEvent).toHaveBeenCalledWith({
+      data: expect.objectContaining({ payload: expect.objectContaining({ ai: 'skipped_by_policy' }) }),
+    });
+  });
+
   it.each([
     ['inactive', { name: 'Unavailable', active: false }],
     ['unknown', null],
   ])('rejects a changed %s category with invalid_category', async (_label, categoryRow) => {
     vi.clearAllMocks();
-    mocks.findRequest.mockResolvedValue({ ...pendingRequest, id: 'request-edit', requestedById: 'staff-1' });
+    mocks.findRequest.mockResolvedValue({
+      ...pendingRequest, id: 'request-edit', requestedById: 'staff-1',
+      requestType: 'purchase', category: 'general', categoryGroups: '',
+    });
     mocks.findCategory.mockResolvedValue(categoryRow);
 
     await expect(editStaffRequest('request-edit', { category: 'Unavailable' }, {

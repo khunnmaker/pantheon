@@ -142,10 +142,16 @@ export default function NeeApprovalQueue() {
                   </div>
                 )}
 
-                <div className="mt-2 px-3 py-2.5 rounded-xl bg-sky-50 border border-sky-200 text-xs text-sky-900">
-                  <div className="font-semibold mb-0.5">เหตุผลจาก AI</div>
-                  {request.aiReview?.reasoning || (request.aiScreenStatus === 'pending' ? 'กำลังตรวจคำขอ' : 'ไม่พบคำอธิบายจาก AI — ส่งต่อเพื่อความปลอดภัย')}
-                </div>
+                {/* Advances skip the AI screen entirely (Ceres advance simplify,
+                    2026-07-19) — no aiReview/aiReviewId is ever set for them, so this
+                    block renders nothing rather than a misleading "no AI explanation"
+                    fallback. */}
+                {request.requestType !== 'advance' && (
+                  <div className="mt-2 px-3 py-2.5 rounded-xl bg-sky-50 border border-sky-200 text-xs text-sky-900">
+                    <div className="font-semibold mb-0.5">เหตุผลจาก AI</div>
+                    {request.aiReview?.reasoning || (request.aiScreenStatus === 'pending' ? 'กำลังตรวจคำขอ' : 'ไม่พบคำอธิบายจาก AI — ส่งต่อเพื่อความปลอดภัย')}
+                  </div>
+                )}
 
                 {aiPending && (
                   <div className="mt-2 text-xs font-semibold text-amber-700">

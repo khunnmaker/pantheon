@@ -1010,6 +1010,7 @@ model CeresPaymentRequest {
   entity               String    @default("PROM")
   payee                String    @default("")
   category             String    @default("")
+  categoryGroups       String    @default("")
   amount               String    @default("")
   detail               String    @default("")
   recurringTemplateId  String?
