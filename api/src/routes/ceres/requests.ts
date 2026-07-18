@@ -93,7 +93,7 @@ function requestError(reply: { code: (status: number) => { send: (body: unknown)
   if (!(err instanceof CeresRequestError)) throw err;
   const status = err.code === 'not_found' ? 404
     : err.code === 'forbidden' || err.code === 'no_party' || err.code === 'media_not_owned' ? 403
-      : ['not_editable', 'not_cancellable', 'not_pending_nee', 'not_pending_ceo', 'conflict'].includes(err.code) ? 409
+      : ['not_editable', 'not_cancellable', 'ai_review_pending', 'not_pending_nee', 'not_pending_ceo', 'conflict'].includes(err.code) ? 409
         : 400;
   return reply.code(status).send({ error: err.code });
 }

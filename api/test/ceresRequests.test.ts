@@ -127,6 +127,29 @@ describe('Ceres v2 request submission and AI pre-screen', () => {
     expect(mocks.createRequest.mock.calls[0]![0].data).not.toEqual(expect.objectContaining({ requestedById: 'forged-user' }));
   });
 
+  it('lets a party-less GM submit through the same synchronous AI pre-screen', async () => {
+    mocks.findParty.mockResolvedValue(null);
+    mocks.llmAvailable.mockReturnValue(false);
+
+    await createStaffRequest({
+      requestType: 'advance', entity: 'PROM', category: 'general', amount: '5000.00', reason: 'GM travel advance',
+    }, {
+      id: 'gm-1', email: 'gm@example.test', name: 'GM', role: 'gm', apps: [], authVersion: 0,
+    });
+
+    expect(mocks.createRequest).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        requestedById: 'gm-1', requestedByName: 'GM', requesterPartyId: null, aiScreenStatus: 'pending',
+      }),
+    });
+    expect(mocks.createReview).toHaveBeenCalledWith({
+      data: expect.objectContaining({ subjectId: 'request-1', verdict: 'escalate' }),
+    });
+    expect(mocks.updateRequests).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ aiScreenStatus: 'escalate' }),
+    }));
+  });
+
   it('turns an AI outage into escalation and never approval', async () => {
     mocks.llmAvailable.mockReturnValue(false);
     await expect(reviewStaffRequest('request-1')).resolves.toMatchObject({ verdict: 'escalate' });

@@ -57,6 +57,79 @@ async function approvalApp() {
 }
 
 describe('Ceres v2 approval binding', () => {
+  it('blocks every Nee decision while the AI review is pending', async () => {
+    vi.clearAllMocks();
+    mocks.findRequest.mockResolvedValue({ ...pendingRequest, aiScreenStatus: 'pending' });
+    const app = await approvalApp();
+
+    for (const decision of ['approve', 'reject'] as const) {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/ceres/requests/request-race/nee-decision',
+        payload: { decision, ...(decision === 'reject' ? { note: 'not yet' } : {}) },
+      });
+      expect(response.statusCode).toBe(409);
+      expect(response.json()).toEqual({ error: 'ai_review_pending' });
+    }
+    expect(mocks.transaction).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('lets a GM approve their own clear request at exactly 5,000 THB', async () => {
+    vi.clearAllMocks();
+    const ownRequest = { ...pendingRequest, requestedById: 'gm-1', requestedByName: 'GM', amount: '5000.00' };
+    mocks.findRequest.mockResolvedValue(ownRequest);
+    mocks.updateMany.mockResolvedValue({ count: 1 });
+    mocks.createEvent.mockResolvedValue({ id: 'event-own' });
+    mocks.transaction.mockImplementation(async (callback) => callback({
+      ceresPaymentRequest: {
+        updateMany: mocks.updateMany,
+        findUniqueOrThrow: vi.fn(async () => ({ ...ownRequest, approvalStatus: 'approved', rowVersion: 8 })),
+      },
+      ceresRequestEvent: { create: mocks.createEvent },
+    }));
+    const app = await approvalApp();
+    const response = await app.inject({
+      method: 'POST', url: '/api/ceres/requests/request-race/nee-decision', payload: { decision: 'approve' },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().request.approvalStatus).toBe('approved');
+    expect(mocks.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ approvalStatus: 'approved', neeDecidedById: 'gm-1' }),
+    }));
+    await app.close();
+  });
+
+  it.each([
+    ['a clear GM-authored request strictly over 5,000 THB', { amount: '5000.01', aiScreenStatus: 'clear' }],
+    ['a GM-authored AI escalation at any amount', { amount: '100.00', aiScreenStatus: 'escalate' }],
+  ])('routes %s to the CEO when the GM approves', async (_label, overrides) => {
+    vi.clearAllMocks();
+    const ownRequest = { ...pendingRequest, requestedById: 'gm-1', requestedByName: 'GM', ...overrides };
+    mocks.findRequest.mockResolvedValue(ownRequest);
+    mocks.updateMany.mockResolvedValue({ count: 1 });
+    mocks.createEvent.mockResolvedValue({ id: 'event-escalated' });
+    mocks.transaction.mockImplementation(async (callback) => callback({
+      ceresPaymentRequest: {
+        updateMany: mocks.updateMany,
+        findUniqueOrThrow: vi.fn(async () => ({ ...ownRequest, approvalStatus: 'pending_ceo', rowVersion: 8 })),
+      },
+      ceresRequestEvent: { create: mocks.createEvent },
+    }));
+    const app = await approvalApp();
+    const response = await app.inject({
+      method: 'POST', url: '/api/ceres/requests/request-race/nee-decision', payload: { decision: 'approve' },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().request.approvalStatus).toBe('pending_ceo');
+    expect(mocks.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ approvalStatus: 'pending_ceo' }),
+    }));
+    await app.close();
+  });
+
   it('maps a stale rowVersion double-decision to one success and one conflict', async () => {
     vi.clearAllMocks();
     mocks.findRequest.mockResolvedValue(pendingRequest);

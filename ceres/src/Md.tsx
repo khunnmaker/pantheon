@@ -21,6 +21,7 @@ import {
   PiggyBank,
   Repeat,
   Scale,
+  Send,
   Settings as SettingsIcon,
 } from 'lucide-react';
 import { useHashTab } from '@pantheon/ui';
@@ -48,6 +49,7 @@ import NeeApprovalQueue from './NeeApprovalQueue';
 import NeeFulfillmentQueue from './NeeFulfillmentQueue';
 import NeeHome from './NeeHome';
 import Settings from './Settings';
+import StaffHome from './StaffHome';
 
 const PORTAL_URL: string = import.meta.env.VITE_PORTAL_URL ?? 'https://pantheon.prominentdental.com';
 
@@ -68,6 +70,8 @@ type View =
   | 'ceo-history'
   | 'legacy-fulfillment'
   | 'settings'
+  | 'my-submit'
+  | 'my-requests'
   // Desktop-only (≥1024px) CEO escalation queue — a focused single-purpose screen around the
   // same EscalationsSection CeoHome/CeoOverview already render, so the leading tab in the CEO's
   // desktop strip (ceoTabGroups, inside ManagementApp below) has somewhere dedicated to point.
@@ -92,6 +96,8 @@ const VIEW_KEYS: View[] = [
   'ceo-history',
   'legacy-fulfillment',
   'settings',
+  'my-submit',
+  'my-requests',
   'ceo-queue',
 ];
 
@@ -108,6 +114,8 @@ const SECONDARY_VIEWS = new Set<View>([
   'ceo-history',
   'legacy-fulfillment',
   'settings',
+  'my-submit',
+  'my-requests',
 ]);
 
 // Tracks Tailwind's own `lg:` breakpoint (min-width: 1024px) in JS, for the few nav decisions
@@ -148,7 +156,7 @@ function ManagementApp({ isCeo }: { isCeo: boolean }) {
 
   // A copied or stale hash must never expose a role-inappropriate primary screen.
   const roleInappropriate = isCeo
-    ? view === 'approvals' || view === 'fulfillment'
+    ? view === 'approvals' || view === 'fulfillment' || view === 'my-submit' || view === 'my-requests'
     : view === 'ceo-history' || view === 'legacy-fulfillment' || view === 'ceo-queue';
   // Desktop gm has no big-button home (owner spec, 2026-07-18 desktop nav) — NeeHome's four
   // cards are a mobile-only front door, so a gm landing on (or hash-linking to) 'home' on a
@@ -291,6 +299,10 @@ function ManagementApp({ isCeo }: { isCeo: boolean }) {
       { key: 'requests', label: 'คำขอจ่ายเงินเดิม', icon: <Banknote size={16} /> },
       { key: 'templates', label: 'รายการประจำ', icon: <Repeat size={16} /> },
     ] },
+    { caption: 'ของฉัน', tabs: [
+      { key: 'my-submit', label: 'ส่งคำขอ', icon: <Send size={16} /> },
+      { key: 'my-requests', label: 'คำขอของฉัน', icon: <ListChecks size={16} /> },
+    ] },
     { caption: 'สรุป', tabs: [
       { key: 'exports', label: 'ส่งออกข้อมูล', icon: <Download size={16} /> },
       { key: 'settings', label: 'ตั้งค่า LINE', icon: <SettingsIcon size={16} /> },
@@ -389,10 +401,10 @@ function ManagementApp({ isCeo }: { isCeo: boolean }) {
       <main className="max-w-5xl mx-auto p-4">
         {SECONDARY_VIEWS.has(activeView) && (
           <button
-            onClick={() => setView('more')}
+            onClick={() => setView(activeView === 'my-submit' || activeView === 'my-requests' ? 'home' : 'more')}
             className="lg:hidden mb-3 flex items-center gap-1 text-sm font-semibold text-slate-500 hover:text-amber-700"
           >
-            <ArrowLeft size={16} /> กลับไปเมนูเพิ่มเติม
+            <ArrowLeft size={16} /> {activeView === 'my-submit' || activeView === 'my-requests' ? 'กลับหน้าหลัก' : 'กลับไปเมนูเพิ่มเติม'}
           </button>
         )}
 
@@ -404,6 +416,7 @@ function ManagementApp({ isCeo }: { isCeo: boolean }) {
             onGoFulfillment={() => setView('fulfillment')}
             onGoRecon={() => setView('recon')}
             onGoBoard={() => setView('board')}
+            onGoOwnRequest={() => setView('my-submit')}
           />
         ))}
         {activeView === 'approvals' && !isCeo && <NeeApprovalQueue />}
@@ -425,6 +438,18 @@ function ManagementApp({ isCeo }: { isCeo: boolean }) {
         {activeView === 'ceo-history' && isCeo && <CeoOverview onGoExpenses={() => setView('expenses')} />}
         {activeView === 'legacy-fulfillment' && isCeo && <NeeFulfillmentQueue />}
         {activeView === 'settings' && <Settings />}
+        {activeView === 'my-submit' && !isCeo && (
+          <StaffHome
+            key="my-submit"
+            embeddedView="home"
+            openRequestOnMount
+            onOpenMine={() => setView('my-requests')}
+            onOpenSettings={() => setView('settings')}
+          />
+        )}
+        {activeView === 'my-requests' && !isCeo && (
+          <StaffHome key="my-requests" embeddedView="mine" onOpenSettings={() => setView('settings')} />
+        )}
         {activeView === 'ceo-queue' && isCeo && (
           ceoQueueLoading ? (
             <div className="py-16 flex justify-center text-slate-400">

@@ -32,6 +32,7 @@ export class CeresRequestError extends Error {
       | 'media_not_owned'
       | 'not_editable'
       | 'not_cancellable'
+      | 'ai_review_pending'
       | 'not_pending_nee'
       | 'not_pending_ceo'
       | 'conflict',
@@ -251,6 +252,9 @@ export async function decideStaffRequestByNee(
   const existing = await prisma.ceresPaymentRequest.findUnique({ where: { id: requestId } });
   if (!existing || existing.workflowVersion !== 2) throw new CeresRequestError('not_found');
   if (existing.approvalStatus !== 'pending_nee') throw new CeresRequestError('not_pending_nee');
+  if (existing.aiScreenStatus !== 'clear' && existing.aiScreenStatus !== 'escalate') {
+    throw new CeresRequestError('ai_review_pending');
+  }
   const next = decision === 'reject' ? 'rejected' : neeApprovalTarget(existing);
   const result = await prisma.$transaction(async (tx) => {
     const changed = await tx.ceresPaymentRequest.updateMany({

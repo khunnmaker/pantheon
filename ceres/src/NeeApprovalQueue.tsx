@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { AlertTriangle, CheckCircle2, Loader2, RefreshCw, ThumbsUp, X } from 'lucide-react';
-import { baht, listStaffRequests, neeDecision, type StaffRequest } from './lib/api';
+import { ApiError, baht, listStaffRequests, neeDecision, type StaffRequest } from './lib/api';
 import { useCeres } from './lib/bootstrapContext';
 import { MediaThumb } from './lib/media';
 
@@ -58,8 +58,10 @@ export default function NeeApprovalQueue() {
       if (decision === 'reject') setSuccess('บันทึกว่าไม่อนุมัติแล้ว');
       else if (result.request.approvalStatus === 'pending_ceo') setSuccess('อนุมัติแล้วส่งต่อ CEO');
       else setSuccess('อนุมัติแล้ว');
-    } catch {
-      setError('บันทึกผลไม่สำเร็จ ลองใหม่อีกครั้ง');
+    } catch (err) {
+      setError(err instanceof ApiError && err.message === 'ai_review_pending'
+        ? 'AI ยังตรวจคำขอนี้ไม่เสร็จ กรุณารอสักครู่แล้วโหลดใหม่'
+        : 'บันทึกผลไม่สำเร็จ ลองใหม่อีกครั้ง');
     } finally {
       setBusyId('');
     }
@@ -101,6 +103,7 @@ export default function NeeApprovalQueue() {
         <div className="space-y-3">
           {rows.map((request) => {
             const forward = willForward(request, bootstrap.ceoThreshold);
+            const aiPending = request.aiScreenStatus === 'pending';
             const ocrMismatch = !!request.ocr.amount && Number(request.ocr.amount) !== request.amountNum;
             const duplicate = /รูปเดียวกัน|หลักฐาน.*ซ้ำ|ใบเสร็จซ้ำ/.test(request.aiReview?.reasoning ?? '');
             return (
@@ -144,6 +147,12 @@ export default function NeeApprovalQueue() {
                   {request.aiReview?.reasoning || (request.aiScreenStatus === 'pending' ? 'กำลังตรวจคำขอ' : 'ไม่พบคำอธิบายจาก AI — ส่งต่อเพื่อความปลอดภัย')}
                 </div>
 
+                {aiPending && (
+                  <div className="mt-2 text-xs font-semibold text-amber-700">
+                    รอ AI ตรวจเสร็จก่อน จึงจะอนุมัติหรือไม่อนุมัติได้
+                  </div>
+                )}
+
                 {forward && (
                   <div className="mt-2 px-3 py-2 rounded-xl bg-violet-50 border border-violet-200 text-violet-700 text-xs font-semibold">
                     เมื่อกดอนุมัติ: อนุมัติแล้วส่งต่อ CEO
@@ -163,7 +172,7 @@ export default function NeeApprovalQueue() {
                     <div className="flex gap-2">
                       <button
                         onClick={() => decide(request, 'reject')}
-                        disabled={busyId === request.id || !note.trim()}
+                        disabled={busyId === request.id || aiPending || !note.trim()}
                         className="flex-1 min-h-[42px] rounded-lg bg-rose-600 text-white text-sm font-semibold flex items-center justify-center gap-1 disabled:opacity-40"
                       >
                         {busyId === request.id ? <Loader2 size={14} className="animate-spin" /> : <X size={14} />} ยืนยันไม่อนุมัติ
@@ -181,14 +190,14 @@ export default function NeeApprovalQueue() {
                   <div className="flex gap-2 mt-3 pt-3 border-t border-slate-100">
                     <button
                       onClick={() => decide(request, 'approve')}
-                      disabled={busyId === request.id}
+                      disabled={busyId === request.id || aiPending}
                       className="flex-1 min-h-[44px] rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold flex items-center justify-center gap-1 disabled:opacity-40"
                     >
                       {busyId === request.id ? <Loader2 size={14} className="animate-spin" /> : <ThumbsUp size={14} />} {forward ? 'อนุมัติและส่งต่อ' : 'อนุมัติ'}
                     </button>
                     <button
                       onClick={() => { setRejectingId(request.id); setNote(''); }}
-                      disabled={busyId === request.id}
+                      disabled={busyId === request.id || aiPending}
                       className="flex-1 min-h-[44px] rounded-lg border border-rose-300 text-rose-600 text-sm font-semibold flex items-center justify-center gap-1 disabled:opacity-40"
                     >
                       <X size={14} /> ไม่อนุมัติ

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { AlertTriangle, Banknote, ClipboardCheck, Landmark, Loader2, Scale, Wallet } from 'lucide-react';
+import { AlertTriangle, Banknote, ClipboardCheck, Landmark, Loader2, Scale, Send, Wallet } from 'lucide-react';
 import { baht, getBoard, getTransferReconciliation, listStaffRequests, type Board } from './lib/api';
 
 // Phase 4 — Nee's (GM) home. Default landing is the approval/fulfillment work itself,
@@ -19,11 +19,13 @@ export default function NeeHome({
   onGoFulfillment,
   onGoRecon,
   onGoBoard,
+  onGoOwnRequest,
 }: {
   onGoApprovals: () => void;
   onGoFulfillment: () => void;
   onGoRecon: () => void;
   onGoBoard: () => void;
+  onGoOwnRequest: () => void;
 }) {
   const [data, setData] = useState<Snapshot | null>(null);
   const [loading, setLoading] = useState(true);
@@ -70,6 +72,18 @@ export default function NeeHome({
 
   return (
     <div className="space-y-3">
+      <button
+        onClick={onGoOwnRequest}
+        className="w-full bg-amber-50 rounded-xl border border-amber-200 px-4 py-3 flex items-center gap-3 text-left text-amber-800 hover:bg-amber-100"
+      >
+        <div className="shrink-0 w-9 h-9 rounded-full bg-amber-100 text-amber-700 flex items-center justify-center">
+          <Send size={18} />
+        </div>
+        <div>
+          <div className="text-sm font-bold">ส่งคำขอเงิน</div>
+          <div className="text-xs text-amber-700">ส่งคำขอสำหรับตัวเอง</div>
+        </div>
+      </button>
       <HomeCard
         onClick={onGoApprovals}
         icon={<ClipboardCheck size={22} />}

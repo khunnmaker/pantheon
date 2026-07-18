@@ -19,12 +19,23 @@ const PORTAL_URL: string = import.meta.env.VITE_PORTAL_URL ?? 'https://pantheon.
 
 type View = 'home' | 'mine' | 'more' | 'settings' | 'legacy';
 
-export default function StaffHome() {
+export default function StaffHome({
+  embeddedView,
+  openRequestOnMount = false,
+  onOpenMine,
+  onOpenSettings,
+}: {
+  embeddedView?: 'home' | 'mine';
+  openRequestOnMount?: boolean;
+  onOpenMine?: () => void;
+  onOpenSettings?: () => void;
+} = {}) {
   const { bootstrap, onLogout } = useCeres();
   const viewKeys: View[] = ['home', 'mine', 'more', 'settings', 'legacy'];
   const [view, setView] = useHashTab<View>(viewKeys, 'home');
+  const activeView = embeddedView ?? view;
 
-  const [requestSheetOpen, setRequestSheetOpen] = useState(false);
+  const [requestSheetOpen, setRequestSheetOpen] = useState(openRequestOnMount);
   const [editingRequest, setEditingRequest] = useState<StaffRequest | null>(null);
   const [requestReloadKey, setRequestReloadKey] = useState(0);
   const [detailRequestId, setDetailRequestId] = useState<string | null>(null);
@@ -50,8 +61,8 @@ export default function StaffHome() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-100 font-sans text-slate-800 pb-20">
-      <header className="bg-white border-b border-slate-200 sticky top-0 z-20">
+    <div className={embeddedView ? '' : 'min-h-screen bg-slate-100 font-sans text-slate-800 pb-20'}>
+      {!embeddedView && <header className="bg-white border-b border-slate-200 sticky top-0 z-20">
         <div className="max-w-md mx-auto px-4 h-14 flex items-center justify-between">
           <div className="flex items-center gap-2 text-amber-700 min-w-0">
             <Wallet size={20} className="shrink-0" />
@@ -74,16 +85,16 @@ export default function StaffHome() {
             </button>
           </div>
         </div>
-      </header>
+      </header>}
 
-      <main className="max-w-md mx-auto p-4">
+      <main className={`max-w-md mx-auto ${embeddedView ? '' : 'p-4'}`}>
         {successMsg && (
           <div className="mb-3 px-3 py-2 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-700 text-sm">
             {successMsg}
           </div>
         )}
 
-        {view === 'home' && (
+        {activeView === 'home' && (
           <>
             <button
               onClick={openNewRequest}
@@ -98,11 +109,11 @@ export default function StaffHome() {
               limit={5}
               onEdit={openEdit}
               onOpenDetail={openDetail}
-              onOpenSettings={() => setView('settings')}
+              onOpenSettings={() => onOpenSettings ? onOpenSettings() : setView('settings')}
             />
 
             <button
-              onClick={() => setView('mine')}
+              onClick={() => onOpenMine ? onOpenMine() : setView('mine')}
               className="w-full min-h-[44px] rounded-xl border border-slate-300 bg-white text-slate-600 text-sm font-semibold hover:bg-slate-50"
             >
               ดูคำขอทั้งหมด
@@ -110,7 +121,7 @@ export default function StaffHome() {
           </>
         )}
 
-        {view === 'mine' && (
+        {activeView === 'mine' && (
           <>
             <div className="relative mb-3">
               <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
@@ -131,7 +142,7 @@ export default function StaffHome() {
           </>
         )}
 
-        {view === 'more' && (
+        {activeView === 'more' && (
           <MoreMenu
             groups={[
               {
@@ -149,13 +160,13 @@ export default function StaffHome() {
           />
         )}
 
-        {view === 'settings' && <Settings />}
+        {activeView === 'settings' && <Settings />}
       </main>
 
-      {view === 'legacy' && <MessengerHome embedded onBack={() => setView('more')} />}
+      {activeView === 'legacy' && <MessengerHome embedded onBack={() => setView('more')} />}
 
       {/* bottom nav — 4 items, persistent labels + ARIA names (fixes the old scroller's a11y gap) */}
-      <nav
+      {!embeddedView && <nav
         aria-label="เมนูหลัก"
         className="fixed bottom-0 inset-x-0 z-20 bg-white border-t border-slate-200 pb-[env(safe-area-inset-bottom)]"
       >
@@ -165,7 +176,7 @@ export default function StaffHome() {
           <NavButton active={view === 'more' || view === 'legacy'} label="เพิ่มเติม" icon={<MoreHorizontal size={20} />} onClick={() => setView('more')} />
           <NavButton active={view === 'settings'} label="ตั้งค่า" icon={<SettingsIcon size={20} />} onClick={() => setView('settings')} />
         </div>
-      </nav>
+      </nav>}
 
       {requestSheetOpen && (
         <RequestSheet

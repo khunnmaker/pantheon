@@ -1,13 +1,11 @@
 # Ceres desktop nav — tab grouping (2026-07-18)
 
-Scope: `ceres/` frontend only, desktop (≥1024px) layout for roles **gm** and **ceo**
-(bootstrap.role; raw agent.role `gm`/`supervisor`). Staff/messenger and all mobile (<1024px)
-markup are untouched — verified via `git diff` returning 0 lines for every other component
-file (StaffHome, NeeHome, CeoHome, CeoOverview, MoreMenu, all Nee*/Md* legacy screens,
-Settings, Ceres.tsx, App.tsx).
+Scope: `ceres/` frontend, desktop (≥1024px) layout for roles **gm** and **ceo**
+(bootstrap.role; raw agent.role `gm`/`supervisor`), plus the GM mobile shortcut into the
+shared staff request flow.
 
-Implementation lives entirely in `ceres/src/Md.tsx` (`ManagementApp`, shared by both
-`NeeApp`/`CeoApp`): a `hidden lg:flex` grouped tab strip added below the existing header row,
+The grouped strip lives in `ceres/src/Md.tsx` (`ManagementApp`, shared by both
+`NeeApp`/`CeoApp`): a `hidden lg:flex` grouped tab strip below the existing header row,
 copy-adapted from Juno's `juno/src/Juno.tsx` tabGroups pattern (small muted group captions,
 thin vertical dividers, active-tab underline, red pill badges, horizontal-scroll overflow with
 hidden scrollbar). The mobile bottom nav + "back to more" button are now `lg:hidden`; nothing
@@ -21,7 +19,7 @@ additive only, the field was already on the wire, just unused by Ceres until now
 ## Final grouping
 
 **GM (Nee)** — lands on อนุมัติ (no big-button home on desktop):
-`[ขั้น 1 · คำขอ] อนุมัติ(●queue) │ [ขั้น 2 · จ่ายเงิน] รอจ่าย(●fulfillment) · โอน/สลิป(●recon) │ [กล่องเงินสด] บอร์ด · ปิดวัน │ [ค่าใช้จ่ายเดิม] ตรวจค่าใช้จ่าย · เบิก/คืนเงิน · ประวัติค่าใช้จ่าย · คำขอจ่ายเงินเดิม · รายการประจำ │ [สรุป] ส่งออกข้อมูล · ตั้งค่า LINE`
+`[ขั้น 1 · คำขอ] อนุมัติ(●queue) │ [ขั้น 2 · จ่ายเงิน] รอจ่าย(●fulfillment) · โอน/สลิป(●recon) │ [กล่องเงินสด] บอร์ด · ปิดวัน │ [ค่าใช้จ่ายเดิม] ตรวจค่าใช้จ่าย · เบิก/คืนเงิน · ประวัติค่าใช้จ่าย · คำขอจ่ายเงินเดิม · รายการประจำ │ [ของฉัน] ส่งคำขอ · คำขอของฉัน │ [สรุป] ส่งออกข้อมูล · ตั้งค่า LINE`
 
 **CEO (supervisor)** — lands on วันนี้ (oversight), leading tab is รอ CEO:
 `[รอ CEO] รอ CEO(●escalations) │ [ภาพรวม] วันนี้ · ย้อนหลัง │ [ขั้น 2 · จ่ายเงิน] จ่าย/ซื้อ(●fulfillment) · โอน/สลิป(●recon) │ [กล่องเงินสด] บอร์ด · ปิดวัน │ [ค่าใช้จ่ายเดิม] ตรวจค่าใช้จ่าย · เบิก/คืนเงิน · ประวัติค่าใช้จ่าย · คำขอจ่ายเงินเดิม · รายการประจำ │ [สรุป] ส่งออกข้อมูล · ตั้งค่า LINE`
@@ -40,6 +38,8 @@ additive only, the field was already on the wire, just unused by Ceres until now
 | ประวัติค่าใช้จ่าย | `expenses` | MdExpenses | ✓ | ✓ |
 | คำขอจ่ายเงินเดิม | `requests` | MdRequests | ✓ | ✓ |
 | รายการประจำ | `templates` | MdTemplates | ✓ | ✓ |
+| ส่งคำขอ | `my-submit` | StaffHome + RequestSheet (shared staff flow) | ✓ | — |
+| คำขอของฉัน | `my-requests` | StaffHome + MyRequests (shared staff flow) | ✓ | — |
 | ส่งออกข้อมูล | `exports` | WeeklyPackSection | ✓ | ✓ |
 | ตั้งค่า LINE | `settings` | Settings | ✓ | ✓ |
 | รอ CEO **(new view)** | `ceo-queue` | `EscalationsSection` (exported from CeoOverview.tsx, reused as-is) fed by `getCeoOverview(today).escalations` | — | ✓ |
@@ -47,7 +47,7 @@ additive only, the field was already on the wire, just unused by Ceres until now
 | ย้อนหลัง | `ceo-history` | CeoOverview.tsx (date-picker + AI reviews + missed bills + request counts + weekly pack) | — | ✓ |
 
 Every GM/CEO mobile destination (moreGroups + NeeHome/CeoHome shortcuts) has a 1:1 desktop tab.
-The only NEW screen is `ceo-queue` — not a new endpoint, just `EscalationsSection` (already
+The `ceo-queue` screen is not a new endpoint, just `EscalationsSection` (already
 exported by CeoOverview.tsx) given its own tab so the CEO desktop strip has a dedicated
 "leading" queue tab per the design brief, separate from the "วันนี้" oversight dashboard
 (which also shows escalations inline, same as it does today on mobile — intentionally kept,

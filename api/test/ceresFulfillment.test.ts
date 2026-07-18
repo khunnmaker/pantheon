@@ -164,6 +164,22 @@ describe('Ceres Phase 3 fulfillment', () => {
     expect(state.movements).toHaveLength(0);
   });
 
+  it.each([
+    ['cash', {}],
+    ['transfer', { transferSlipUploadId: 'slip-gm' }],
+  ] as const)('fulfills a party-less GM request through the %s lane', async (lane, evidence) => {
+    state.request.requesterPartyId = null;
+    state.request.requestedByName = 'GM';
+
+    await expect(fulfillRequest({ requestId: 'request-1', lane, ...evidence })).resolves.toBeDefined();
+    expect(state.events[0]).toMatchObject({ requestId: 'request-1', lane, kind: 'payment' });
+    if (lane === 'cash') {
+      expect(state.movements[0]).toMatchObject({ requestId: 'request-1', partyId: null });
+    } else {
+      expect(state.movements).toHaveLength(0);
+    }
+  });
+
   it('rolls back the event projection when the paired cash write fails', async () => {
     state.failMovement = true;
     await expect(fulfillRequest({ requestId: 'request-1', lane: 'cash' })).rejects.toThrow('db_write_failed');
