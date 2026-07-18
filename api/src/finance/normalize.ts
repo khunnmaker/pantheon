@@ -26,6 +26,37 @@ export function normalizeSlipDate(input: string): string {
   return `${day.padStart(2, '0')}/${mon.padStart(2, '0')}/${y}${time ? ` ${time}` : ''}`;
 }
 
+export interface ResolvedSlipTransferAt {
+  value: string;
+  fromSlip: boolean;
+}
+
+// Prefer the timestamp OCR read from INSIDE the bank slip. The LINE message timestamp is only
+// a last-resort prefill when OCR returned a genuinely blank value; callers must retain
+// `fromSlip` so that fallback value stays editable rather than being mistaken for locked OCR.
+export function resolveSlipTransferAt(
+  ocrTransferAt: string,
+  lineArrivedAt: Date,
+): ResolvedSlipTransferAt {
+  const normalized = normalizeSlipDate(ocrTransferAt.trim());
+  if (normalized) return { value: normalized, fromSlip: true };
+
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Bangkok',
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(lineArrivedAt);
+  const part = (type: Intl.DateTimeFormatPartTypes) => parts.find((p) => p.type === type)?.value ?? '';
+  return {
+    value: `${part('day')}/${part('month')}/${part('year')} ${part('hour')}:${part('minute')}`,
+    fromSlip: false,
+  };
+}
+
 // → a plain 2-decimal number string (strip ฿, commas, spaces). "1,500" → "1500.00".
 export function normalizeAmount(input: string): string {
   const cleaned = (input || '').replace(/[^\d.]/g, '');

@@ -21,7 +21,7 @@ import { recordProductKeywords } from '../catalog/match.js';
 import { readSlip } from '../llm/readSlip.js';
 import { sendToFinance } from '../finance/sendToFinance.js';
 import { buildSlipUrl, isPdfSlip, isSlipCapable } from '../finance/slipLink.js';
-import { normalizeSlipDate, normalizeAmount } from '../finance/normalize.js';
+import { normalizeSlipDate, normalizeAmount, resolveSlipTransferAt } from '../finance/normalize.js';
 import { pushToConsole } from '../ws/io.js';
 import { captionStaffUpload } from '../llm/captionImage.js';
 
@@ -147,7 +147,8 @@ export async function messageRoutes(app: FastifyInstance) {
 
   // POST /api/messages/:id/read-slip — OCR a customer's payment-slip image into
   // {amount, bank, transferAt, ref} to pre-fill the "แจ้งการเงิน" card (best-effort;
-  // empty fields when the LLM is unavailable). Also returns the customer's names.
+  // transferAt alone falls back to the editable LINE-arrival time when OCR is blank).
+  // Also returns the customer's names.
   app.post<{ Params: { id: string } }>('/api/messages/:id/read-slip', async (req, reply) => {
     const msg = await prisma.message.findUnique({ where: { id: req.params.id } });
     // Images or PDF file messages — bank apps export slips as PDFs (see isSlipCapable).
@@ -156,10 +157,12 @@ export async function messageRoutes(app: FastifyInstance) {
     // PDFs are forced to application/pdf so the reader picks the document-block path even if
     // the stored ref is missing (filename fallback matched); images keep the jpeg fallback.
     const fields = await readSlip(msg.id, isPdfSlip(msg) ? 'application/pdf' : msg.attachmentRef || 'image/jpeg');
+    const transferAt = resolveSlipTransferAt(fields.transferAt, msg.createdAt);
     // Store the OCR amount server-side (tamper-proof) for the corrected-amount audit.
     if (fields.amount) await prisma.message.update({ where: { id: msg.id }, data: { slipAmount: fields.amount } }).catch(() => undefined);
     return {
-      amount: fields.amount, bank: fields.bank, transferAt: fields.transferAt, ref: fields.ref,
+      amount: fields.amount, bank: fields.bank, transferAt: transferAt.value, ref: fields.ref,
+      transferAtFromSlip: transferAt.fromSlip,
       nickname: customer ? await resolveCustomerName(customer) : '',
       code: customer?.code ?? '', // customer code (ร001) — shown read-only in the finance card
       realName: fields.senderName, // from the SLIP (sender), not the random LINE name

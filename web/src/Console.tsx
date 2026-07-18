@@ -454,7 +454,7 @@ function FinanceModal({ messageId, onClose, onSent }: { messageId: string; onClo
         if (!cancelled) {
           setF((p) => ({ ...p, ...r }));
           setOcrAmount(r.amount);
-          setLocked({ realName: !!r.realName, amount: !!r.amount, bank: !!r.bank, transferAt: !!r.transferAt, ref: !!r.ref });
+          setLocked({ realName: !!r.realName, amount: !!r.amount, bank: !!r.bank, transferAt: r.transferAtFromSlip, ref: !!r.ref });
         }
       })
       .catch(() => undefined)
