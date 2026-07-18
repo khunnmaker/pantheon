@@ -919,6 +919,8 @@ export interface ReReconFilter {
   q?: string;
   from?: string;
   to?: string;
+  limit?: number;
+  offset?: number;
 }
 function reReconFilterQuery(f: ReReconFilter): string {
   const p = new URLSearchParams();
@@ -926,11 +928,13 @@ function reReconFilterQuery(f: ReReconFilter): string {
   if (f.q) p.set('q', f.q);
   if (f.from) p.set('from', f.from);
   if (f.to) p.set('to', f.to);
+  if (f.limit !== undefined) p.set('limit', String(f.limit));
+  if (f.offset) p.set('offset', String(f.offset));
   const s = p.toString();
   return s ? `?${s}` : '';
 }
 export const getReReconciliation = (f: ReReconFilter) =>
-  authed<{ rows: ReReconRow[]; summary: ReReconSummary }>(`/api/juno/re${reReconFilterQuery(f)}`);
+  authed<{ rows: ReReconRow[]; summary: ReReconSummary; total: number; hasMore: boolean }>(`/api/juno/re${reReconFilterQuery(f)}`);
 
 // The imported Express receipt's customer name per RE core (only cores that are imported come
 // back). The ใบปะหน้า cover uses this so ชื่อบนใบเสร็จ shows the name on the actual RE, not the

@@ -2999,6 +2999,8 @@ export async function junoRoutes(app: FastifyInstance) {
     q: z.string().max(120).optional(),
     from: z.string().max(20).optional(),
     to: z.string().max(20).optional(),
+    limit: z.coerce.number().int().min(1).max(500).optional(),
+    offset: z.coerce.number().int().min(0).optional(),
   });
   app.get('/api/juno/re', async (req, reply) => {
     const parsedQ = reQuerySchema.safeParse(req.query ?? {});
@@ -3098,7 +3100,14 @@ export async function junoRoutes(app: FastifyInstance) {
       matchedAmount: allRows.filter((r) => r.status === 'matched').reduce((s, r) => s + r.amount, 0),
     };
 
-    return { rows, summary };
+    // Status must be computed for the WHOLE set anyway (summary + post-computation status filter),
+    // so paging here only trims the response: 8k imported receipts were shipping multi-MB payloads
+    // and 8k DOM rows to the browser. Slice AFTER the status filter so offsets are stable per view.
+    const limit = q.limit ?? 100;
+    const offset = q.offset ?? 0;
+    const page = rows.slice(offset, offset + limit);
+
+    return { rows: page, summary, total: rows.length, hasMore: offset + page.length < rows.length };
   });
 
   // GET /api/juno/re/names?res=6907402,6907403 — the imported Express receipt's customer name

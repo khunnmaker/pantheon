@@ -133,6 +133,8 @@ function ImportPanel({ onImported }: { onImported: () => void }) {
 }
 
 // ── Totals bar + RE list ─────────────────────────────────────────────────────
+const PAGE_SIZE = 100;
+
 function ReList({ refreshKey }: { refreshKey: number }) {
   const [status, setStatus] = useState<ReReconStatusFilter>('all');
   const [q, setQ] = useState('');
@@ -140,24 +142,58 @@ function ReList({ refreshKey }: { refreshKey: number }) {
   const [to, setTo] = useState('');
   const [rows, setRows] = useState<ReReconRow[]>([]);
   const [summary, setSummary] = useState<ReReconSummary | null>(null);
+  const [total, setTotal] = useState(0);
+  const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState('');
   const [expanded, setExpanded] = useState<string | null>(null);
+  // Bumped on every request; a response only lands if it's still the newest one, so a slow
+  // page-2 append can never clobber the fresh page-1 of a filter the user changed to meanwhile.
+  const genRef = useRef(0);
+  const sentinelRef = useRef<HTMLDivElement>(null);
 
-  const load = useCallback(() => {
-    setLoading(true);
+  const load = useCallback((offset: number) => {
+    const gen = ++genRef.current;
+    const replace = offset === 0;
+    if (replace) setLoading(true); else setLoadingMore(true);
     setError('');
-    getReReconciliation({ status, q: q.trim() || undefined, from: from || undefined, to: to || undefined })
-      .then((r) => { setRows(r.rows); setSummary(r.summary); })
-      .catch(() => setError('โหลดข้อมูลไม่สำเร็จ'))
-      .finally(() => setLoading(false));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [status, q, from, to, refreshKey]);
+    getReReconciliation({
+      status, q: q.trim() || undefined, from: from || undefined, to: to || undefined,
+      limit: PAGE_SIZE, offset,
+    })
+      .then((r) => {
+        if (gen !== genRef.current) return;
+        setSummary(r.summary);
+        setTotal(r.total);
+        setHasMore(r.hasMore);
+        setRows((prev) => (replace ? r.rows : [...prev, ...r.rows]));
+      })
+      .catch(() => { if (gen === genRef.current) setError('โหลดข้อมูลไม่สำเร็จ'); })
+      .finally(() => {
+        if (gen !== genRef.current) return;
+        setLoading(false);
+        setLoadingMore(false);
+      });
+  }, [status, q, from, to]);
 
   useEffect(() => {
-    const t = setTimeout(load, 250); // debounce the search box
+    const t = setTimeout(() => load(0), 250); // debounce the search box
     return () => clearTimeout(t);
-  }, [load]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [load, refreshKey]);
+
+  // Auto-append the next page when the bottom sentinel scrolls into view.
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el || !hasMore || loading || loadingMore) return;
+    const obs = new IntersectionObserver(
+      (entries) => { if (entries[0].isIntersecting) load(rows.length); },
+      { rootMargin: '300px' },
+    );
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [hasMore, loading, loadingMore, rows.length, load]);
 
   return (
     <div className="space-y-3">
@@ -187,7 +223,7 @@ function ReList({ refreshKey }: { refreshKey: number }) {
           </div>
           <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="px-2 py-1.5 rounded-lg border border-slate-300 text-xs" title="ตั้งแต่วันที่" />
           <input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="px-2 py-1.5 rounded-lg border border-slate-300 text-xs" title="ถึงวันที่" />
-          <button onClick={load} className="p-1.5 rounded-lg border border-slate-300 text-slate-500 hover:bg-slate-50" title="รีเฟรช">
+          <button onClick={() => load(0)} className="p-1.5 rounded-lg border border-slate-300 text-slate-500 hover:bg-slate-50" title="รีเฟรช">
             <RefreshCw size={14} />
           </button>
         </div>
@@ -203,6 +239,17 @@ function ReList({ refreshKey }: { refreshKey: number }) {
             {rows.map((r) => (
               <ReRow key={r.id} row={r} expanded={expanded === r.id} onToggle={() => setExpanded((e) => (e === r.id ? null : r.id))} />
             ))}
+            {hasMore && (
+              <div
+                ref={sentinelRef}
+                onClick={() => { if (!loadingMore) load(rows.length); }}
+                className="p-3 text-center text-xs text-slate-400 cursor-pointer hover:bg-slate-50"
+              >
+                {loadingMore
+                  ? <Loader2 className="animate-spin inline" size={15} />
+                  : `แสดง ${rows.length} จาก ${total} รายการ — เลื่อนลงเพื่อโหลดเพิ่ม`}
+              </div>
+            )}
           </div>
         )}
       </div>
