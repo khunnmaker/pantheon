@@ -15,7 +15,7 @@ import { generateAllCards } from '../venus/cards.js';
 //
 // Import is supervisor-only (mirrors Vesta/Juno: imports/config = supervisor). Reading
 // the customer list is per-grant: requireApp('venus') — supervisor always passes, gm is
-// excluded (the gm implicit app set does not include Venus), agm/employees need 'venus' in their
+// excluded (the gm implicit app set does not include Venus), central/employees need 'venus' in their
 // Agent.apps (owner-granted via Jupiter's admin UI). Suite-consistent with Vesta/Juno/Ceres.
 
 const MAX_UPLOAD_BYTES = 12 * 1024 * 1024; // real ARMAST export is ~6.6MB

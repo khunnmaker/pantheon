@@ -41,8 +41,8 @@ beforeEach(() => {
 });
 
 describe('Ceres v2 request access', () => {
-  it('rejects employee and AGM callers at both human-decision routes', async () => {
-    for (const role of ['employee', 'agm'] as const) {
+  it('rejects employee and Central Office callers at both human-decision routes', async () => {
+    for (const role of ['employee', 'central'] as const) {
       const app = Fastify();
       app.addHook('preHandler', async (req) => {
         req.agent = { ...employee(`${role}-1`), role };

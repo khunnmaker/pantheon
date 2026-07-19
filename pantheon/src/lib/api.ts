@@ -3,7 +3,7 @@ export type { AppName };
 
 export const API_URL: string = import.meta.env.VITE_API_URL ?? 'http://localhost:3000';
 
-export type Role = 'supervisor' | 'gm' | 'agm' | 'employee';
+export type Role = 'supervisor' | 'gm' | 'central' | 'employee';
 export interface Agent {
   id: string;
   email: string;

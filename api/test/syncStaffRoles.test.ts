@@ -47,7 +47,7 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllEnvs());
 
 describe('syncStaff role seeding', () => {
-  it('upserts Noon from GM_PASSWORD as gm and the three PIN-auth staff as agm', async () => {
+  it('upserts Noon from GM_PASSWORD as gm and the three PIN-auth staff as central', async () => {
     mocks.env.EMPLOYEE_PINS = 'poopae:295374,win:306485,mail:417596';
 
     await syncStaff();
@@ -63,8 +63,8 @@ describe('syncStaff role seeding', () => {
     });
     for (const slug of ['poopae', 'win', 'mail']) {
       const write = writes.find((w) => w.where.email === `${slug}@prominent.local`);
-      expect(write?.update.role).toBe('agm');
-      expect(write?.create.role).toBe('agm');
+      expect(write?.update.role).toBe('central');
+      expect(write?.create.role).toBe('central');
     }
     expect(mocks.deleteMany).not.toHaveBeenCalled();
   });
@@ -90,7 +90,7 @@ describe('syncStaff role seeding', () => {
     expect(mocks.deleteMany).toHaveBeenCalledOnce();
   });
 
-  it('skips the new agm accounts while their PINs are absent and keeps pruning paused', async () => {
+  it('skips the new Central Office accounts while their PINs are absent and keeps pruning paused', async () => {
     await syncStaff();
 
     const emails = mocks.upsert.mock.calls.map(([args]) => args.where.email);

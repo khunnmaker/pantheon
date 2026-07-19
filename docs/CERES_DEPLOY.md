@@ -21,7 +21,7 @@ list — each only when its table is empty.
 | Var | Value |
 |---|---|
 | `GM_PASSWORD` | Nee's GM login password (login email remains `md@prominent.local`). `MD_PASSWORD` is accepted as a fallback, so the existing Railway variable may remain untouched during rollout. |
-| `EMPLOYEE_PINS` | **One var for all EMPLOYEES slugs**, including `nun`, `poopae`, `win`, and `mail` — **exactly 6 digits per PIN** (non-6-digit entries skipped with a warning; weak PINs like 123456 warned). Someone missing from the list simply can't log in yet, and stale-account pruning stays disabled until everyone listed is provisioned, so adding the three AGMs is safe before their Railway PINs exist. |
+| `EMPLOYEE_PINS` | **One var for all EMPLOYEES slugs**, including `nun`, `poopae`, `win`, and `mail` — **exactly 6 digits per PIN** (non-6-digit entries skipped with a warning; weak PINs like 123456 warned). Someone missing from the list simply can't log in yet, and stale-account pruning stays disabled until everyone listed is provisioned, so adding the three Central Office accounts is safe before their Railway PINs exist. |
 | `CEO_LINE_USER_ID` | optional, suite-wide — the CEO's LINE userId for escalation pushes from the Prominent OA (the old name `CERES_CEO_LINE_USER_ID` still works as a deprecated fallback). To find it: message the OA from the personal account, then read the `Customer.lineUserId` of that chat (console or DB). Leave unset to disable pushes (escalations still appear in the CEO tab). |
 | `CERES_FLOOR` | optional, default `40000` (top-up trigger) |
 | `CERES_CEO_THRESHOLD` | optional, default `5000` (mandatory CEO pre-approval above this) |
@@ -37,7 +37,7 @@ touch env vars again.
 
 ### Ceres access and SSO
 
-- `supervisor` and `gm` Agents have implicit Ceres access. `agm` and `employee` Agents need
+- `supervisor` and `gm` Agents have implicit Ceres access. `central` and `employee` Agents need
   `ceres` in `Agent.apps`.
 - A logged-out Ceres entry tries the shared suite cookie, then redirects to Pantheon with
   `?redirect=<complete-ceres-url>`. Ceres account cards never appear on the normal path.
@@ -71,12 +71,12 @@ npm run ceres:sso-readiness
 
 The command is read-only, prints counts and identifiers only, and exits non-zero when it finds
 any of the following: an active person party without a live Agent or Ceres access; a canonical
-target account that is missing or lacks its grant/implicit access; an employee/AGM requester or
+target account that is missing or lacks its grant/implicit access; an employee/Central Office requester or
 other granted staff account without an active email-linked `CeresParty`; duplicate active party
 links for one email; or a historical expense whose referenced party row no longer exists.
 
 Repair grants and party links additively, rerun until green, then confirm the production Ceres
-origin, shared-cookie domain, and representative supervisor, GM, AGM, employee, and original
+origin, shared-cookie domain, and representative supervisor, GM, Central Office, employee, and original
 messenger portal round trips. Never copy credential values into the audit or deployment log.
 
 ### B. Compatibility release (default for this phase)

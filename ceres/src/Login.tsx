@@ -4,7 +4,7 @@ import { login, setSession, getLogins, type Agent, type LoginName } from './lib/
 import { groupLogins, type GroupMeta, memberAvatar, teamAvatar } from '@pantheon/ui';
 
 const PIN_LEN = 6;
-const RAW_ROLES = new Set(['employee', 'agm', 'gm', 'supervisor']);
+const RAW_ROLES = new Set(['employee', 'central', 'gm', 'supervisor']);
 
 export default function Login({ onLogin }: { onLogin: (agent: Agent) => void }) {
   const [manual, setManual] = useState(false);

@@ -11,7 +11,7 @@ export const API_URL: string = import.meta.env.VITE_API_URL ?? 'http://localhost
 // api/src/routes/venus.ts): supervisor always has access; employees need the explicit
 // 'venus' grant (Agent.apps); gm is excluded. The login screen does not hard-block by
 // role — an ungranted employee logs in fine and gets a friendly 403 state instead (App.tsx).
-export type Role = 'supervisor' | 'gm' | 'agm' | 'employee';
+export type Role = 'supervisor' | 'gm' | 'central' | 'employee';
 export interface Agent {
   id: string;
   email: string;
@@ -319,7 +319,7 @@ export interface LoginName {
   gender?: string;
 }
 // PUBLIC — no auth required. Ordered: supervisor first (kind 'password'), then any
-// granted GM/AGM/employee cards. Uses the GENERAL suite endpoint (not an app-owned one like
+// granted GM/Central Office/employee cards. Uses the GENERAL suite endpoint (not an app-owned one like
 // Ceres's /api/ceres/logins) since Venus access is grant-based, not role-based.
 export const getLogins = () =>
   fetch(`${API_URL}/api/auth/logins?app=venus`).then((r) => {

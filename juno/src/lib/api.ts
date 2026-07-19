@@ -7,8 +7,8 @@ import { fetchWithSessionRenewal, renewSuiteSessionOnce } from '@pantheon/ui';
 export const API_URL: string = import.meta.env.VITE_API_URL ?? 'http://localhost:3000';
 
 // Live roles (mirror of api/src/auth/jwt.ts). The old 'agent' type was stale — the runtime
-// sends supervisor/gm/agm/employee. Juno's routes apply their own server-side scope gates.
-export type Role = 'supervisor' | 'gm' | 'agm' | 'employee';
+// sends supervisor/gm/central/employee. Juno's routes apply their own server-side scope gates.
+export type Role = 'supervisor' | 'gm' | 'central' | 'employee';
 export interface Agent {
   id: string;
   email: string;
@@ -27,7 +27,7 @@ import type { AppName } from '@pantheon/ui';
 export type { AppName };
 
 // Mirror of the server's hasAppAccess (api/src/auth/jwt.ts): supervisor → everything;
-// gm → Ceres + Minerva + Juno + Apollo; agm/employee → their own per-person grant list. A stored agent from
+// gm → Ceres + Minerva + Juno + Apollo; central/employee → their own per-person grant list. A stored agent from
 // before this field existed has no apps → treated as no grants (empty list), which is safe.
 export function hasAppAccess(agent: Agent, app: AppName): boolean {
   if (agent.role === 'supervisor') return true;
@@ -273,7 +273,7 @@ export interface LoginCard {
   name: string;
   kind: 'password' | 'pin';
   // DISPLAY metadata for the role-grouped, avatar login screen (additive; server-provided).
-  group: string;                 // ceo | gm | agm | sales | finance | messengers | stores | others
+  group: string;                 // ceo | gm | central | sales | finance | messengers | stores | others
   gender: 'male' | 'female';     // drives the cute (DiceBear) avatar
 }
 // PUBLIC — no auth required. Ordered: supervisor first, then employees granted this app.

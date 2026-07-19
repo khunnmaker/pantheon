@@ -1,19 +1,19 @@
 import jwt from 'jsonwebtoken';
 import { env } from '../env.js';
 
-// Unified auth: four live tiers. 'md'/'agent'/'messenger' are RETIRED roles — no live Agent row
+// Unified auth: four live tiers. 'agm'/'md'/'agent'/'messenger' are RETIRED roles — no live Agent row
 // can carry them after boot (ensureSeeded heals every row to one of the four below) — but a
 // pre-deploy bearer/session token signed under an old scheme may still carry one until expiry.
-export type Role = 'supervisor' | 'gm' | 'agm' | 'employee';
+export type Role = 'supervisor' | 'gm' | 'central' | 'employee';
 // Every live role, as a runtime tuple. Use where an endpoint means "any authenticated
 // account" and then gates per-app inside the handler (see middleware.requireAnyAuth /
 // the Pantheon badges route). Mirrors LIVE_ROLES in middleware.ts; adding a future role
 // here keeps those "any account" paths from silently omitting it.
-export const ALL_ROLES = ['supervisor', 'gm', 'agm', 'employee'] as const;
+export const ALL_ROLES = ['supervisor', 'gm', 'central', 'employee'] as const;
 // Accepted at TOKEN VERIFICATION ONLY, so an old token isn't rejected outright mid-rollout;
 // every consumer re-reads the LIVE Agent row (see authedAgentFromToken), which decides real
-// access and can never itself be 'md'/'agent'/'messenger' post-boot.
-const TOKEN_ROLES = ['supervisor', 'gm', 'agm', 'employee', 'md', 'agent', 'messenger'] as const;
+// access and can never itself be 'agm'/'md'/'agent'/'messenger' post-boot.
+const TOKEN_ROLES = ['supervisor', 'gm', 'central', 'employee', 'agm', 'md', 'agent', 'messenger'] as const;
 type TokenRole = (typeof TOKEN_ROLES)[number];
 
 // The suite's app names — the SINGLE source of truth (runtime tuple + type). requireApp,
@@ -131,7 +131,7 @@ export function verifyToken(
 
 // supervisor → everything; gm → Ceres + Minerva + Juno + Apollo. The Juno grant admits GMs,
 // while routes/juno.ts narrows them to bills/products only (owner decision 2026-07-13).
-// agm/employee → their own per-person Agent.apps grant list.
+// central/employee → their own per-person Agent.apps grant list.
 export const GM_APPS: readonly AppName[] = ['ceres', 'minerva', 'juno', 'apollo'];
 export function hasAppAccess(agent: AuthedAgent, app: AppName): boolean {
   if (agent.role === 'supervisor') return true;

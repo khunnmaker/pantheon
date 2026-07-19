@@ -9,7 +9,7 @@ beforeAll(async () => {
   auth = await import('../src/auth/jwt.js');
 });
 
-const agent = (role: 'supervisor' | 'gm' | 'agm' | 'employee', apps: string[] = []) => ({
+const agent = (role: 'supervisor' | 'gm' | 'central' | 'employee', apps: string[] = []) => ({
   id: `${role}-1`, email: `${role}@example.test`, name: role, role, apps, authVersion: 0,
 });
 
@@ -23,15 +23,24 @@ describe('unified auth roles', () => {
     expect(auth.verifyToken(token)).toMatchObject({ id: 'legacy-1', role: 'md', authVersion: 0 });
   });
 
+  it('accepts a legacy agm claim at token verification during rollout', () => {
+    const token = jwt.sign(
+      { email: 'legacy-central@example.test', name: 'Legacy Central Office', role: 'agm' },
+      'unit-test-jwt-secret',
+      { subject: 'legacy-central-1', algorithm: 'HS256', expiresIn: '1h' },
+    );
+    expect(auth.verifyToken(token)).toMatchObject({ id: 'legacy-central-1', role: 'agm', authVersion: 0 });
+  });
+
   it('gives gm the implicit GM_APPS set', () => {
     for (const app of auth.GM_APPS) expect(auth.hasAppAccess(agent('gm'), app)).toBe(true);
     expect(auth.hasAppAccess(agent('gm'), 'venus')).toBe(false);
   });
 
-  it('gives agm access only through Agent.apps', () => {
-    expect(auth.hasAppAccess(agent('agm'), 'apollo')).toBe(false);
-    expect(auth.hasAppAccess(agent('agm', ['apollo']), 'apollo')).toBe(true);
-    expect(auth.hasAppAccess(agent('agm', ['apollo']), 'juno')).toBe(false);
+  it('gives Central Office access only through Agent.apps', () => {
+    expect(auth.hasAppAccess(agent('central'), 'apollo')).toBe(false);
+    expect(auth.hasAppAccess(agent('central', ['apollo']), 'apollo')).toBe(true);
+    expect(auth.hasAppAccess(agent('central', ['apollo']), 'juno')).toBe(false);
   });
 
   it('keeps bearer, session, and OA-sync scopes separate', () => {

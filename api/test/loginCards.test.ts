@@ -13,9 +13,9 @@ vi.mock('../src/db/ensureSeeded.js', () => ({
   ],
   EMPLOYEES: [
     { slug: 'sales', name: 'Sales', apps: ['ceres'], group: 'sales', gender: 'female' },
-    { slug: 'poopae', name: 'Poopae', apps: ['ceres'], role: 'agm', group: 'agm', gender: 'female' },
-    { slug: 'win', name: 'Win', apps: ['ceres'], role: 'agm', group: 'agm', gender: 'male' },
-    { slug: 'mail', name: 'Mail', apps: ['ceres'], role: 'agm', group: 'agm', gender: 'female' },
+    { slug: 'poopae', name: 'Poopae', apps: ['ceres'], role: 'central', group: 'central', gender: 'female' },
+    { slug: 'win', name: 'Win', apps: ['ceres'], role: 'central', group: 'central', gender: 'male' },
+    { slug: 'mail', name: 'Mail', apps: ['ceres'], role: 'central', group: 'central', gender: 'female' },
   ],
   employeeEmail: (slug: string) => `${slug}@prominent.local`,
 }));
@@ -33,7 +33,7 @@ beforeEach(() => {
 });
 
 describe('buildLoginCards', () => {
-  it('returns supervisor, both password GMs, AGMs, then employees in order', async () => {
+  it('returns supervisor, both password GMs, Central Office, then employees in order', async () => {
     const cards = await buildLoginCards('ceres');
 
     expect(cards.slice(0, 6).map(({ email, kind }) => ({ email, kind }))).toEqual([

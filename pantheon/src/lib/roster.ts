@@ -65,8 +65,8 @@ export const ROLE_GROUPS: RoleGroup[] = [
     ],
   },
   {
-    id: 'agm',
-    label: 'ผู้ช่วยผู้จัดการ (AGM)',
+    id: 'central',
+    label: 'ส่วนกลาง (Central Office)',
     color: 'bg-cyan-600',
     members: [
       { email: slugEmail('poopae'), label: 'Poopae (ปูเป้)', cred: 'pin', gender: 'female' },

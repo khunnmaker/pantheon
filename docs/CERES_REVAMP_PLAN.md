@@ -3,7 +3,7 @@
 The repository is ahead of parts of the mission brief:
 
 - Ceres has the 13 original tables from `20260705000000_ceres` plus the later expense-void migration. Money is stored as string-valued append-only movements and queried into balances; daily closes create immutable settlement snapshots.
-- The staff roster and authentication have already moved to the four live tiers introduced in `a185175`: `supervisor`, `gm`, `agm`, and `employee`. Raw `messenger` and `md` Agent roles are retired.
+- The staff roster and authentication use four live tiers: `supervisor`, `gm`, `central`, and `employee`. The Central Office tier was introduced in `a185175` as `agm` (formerly AGM); raw `agm`, `messenger`, and `md` Agent roles are retired.
 - Ceres already boots from the Pantheon shared SSO cookie and uses the portal `?redirect=` flow. Ceres access is live-checked from `Agent.apps`.
 - `CERES_MESSENGER_PINS` still exists in `api/src/env.ts`, but nothing consumes it. Current PIN login uses the suite-wide Agent accounts provisioned from `EMPLOYEE_PINS`/legacy `AGENT_PINS`.
 - The canonical roster currently contains 23 employee records, and all 23 declare a Ceres grant. `ensureCeres.ts` creates or repairs a `CeresParty` for every employee, not merely the original messenger group. Existing messenger PIN users are therefore already represented by normal Agent accounts and parties.
@@ -11,7 +11,7 @@ The repository is ahead of parts of the mission brief:
 - Ceres currently maps:
   - `supervisor` → `ceo`
   - any `gm` → Ceres management
-  - granted `agm`/`employee` → `messenger`
+  - granted `central`/`employee` → `messenger`
 - Nee is not the only current approver: Noon is also seeded as `gm`, and every `gm` can perform the same Ceres actions. This needs an owner decision if “Nee approves everything” is intended to be identity-specific.
 - The entity list has already expanded from PROM/DENL to the five Jupiter company codes: PROM, TONR, DENC, DENL, and KPKF.
 - The current approval architecture does not match the new brief:
@@ -408,7 +408,7 @@ CEO home:
 
 ### Acceptance criteria
 
-- Every granted employee/AGM can create and view only their own three request types.
+- Every granted employee/Central Office user can create and view only their own three request types.
 - A reimbursement cannot be submitted without a receipt.
 - Staff cannot forge requester ID, access another person’s request, or attach another person’s upload.
 - AI unavailability and malformed AI output both produce escalation, never approval.
@@ -670,11 +670,11 @@ Run a read-only report containing counts and identifiers only, never credentials
 
 - Every currently active legacy messenger has an Agent row.
 - Every target staff account has a Ceres grant or implicit GM/supervisor access.
-- Every employee/AGM requester has an active `CeresParty` linked by `agentEmail`.
+- Every employee/Central Office requester has an active `CeresParty` linked by `agentEmail`.
 - No two active parties map to the same Agent email.
 - Each legacy expense party remains present even if inactive.
 - Confirm portal redirect origin and the production shared-cookie domain.
-- Confirm successful Ceres bootstrap for representative supervisor, GM, AGM, employee, and original messenger accounts.
+- Confirm successful Ceres bootstrap for representative supervisor, GM, Central Office, employee, and original messenger accounts.
 
 Repair grants or party links additively before changing the frontend.
 
