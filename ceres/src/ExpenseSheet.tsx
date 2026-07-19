@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Camera, Loader2, AlertTriangle, X, Check, ImageOff } from 'lucide-react';
-import { createExpense, updateExpense, uploadReceipt, type Expense, type OcrResult, type DuplicateReceipt } from './lib/api';
+import { ApiError, createExpense, updateExpense, uploadReceipt, type Expense, type OcrResult, type DuplicateReceipt } from './lib/api';
 import { downscaleImage } from './lib/image';
 import { useCeres } from './lib/bootstrapContext';
 import CategoryPicker from './components/CategoryPicker';
@@ -154,8 +154,20 @@ export default function ExpenseSheet({
       setSuccessMsg('บันทึกเรียบร้อย');
       onSaved();
       onClose();
-    } catch {
-      setSubmitError('บันทึกไม่สำเร็จ ลองใหม่อีกครั้ง');
+    } catch (err) {
+      const code = err instanceof ApiError && typeof (err.body as { error?: string })?.error === 'string'
+        ? (err.body as { error: string }).error
+        : '';
+      const known: Record<string, string> = {
+        media_not_owned: 'รูปใบเสร็จใช้กับรายการนี้ไม่ได้ กรุณาถ่ายรูปใหม่อีกครั้ง',
+        receipt_required: 'ต้องแนบใบเสร็จสำหรับรายการหักเงินเบิก',
+        advance_not_paid: 'เบิกล่วงหน้านี้ยังไม่ถูกจ่ายเงิน จึงยังบันทึกค่าใช้จ่ายไม่ได้',
+        not_yours: 'รายการเบิกนี้ไม่ใช่ของบัญชีที่ล็อกอินอยู่',
+        no_party: 'บัญชีนี้ยังไม่ถูกผูกกับรายชื่อพนักงานเบิกเงิน แจ้ง GM ให้ตรวจสอบ',
+        invalid_advance: 'ไม่พบรายการเบิกล่วงหน้าที่อ้างถึง ลองปิดแล้วเปิดหน้านี้ใหม่',
+        invalid_amount: 'จำนวนเงินไม่ถูกต้อง',
+      };
+      setSubmitError(known[code] ?? `บันทึกไม่สำเร็จ ลองใหม่อีกครั้ง${code ? ` (${code})` : ''}`);
     } finally {
       setSubmitBusy(false);
     }

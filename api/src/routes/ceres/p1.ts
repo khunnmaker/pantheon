@@ -221,7 +221,10 @@ export function p1Routes(app: FastifyInstance) {
       const media = await mediaCanBeAttachedBy(
         b.receiptUploadId,
         agent,
-        b.advanceRequestId ? ['reimbursement_receipt'] : ['legacy_receipt'],
+        // Liquidation receipts arrive via POST /receipts (purpose 'legacy_receipt' — that
+        // pipeline carries the dup-catch + OCR); reimbursement_receipt stays accepted for
+        // media uploaded through the v2 request flow.
+        b.advanceRequestId ? ['reimbursement_receipt', 'legacy_receipt'] : ['legacy_receipt'],
       );
       if (!media) return reply.code(403).send({ error: 'media_not_owned' });
       receiptMeta = await readCeresReceiptMeta(b.receiptUploadId);
@@ -400,7 +403,7 @@ export function p1Routes(app: FastifyInstance) {
         const media = await mediaCanBeAttachedBy(
           uploadId,
           agent,
-          existing.advanceRequestId ? ['reimbursement_receipt'] : ['legacy_receipt'],
+          existing.advanceRequestId ? ['reimbursement_receipt', 'legacy_receipt'] : ['legacy_receipt'],
         );
         if (!media) return reply.code(403).send({ error: 'media_not_owned' });
         const meta = await readCeresReceiptMeta(uploadId);
