@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react';
 import {
   AlertTriangle,
   Bell,
-  ChevronRight,
   Crown,
   Home,
   ListChecks,
