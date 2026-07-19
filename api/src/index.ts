@@ -39,6 +39,8 @@ import { apolloRoutes } from './routes/apollo.js';
 import { startApolloSchedulers } from './apollo/scheduler.js';
 import { staffLineRoutes } from './routes/staffLine.js';
 import { autosendRoutes } from './routes/autosend.js';
+import { maliRoutes } from './routes/mali.js';
+import { maliWebhookRoutes } from './routes/maliWebhook.js';
 
 // Raw body is needed to verify the LINE webhook signature.
 declare module 'fastify' {
@@ -88,6 +90,7 @@ async function buildServer() {
   await app.register(contentRoutes);
   await app.register(authRoutes);
   await app.register(webhookRoutes);
+  await app.register(maliWebhookRoutes);
   await app.register(consoleRoutes);
   await app.register(kbRoutes);
   await app.register(messageRoutes);
@@ -112,6 +115,7 @@ async function buildServer() {
   await app.register(oaSyncRoutes);
   await app.register(staffLineRoutes);
   await app.register(apolloRoutes);
+  await app.register(maliRoutes);
   startApolloSchedulers(app.log);
 
   return app;

@@ -6,10 +6,11 @@ import { env } from '../env.js';
 export function verifyLineSignature(
   rawBody: string | Buffer,
   signature: string | undefined,
+  channelSecret: string = env.LINE_CHANNEL_SECRET,
 ): boolean {
-  if (!signature || !env.LINE_CHANNEL_SECRET) return false;
+  if (!signature || !channelSecret) return false;
   try {
-    return validateSignature(rawBody, env.LINE_CHANNEL_SECRET, signature);
+    return validateSignature(rawBody, channelSecret, signature);
   } catch {
     return false;
   }

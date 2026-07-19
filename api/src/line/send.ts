@@ -1,4 +1,4 @@
-import { getAppdentLineClient, getLineClient } from './client.js';
+import { getAppdentLineClient, getLineClient, getMaliLineClient } from './client.js';
 import { env } from '../env.js';
 
 export interface SendResult {
@@ -21,7 +21,7 @@ const dryRunForced = () => env.LINE_DRY_RUN === '1' || env.LINE_DRY_RUN.toLowerC
 // real customers. Logs only structured channel/message kinds, never IDs or bodies.
 async function push(
   client: ReturnType<typeof getLineClient>,
-  channel: 'prominent' | 'appdent',
+  channel: 'prominent' | 'appdent' | 'mali',
   lineUserId: string,
   messages: LineOutMessage[],
   resultIndex = 0,
@@ -71,6 +71,38 @@ export async function sendOwnerLineText(
   }
   const destination = env.APPDENT_OWNER_LINE_USER_ID || prominentOwnerUserId;
   return push(client, 'appdent', destination, [{ type: 'text', text }]);
+}
+
+// Mali uses the free webhook reply token first, then falls back to a push on
+// the same OA if the token expired while retrieval/LLM work was running.
+export async function sendMaliLineText(
+  lineUserId: string,
+  replyToken: string | undefined,
+  text: string,
+): Promise<SendResult> {
+  const client = getMaliLineClient();
+  if (!client || dryRunForced()) {
+    // eslint-disable-next-line no-console
+    console.log({ event: 'line_reply_dry_run', channel: 'mali', kind: 'text' });
+    return { sent: false, dryRun: true };
+  }
+
+  if (replyToken) {
+    try {
+      const res = await client.replyMessage({ replyToken, messages: [{ type: 'text', text }] });
+      const sentMessage = res?.sentMessages?.[0] as { id?: string; quoteToken?: string } | undefined;
+      return {
+        sent: true,
+        dryRun: false,
+        channelMsgId: sentMessage?.id,
+        quoteToken: sentMessage?.quoteToken,
+      };
+    } catch {
+      // Fall through: LINE reply tokens are short-lived and single-use.
+    }
+  }
+
+  return push(client, 'mali', lineUserId, [{ type: 'text', text }]);
 }
 
 // Image(s) only — no text bubble (LINE rejects empty text). For an instant photo send.

@@ -5,6 +5,7 @@ import { env } from '../env.js';
 // token is configured (M1 dev runs without real LINE credentials).
 let client: messagingApi.MessagingApiClient | null = null;
 let appdentClient: messagingApi.MessagingApiClient | null = null;
+let maliClient: messagingApi.MessagingApiClient | null = null;
 
 export function getLineClient(): messagingApi.MessagingApiClient | null {
   if (!env.LINE_CHANNEL_ACCESS_TOKEN) return null;
@@ -26,6 +27,18 @@ export function getAppdentLineClient(): messagingApi.MessagingApiClient | null {
     });
   }
   return appdentClient;
+}
+
+// Separately cached client for Mali's staff-only OA. Never fall back to the
+// customer channel when the Mali token is unset.
+export function getMaliLineClient(): messagingApi.MessagingApiClient | null {
+  if (!env.MALI_LINE_CHANNEL_ACCESS_TOKEN) return null;
+  if (!maliClient) {
+    maliClient = new messagingApi.MessagingApiClient({
+      channelAccessToken: env.MALI_LINE_CHANNEL_ACCESS_TOKEN,
+    });
+  }
+  return maliClient;
 }
 
 // Best-effort display-name lookup; null if no client or the call fails.
