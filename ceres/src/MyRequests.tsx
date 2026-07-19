@@ -20,7 +20,10 @@ import {
 } from './lib/api';
 import { MediaThumb } from './lib/media';
 
-const TYPE_LABEL: Record<StaffRequest['requestType'], string> = {
+// Exported so StaffHome's new home-screen sections (open-advance cards + the
+// "รอดำเนินการ" compact list — see docs/CERES_STAFF_HOME_PLAN.md "1") can reuse the
+// exact same type label + status-pill logic instead of re-deriving it.
+export const TYPE_LABEL: Record<StaffRequest['requestType'], string> = {
   advance: 'เบิกล่วงหน้า',
   reimbursement: 'สำรองจ่าย-ขอคืน',
   purchase: 'ขอให้ซื้อ',
@@ -38,7 +41,7 @@ const FULFILLMENT_META: Partial<Record<FulfillmentStatus, { label: string; cls: 
   reversed: { label: 'ย้อนกลับแล้ว', cls: 'bg-rose-100 text-rose-700' },
 };
 
-function statusMeta(request: StaffRequest): { label: string; cls: string } {
+export function statusMeta(request: StaffRequest): { label: string; cls: string } {
   if (request.approvalStatus === 'pending_nee') {
     return request.aiScreenStatus === 'pending'
       ? { label: 'รอตรวจ', cls: 'bg-sky-100 text-sky-700' }
@@ -202,7 +205,10 @@ export default function MyRequests({
                         {status.label}
                       </span>
                     </div>
-                    <div className="text-sm text-slate-600 truncate">{TYPE_LABEL[request.requestType]} · {request.reason}</div>
+                    <div className="text-sm text-slate-600 truncate">
+                      {TYPE_LABEL[request.requestType]}
+                      {request.reason ? ` · ${request.reason}` : ''}
+                    </div>
                     {rejectReason && <div className="text-xs text-rose-600 mt-0.5 truncate">เหตุผล: {rejectReason}</div>}
                   </div>
                   {expanded ? <ChevronUp size={17} className="text-slate-400" /> : <ChevronDown size={17} className="text-slate-400" />}

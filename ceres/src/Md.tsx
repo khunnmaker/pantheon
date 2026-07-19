@@ -334,7 +334,7 @@ function ManagementApp({ isCeo }: { isCeo: boolean }) {
       title: isCeo ? 'เครื่องมือปฏิบัติการเดิม' : 'งานเงินสดและการปิดยอด',
       items: [
         { key: 'board', label: 'กระดานเงินสด', icon: <LayoutDashboard size={17} />, onClick: () => setView('board') },
-        { key: 'legacy-approval', label: 'ตรวจค่าใช้จ่ายเดิม', icon: <ClipboardCheck size={17} />, onClick: () => setView('legacy-approval') },
+        { key: 'legacy-approval', label: 'ตรวจใบเสร็จค่าใช้จ่าย', icon: <ClipboardCheck size={17} />, onClick: () => setView('legacy-approval') },
         { key: 'money', label: 'เบิก / คืนเงิน', icon: <ArrowLeftRight size={17} />, onClick: () => setView('money') },
         { key: 'close', label: 'ปิดยอดประจำวัน', icon: <FileCheck2 size={17} />, onClick: () => setView('close') },
         ...(isCeo
@@ -586,7 +586,7 @@ function ApprovalsComposedView({
     <div className="space-y-6">
       <NeeApprovalQueue />
       <div className="pt-4 border-t border-slate-200">
-        <div className="text-sm font-semibold text-slate-500 mb-2">ตรวจค่าใช้จ่ายเดิม (ระบบเดิม)</div>
+        <div className="text-sm font-semibold text-slate-500 mb-2">ตรวจใบเสร็จค่าใช้จ่าย</div>
         <MdApproval prefill={prefill} onConsumePrefill={onConsumePrefill} />
       </div>
     </div>
