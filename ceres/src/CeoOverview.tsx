@@ -316,7 +316,7 @@ export function CashSection({ cash, onTopupDone }: { cash: CeoOverviewData['cash
     if (!Number.isFinite(n) || n <= 0) return setError('กรอกจำนวนเงินให้ถูกต้อง');
     setBusy(true);
     try {
-      await createMovement({ type: 'topup', amount, note: 'เติมตามคำแนะนำ' });
+      await createMovement({ type: 'deposit', amount, note: 'เติมตามคำแนะนำ' });
       setConfirming(false);
       onTopupDone();
     } catch {

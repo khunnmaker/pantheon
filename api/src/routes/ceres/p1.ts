@@ -564,11 +564,15 @@ export function p1Routes(app: FastifyInstance) {
     },
   );
 
-  // POST /api/ceres/movements { type: deposit|topup, amount, note? } — box deposit / CEO top-up.
+  // POST /api/ceres/movements { type: deposit, amount, note? } — box deposit (gm+ceo).
+  // 'topup' was merged into 'deposit' 2026-07-20 — the two forms were functionally identical
+  // (both credited the same pettyCash box), so the CEO-only top-up form was dropped in favor of
+  // this one. Old rows with type 'topup' remain in the DB and keep counting via the
+  // history-compat mapping in requestMoney.ts / statements.ts — only new writes are narrowed here.
   app.post('/api/ceres/movements', { preHandler: requireCeresRole('gm', 'ceo') }, async (req, reply) => {
     const body = z
       .object({
-        type: z.enum(['deposit', 'topup']),
+        type: z.literal('deposit'),
         amount: z.string().refine(isValidAmount, 'invalid_amount'),
         note: z.string().max(600).optional(),
       })
@@ -576,10 +580,6 @@ export function p1Routes(app: FastifyInstance) {
     if (!body.success) {
       const amountIssue = body.error.issues.some((i) => i.message === 'invalid_amount');
       return reply.code(400).send({ error: amountIssue ? 'invalid_amount' : 'invalid_body' });
-    }
-    const role = ceresRoleOf(req.agent!);
-    if (body.data.type === 'topup' && role !== 'ceo') {
-      return reply.code(403).send({ error: 'forbidden' });
     }
     const movement = await prisma.cashMovement.create({
       data: {

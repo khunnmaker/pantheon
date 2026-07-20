@@ -58,7 +58,7 @@ export default function MdBoard({ onViewPendingParty }: { onViewPendingParty: (p
           {needsOpeningBalance && (
             <div className="mb-3 flex items-start gap-2 px-3 py-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-sm">
               <AlertCircle size={16} className="mt-0.5 shrink-0" />
-              <span>ยังไม่ได้ตั้งยอดเงินตั้งต้น — นับเงินสดในกล่อง แล้วบันทึกที่แท็บ ฝาก/เติมเงิน → ฝากเข้ากล่อง</span>
+              <span>ยังไม่ได้ตั้งยอดเงินตั้งต้น — นับเงินสดในกล่อง แล้วบันทึกที่แท็บ ฝากเงิน → ฝากเข้ากล่อง</span>
             </div>
           )}
           <div className="bg-white rounded-xl border border-slate-200 p-5 mb-3">
