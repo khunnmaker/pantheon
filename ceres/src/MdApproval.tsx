@@ -4,8 +4,7 @@ import { listExpenses, approveExpense, rejectExpense, baht, type Expense } from 
 import { useCeres } from './lib/bootstrapContext';
 
 // Prefill payload passed in from MdBoard's tappable "รอตรวจ" party badge — jumps here
-// pre-filtered to that party. Mirrors MdRequests's RequestPrefill pattern (see Md.tsx's
-// approvalPrefill state / goToApprovalWithPrefill).
+// pre-filtered to that party (see Md.tsx's approvalPrefill state / goToApprovalWithPrefill).
 export interface ApprovalPrefill {
   partyId: string;
 }

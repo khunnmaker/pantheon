@@ -1,8 +1,7 @@
-import crypto from 'node:crypto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
-  env: { JWT_SECRET: 'unit-test-placeholder', CERES_ALLOW_LEGACY_MEDIA_TOKENS: '' },
+  env: { JWT_SECRET: 'unit-test-placeholder' },
   findMedia: vi.fn(),
   findParty: vi.fn(),
   findExpense: vi.fn(),
@@ -37,7 +36,6 @@ const gm = { ...employee, id: 'gm-1', role: 'gm' as const };
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mocks.env.CERES_ALLOW_LEGACY_MEDIA_TOKENS = '';
   mocks.findMedia.mockResolvedValue({
     id: 'upload-1', purpose: 'legacy_receipt', sha256: 'hash', uploadedById: 'employee-2',
     uploadedByName: 'Other', createdAt: new Date(),
@@ -57,12 +55,9 @@ describe('Ceres media security', () => {
     expect(verifyCeresReceiptToken('upload-1', token, expires, now + CERES_MEDIA_URL_TTL_SECONDS * 1000)).toBe(false);
   });
 
-  it('accepts the old stable token only when the rollback flag is enabled', () => {
-    const token = crypto.createHmac('sha256', mocks.env.JWT_SECRET)
-      .update('ceres-receipt:upload-1').digest('hex').slice(0, 32);
+  it('rejects tokens without an expiry', () => {
+    const token = 'legacy-token';
     expect(verifyCeresReceiptToken('upload-1', token, undefined)).toBe(false);
-    mocks.env.CERES_ALLOW_LEGACY_MEDIA_TOKENS = 'true';
-    expect(verifyCeresReceiptToken('upload-1', token, undefined)).toBe(true);
     expect(ceresReceiptUrl('https://api.example.test', 'upload-1')).toContain('expires=');
   });
 

@@ -12,8 +12,6 @@ import {
 } from '../../ceres/mediaAccess.js';
 import { ceresReceiptExpiry } from '../../ceres/receiptLink.js';
 import {
-  CashLedgerError,
-  createLegacyAdvance,
   lockPettyCash,
   syncAdvanceLiquidationProjection,
 } from '../../ceres/requestMoney.js';
@@ -565,73 +563,6 @@ export function p1Routes(app: FastifyInstance) {
       return { expense: toExpenseRow(updated, reqBase(req)) };
     },
   );
-
-  // POST /api/ceres/advances { partyId, amount, entity?, note? } — Nee's morning cash advance.
-  app.post('/api/ceres/advances', { preHandler: requireCeresRole('gm', 'ceo') }, async (req, reply) => {
-    const body = z
-      .object({
-        partyId: z.string().min(1),
-        amount: z.string().refine(isValidAmount, 'invalid_amount'),
-        entity: z.enum(ENTITIES).optional(),
-        note: z.string().max(600).optional(),
-      })
-      .safeParse(req.body);
-    if (!body.success) {
-      const amountIssue = body.error.issues.some((i) => i.message === 'invalid_amount');
-      return reply.code(400).send({ error: amountIssue ? 'invalid_amount' : 'invalid_body' });
-    }
-    const party = await prisma.ceresParty.findUnique({ where: { id: body.data.partyId } });
-    if (!party || !party.active) return reply.code(400).send({ error: 'invalid_party' });
-    let movement;
-    try {
-      movement = await createLegacyAdvance({
-        partyId: party.id,
-        partyName: party.name,
-        entity: body.data.entity ?? '',
-        amount: body.data.amount,
-        note: body.data.note ?? '',
-        createdById: req.agent!.id,
-        createdByName: req.agent!.name,
-      });
-    } catch (err) {
-      if (err instanceof CashLedgerError && err.code === 'insufficient_cash') {
-        return reply.code(409).send({ error: err.code, balance: err.balance?.toFixed(2) });
-      }
-      throw err;
-    }
-    return { movement };
-  });
-
-  // POST /api/ceres/refunds { partyId, amount, note? } — messenger returns unspent cash.
-  app.post('/api/ceres/refunds', { preHandler: requireCeresRole('gm', 'ceo') }, async (req, reply) => {
-    const body = z
-      .object({
-        partyId: z.string().min(1),
-        amount: z.string().refine(isValidAmount, 'invalid_amount'),
-        note: z.string().max(600).optional(),
-      })
-      .safeParse(req.body);
-    if (!body.success) {
-      const amountIssue = body.error.issues.some((i) => i.message === 'invalid_amount');
-      return reply.code(400).send({ error: amountIssue ? 'invalid_amount' : 'invalid_body' });
-    }
-    const party = await prisma.ceresParty.findUnique({ where: { id: body.data.partyId } });
-    if (!party || !party.active) return reply.code(400).send({ error: 'invalid_party' });
-    const movement = await prisma.cashMovement.create({
-      data: {
-        accountId: 'pettyCash',
-        type: 'refund',
-        direction: 'in',
-        partyId: party.id,
-        partyName: party.name,
-        amount: body.data.amount,
-        note: body.data.note ?? '',
-        createdById: req.agent!.id,
-        createdByName: req.agent!.name,
-      },
-    });
-    return { movement };
-  });
 
   // POST /api/ceres/movements { type: deposit|topup, amount, note? } — box deposit / CEO top-up.
   app.post('/api/ceres/movements', { preHandler: requireCeresRole('gm', 'ceo') }, async (req, reply) => {

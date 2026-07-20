@@ -20,7 +20,6 @@ vi.mock('../src/env.js', () => ({
     JWT_SECRET: 'unit-test-placeholder',
     CERES_CEO_THRESHOLD: 5000,
     CERES_FLOOR: 3000,
-    CERES_ALLOW_LEGACY_MEDIA_TOKENS: '',
   },
 }));
 vi.mock('../src/ceres/receiptStore.js', () => ({
@@ -140,6 +139,15 @@ beforeEach(() => {
 });
 
 describe('Ceres advance liquidation expense receipts', () => {
+  it('leaves the removed manual advance and refund routes unregistered', async () => {
+    const app = buildApp();
+    for (const route of ['/api/ceres/advances', '/api/ceres/refunds']) {
+      const response = await app.inject({ method: 'POST', url: route, payload: {} });
+      expect(response.statusCode).toBe(404);
+    }
+    await app.close();
+  });
+
   it.each(['legacy_receipt', 'reimbursement_receipt'] as const)(
     'creates a liquidation expense with requester-owned %s media',
     async (purpose) => {

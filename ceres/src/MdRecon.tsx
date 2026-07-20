@@ -26,7 +26,6 @@ import {
   matchStatementLine,
   unmatchStatementLine,
   setStatementLineRef,
-  listRequests,
   listMovements,
   getTransferReconciliation,
   baht,
@@ -36,13 +35,14 @@ import {
   type StatementLine,
   type StatementPreview,
   type MatchStatus,
-  type PaymentRequest,
   type Movement,
   type TransferReconciliationEvent,
   type TransferReconciliationBankLine,
 } from './lib/api';
-import { todayStr } from './MdRequests';
 
+function todayStr(): string {
+  return new Date().toLocaleDateString('sv-SE');
+}
 function daysAgoStr(n: number): string {
   const d = new Date();
   d.setDate(d.getDate() - n);
@@ -62,7 +62,6 @@ export default function MdRecon() {
   const [imports, setImports] = useState<StatementImport[]>([]);
   const [refreshKey, setRefreshKey] = useState(0);
 
-  const [dir, setDir] = useState<'out' | 'in'>('out');
   const [status, setStatus] = useState<MatchStatus | ''>('');
   const [q, setQ] = useState('');
   const [from, setFrom] = useState(daysAgoStr(30));
@@ -88,14 +87,16 @@ export default function MdRecon() {
       .catch(() => setImports([]));
   }, []);
 
+  // v1 purge (2026-07-19): only 'in' lines get browsed/matched here now — the 'out'
+  // v1-request matching UI is gone (see docs/CERES_V1_PURGE_PLAN.md Phase B item 4).
   const loadLines = useCallback(() => {
     setLinesLoading(true);
     setLinesError('');
-    listStatementLines({ dir, status: status || undefined, from: from || undefined, to: to || undefined, q: q || undefined, limit: 200 })
+    listStatementLines({ dir: 'in', status: status || undefined, from: from || undefined, to: to || undefined, q: q || undefined, limit: 200 })
       .then((r) => setLines(r.lines))
       .catch(() => setLinesError('โหลดข้อมูลไม่สำเร็จ'))
       .finally(() => setLinesLoading(false));
-  }, [dir, status, from, to, q]);
+  }, [status, from, to, q]);
 
   useEffect(() => {
     loadSummary();
@@ -124,9 +125,9 @@ export default function MdRecon() {
     <div>
       <h2 className="text-lg font-bold mb-3">กระทบยอด</h2>
 
-      <TransferReconciliationPanel refreshKey={refreshKey} onChanged={bump} />
+      <TransferReconciliationPanel refreshKey={refreshKey} onChanged={bump} summary={summary} />
 
-      <div className="text-sm font-semibold text-slate-500 mb-2 mt-5">กระทบยอดแบบเดิม (คำขอจ่ายเงิน / เงินเข้า-เติมเงิน)</div>
+      <div className="text-sm font-semibold text-slate-500 mb-2 mt-5">กระทบยอดเงินเข้า</div>
       <SummaryCards
         summary={summary}
         loading={summaryLoading}
@@ -155,20 +156,6 @@ export default function MdRecon() {
       )}
 
       <div className="bg-white rounded-xl border border-slate-200 p-3 mb-3 flex flex-wrap items-center gap-2">
-        <div className="flex rounded-lg border border-slate-300 overflow-hidden">
-          <button
-            onClick={() => setDir('out')}
-            className={`px-3 py-2 text-sm font-medium ${dir === 'out' ? 'bg-amber-600 text-white' : 'bg-white text-slate-600'}`}
-          >
-            ออก
-          </button>
-          <button
-            onClick={() => setDir('in')}
-            className={`px-3 py-2 text-sm font-medium ${dir === 'in' ? 'bg-amber-600 text-white' : 'bg-white text-slate-600'}`}
-          >
-            เข้า
-          </button>
-        </div>
         <select value={status} onChange={(e) => setStatus(e.target.value as MatchStatus | '')} className="px-2 py-2 rounded-lg border border-slate-300 text-sm bg-white">
           <option value="">ทุกสถานะ</option>
           <option value="unmatched">ยังไม่จับคู่</option>
@@ -229,7 +216,21 @@ export default function MdRecon() {
 // lack of one), slip status, and manual match/unmatch. Reversal exceptions stay visible
 // as unmatched until their real compensating bank line shows up. See
 // GET /api/ceres/transfers/reconciliation + docs/CERES_REVAMP_PLAN.md "Phase 3".
-function TransferReconciliationPanel({ refreshKey, onChanged }: { refreshKey: number; onChanged: () => void }) {
+function TransferReconciliationPanel({
+  refreshKey,
+  onChanged,
+  summary,
+}: {
+  refreshKey: number;
+  onChanged: () => void;
+  // Adversarial-review fix (2026-07-19 follow-up): the old "กระทบยอดแบบเดิม" section was
+  // the only proactive surface for unexplained 'out' bank lines (bank fees, unknown
+  // withdrawals with no Ceres record at all) — dropping it made them invisible even
+  // though getStatementSummary()/getTransferReconciliation() still compute/return them.
+  // Passed down from MdRecon's own `summary` state (getStatementSummary()) rather than
+  // re-fetched here. See docs/CERES_V1_PURGE_PLAN.md.
+  summary: StatementSummary | null;
+}) {
   const [events, setEvents] = useState<TransferReconciliationEvent[]>([]);
   const [bankLines, setBankLines] = useState<TransferReconciliationBankLine[]>([]);
   const [loading, setLoading] = useState(true);
@@ -256,6 +257,10 @@ function TransferReconciliationPanel({ refreshKey, onChanged }: { refreshKey: nu
   const unmatchedCount = events.filter((e) => e.reconciliationState === 'unmatched').length;
   const reversalExceptionCount = events.filter((e) => e.reversalException).length;
   const visibleEvents = showMatched ? events : events.filter((e) => e.reconciliationState === 'unmatched');
+  // Same `unmatchedBankLines` this panel already fetches for TransferMatchDialog's
+  // candidate list (statements.ts's GET /api/ceres/transfers/reconciliation) — just
+  // narrowed to 'out' for direct display instead of only surfacing inside the dialog.
+  const outLines = bankLines.filter((l) => l.direction === 'out');
 
   async function handleUnmatch(bankLineId: string) {
     try {
@@ -383,6 +388,35 @@ function TransferReconciliationPanel({ refreshKey, onChanged }: { refreshKey: nu
           ))}
         </div>
       )}
+
+      <div className="text-sm font-semibold text-slate-500 mb-2 mt-4">เงินออกที่ยังไม่มีรายการรองรับ</div>
+      {summary && (
+        <div className="bg-white rounded-xl border border-slate-200 p-3 mb-2">
+          <div className="text-xs text-slate-400">เงินออกยังไม่จับคู่</div>
+          <div className="text-lg font-bold text-rose-600">{baht(summary.unmatchedOut.sum)}</div>
+          <div className="text-xs text-slate-400">{summary.unmatchedOut.count} รายการ</div>
+        </div>
+      )}
+      {outLines.length === 0 ? (
+        <div className="text-center text-slate-400 text-sm py-6 bg-white rounded-xl border border-slate-200">
+          ไม่มีรายการเงินออกที่ยังไม่มีรายการรองรับ
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {outLines.map((l) => (
+            <div key={l.id} className="bg-white rounded-xl border border-slate-200 px-3 py-3">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs text-slate-400">{fmtDateTime(l.txnAt)}</span>
+                <span className="font-bold text-rose-600">-{baht(Number(l.amount))}</span>
+              </div>
+              <div className="text-sm text-slate-600 truncate mt-1">{l.payerName || l.details || l.channel}</div>
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="text-xs text-slate-400 mt-2">
+        รายการเหล่านี้ยังไม่มีคำขอ/รายการโอนใดจับคู่ด้วย — จับคู่ได้จากปุ่ม “จับคู่กับรายการธนาคาร” ของรายการที่เกี่ยวข้องด้านบน หรือตรวจสอบว่าเป็นค่าธรรมเนียมธนาคารหรือรายการไม่ทราบที่มา
+      </div>
 
       {matchingEventId && (
         <TransferMatchDialog
@@ -516,27 +550,10 @@ function SummaryCards({
 
   return (
     <div>
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-        <div className="bg-white rounded-xl border border-slate-200 p-3">
-          <div className="text-xs text-slate-400">เงินออกยังไม่จับคู่</div>
-          <div className="text-lg font-bold text-rose-600">{baht(summary.unmatchedOut.sum)}</div>
-          <div className="text-xs text-slate-400">{summary.unmatchedOut.count} รายการ</div>
-        </div>
-        <div className="bg-white rounded-xl border border-slate-200 p-3">
-          <div className="text-xs text-slate-400">เงินเข้ายังไม่จับคู่</div>
-          <div className="text-lg font-bold text-emerald-600">{baht(summary.unmatchedIn.sum)}</div>
-          <div className="text-xs text-slate-400">{summary.unmatchedIn.count} รายการ</div>
-        </div>
-        <div className="bg-white rounded-xl border border-slate-200 p-3">
-          <div className="text-xs text-slate-400">จ่ายแล้วแต่ไม่พบในสเตทเมนท์</div>
-          <div className="text-lg font-bold">{baht(summary.paidRequestsUnreconciled.sum)}</div>
-          <div className="flex items-center gap-1.5 text-xs text-slate-400">
-            {summary.paidRequestsUnreconciled.count} รายการ
-            {summary.paidRequestsUnreconciled.oldestDays >= 7 && (
-              <span className="px-1.5 py-0.5 rounded-full bg-rose-100 text-rose-700 font-semibold">{summary.paidRequestsUnreconciled.oldestDays} วัน</span>
-            )}
-          </div>
-        </div>
+      <div className="bg-white rounded-xl border border-slate-200 p-3">
+        <div className="text-xs text-slate-400">เงินเข้ายังไม่จับคู่</div>
+        <div className="text-lg font-bold text-emerald-600">{baht(summary.unmatchedIn.sum)}</div>
+        <div className="text-xs text-slate-400">{summary.unmatchedIn.count} รายการ</div>
       </div>
 
       <div className="flex items-center justify-between mt-3 gap-2 flex-wrap">
@@ -703,7 +720,7 @@ function ImportDialog({ onClose, onImported }: { onClose: () => void; onImported
 function LineRow({ line, expanded, onToggle, onChanged }: { line: StatementLine; expanded: boolean; onToggle: () => void; onChanged: () => void }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const [matchDialog, setMatchDialog] = useState<'request' | 'movement' | null>(null);
+  const [matchDialogOpen, setMatchDialogOpen] = useState(false);
   const [refDialog, setRefDialog] = useState(false);
   const [refText, setRefText] = useState(line.refText || '');
 
@@ -785,21 +802,12 @@ function LineRow({ line, expanded, onToggle, onChanged }: { line: StatementLine;
             </div>
           ) : (
             <div className="mt-2 pt-2 border-t border-slate-100 space-y-2">
-              {line.direction === 'out' ? (
-                <button
-                  onClick={() => setMatchDialog('request')}
-                  className="w-full min-h-[40px] rounded-lg bg-sky-600 hover:bg-sky-700 text-white text-sm font-semibold flex items-center justify-center gap-1"
-                >
-                  <Link2 size={14} /> จับคู่กับคำขอจ่ายเงิน
-                </button>
-              ) : (
-                <button
-                  onClick={() => setMatchDialog('movement')}
-                  className="w-full min-h-[40px] rounded-lg bg-sky-600 hover:bg-sky-700 text-white text-sm font-semibold flex items-center justify-center gap-1"
-                >
-                  <Link2 size={14} /> จับคู่กับเงินเข้า/เติมเงิน
-                </button>
-              )}
+              <button
+                onClick={() => setMatchDialogOpen(true)}
+                className="w-full min-h-[40px] rounded-lg bg-sky-600 hover:bg-sky-700 text-white text-sm font-semibold flex items-center justify-center gap-1"
+              >
+                <Link2 size={14} /> จับคู่กับเงินเข้า/เติมเงิน
+              </button>
               <button
                 onClick={() => setRefDialog(true)}
                 className="w-full min-h-[40px] rounded-lg border border-slate-300 text-slate-600 hover:bg-slate-50 text-sm font-semibold flex items-center justify-center gap-1"
@@ -833,16 +841,15 @@ function LineRow({ line, expanded, onToggle, onChanged }: { line: StatementLine;
             </div>
           )}
 
-          {matchDialog && (
+          {matchDialogOpen && (
             <MatchPickerDialog
-              type={matchDialog}
-              onClose={() => setMatchDialog(null)}
+              onClose={() => setMatchDialogOpen(false)}
               onPicked={async (targetId) => {
                 setBusy(true);
                 setError('');
                 try {
-                  await matchStatementLine(line.id, matchDialog === 'request' ? 'paymentRequest' : 'cashMovement', targetId);
-                  setMatchDialog(null);
+                  await matchStatementLine(line.id, 'cashMovement', targetId);
+                  setMatchDialogOpen(false);
                   onChanged();
                 } catch {
                   setError('จับคู่ไม่สำเร็จ');
@@ -858,43 +865,36 @@ function LineRow({ line, expanded, onToggle, onChanged }: { line: StatementLine;
   );
 }
 
+// v1 purge (2026-07-19) — this dialog used to also offer matching against a paid v1
+// PaymentRequest; now it only ever picks a topup/deposit CashMovement (the เงินเข้า
+// matching capability the plan explicitly kept). See docs/CERES_V1_PURGE_PLAN.md.
 function MatchPickerDialog({
-  type,
   onClose,
   onPicked,
 }: {
-  type: 'request' | 'movement';
   onClose: () => void;
   onPicked: (targetId: string) => void;
 }) {
   const [q, setQ] = useState('');
-  const [requests, setRequests] = useState<PaymentRequest[]>([]);
   const [movements, setMovements] = useState<Movement[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     setLoading(true);
-    if (type === 'request') {
-      listRequests({ status: 'paid', q: q || undefined, limit: 50 })
-        .then((r) => setRequests(r.requests))
-        .catch(() => setRequests([]))
-        .finally(() => setLoading(false));
-    } else {
-      Promise.all([listMovements({ type: 'topup' }), listMovements({ type: 'deposit' })])
-        .then(([a, b]) => {
-          const all = [...a.movements, ...b.movements].sort((x, y) => (x.createdAt < y.createdAt ? 1 : -1));
-          setMovements(q ? all.filter((m) => m.note.toLowerCase().includes(q.toLowerCase()) || (m.partyName ?? '').toLowerCase().includes(q.toLowerCase())) : all);
-        })
-        .catch(() => setMovements([]))
-        .finally(() => setLoading(false));
-    }
-  }, [type, q]);
+    Promise.all([listMovements({ type: 'topup' }), listMovements({ type: 'deposit' })])
+      .then(([a, b]) => {
+        const all = [...a.movements, ...b.movements].sort((x, y) => (x.createdAt < y.createdAt ? 1 : -1));
+        setMovements(q ? all.filter((m) => m.note.toLowerCase().includes(q.toLowerCase()) || (m.partyName ?? '').toLowerCase().includes(q.toLowerCase())) : all);
+      })
+      .catch(() => setMovements([]))
+      .finally(() => setLoading(false));
+  }, [q]);
 
   return (
     <div className="fixed inset-0 z-40 bg-black/40 flex items-end sm:items-center justify-center p-0 sm:p-4">
       <div className="bg-white rounded-t-2xl sm:rounded-2xl w-full sm:max-w-md max-h-[85vh] overflow-y-auto p-4">
         <div className="flex items-center justify-between mb-3">
-          <h3 className="font-bold text-base">{type === 'request' ? 'เลือกคำขอจ่ายเงินที่จ่ายแล้ว' : 'เลือกเงินเข้า/เติมเงิน'}</h3>
+          <h3 className="font-bold text-base">เลือกเงินเข้า/เติมเงิน</h3>
           <button onClick={onClose} className="p-1 text-slate-400 hover:text-slate-600">
             <X size={18} />
           </button>
@@ -914,26 +914,6 @@ function MatchPickerDialog({
           <div className="py-8 flex justify-center text-slate-400">
             <Loader2 className="animate-spin" size={20} />
           </div>
-        ) : type === 'request' ? (
-          requests.length === 0 ? (
-            <div className="text-center text-slate-400 text-sm py-8">ไม่พบรายการ</div>
-          ) : (
-            <div className="space-y-1.5">
-              {requests.map((r) => (
-                <button
-                  key={r.id}
-                  onClick={() => onPicked(r.id)}
-                  className="w-full flex items-center justify-between gap-2 px-3 py-2.5 rounded-lg border border-slate-200 hover:bg-slate-50 text-left text-sm"
-                >
-                  <div className="min-w-0">
-                    <div className="font-medium truncate">{r.payee}</div>
-                    <div className="text-xs text-slate-400">{r.paidAt ? fmtDateTime(r.paidAt) : ''}</div>
-                  </div>
-                  <span className="font-semibold shrink-0">{baht(r.amountNum)}</span>
-                </button>
-              ))}
-            </div>
-          )
         ) : movements.length === 0 ? (
           <div className="text-center text-slate-400 text-sm py-8">ไม่พบรายการ</div>
         ) : (

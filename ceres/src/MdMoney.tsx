@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Loader2, AlertTriangle, ArrowDownCircle, ArrowUpCircle, PiggyBank, Landmark, CheckCircle2 } from 'lucide-react';
-import { createAdvance, createRefund, createMovement, listMovements, baht, type Movement } from './lib/api';
+import { Loader2, AlertTriangle, PiggyBank, Landmark, CheckCircle2 } from 'lucide-react';
+import { createMovement, listMovements, baht, type Movement } from './lib/api';
 import { useCeres } from './lib/bootstrapContext';
 
 const AMOUNT_RE = /^\d+(\.\d{1,2})?$/;
@@ -18,7 +18,6 @@ const TYPE_META: Record<string, { label: string; cls: string }> = {
 
 export default function MdMoney() {
   const { bootstrap } = useCeres();
-  const activeParties = bootstrap.parties.filter((p) => p.active);
   const [movements, setMovements] = useState<Movement[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshKey, setRefreshKey] = useState(0);
@@ -40,11 +39,9 @@ export default function MdMoney() {
 
   return (
     <div>
-      <h2 className="text-lg font-bold mb-3">เบิก / คืนเงิน</h2>
+      <h2 className="text-lg font-bold mb-3">ฝาก / เติมเงิน</h2>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
-        <AdvanceForm parties={activeParties} onDone={bump} />
-        <RefundForm parties={activeParties} onDone={bump} />
         <DepositForm onDone={bump} />
         {bootstrap.role === 'ceo' && <TopupForm onDone={bump} />}
       </div>
@@ -121,88 +118,6 @@ function FormShell({
         {busy ? <Loader2 size={14} className="animate-spin" /> : 'บันทึก'}
       </button>
     </div>
-  );
-}
-
-function AdvanceForm({ parties, onDone }: { parties: { id: string; name: string }[]; onDone: () => void }) {
-  const [partyId, setPartyId] = useState('');
-  const [amount, setAmount] = useState('');
-  const [note, setNote] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
-  const [success, setSuccess] = useState(false);
-
-  async function submit() {
-    setError('');
-    setSuccess(false);
-    if (!partyId) return setError('กรุณาเลือกคน');
-    if (!AMOUNT_RE.test(amount) || Number(amount) <= 0) return setError('กรอกจำนวนเงินให้ถูกต้อง');
-    setBusy(true);
-    try {
-      await createAdvance({ partyId, amount, note: note.trim() || undefined });
-      setAmount('');
-      setNote('');
-      setSuccess(true);
-      onDone();
-    } catch {
-      setError('บันทึกไม่สำเร็จ');
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <FormShell icon={<ArrowUpCircle size={18} className="text-sky-600" />} title="เบิกเงิน" busy={busy} error={error} success={success} onSubmit={submit}>
-      <select value={partyId} onChange={(e) => setPartyId(e.target.value)} className="w-full px-3 py-2.5 rounded-lg border border-slate-300 text-sm bg-white min-h-[44px]">
-        <option value="">เลือกคน</option>
-        {parties.map((p) => (
-          <option key={p.id} value={p.id}>{p.name}</option>
-        ))}
-      </select>
-      <input inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="จำนวนเงิน" className="w-full px-3 py-2.5 rounded-lg border border-slate-300 text-sm min-h-[44px]" />
-      <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="หมายเหตุ (ถ้ามี)" className="w-full px-3 py-2.5 rounded-lg border border-slate-300 text-sm min-h-[44px]" />
-    </FormShell>
-  );
-}
-
-function RefundForm({ parties, onDone }: { parties: { id: string; name: string }[]; onDone: () => void }) {
-  const [partyId, setPartyId] = useState('');
-  const [amount, setAmount] = useState('');
-  const [note, setNote] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
-  const [success, setSuccess] = useState(false);
-
-  async function submit() {
-    setError('');
-    setSuccess(false);
-    if (!partyId) return setError('กรุณาเลือกคน');
-    if (!AMOUNT_RE.test(amount) || Number(amount) <= 0) return setError('กรอกจำนวนเงินให้ถูกต้อง');
-    setBusy(true);
-    try {
-      await createRefund({ partyId, amount, note: note.trim() || undefined });
-      setAmount('');
-      setNote('');
-      setSuccess(true);
-      onDone();
-    } catch {
-      setError('บันทึกไม่สำเร็จ');
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <FormShell icon={<ArrowDownCircle size={18} className="text-emerald-600" />} title="รับเงินคืน" busy={busy} error={error} success={success} onSubmit={submit}>
-      <select value={partyId} onChange={(e) => setPartyId(e.target.value)} className="w-full px-3 py-2.5 rounded-lg border border-slate-300 text-sm bg-white min-h-[44px]">
-        <option value="">เลือกคน</option>
-        {parties.map((p) => (
-          <option key={p.id} value={p.id}>{p.name}</option>
-        ))}
-      </select>
-      <input inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="จำนวนเงิน" className="w-full px-3 py-2.5 rounded-lg border border-slate-300 text-sm min-h-[44px]" />
-      <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="หมายเหตุ (ถ้ามี)" className="w-full px-3 py-2.5 rounded-lg border border-slate-300 text-sm min-h-[44px]" />
-    </FormShell>
   );
 }
 

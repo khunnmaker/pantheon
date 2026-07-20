@@ -11,7 +11,7 @@ import {
   type TemplatePeriod,
 } from './lib/api';
 import { useCeres } from './lib/bootstrapContext';
-import type { RequestPrefill } from './MdRequests';
+import type { RequestSheetPrefill } from './RequestSheet';
 import CategoryPicker from './components/CategoryPicker';
 
 const AMOUNT_RE = /^\d+(\.\d{1,2})?$/;
@@ -29,7 +29,7 @@ const STATE_META: Record<TemplateDue['state'], { label: string; cls: string }> =
   overdue: { label: 'เลยกำหนด', cls: 'bg-rose-100 text-rose-700' },
 };
 
-export default function MdTemplates({ onCreateRequest }: { onCreateRequest: (prefill: RequestPrefill) => void }) {
+export default function MdTemplates({ onCreateRequest }: { onCreateRequest: (prefill: RequestSheetPrefill) => void }) {
   const { bootstrap } = useCeres();
   const [due, setDue] = useState<TemplateDue[]>([]);
   const [loading, setLoading] = useState(true);
@@ -122,12 +122,9 @@ export default function MdTemplates({ onCreateRequest }: { onCreateRequest: (pre
                     <button
                       onClick={() =>
                         onCreateRequest({
-                          payee: d.template.payee,
-                          entity: d.template.entity,
-                          category: d.template.category,
                           amount: d.template.expectedAmount,
-                          recurringTemplateId: d.template.id,
-                          billPeriod: d.periodKey,
+                          category: d.template.category,
+                          reason: d.template.payee,
                         })
                       }
                       className="flex items-center gap-1 px-2 py-1 rounded-lg bg-amber-600 hover:bg-amber-700 text-white font-semibold"

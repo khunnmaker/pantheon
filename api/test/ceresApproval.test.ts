@@ -274,12 +274,25 @@ describe('Ceres v2 approval binding', () => {
     expect(mocks.transaction).not.toHaveBeenCalled();
   });
 
-  it('keeps the legacy decision alias workflow-v1 only and adds both human v2 decisions', async () => {
+  it('requires requestType and leaves removed v1 decision/payment routes unregistered', async () => {
+    const app = await approvalApp();
+    const missingType = await app.inject({
+      method: 'POST', url: '/api/ceres/requests',
+      payload: { entity: 'PROM', payee: 'Vendor', category: 'general', amount: '100.00' },
+    });
+    expect(missingType.statusCode).toBe(400);
+    expect(missingType.json()).toEqual({ error: 'invalid_body' });
+    for (const suffix of ['decide', 'paid']) {
+      const response = await app.inject({ method: 'POST', url: `/api/ceres/requests/request-1/${suffix}`, payload: {} });
+      expect(response.statusCode).toBe(404);
+    }
+    await app.close();
+
     const source = await readFile(path.join(apiRoot, 'src/routes/ceres/requests.ts'), 'utf8');
-    expect(source).toContain("'/api/ceres/requests/:id/decide'");
-    expect(source).toContain('existing.workflowVersion !== 1');
+    expect(source).not.toContain("'/api/ceres/requests/:id/decide'");
+    expect(source).not.toContain("'/api/ceres/requests/:id/paid'");
     expect(source).toContain("'/api/ceres/requests/:id/nee-decision'");
     expect(source).toContain("'/api/ceres/requests/:id/ceo-decision'");
-    expect(source).toContain('const where: Record<string, unknown> = { workflowVersion: 1 }');
+    expect(source).not.toContain('const where: Record<string, unknown> = { workflowVersion: 1 }');
   });
 });

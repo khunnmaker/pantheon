@@ -8,10 +8,6 @@ function hmac(value: string): string {
   return crypto.createHmac('sha256', env.JWT_SECRET).update(value).digest('hex').slice(0, 32);
 }
 
-function ceresLegacyReceiptToken(uploadId: string): string {
-  return hmac(`ceres-receipt:${uploadId}`);
-}
-
 function safeEqual(actual: string, expected: string): boolean {
   const a = Buffer.from(actual);
   const b = Buffer.from(expected);
@@ -51,6 +47,5 @@ export function verifyCeresReceiptToken(
     return safeEqual(token, ceresReceiptToken(uploadId, expires));
   }
 
-  const allowLegacy = ['1', 'true'].includes((env.CERES_ALLOW_LEGACY_MEDIA_TOKENS ?? '').toLowerCase());
-  return allowLegacy && safeEqual(token, ceresLegacyReceiptToken(uploadId));
+  return false;
 }

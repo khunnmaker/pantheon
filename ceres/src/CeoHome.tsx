@@ -1,8 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
 import { AlertTriangle, Loader2, Scale, Send } from 'lucide-react';
 import { getCeoOverview, type CeoOverview as CeoOverviewData } from './lib/api';
-import { todayStr } from './MdRequests';
 import { CashSection, DailyOutflowSection, EscalationsSection, FlaggedExpensesSection, SectionCard, SettlementSection } from './CeoOverview';
+
+// v1 purge (2026-07-19) — MdRequests.tsx is gone; local copy matching MdMoney.tsx's pattern.
+function todayStr(): string {
+  return new Date().toLocaleDateString('sv-SE');
+}
 
 // Phase 4 — CEO home. Default view is TODAY's oversight snapshot: pending CEO
 // decisions, daily outflow by lane/type, cash balance, unreconciled transfers, AI

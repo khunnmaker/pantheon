@@ -211,7 +211,7 @@ async function appendSemanticPage(
 // LINE-driven business never leaves an order sitting unseen. Fail-open: a LINE
 // failure must never affect the order flow (the order is already persisted).
 async function notifyNewOrder(o: { orderNo: number; lines: { qty: number }[] }, clinicName: string): Promise<void> {
-  const ceo = env.CEO_LINE_USER_ID || env.CERES_CEO_LINE_USER_ID;
+  const ceo = env.CEO_LINE_USER_ID;
   if (!ceo) return;
   try {
     const units = o.lines.reduce((n, l) => n + l.qty, 0);

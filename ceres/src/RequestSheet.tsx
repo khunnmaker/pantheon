@@ -38,12 +38,27 @@ function purposeFor(type: V2RequestType): MediaPurpose {
   return type === 'reimbursement' ? 'reimbursement_receipt' : 'request_photo';
 }
 
+// Minimal prefill payload for MdTemplates's "สร้างคำขอจ่าย" button (v1 purge, 2026-07-19 —
+// see docs/CERES_V1_PURGE_PLAN.md Phase B item 5). Only amount/category/reason carry over
+// from the recurring template; requestType is forced to 'purchase' by the caller passing
+// this prop. `category` is the category NAME (matches Category.name, like editing.category).
+export interface RequestSheetPrefill {
+  amount: string;
+  category: string;
+  reason: string;
+}
+
 export default function RequestSheet({
   editing,
+  prefill,
   onClose,
   onSaved,
 }: {
   editing?: StaffRequest | null;
+  // Absent for the normal staff flow — when omitted, every prefill-derived default below
+  // falls back to the exact same value it had before this prop existed (no lazy defaults
+  // reintroduced; owner rule, 2026-07-18).
+  prefill?: RequestSheetPrefill | null;
   onClose: () => void;
   onSaved: (request: StaffRequest) => void;
 }) {
@@ -54,15 +69,20 @@ export default function RequestSheet({
   // CategoryPicker shows its group chips in — advance's multi-select row reuses it.
   const groupOptions = groupByCategoryGroup(categories).map((g) => g.group);
 
-  const [step, setStep] = useState<'type' | 'form'>(editing ? 'form' : 'type');
-  const [requestType, setRequestType] = useState<V2RequestType>(editing?.requestType ?? 'advance');
+  const [step, setStep] = useState<'type' | 'form'>(editing || prefill ? 'form' : 'type');
+  const [requestType, setRequestType] = useState<V2RequestType>(editing?.requestType ?? (prefill ? 'purchase' : 'advance'));
 
   // NO lazy defaults (owner rule, 2026-07-18) — entity/category start empty for a NEW
-  // request; only an edit of an existing request pre-fills its own prior values.
+  // request; only an edit of an existing request pre-fills its own prior values. A
+  // template prefill does NOT fill entity either (plan only names amount/category/reason)
+  // — the requester still taps their company explicitly.
   const [entity, setEntity] = useState(editing?.entity || '');
   const [categoryId, setCategoryId] = useState(() => {
     if (editing) {
       const match = categories.find((c) => c.name === editing.category);
+      if (match) return match.id;
+    } else if (prefill) {
+      const match = categories.find((c) => c.name === prefill.category);
       if (match) return match.id;
     }
     return '';
@@ -80,9 +100,9 @@ export default function RequestSheet({
     return [];
   });
   const [groupsError, setGroupsError] = useState('');
-  const [amount, setAmount] = useState(editing?.amount || '');
+  const [amount, setAmount] = useState(editing?.amount || prefill?.amount || '');
   const [amountError, setAmountError] = useState('');
-  const [reason, setReason] = useState(editing?.reason || '');
+  const [reason, setReason] = useState(editing?.reason || prefill?.reason || '');
 
   const [photoUploadId, setPhotoUploadId] = useState<string | null>(editing?.requestPhotoUploadId ?? null);
   const [localPreview, setLocalPreview] = useState<string | null>(null);

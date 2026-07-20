@@ -3,7 +3,6 @@ import {
   AlertTriangle,
   ArrowLeft,
   ArrowLeftRight,
-  Banknote,
   Bell,
   CircleDollarSign,
   ClipboardCheck,
@@ -39,7 +38,6 @@ import MdApproval, { type ApprovalPrefill } from './MdApproval';
 import MdMoney from './MdMoney';
 import MdClose from './MdClose';
 import MdExpenses from './MdExpenses';
-import MdRequests, { todayStr, type RequestPrefill } from './MdRequests';
 import MdTemplates from './MdTemplates';
 import MdRecon from './MdRecon';
 import CeoOverview, { EscalationsSection, WeeklyPackSection } from './CeoOverview';
@@ -48,8 +46,16 @@ import MoreMenu, { type MoreMenuGroup } from './MoreMenu';
 import NeeApprovalQueue from './NeeApprovalQueue';
 import NeeFulfillmentQueue from './NeeFulfillmentQueue';
 import NeeHome from './NeeHome';
+import RequestSheet, { type RequestSheetPrefill } from './RequestSheet';
 import Settings from './Settings';
 import StaffHome from './StaffHome';
+
+// v1 purge (2026-07-19) — MdRequests.tsx (the legacy list) is gone; every consumer that
+// used to import todayStr() from it now carries this same one-liner locally, matching the
+// pattern MdMoney.tsx/CeoHome.tsx/CeoOverview.tsx already use. See docs/CERES_V1_PURGE_PLAN.md.
+function todayStr(): string {
+  return new Date().toLocaleDateString('sv-SE');
+}
 
 const PORTAL_URL: string = import.meta.env.VITE_PORTAL_URL ?? 'https://pantheon.prominentdental.com';
 
@@ -63,7 +69,6 @@ type View =
   | 'money'
   | 'close'
   | 'expenses'
-  | 'requests'
   | 'templates'
   | 'recon'
   | 'exports'
@@ -96,7 +101,6 @@ const VIEW_KEYS: View[] = [
   'money',
   'close',
   'expenses',
-  'requests',
   'templates',
   'recon',
   'exports',
@@ -117,7 +121,6 @@ const SECONDARY_VIEWS = new Set<View>([
   'money',
   'close',
   'expenses',
-  'requests',
   'templates',
   'recon',
   'exports',
@@ -165,13 +168,15 @@ export function CeoApp() {
 // desktop*Redirect consts in ManagementApp for how an old key (e.g. 'money') maps in and
 // primes the right segment.
 type CashboxTab = 'board' | 'money' | 'close';
-type HistoryTab = 'expenses' | 'requests';
 type OtherTab = 'templates' | 'exports' | 'settings';
 
 function ManagementApp({ isCeo }: { isCeo: boolean }) {
   const { agent, onLogout } = useCeres();
   const [view, setView] = useHashTab<View>(VIEW_KEYS, 'home');
-  const [requestPrefill, setRequestPrefill] = useState<RequestPrefill | null>(null);
+  // v1 purge (2026-07-19) — MdTemplates's "สร้างคำขอจ่าย" now opens the v2 RequestSheet
+  // prefilled instead of navigating to the deleted legacy requests screen. See
+  // docs/CERES_V1_PURGE_PLAN.md Phase B item 5.
+  const [templateRequestPrefill, setTemplateRequestPrefill] = useState<RequestSheetPrefill | null>(null);
   const [approvalPrefill, setApprovalPrefill] = useState<ApprovalPrefill | null>(null);
   const isDesktop = useIsDesktop();
 
@@ -192,7 +197,7 @@ function ManagementApp({ isCeo }: { isCeo: boolean }) {
   const desktopLegacyApprovalRedirect = isDesktop && !isCeo && view === 'legacy-approval';
   const desktopCeoHistoryRedirect = isDesktop && isCeo && view === 'ceo-history';
   const desktopCashboxRedirect = isDesktop && (view === 'board' || view === 'money' || view === 'close');
-  const desktopHistoryRedirect = isDesktop && (view === 'expenses' || view === 'requests');
+  const desktopHistoryRedirect = isDesktop && view === 'expenses';
   const desktopOtherRedirect = isDesktop && (view === 'templates' || view === 'exports' || view === 'settings');
   const activeView: View = roleInappropriate
     ? 'home'
@@ -283,11 +288,6 @@ function ManagementApp({ isCeo }: { isCeo: boolean }) {
     if (view === 'board' || view === 'money' || view === 'close') setCashboxTab(view);
   }, [view]);
 
-  const [historyTab, setHistoryTab] = useState<HistoryTab>('expenses');
-  useEffect(() => {
-    if (view === 'expenses' || view === 'requests') setHistoryTab(view);
-  }, [view]);
-
   const [otherTab, setOtherTab] = useState<OtherTab>('templates');
   useEffect(() => {
     if (view === 'templates' || view === 'exports' || view === 'settings') setOtherTab(view);
@@ -308,9 +308,8 @@ function ManagementApp({ isCeo }: { isCeo: boolean }) {
     setView('my-submit');
   }
 
-  function goToRequestsWithPrefill(prefill: RequestPrefill) {
-    setRequestPrefill(prefill);
-    setView('requests');
+  function openTemplateRequest(prefill: RequestSheetPrefill) {
+    setTemplateRequestPrefill(prefill);
   }
 
   function goToApprovalWithPrefill(partyId: string) {
@@ -331,11 +330,11 @@ function ManagementApp({ isCeo }: { isCeo: boolean }) {
         }]
       : []),
     {
-      title: isCeo ? 'เครื่องมือปฏิบัติการเดิม' : 'งานเงินสดและการปิดยอด',
+      title: isCeo ? 'เครื่องมือปฏิบัติการ' : 'งานเงินสดและการปิดยอด',
       items: [
         { key: 'board', label: 'กระดานเงินสด', icon: <LayoutDashboard size={17} />, onClick: () => setView('board') },
         { key: 'legacy-approval', label: 'ตรวจใบเสร็จค่าใช้จ่าย', icon: <ClipboardCheck size={17} />, onClick: () => setView('legacy-approval') },
-        { key: 'money', label: 'เบิก / คืนเงิน', icon: <ArrowLeftRight size={17} />, onClick: () => setView('money') },
+        { key: 'money', label: 'ฝาก / เติมเงิน', icon: <ArrowLeftRight size={17} />, onClick: () => setView('money') },
         { key: 'close', label: 'ปิดยอดประจำวัน', icon: <FileCheck2 size={17} />, onClick: () => setView('close') },
         ...(isCeo
           ? [{ key: 'legacy-fulfillment', label: 'จ่าย / ซื้อ', icon: <CircleDollarSign size={17} />, onClick: () => setView('legacy-fulfillment') }]
@@ -346,7 +345,6 @@ function ManagementApp({ isCeo }: { isCeo: boolean }) {
       title: isCeo ? 'รายการและการตั้งค่า' : 'รายการ ประวัติ และส่งออก',
       items: [
         ...(!isCeo ? [{ key: 'expenses', label: 'ประวัติค่าใช้จ่าย', icon: <ListChecks size={17} />, onClick: () => setView('expenses') }] : []),
-        { key: 'requests', label: 'คำขอจ่ายเงินเดิม', icon: <Banknote size={17} />, onClick: () => setView('requests') },
         { key: 'templates', label: 'รายการประจำ', icon: <Repeat size={17} />, onClick: () => setView('templates') },
         ...(!isCeo ? [
           { key: 'recon', label: 'กระทบยอดรายการโอน', icon: <Scale size={17} />, onClick: () => setView('recon') },
@@ -484,10 +482,7 @@ function ManagementApp({ isCeo }: { isCeo: boolean }) {
         {activeView === 'money' && <MdMoney />}
         {activeView === 'close' && <MdClose />}
         {activeView === 'expenses' && <MdExpenses />}
-        {activeView === 'requests' && (
-          <MdRequests prefill={requestPrefill} onConsumePrefill={() => setRequestPrefill(null)} />
-        )}
-        {activeView === 'templates' && <MdTemplates onCreateRequest={goToRequestsWithPrefill} />}
+        {activeView === 'templates' && <MdTemplates onCreateRequest={openTemplateRequest} />}
         {activeView === 'recon' && <MdRecon />}
         {activeView === 'exports' && <WeeklyPackSection />}
         {activeView === 'ceo-history' && isCeo && <CeoOverview onGoExpenses={() => setView('expenses')} />}
@@ -521,16 +516,9 @@ function ManagementApp({ isCeo }: { isCeo: boolean }) {
         {activeView === 'cashbox' && (
           <CashboxComposedView sub={cashboxTab} onSubChange={setCashboxTab} onViewPendingParty={goToApprovalWithPrefill} />
         )}
-        {activeView === 'history' && (
-          <HistoryComposedView
-            sub={historyTab}
-            onSubChange={setHistoryTab}
-            requestPrefill={requestPrefill}
-            onConsumeRequestPrefill={() => setRequestPrefill(null)}
-          />
-        )}
+        {activeView === 'history' && <HistoryComposedView />}
         {activeView === 'other' && (
-          <OtherComposedView sub={otherTab} onSubChange={setOtherTab} onCreateRequest={goToRequestsWithPrefill} />
+          <OtherComposedView sub={otherTab} onSubChange={setOtherTab} onCreateRequest={openTemplateRequest} />
         )}
       </main>
 
@@ -542,6 +530,14 @@ function ManagementApp({ isCeo }: { isCeo: boolean }) {
           <NavButton active={activeView === 'more' || SECONDARY_VIEWS.has(activeView)} label="More" icon={<MoreHorizontal size={20} />} onClick={() => setView('more')} />
         </div>
       </nav>
+
+      {templateRequestPrefill && (
+        <RequestSheet
+          prefill={templateRequestPrefill}
+          onClose={() => setTemplateRequestPrefill(null)}
+          onSaved={() => setTemplateRequestPrefill(null)}
+        />
+      )}
     </div>
   );
 }
@@ -639,7 +635,7 @@ function CashboxComposedView({
         onChange={onSubChange}
         options={[
           { key: 'board', label: 'บอร์ด', icon: <PiggyBank size={15} /> },
-          { key: 'money', label: 'เบิก·คืน', icon: <ArrowLeftRight size={15} /> },
+          { key: 'money', label: 'ฝาก·เติม', icon: <ArrowLeftRight size={15} /> },
           { key: 'close', label: 'ปิดวัน', icon: <FileCheck2 size={15} /> },
         ]}
       />
@@ -650,32 +646,12 @@ function CashboxComposedView({
   );
 }
 
-// ประวัติ: ค่าใช้จ่าย · คำขอเดิม.
-function HistoryComposedView({
-  sub,
-  onSubChange,
-  requestPrefill,
-  onConsumeRequestPrefill,
-}: {
-  sub: HistoryTab;
-  onSubChange: (t: HistoryTab) => void;
-  requestPrefill: RequestPrefill | null;
-  onConsumeRequestPrefill: () => void;
-}) {
-  return (
-    <div>
-      <SegmentBar
-        value={sub}
-        onChange={onSubChange}
-        options={[
-          { key: 'expenses', label: 'ค่าใช้จ่าย', icon: <ListChecks size={15} /> },
-          { key: 'requests', label: 'คำขอเดิม', icon: <Banknote size={15} /> },
-        ]}
-      />
-      {sub === 'expenses' && <MdExpenses />}
-      {sub === 'requests' && <MdRequests prefill={requestPrefill} onConsumePrefill={onConsumeRequestPrefill} />}
-    </div>
-  );
+// ประวัติ: ค่าใช้จ่ายเท่านั้น (คำขอเดิม segment ถูกถอดออกพร้อมกับ MdRequests.tsx — v1 purge
+// 2026-07-19, docs/CERES_V1_PURGE_PLAN.md Phase B item 1). No SegmentBar left since there's
+// only one destination now; keeps the composed-tab wrapper so desktopHistoryRedirect still
+// has somewhere to land.
+function HistoryComposedView() {
+  return <MdExpenses />;
 }
 
 // อื่นๆ: ประจำ · ส่งออก · ตั้งค่า.
@@ -686,7 +662,7 @@ function OtherComposedView({
 }: {
   sub: OtherTab;
   onSubChange: (t: OtherTab) => void;
-  onCreateRequest: (prefill: RequestPrefill) => void;
+  onCreateRequest: (prefill: RequestSheetPrefill) => void;
 }) {
   return (
     <div>

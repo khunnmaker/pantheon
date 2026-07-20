@@ -361,10 +361,6 @@ export interface Movement {
   createdAt: string;
 }
 
-export const createAdvance = (body: { partyId: string; amount: string; entity?: string; note?: string }) =>
-  authed<{ movement: Movement }>('/api/ceres/advances', { method: 'POST', body: JSON.stringify(body) });
-export const createRefund = (body: { partyId: string; amount: string; note?: string }) =>
-  authed<{ movement: Movement }>('/api/ceres/refunds', { method: 'POST', body: JSON.stringify(body) });
 export const createMovement = (body: { type: 'deposit' | 'topup'; amount: string; note?: string }) =>
   authed<{ movement: Movement }>('/api/ceres/movements', { method: 'POST', body: JSON.stringify(body) });
 
@@ -430,75 +426,16 @@ export const listSettlements = (limit?: number) =>
   authed<{ settlements: Settlement[] }>(`/api/ceres/settlements${limit ? `?limit=${limit}` : ''}`);
 
 // ---------------------------------------------------------------------------
-// P2/P3 — payment requests + recurring templates
+// P2/P3 — recurring templates (v1 payment-request CRUD purged 2026-07-19 —
+// see docs/CERES_V1_PURGE_PLAN.md; the v2 staff-request client further below
+// is the only creation/decision/list path left).
 // ---------------------------------------------------------------------------
-
-export type RequestStatus =
-  | 'requested'
-  | 'ai_approved'
-  | 'escalated'
-  | 'ceo_approved'
-  | 'rejected'
-  | 'cancelled'
-  | 'paid';
 
 export interface AIReviewBrief {
   verdict: string;
   reasoning: string;
   createdAt: string;
 }
-
-export interface PaymentRequest {
-  id: string;
-  requestedById: string;
-  requestedByName: string;
-  entity: string;
-  payee: string;
-  category: string;
-  amount: string;
-  amountNum: number;
-  detail: string;
-  recurringTemplateId: string | null;
-  billPeriod: string;
-  status: RequestStatus;
-  aiReviewId: string | null;
-  decidedById: string | null;
-  decidedAt: string | null;
-  decisionNote: string;
-  paidById: string | null;
-  paidAt: string | null;
-  paidRef: string;
-  createdAt: string;
-  aiReview: AIReviewBrief | null;
-}
-
-export const createRequest = (body: {
-  entity: string;
-  payee: string;
-  category: string;
-  amount: string;
-  detail?: string;
-  recurringTemplateId?: string;
-  billPeriod?: string;
-}) => authed<{ request: PaymentRequest }>('/api/ceres/requests', { method: 'POST', body: JSON.stringify(body) });
-
-export const listRequests = (q: { status?: RequestStatus; from?: string; to?: string; q?: string; limit?: number }) =>
-  authed<{ requests: PaymentRequest[] }>(`/api/ceres/requests${queryString(q)}`);
-
-export const decideRequest = (id: string, decision: 'approve' | 'reject', note?: string) =>
-  authed<{ request: PaymentRequest }>(`/api/ceres/requests/${id}/decide`, {
-    method: 'POST',
-    body: JSON.stringify({ decision, note }),
-  });
-
-export const markRequestPaid = (id: string, paidRef?: string) =>
-  authed<{ request: PaymentRequest }>(`/api/ceres/requests/${id}/paid`, {
-    method: 'POST',
-    body: JSON.stringify({ paidRef }),
-  });
-
-export const cancelRequest = (id: string) =>
-  authed<{ request: PaymentRequest }>(`/api/ceres/requests/${id}/cancel`, { method: 'POST' });
 
 export type TemplatePeriod = 'monthly' | 'quarterly' | 'yearly';
 
@@ -584,13 +521,14 @@ export interface DailyOutflowBucket {
 
 export interface CeoOverview {
   dayKey: string;
-  escalations: (PaymentRequest | StaffRequest)[];
+  // v2-only since the v1 purge (2026-07-19) — the server only ever escalates
+  // workflowVersion-2 StaffRequest rows to pending_ceo now.
+  escalations: StaffRequest[];
   aiReviews: AIReviewRow[];
   flaggedExpenses: Expense[];
   cash: { box: { balance: number; floor: number; belowFloor: boolean; suggestedTopup: number }; outstandingTotal: number };
   missedBills: TemplateDue[];
   settlementToday: Settlement | null;
-  requestCounts: Record<string, number>;
   v2RequestCounts: Record<string, number>;
   transferReconciliation: { unmatched: number; reversalExceptions: number };
   dailyOutflow: DailyOutflowBucket[];
@@ -700,7 +638,6 @@ export const setStatementLineRef = (id: string, refText: string) =>
 export interface StatementSummary {
   unmatchedOut: { count: number; sum: number };
   unmatchedIn: { count: number; sum: number };
-  paidRequestsUnreconciled: { count: number; sum: number; oldestDays: number };
   lastImport: { importedAt: string; fileName: string } | null;
 }
 export const getStatementSummary = () => authed<StatementSummary>('/api/ceres/statements/summary');

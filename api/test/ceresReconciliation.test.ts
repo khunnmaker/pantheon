@@ -110,7 +110,7 @@ describe('Ceres Phase 3 transfer reconciliation', () => {
     await server.close();
   });
 
-  it('does not guess when one bank line fits both a legacy payment and a transfer event', async () => {
+  it('ignores legacy paid requests and matches the v2 transfer event', async () => {
     state.events.push(makeEvent('event-1', 'payment', '100.00'));
     state.requests.push({
       id: 'legacy-1', workflowVersion: 1, status: 'paid', amount: '100.00', paidAt: at, createdAt: at,
@@ -118,8 +118,10 @@ describe('Ceres Phase 3 transfer reconciliation', () => {
     state.lines.push(makeLine('line-1', '100.00', 'out'));
     const server = await app();
     const response = await server.inject({ method: 'POST', url: '/api/ceres/statements/automatch' });
-    expect(response.json()).toEqual({ autoMatched: 0 });
-    expect(state.lines[0].matchStatus).toBe('unmatched');
+    expect(response.json()).toEqual({ autoMatched: 1 });
+    expect(state.lines[0]).toMatchObject({
+      matchStatus: 'matched', matchedType: 'requestMoneyEvent', matchedId: 'event-1',
+    });
     await server.close();
   });
 
@@ -169,6 +171,15 @@ describe('Ceres Phase 3 transfer reconciliation', () => {
     expect(body.transferEvents.find((event: any) => event.id === original.id)).toMatchObject({
       reconciliationState: 'matched', reversedByEventId: reversal.id,
     });
+    await server.close();
+  });
+
+  it('omits the removed v1 paid-request metric from the summary', async () => {
+    const server = await app();
+    const response = await server.inject({ method: 'GET', url: '/api/ceres/statements/summary' });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).not.toHaveProperty('paidRequestsUnreconciled');
+    expect(response.json()).toHaveProperty('transferEventsUnreconciled');
     await server.close();
   });
 });

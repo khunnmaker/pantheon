@@ -12,7 +12,7 @@ import { num, thaiDayKey, thaiDayRange } from './common.js';
 // P5 — bank statement import + reconciliation. Nee uploads the KBIZ CSV export from
 // Ceres's SEPARATE expense bank account (same file format Juno uses for the income
 // account) every day; Ceres auto-matches statement lines against recorded P2/P3
-// payments (CeresPaymentRequest) and P4 top-ups (CashMovement), flagging unmatched
+// v2 request-money transfer events and P4 top-ups (CashMovement), flagging unmatched
 // lines both ways. See docs/CERES_BRIEF.md §2 P5 / §6.
 
 interface StagedRow extends ParsedBankRow {
@@ -89,33 +89,22 @@ async function autoMatchTransferEvents(lineIds?: string[]): Promise<number> {
     select: { matchedId: true },
   });
   const unavailable = new Set(alreadyLinked.map((line) => line.matchedId));
-  const [legacyRequests, cashTargets, linkedLegacyRequests, linkedCashTargets] = await Promise.all([
-    prisma.ceresPaymentRequest.findMany({ where: { workflowVersion: 1, status: 'paid' } }),
+  const [cashTargets, linkedCashTargets] = await Promise.all([
     prisma.cashMovement.findMany({ where: { type: { in: ['topup', 'deposit'] } } }),
-    prisma.ceresStatementLine.findMany({
-      where: { matchedType: 'paymentRequest', matchedId: { not: '' } },
-      select: { matchedId: true },
-    }),
     prisma.ceresStatementLine.findMany({
       where: { matchedType: 'cashMovement', matchedId: { not: '' } },
       select: { matchedId: true },
     }),
   ]);
-  const linkedLegacyIds = new Set(linkedLegacyRequests.map((line) => line.matchedId));
   const linkedCashIds = new Set(linkedCashTargets.map((line) => line.matchedId));
   let linked = 0;
 
   for (const line of scopedLines) {
-    const hasLegacyCandidate = line.direction === 'out'
-      ? legacyRequests.some((request) =>
-          !linkedLegacyIds.has(request.id) && request.paidAt && num(request.amount) === num(line.amount) &&
-          Math.abs(line.txnAt.getTime() - request.paidAt.getTime()) <= 3 * DAY_MS,
-        )
-      : cashTargets.some((movement) =>
-          !linkedCashIds.has(movement.id) && num(movement.amount) === num(line.amount) &&
-          Math.abs(line.txnAt.getTime() - movement.createdAt.getTime()) <= 3 * DAY_MS,
-        );
-    if (hasLegacyCandidate) continue;
+    const hasCashCandidate = line.direction === 'in' && cashTargets.some((movement) =>
+      !linkedCashIds.has(movement.id) && num(movement.amount) === num(line.amount) &&
+      Math.abs(line.txnAt.getTime() - movement.createdAt.getTime()) <= 3 * DAY_MS,
+    );
+    if (hasCashCandidate) continue;
     const candidates = events.filter((event) =>
       !unavailable.has(event.id) &&
       transferEventDirection(event, eventMap) === line.direction &&
@@ -159,68 +148,6 @@ async function autoMatchTransferEvents(lineIds?: string[]): Promise<number> {
 // and POST /automatch (over every currently-unmatched line). See CERES_BRIEF §2 P5.
 async function autoMatchLines(lineIds?: string[]): Promise<number> {
   let linked = await autoMatchTransferEvents(lineIds);
-
-  // ── 'out' lines <-> CeresPaymentRequest (status='paid'), unambiguous both ways ──
-  {
-    // The reverse-direction uniqueness test must see EVERY unmatched line, not just the
-    // scope we're linking (an older unmatched line matching the same request makes the
-    // pairing ambiguous even when it isn't part of this import). So: load all, link scoped.
-    const allOutLines = await prisma.ceresStatementLine.findMany({
-      where: { direction: 'out', matchStatus: 'unmatched', refText: '' },
-    });
-    const scope = lineIds ? new Set(lineIds) : null;
-    const outLines = scope ? allOutLines.filter((l) => scope.has(l.id)) : allOutLines;
-    if (outLines.length) {
-      const paidRequests = await prisma.ceresPaymentRequest.findMany({ where: { status: 'paid' } });
-      // Requests already linked by ANY OTHER line (matchedType='paymentRequest') are
-      // excluded — a payment request can only be linked once.
-      const alreadyLinked = await prisma.ceresStatementLine.findMany({
-        where: { matchedType: 'paymentRequest', matchedId: { not: '' } },
-        select: { matchedId: true },
-      });
-      const linkedRequestIds = new Set(alreadyLinked.map((l) => l.matchedId));
-      const availableRequests = paidRequests.filter((r) => !linkedRequestIds.has(r.id) && r.paidAt);
-      const transferEvents = await prisma.ceresRequestMoneyEvent.findMany({ where: { lane: 'transfer' } });
-      const transferMap = new Map(transferEvents.map((event) => [event.id, event]));
-      const linkedTransferIds = new Set((await prisma.ceresStatementLine.findMany({
-        where: { matchedType: 'requestMoneyEvent', matchedId: { not: '' } },
-        select: { matchedId: true },
-      })).map((linkedLine) => linkedLine.matchedId));
-
-      for (const line of outLines) {
-        if (transferEvents.some((event) =>
-          !linkedTransferIds.has(event.id) && transferEventDirection(event, transferMap) === 'out' &&
-          num(event.amount) === num(line.amount) && Math.abs(line.txnAt.getTime() - event.createdAt.getTime()) <= 3 * DAY_MS,
-        )) continue;
-        const lineCandidates = availableRequests.filter(
-          (r) => num(r.amount) === num(line.amount) && r.paidAt && Math.abs(line.txnAt.getTime() - r.paidAt.getTime()) <= 3 * DAY_MS,
-        );
-        if (lineCandidates.length !== 1) continue;
-        const candidate = lineCandidates[0];
-        // Check the OTHER direction: is this line the only UNMATCHED line anywhere that
-        // would match that request? (checked against allOutLines, not just the scope)
-        const reverseCandidates = allOutLines.filter(
-          (l) =>
-            num(l.amount) === num(candidate.amount) &&
-            candidate.paidAt &&
-            Math.abs(l.txnAt.getTime() - candidate.paidAt.getTime()) <= 3 * DAY_MS,
-        );
-        if (reverseCandidates.length !== 1 || reverseCandidates[0].id !== line.id) continue;
-
-        await prisma.ceresStatementLine.update({
-          where: { id: line.id },
-          data: {
-            matchedType: 'paymentRequest',
-            matchedId: candidate.id,
-            matchStatus: 'matched',
-            reconciledById: null,
-            reconciledAt: new Date(),
-          },
-        });
-        linked++;
-      }
-    }
-  }
 
   // ── 'in' lines <-> CashMovement (type in topup|deposit), unambiguous both ways ──
   {
@@ -628,16 +555,6 @@ export function statementsRoutes(app: FastifyInstance) {
       prisma.ceresStatementImport.findFirst({ orderBy: { importedAt: 'desc' } }),
     ]);
 
-    const linkedRequestIds = new Set(
-      (
-        await prisma.ceresStatementLine.findMany({
-          where: { matchedType: 'paymentRequest', matchedId: { not: '' } },
-          select: { matchedId: true },
-        })
-      ).map((l) => l.matchedId),
-    );
-    const paidRequests = await prisma.ceresPaymentRequest.findMany({ where: { status: 'paid' } });
-    const unreconciledPaid = paidRequests.filter((r) => !linkedRequestIds.has(r.id));
     const transferEvents = await prisma.ceresRequestMoneyEvent.findMany({ where: { lane: 'transfer' } });
     const linkedMoneyEventIds = new Set(
       (
@@ -650,23 +567,9 @@ export function statementsRoutes(app: FastifyInstance) {
     const unreconciledTransferEvents = transferEvents.filter((event) => !linkedMoneyEventIds.has(event.id));
     const reversalExceptions = unreconciledTransferEvents.filter((event) => event.kind === 'reversal');
 
-    const oldestDays =
-      unreconciledPaid.length > 0
-        ? Math.floor(
-            (Date.now() -
-              Math.min(...unreconciledPaid.map((r) => (r.paidAt ? r.paidAt.getTime() : r.createdAt.getTime())))) /
-              DAY_MS,
-          )
-        : 0;
-
     return {
       unmatchedOut: { count: unmatchedOutLines.length, sum: unmatchedOutLines.reduce((s, l) => s + num(l.amount), 0) },
       unmatchedIn: { count: unmatchedInLines.length, sum: unmatchedInLines.reduce((s, l) => s + num(l.amount), 0) },
-      paidRequestsUnreconciled: {
-        count: unreconciledPaid.length,
-        sum: unreconciledPaid.reduce((s, r) => s + num(r.amount), 0),
-        oldestDays,
-      },
       transferEventsUnreconciled: {
         count: unreconciledTransferEvents.length,
         sum: unreconciledTransferEvents.reduce((sum, event) => sum + num(event.amount), 0),

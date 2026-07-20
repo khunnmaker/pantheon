@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { prisma } from '../../db/prisma.js';
 import { requireCeresRole } from '../../ceres/auth.js';
 import { ageStuckAIReviews } from '../../ceres/requestService.js';
-import { computeBoard, num, thaiDayKey, thaiDayRange, toExpenseRow, toStaffRequestRow, transferReconciliationStats } from './common.js';
+import { computeBoard, thaiDayKey, thaiDayRange, toExpenseRow, toStaffRequestRow, transferReconciliationStats } from './common.js';
 import { computeTemplateDue } from './requests.js';
 import { dailyOutflowSummary } from '../../ceres/nightlyDigest.js';
 
@@ -27,14 +27,9 @@ export function ceoRoutes(app: FastifyInstance) {
     const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 3600 * 1000);
     await ageStuckAIReviews();
 
-    const [escalatedRows, aiReviewRows, flaggedExpenseRows, board, templateDue, settlement, statusCounts, v2ApprovalCounts, transferReconciliation, dailyOutflow] = await Promise.all([
+    const [escalatedRows, aiReviewRows, flaggedExpenseRows, board, templateDue, settlement, v2ApprovalCounts, transferReconciliation, dailyOutflow] = await Promise.all([
       prisma.ceresPaymentRequest.findMany({
-        where: {
-          OR: [
-            { workflowVersion: 1, status: 'escalated' },
-            { workflowVersion: 2, approvalStatus: 'pending_ceo' },
-          ],
-        },
+        where: { workflowVersion: 2, approvalStatus: 'pending_ceo' },
         orderBy: { createdAt: 'asc' },
       }),
       prisma.ceresAIReview.findMany({ where: { createdAt: range }, orderBy: { createdAt: 'desc' } }),
@@ -42,11 +37,6 @@ export function ceoRoutes(app: FastifyInstance) {
       computeBoard(),
       computeTemplateDue(),
       prisma.ceresSettlement.findUnique({ where: { dayKey }, include: { lines: true } }),
-      prisma.ceresPaymentRequest.groupBy({
-        by: ['status'],
-        where: { workflowVersion: 1, createdAt: range },
-        _count: { _all: true },
-      }),
       prisma.ceresPaymentRequest.groupBy({
         by: ['approvalStatus'],
         where: { workflowVersion: 2, createdAt: range },
@@ -65,30 +55,7 @@ export function ceoRoutes(app: FastifyInstance) {
 
     const escalations = escalatedRows.map((r) => {
       const review = r.aiReviewId ? escReviews.get(r.aiReviewId) : undefined;
-      if (r.workflowVersion === 2) return toStaffRequestRow(r, review);
-      return {
-        id: r.id,
-        requestedById: r.requestedById,
-        requestedByName: r.requestedByName,
-        entity: r.entity,
-        payee: r.payee,
-        category: r.category,
-        amount: r.amount,
-        amountNum: num(r.amount),
-        detail: r.detail,
-        recurringTemplateId: r.recurringTemplateId,
-        billPeriod: r.billPeriod,
-        status: r.status,
-        aiReviewId: r.aiReviewId,
-        decidedById: r.decidedById,
-        decidedAt: r.decidedAt ? r.decidedAt.toISOString() : null,
-        decisionNote: r.decisionNote,
-        paidById: r.paidById,
-        paidAt: r.paidAt ? r.paidAt.toISOString() : null,
-        paidRef: r.paidRef,
-        createdAt: r.createdAt.toISOString(),
-        aiReview: review ? { verdict: review.verdict, reasoning: review.reasoning, createdAt: review.createdAt.toISOString() } : null,
-      };
+      return toStaffRequestRow(r, review);
     });
 
     // Batch-load subject summaries for the day's AI reviews (expense → partyName/amount/
@@ -101,8 +68,8 @@ export function ceoRoutes(app: FastifyInstance) {
         : Promise.resolve([]),
       requestIds.length
         ? prisma.ceresPaymentRequest.findMany({
-          where: { id: { in: requestIds } },
-          select: { id: true, payee: true, amount: true, status: true, workflowVersion: true, approvalStatus: true },
+          where: { id: { in: requestIds }, workflowVersion: 2 },
+          select: { id: true, payee: true, amount: true, approvalStatus: true },
         })
         : Promise.resolve([]),
     ]);
@@ -110,8 +77,7 @@ export function ceoRoutes(app: FastifyInstance) {
     const requestSubjectMap = new Map(requestSubjects.map((r) => [r.id, {
       payee: r.payee,
       amount: r.amount,
-      workflowVersion: r.workflowVersion,
-      status: r.workflowVersion === 2 ? r.approvalStatus : r.status,
+      status: r.approvalStatus,
     }]));
 
     const aiReviews = aiReviewRows.map((r) => ({
@@ -137,10 +103,6 @@ export function ceoRoutes(app: FastifyInstance) {
     const outstandingTotal = board.parties.reduce((s, p) => s + p.expectedChange, 0);
     const missedBills = templateDue.filter((d) => d.state === 'overdue');
 
-    const requestCounts: Record<string, number> = {};
-    for (const row of statusCounts) {
-      requestCounts[row.status] = row._count._all;
-    }
     const v2RequestCounts: Record<string, number> = {};
     for (const row of v2ApprovalCounts) {
       v2RequestCounts[row.approvalStatus] = row._count._all;
@@ -154,7 +116,6 @@ export function ceoRoutes(app: FastifyInstance) {
       cash: { box: board.box, outstandingTotal },
       missedBills,
       settlementToday: settlement ?? null,
-      requestCounts,
       v2RequestCounts,
       transferReconciliation,
       dailyOutflow,

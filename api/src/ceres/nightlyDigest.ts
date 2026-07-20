@@ -78,12 +78,7 @@ export async function buildCeresDigest(): Promise<string> {
 
   const [escalatedRows, flaggedCount, board, templateDue, settlementToday, pendingCount, pendingNeeCount, v2AiEscalatedCount, transferRecon, dailyOutflow] = await Promise.all([
     prisma.ceresPaymentRequest.findMany({
-      where: {
-        OR: [
-          { workflowVersion: 1, status: 'escalated' },
-          { workflowVersion: 2, approvalStatus: 'pending_ceo' },
-        ],
-      },
+      where: { workflowVersion: 2, approvalStatus: 'pending_ceo' },
       select: { amount: true },
     }),
     prisma.ceresExpense.count({ where: { aiVerdict: 'flagged', createdAt: todayRange } }),

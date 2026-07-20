@@ -1,38 +1,9 @@
 import { prisma } from '../db/prisma.js';
-import { env } from '../env.js';
 import { callClaude, llmAvailable } from '../llm/anthropic.js';
 import { num, thaiDayKey } from '../routes/ceres/common.js';
 
 export const POLICY_VERSION = 'ceres-policy-v2'; // v2: general staff categories (not messenger-only)
 export const AI_MODEL = 'claude-sonnet-4-6'; // informational; anthropic.ts owns the real constant
-
-// Cached-block policy text for the LLM judgment call (payee plausibility / category fit /
-// reasonableness) — consulted ONLY when no deterministic rule fired (fail-closed design,
-// see docs/CERES_BRIEF.md §7). Keep this versioned alongside POLICY_VERSION.
-const POLICY_TEXT = `คุณคือ AI ผู้ตรวจสอบการจ่ายเงินของบริษัท (Ceres) ก่อนที่จะอนุมัติให้จ่ายเงินจากบัญชีบริษัท
-
-บริษัทจ่ายเงินได้ตามปกติสำหรับ:
-- ค่าสินค้า/วัตถุดิบจากซัพพลายเออร์
-- ค่าน้ำ ค่าไฟ ค่าโทรศัพท์ ค่าอินเทอร์เน็ต และค่าสาธารณูปโภคอื่น
-- ค่าขนส่ง/ค่าจัดส่งสินค้า (logistics)
-- ค่าซ่อมบำรุง/ค่าน้ำมันยานพาหนะของบริษัท
-- ค่าอุปกรณ์สำนักงาน/ของใช้สำนักงานทั่วไป
-- ค่าเดินทางของพนักงาน (แท็กซี่/วิน/รถสาธารณะ/ที่จอดรถ)
-- ค่าอาหารเครื่องดื่มและค่ารับรองลูกค้าตามสมควรแก่งาน
-- ค่าซ่อมแซม/บำรุงสถานที่เล็กน้อย
-- ค่าธรรมเนียมราชการ/ภาษี/ค่าใบอนุญาต
-
-ต้องส่งต่อให้ CEO พิจารณา (escalate) เมื่อ:
-- ผู้รับเงิน (payee) ไม่คุ้นเคยหรือไม่เคยจ่ายมาก่อน
-- รายการดูเหมือนเป็นค่าใช้จ่ายส่วนตัว ไม่เกี่ยวกับธุรกิจ
-- จำนวนเงินกลมๆ ที่ดูน่าสงสัย (เช่น จำนวนสูงผิดปกติ หรือดูเหมือนตั้งตัวเลขขึ้นมาเอง)
-- รายละเอียดคลุมเครือ ไม่ชัดเจนว่าเป็นค่าใช้จ่ายอะไร
-- อะไรก็ตามที่ไม่ชัดเจนว่าเป็นรายจ่ายทางธุรกิจ
-
-ตอบกลับเป็น JSON เท่านั้น รูปแบบนี้เท่านั้น ห้ามมีข้อความอื่นนอกจาก JSON:
-{"verdict":"approve","reasoning":"เหตุผลสั้นๆ ภาษาไทย 1-3 ประโยค"}
-หรือ
-{"verdict":"escalate","reasoning":"เหตุผลสั้นๆ ภาษาไทย 1-3 ประโยค"}`;
 
 // Cached-block policy text for the P1 post-hoc expense sanity call — petty-cash context
 // (a messenger's daily entry: delivery fees, fuel, tolls, small supplies) with its OWN
@@ -63,20 +34,6 @@ Return JSON only in exactly one of these forms:
 Escalate anything ambiguous, personal, inconsistent, implausible, or insufficiently evidenced.
 You never approve requests. A human manager must decide every request.`;
 
-function parseVerdict(raw: string): { verdict: 'approve' | 'escalate'; reasoning: string } | null {
-  try {
-    const obj = JSON.parse(raw.replace(/```json/gi, '').replace(/```/g, '').trim()) as Record<string, unknown>;
-    const verdict = obj.verdict;
-    const reasoning = obj.reasoning;
-    if ((verdict === 'approve' || verdict === 'escalate') && typeof reasoning === 'string' && reasoning.trim()) {
-      return { verdict, reasoning };
-    }
-    return null;
-  } catch {
-    return null;
-  }
-}
-
 async function writeReview(subjectType: 'paymentRequest' | 'expense', subjectId: string, verdict: string, reasoning: string) {
   return prisma.ceresAIReview.create({
     data: { subjectType, subjectId, verdict, reasoning, policyVersion: POLICY_VERSION, model: AI_MODEL },
@@ -99,128 +56,7 @@ async function categoryCeilingReason(category: string, amount: number): Promise<
   return null;
 }
 
-// P2/P3 pre-payment GATE. Deterministic rules run first and are authoritative; the LLM is
-// consulted ONLY when no rule fired. Fail-closed: any failure/ambiguity → escalate, never
-// approve. Every exit path writes a CeresAIReview row.
-export async function reviewPaymentRequest(
-  requestId: string,
-): Promise<{ verdict: 'approve' | 'escalate'; reasoning: string; reviewId: string }> {
-  const request = await prisma.ceresPaymentRequest.findUnique({ where: { id: requestId } });
-  if (!request) {
-    const review = await writeReview('paymentRequest', requestId, 'escalate', 'ไม่พบคำขอนี้ — ส่งต่อ CEO (fail-closed)');
-    return { verdict: 'escalate', reasoning: review.reasoning, reviewId: review.id };
-  }
-
-  const amount = num(request.amount);
-  const reasons: string[] = [];
-
-  // 1. CEO threshold.
-  if (amount > env.CERES_CEO_THRESHOLD) {
-    reasons.push(`เกิน ${env.CERES_CEO_THRESHOLD} บาท — ต้องให้ CEO อนุมัติก่อนจ่ายเสมอ`);
-  }
-
-  // 2. Duplicate: same payee + same amount, approved/paid status, within the last 30 days.
-  const payeeNorm = request.payee.trim().toLowerCase();
-  if (payeeNorm) {
-    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 3600 * 1000);
-    const candidates = await prisma.ceresPaymentRequest.findMany({
-      where: {
-        id: { not: request.id },
-        status: { in: ['ai_approved', 'ceo_approved', 'paid'] },
-        createdAt: { gte: thirtyDaysAgo },
-      },
-    });
-    const dup = candidates.find((c) => c.payee.trim().toLowerCase() === payeeNorm && num(c.amount) === amount);
-    if (dup) {
-      reasons.push(`อาจจ่ายซ้ำ: มีรายการ ${request.payee} จำนวนเดียวกันเมื่อ ${thaiDayKey(dup.createdAt)}`);
-    }
-  }
-
-  // 3. Recurring template checks.
-  if (request.recurringTemplateId) {
-    const template = await prisma.ceresRecurringTemplate.findUnique({ where: { id: request.recurringTemplateId } });
-    if (!template || !template.active) {
-      reasons.push('ไม่พบเทมเพลตรายการประจำ หรือเทมเพลตถูกปิดใช้งาน');
-    } else {
-      const expected = num(template.expectedAmount);
-      const tolerance = (expected * template.tolerancePct) / 100;
-      if (amount < expected - tolerance || amount > expected + tolerance) {
-        reasons.push(`จำนวนเงิน ${amount} บาท อยู่นอกช่วงที่คาดไว้ (${expected} บาท ± ${template.tolerancePct}%)`);
-      }
-      if (!request.billPeriod.trim()) {
-        reasons.push('ไม่ระบุงวดบิล');
-      } else {
-        const already = await prisma.ceresPaymentRequest.findFirst({
-          where: {
-            id: { not: request.id },
-            recurringTemplateId: request.recurringTemplateId,
-            billPeriod: request.billPeriod,
-            status: { in: ['ai_approved', 'ceo_approved', 'paid'] },
-          },
-        });
-        if (already) {
-          reasons.push(`งวด ${request.billPeriod} จ่ายแล้ว/รออยู่`);
-        }
-      }
-    }
-  }
-
-  // 4. Category ceiling.
-  const ceilingReason = await categoryCeilingReason(request.category, amount);
-  if (ceilingReason) reasons.push(ceilingReason);
-
-  if (reasons.length > 0) {
-    const review = await writeReview('paymentRequest', requestId, 'escalate', reasons.join('; '));
-    return { verdict: 'escalate', reasoning: review.reasoning, reviewId: review.id };
-  }
-
-  if (!llmAvailable()) {
-    const review = await writeReview('paymentRequest', requestId, 'escalate', 'AI ไม่พร้อมใช้งาน — ส่งต่อ CEO ตามหลัก fail-closed');
-    return { verdict: 'escalate', reasoning: review.reasoning, reviewId: review.id };
-  }
-
-  let template: { payee: string; expectedAmount: string; period: string } | null = null;
-  if (request.recurringTemplateId) {
-    const t = await prisma.ceresRecurringTemplate.findUnique({ where: { id: request.recurringTemplateId } });
-    if (t) template = { payee: t.payee, expectedAmount: t.expectedAmount, period: t.period };
-  }
-
-  try {
-    const userJson = JSON.stringify({
-      payee: request.payee,
-      amount: request.amount,
-      entity: request.entity,
-      category: request.category,
-      detail: request.detail,
-      requestedByName: request.requestedByName,
-      template,
-    });
-    const raw = await callClaude(
-      userJson,
-      { cached: [POLICY_TEXT] },
-      undefined,
-      undefined,
-      { app: 'ceres', feature: 'payment-gate' },
-    );
-    const parsed = parseVerdict(raw);
-    if (!parsed) {
-      const review = await writeReview('paymentRequest', requestId, 'escalate', 'คำตอบ AI ไม่ชัดเจน — ส่งต่อ CEO (fail-closed)');
-      return { verdict: 'escalate', reasoning: review.reasoning, reviewId: review.id };
-    }
-    const review = await writeReview('paymentRequest', requestId, parsed.verdict, parsed.reasoning);
-    return { verdict: parsed.verdict, reasoning: parsed.reasoning, reviewId: review.id };
-  } catch {
-    const review = await writeReview('paymentRequest', requestId, 'escalate', 'AI ขัดข้อง — ส่งต่อ CEO (fail-closed)');
-    return { verdict: 'escalate', reasoning: review.reasoning, reviewId: review.id };
-  }
-}
-
-// P1 post-hoc second pair of eyes AFTER Nee approves. Advisory only — never blocks anyone,
-// never throws. Deterministic flags run first; an LLM sanity call only runs when nothing
-// flagged, and its own failure is NOT fail-closed here (post-hoc, CEO sees everything nightly
-// anyway) — it defaults to 'ok'.
-// V2 staff-request pre-screen. This intentionally lives alongside, rather than replacing,
-// reviewPaymentRequest: workflow-v1 callers still depend on its approve|escalate vocabulary.
+// V2 staff-request pre-screen.
 // Every path writes an immutable CeresAIReview and V2 never writes an `approve` verdict.
 export async function reviewStaffRequest(
   requestId: string,
@@ -309,6 +145,10 @@ export async function reviewStaffRequest(
   }
 }
 
+// P1 post-hoc second pair of eyes AFTER Nee approves. Advisory only — never blocks anyone,
+// never throws. Deterministic flags run first; an LLM sanity call only runs when nothing
+// flagged, and its own failure is NOT fail-closed here (post-hoc, CEO sees everything nightly
+// anyway) — it defaults to 'ok'.
 export async function reviewExpensePostHoc(expenseId: string): Promise<void> {
   try {
     const expense = await prisma.ceresExpense.findUnique({ where: { id: expenseId } });

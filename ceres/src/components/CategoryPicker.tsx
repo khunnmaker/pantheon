@@ -23,10 +23,10 @@ export function groupByCategoryGroup<T extends { group: string }>(items: T[]): {
 }
 
 // Shared grouped category chip-picker (Ceres Phase B categories revamp, 2026-07-18) — used by
-// RequestSheet, ExpenseSheet, MdRequests's RequestForm, and MdTemplates's TemplateDialog so all
-// four category pickers look and behave identically. NEVER pre-selects: `value` starts at ''
-// (or whatever the caller defaults to) and stays there until the person taps a chip themselves
-// — see docs/CERES_CATEGORIES_PLAN.md "NO lazy defaults". Chip classes copied VERBATIM from the
+// RequestSheet, ExpenseSheet, and MdTemplates's TemplateDialog so all three category pickers
+// look and behave identically. NEVER pre-selects: `value` starts at '' (or whatever the caller
+// defaults to) and stays there until the person taps a chip themselves — see
+// docs/CERES_CATEGORIES_PLAN.md "NO lazy defaults". Chip classes copied VERBATIM from the
 // pre-revamp RequestSheet.tsx category chips (owner rule: match siblings, never invent a new
 // style direction).
 //
@@ -35,13 +35,13 @@ export function groupByCategoryGroup<T extends { group: string }>(items: T[]): {
 // tapping one reveals just that group's category chips below. NO group auto-expands for a blank
 // picker — this app just killed every other lazy default, so a first-open picker stays fully
 // collapsed until the person taps a group themselves. A pre-filled `value` (editing an item, a
-// liquidation defaultCategory, "apply template" in MdRequests/MdTemplates) is the one exception:
-// its group starts (or jumps to) expanded with the chip highlighted, so people don't have to
-// hunt for what's already picked.
+// liquidation defaultCategory, applying a template in RequestSheet/MdTemplates) is the one
+// exception: its group starts (or jumps to) expanded with the chip highlighted, so people don't
+// have to hunt for what's already picked.
 //
 // `value`/`onChange` are keyed by whatever the caller's own state tracks — RequestSheet/
-// ExpenseSheet key on category id, MdRequests/MdTemplates key on the category NAME (their
-// PaymentRequest/RecurringTemplate payloads store the name directly). `getKey` picks which.
+// ExpenseSheet key on category id, MdTemplates keys on the category NAME (its RecurringTemplate
+// payload stores the name directly). `getKey` picks which.
 export default function CategoryPicker({
   categories,
   value,
@@ -60,12 +60,11 @@ export default function CategoryPicker({
 
   const [expandedGroup, setExpandedGroup] = useState<string | null>(() => selected?.group ?? null);
 
-  // Re-sync when `value` changes out from under us after mount — e.g. RequestForm's "apply
-  // template" (MdRequests.tsx) or a prefill effect sets `value` while this component is already
-  // mounted. `categories` is intentionally left out of the deps: callers rebuild that array
-  // every render (see ExpenseSheet.tsx's `[...bootstrap.categories].filter(...).sort(...)`), so
-  // depending on it would re-run this on every keystroke elsewhere on the sheet. Mirrors the
-  // same single-dep + eslint-disable pattern MdRequests.tsx already uses for its prefill effect.
+  // Re-sync when `value` changes out from under us after mount — e.g. MdTemplates's "apply
+  // template" or a prefill effect sets `value` while this component is already mounted.
+  // `categories` is intentionally left out of the deps: callers rebuild that array every render
+  // (see ExpenseSheet.tsx's `[...bootstrap.categories].filter(...).sort(...)`), so depending on
+  // it would re-run this on every keystroke elsewhere on the sheet.
   useEffect(() => {
     if (selected) setExpandedGroup(selected.group);
     // eslint-disable-next-line react-hooks/exhaustive-deps

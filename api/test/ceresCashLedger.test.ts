@@ -22,7 +22,7 @@ vi.mock('../src/db/prisma.js', () => ({
 import {
   CashLedgerError,
   cashBalanceFromMovements,
-  createLegacyAdvance,
+  createOutgoingCashMovement,
   lockPettyCash,
   recordRequestMoneyEvent,
 } from '../src/ceres/requestMoney.js';
@@ -75,9 +75,10 @@ describe('Ceres cash ledger safety', () => {
     expect(sql.join(' ')).toContain('FOR UPDATE');
   });
 
-  it('rejects an overdrawing advance and writes nothing', async () => {
+  it('rejects an overdrawing v2 cash payout and writes nothing', async () => {
     mocks.findMovements.mockResolvedValue([{ type: 'deposit', direction: 'in', amount: '100.00' }]);
-    await expect(createLegacyAdvance({
+    await expect(createOutgoingCashMovement({
+      type: 'request_payment',
       partyId: 'party-1',
       partyName: 'Staff',
       amount: '100.01',
@@ -87,9 +88,10 @@ describe('Ceres cash ledger safety', () => {
     expect(mocks.createMovement).not.toHaveBeenCalled();
   });
 
-  it('writes a permitted advance as an explicit outgoing movement after the balance read', async () => {
+  it('writes a permitted v2 cash payout as an explicit outgoing movement after the balance read', async () => {
     mocks.findMovements.mockResolvedValue([{ type: 'deposit', direction: null, amount: '100.00' }]);
-    await createLegacyAdvance({
+    await createOutgoingCashMovement({
+      type: 'request_payment',
       partyId: 'party-1',
       partyName: 'Staff',
       amount: '40.00',
@@ -97,7 +99,7 @@ describe('Ceres cash ledger safety', () => {
       createdByName: 'GM',
     });
     expect(mocks.createMovement).toHaveBeenCalledWith({
-      data: expect.objectContaining({ accountId: 'pettyCash', type: 'advance', direction: 'out', amount: '40.00' }),
+      data: expect.objectContaining({ accountId: 'pettyCash', type: 'request_payment', direction: 'out', amount: '40.00' }),
     });
     expect(mocks.queryRaw.mock.invocationCallOrder[0]).toBeLessThan(mocks.findMovements.mock.invocationCallOrder[0]!);
     expect(mocks.findMovements.mock.invocationCallOrder[0]).toBeLessThan(mocks.createMovement.mock.invocationCallOrder[0]!);
@@ -135,8 +137,8 @@ describe('Ceres cash ledger safety', () => {
     });
 
     const results = await Promise.allSettled([
-      createLegacyAdvance({ amount: '80.00' }),
-      createLegacyAdvance({ amount: '80.00' }),
+      createOutgoingCashMovement({ type: 'request_payment', amount: '80.00' }),
+      createOutgoingCashMovement({ type: 'request_payment', amount: '80.00' }),
     ]);
     expect(results.map((result) => result.status).sort()).toEqual(['fulfilled', 'rejected']);
     expect(inserts).toEqual(['80.00']);

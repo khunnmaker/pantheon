@@ -99,12 +99,6 @@ export async function createOutgoingCashMovement(input: OutgoingCashMovementInpu
   });
 }
 
-export type LegacyAdvanceInput = Omit<OutgoingCashMovementInput, 'type' | 'requestId' | 'requestMoneyEventId'>;
-
-export function createLegacyAdvance(input: LegacyAdvanceInput) {
-  return createOutgoingCashMovement({ ...input, type: 'advance' });
-}
-
 export const requestMoneyKindSchema = z.enum(['payment', 'purchase', 'refund', 'reversal']);
 export const requestMoneyLaneSchema = z.enum(['cash', 'transfer']);
 

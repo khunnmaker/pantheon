@@ -19,12 +19,14 @@ describe('Ceres Phase 1 compatibility contract', () => {
     expect(sql).not.toMatch(/ALTER\s+COLUMN\s+"status"/i);
   });
 
-  it('retains every v1 endpoint while adding the media aliases and close guard', async () => {
+  it('removes manual advance/refund routes while preserving live petty-cash surfaces', async () => {
     const source = await readFile(path.join(apiRoot, 'src/routes/ceres/p1.ts'), 'utf8');
     for (const route of [
-      '/api/ceres/receipts', '/api/ceres/expenses', '/api/ceres/advances',
-      '/api/ceres/refunds', '/api/ceres/movements', '/api/ceres/board', '/api/ceres/close',
+      '/api/ceres/receipts', '/api/ceres/expenses', '/api/ceres/movements',
+      '/api/ceres/board', '/api/ceres/close',
     ]) expect(source).toContain(route);
+    expect(source).not.toContain("'/api/ceres/advances'");
+    expect(source).not.toContain("'/api/ceres/refunds'");
     expect(source).toContain('/api/ceres/media');
     expect(source).toContain('negative_box_balance');
   });
@@ -41,11 +43,11 @@ describe('Ceres Phase 1 compatibility contract', () => {
   it('persists OCR server-side and keeps the strict threshold boundary', async () => {
     const [p1, aiReview] = await Promise.all([
       readFile(path.join(apiRoot, 'src/routes/ceres/p1.ts'), 'utf8'),
-      readFile(path.join(apiRoot, 'src/ceres/aiReview.ts'), 'utf8'),
+      readFile(path.join(apiRoot, 'src/ceres/requestService.ts'), 'utf8'),
     ]);
     expect(p1).toContain('saveCeresReceiptOcr(saved.uploadId, ocrFields)');
     expect(p1).toContain("ocrAmount: b.ocrAmount ?? receiptMeta?.ocrAmount ?? ''");
-    expect(aiReview).toContain('amount > env.CERES_CEO_THRESHOLD');
-    expect(aiReview).not.toContain('amount >= env.CERES_CEO_THRESHOLD');
+    expect(aiReview).toContain('num(request.amount) > env.CERES_CEO_THRESHOLD');
+    expect(aiReview).not.toContain('num(request.amount) >= env.CERES_CEO_THRESHOLD');
   });
 });
