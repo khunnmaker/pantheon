@@ -320,12 +320,18 @@ export interface GroupProduct {
   stock: number | null; // remaining qty (null = unknown)
   reorderPoint: number | null;
   stockOnly?: boolean; // from the Express import, not merchandised yet (hidden from web/AI)
+  // ── name-review fields (merged in from the old ตรวจทานชื่อ tab) ──
+  // RAW name from the Express accounting report ('' = SKU not in the report).
+  expressName: string;
+  proposedNameEn: string | null; // the normalized candidate (null = no proposal loaded)
+  proposalStatus: 'none' | ProposalStatus; // 'none' = this product never had a name proposal
+  proposalNeedsReview: boolean; // flagged for team review (ambiguous shade/variant)
 }
 
 export const getGroups = () =>
   authed<{ groups: CatalogGroupInfo[]; total: number; unassigned: number }>('/api/stock/groups');
 
-export const getGroupProducts = (opts: { group?: string; filter?: 'all' | 'unassigned'; q?: string; sort?: 'sku' | 'sub' | 'name' }) => {
+export const getGroupProducts = (opts: { group?: string; filter?: 'all' | 'unassigned' | 'proposals'; q?: string; sort?: 'sku' | 'sub' | 'name' }) => {
   const p = new URLSearchParams();
   if (opts.group) p.set('group', opts.group);
   if (opts.filter) p.set('filter', opts.filter);

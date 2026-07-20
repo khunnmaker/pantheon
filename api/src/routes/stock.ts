@@ -216,6 +216,7 @@ export async function stockRoutes(app: FastifyInstance) {
     if (!sku || !SKU_RE.test(sku)) return reply.code(400).send({ error: 'bad_sku' });
     const nameEn = String(body.nameEn ?? '').trim();
     const nameTh = String(body.nameTh ?? '').trim();
+    if (!nameEn && !nameTh) return reply.code(400).send({ error: 'empty_name' });
     const product = await prisma.product.findUnique({ where: { sku } });
     if (!product) return reply.code(404).send({ error: 'unknown_sku' });
     const keywords = mergeNameKeywords(product.keywords, nameEn, nameTh);
@@ -592,6 +593,7 @@ export async function stockRoutes(app: FastifyInstance) {
     const where: Record<string, unknown> = { status: VESTA_STATUS };
     if (group) where.catalogGroup = group;
     else if (filter === 'unassigned') where.catalogGroup = null;
+    else if (filter === 'proposals') where.proposalStatus = 'pending';
 
     let products;
     if (query) {
@@ -624,6 +626,12 @@ export async function stockRoutes(app: FastifyInstance) {
         alias: aliasBySku.get(p.sku) ?? null,
         stock: p.stock, reorderPoint: p.reorderPoint,
         stockOnly: p.status === 'stock_only',
+        // Same extra fields the old ตรวจทานชื่อ list carried — now every จัดกลุ่ม bucket can show
+        // the Express reference name + proposal state, since the review flow lives here too.
+        expressName: EXPRESS_NAMES[p.sku] ?? '',
+        proposedNameEn: p.proposedNameEn,
+        proposalStatus: p.proposalStatus,
+        proposalNeedsReview: p.proposalNeedsReview,
       })),
     };
   });

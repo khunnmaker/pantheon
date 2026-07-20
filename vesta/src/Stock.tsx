@@ -3,7 +3,7 @@ import {
   Boxes, Search, Upload, History, LogOut, AlertTriangle, Check, Loader2,
   Package, RefreshCw, ChevronRight, X, LayoutDashboard, PackageX, PackageCheck,
   HelpCircle, Clock, ArrowRight, Crown, Tag, Wand2, Layers, Pencil,
-  ClipboardCheck, Sparkles, Plus, Trash2,
+  Sparkles, Plus, Trash2,
 } from 'lucide-react';
 
 // Portal-back link uses the canonical Pantheon domain unless build-time env overrides it.
@@ -18,16 +18,16 @@ import {
   getGroups, getGroupProducts, autoAssignGroups, setProductGroup, setSubgroup,
   setProductsGroup, setSubgroups,
   createGroup, createSubgroup, renameSubgroup, deleteGroup, deleteSubgroup, emptyTrash,
-  type NameProposalRow, type ProposalSummary, type ProposalFilter,
-  getProposalSummary, getProposals, loadProposals, decideProposal, bulkApproveSafe,
+  type ProposalSummary,
+  getProposalSummary, loadProposals, decideProposal, bulkApproveSafe,
 } from './lib/api';
 import AppSwitcher from './AppSwitcher';
 import { useHashTab } from '@pantheon/ui';
 
-type Tab = 'dashboard' | 'stock' | 'import' | 'history' | 'alias' | 'group' | 'review';
+type Tab = 'dashboard' | 'stock' | 'import' | 'history' | 'alias' | 'group';
 // Vesta is supervisor-only (no per-tab role gating within the app), so every tab is always
 // valid — a shared #<tab> link only ever needs to fall back if the key itself is unrecognized.
-const STOCK_TABS: Tab[] = ['dashboard', 'stock', 'import', 'history', 'alias', 'group', 'review'];
+const STOCK_TABS: Tab[] = ['dashboard', 'stock', 'import', 'history', 'alias', 'group'];
 type StockFilter = 'all' | 'low' | 'out' | 'unknown' | 'noname';
 // One nav button: caption grouping lives in navGroups below, not on the tab itself.
 type NavTab = { key: Tab; label: string; icon: ReactNode; count?: number; tone?: 'rose' | 'slate' };
@@ -96,14 +96,12 @@ export default function Stock({ agent, onLogout }: { agent: Agent; onLogout: () 
   const [summary, setSummary] = useState<StockSummary | null>(null);
   // Stock-tab filter lifted here so the dashboard cards can deep-link into a filtered view.
   const [stockFilter, setStockFilter] = useState<StockFilter>('all');
-  // Nav badges: ยังไม่จัดกลุ่ม count (จัดกลุ่ม) and pending name proposals (ตรวจทานชื่อ).
+  // Nav badge: ยังไม่จัดกลุ่ม count (จัดกลุ่ม — which now also hosts ตรวจทานชื่อ, self-loaded there).
   const [groupUnassigned, setGroupUnassigned] = useState<number | undefined>(undefined);
-  const [proposalPending, setProposalPending] = useState<number | undefined>(undefined);
 
   const refreshCounts = useCallback(() => {
     getSummary().then(setSummary).catch(() => {});
     getGroups().then((r) => setGroupUnassigned(r.unassigned)).catch(() => setGroupUnassigned(undefined));
-    getProposalSummary().then((s) => setProposalPending(s.pending)).catch(() => setProposalPending(undefined));
   }, []);
   useEffect(() => { refreshCounts(); }, [refreshCounts, tab]);
 
@@ -139,7 +137,6 @@ export default function Stock({ agent, onLogout }: { agent: Agent; onLogout: () 
       caption: 'จัดแคตตาล็อก',
       tabs: [
         { key: 'group', label: 'จัดกลุ่ม', icon: <Layers size={16} />, count: groupUnassigned, tone: 'slate' },
-        { key: 'review', label: 'ตรวจทานชื่อ', icon: <ClipboardCheck size={16} />, count: proposalPending, tone: 'slate' },
         { key: 'alias', label: 'รหัสย่อ', icon: <Tag size={16} /> },
       ],
     },
@@ -216,7 +213,6 @@ export default function Stock({ agent, onLogout }: { agent: Agent; onLogout: () 
         {tab === 'history' && <HistoryTab />}
         {tab === 'alias' && <AliasTab />}
         {tab === 'group' && <GroupTab />}
-        {tab === 'review' && <ReviewTab />}
       </main>
     </div>
   );
@@ -1295,9 +1291,11 @@ function GroupSelect({
   );
 }
 
-// One reviewable product row: group + sub-group pickers, remaining stock, and inline name edit.
+// One reviewable product row: group + sub-group pickers, remaining stock, inline name edit,
+// photo zoom, and — carried in from the old ตรวจทานชื่อ tab — the Express reference name and,
+// when this SKU has a pending AI name proposal, an approve/reject mini-form.
 function GroupProductRow({
-  product, groups, index, checked, onToggleSelect, onChangeGroup, onChangeSubgroup, onRenamed,
+  product, groups, index, checked, onToggleSelect, onChangeGroup, onChangeSubgroup, onRenamed, onZoom, onProposalDecided,
 }: {
   product: GroupProduct;
   groups: CatalogGroupInfo[];
@@ -1307,12 +1305,15 @@ function GroupProductRow({
   onChangeGroup: (sku: string, group: string | null) => void;
   onChangeSubgroup: (sku: string, sub: string | null) => void;
   onRenamed: (sku: string, nameTh: string, nameEn: string) => void;
+  onZoom: (photoSku: string) => void;
+  onProposalDecided: (sku: string, patch: { nameEn: string; proposalStatus: 'approved' | 'rejected' }) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [nameTh, setNameTh] = useState(product.nameTh);
   const [nameEn, setNameEn] = useState(product.nameEn);
   const [saving, setSaving] = useState(false);
   const subs = groups.find((g) => g.key === product.catalogGroup)?.subgroups ?? [];
+  const bothNamesEmpty = !nameTh.trim() && !nameEn.trim();
 
   async function saveName() {
     setSaving(true);
@@ -1323,6 +1324,25 @@ function GroupProductRow({
     } catch { /* keep editor open on failure */ } finally {
       setSaving(false);
     }
+  }
+
+  // ── pending name proposal (approve/reject), staged in Product.proposedNameEn ──
+  const proposed = (product.proposedNameEn ?? '').trim();
+  const [proposalText, setProposalText] = useState(proposed);
+  const [proposalBusy, setProposalBusy] = useState<'approve' | 'reject' | null>(null);
+  // Reset any in-progress edit if the underlying proposal changes under us (e.g. a batch action
+  // elsewhere resolved it) — mirrors the same guard the old ProposalRow used.
+  useEffect(() => { setProposalText(proposed); }, [product.sku, proposed]);
+  const pending = product.proposalStatus === 'pending';
+  const proposalLiveDiffers = pending && proposed !== product.nameEn.trim();
+
+  async function decideProposalAction(action: 'approve' | 'reject') {
+    setProposalBusy(action);
+    try {
+      const nameEnArg = action === 'approve' ? proposalText.trim() : undefined;
+      const { product: updated } = await decideProposal(product.sku, action, nameEnArg);
+      onProposalDecided(product.sku, { nameEn: updated.nameEn, proposalStatus: updated.status as 'approved' | 'rejected' });
+    } catch { /* leave the row as-is on failure */ } finally { setProposalBusy(null); }
   }
 
   return (
@@ -1336,17 +1356,31 @@ function GroupProductRow({
           onClick={(e) => onToggleSelect(product.sku, index, e.shiftKey)}
           className="shrink-0 w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-400 cursor-pointer"
         />
-        <Thumb photoSku={product.photoSku} size={34} />
+        {product.photoSku ? (
+          <button type="button" onClick={() => onZoom(product.photoSku!)} title="คลิกเพื่อขยายรูป" className="shrink-0 cursor-zoom-in rounded hover:ring-2 hover:ring-indigo-300">
+            <Thumb photoSku={product.photoSku} size={34} />
+          </button>
+        ) : (
+          <Thumb photoSku={null} size={34} />
+        )}
         <div className="min-w-0 flex-1">
           <div className="text-sm text-slate-700 truncate">
             {product.nameTh || product.nameEn || flatSku(product.sku)}
             {product.stockOnly && <span className="ml-1.5 align-middle text-[9px] font-bold uppercase tracking-wide bg-sky-100 text-sky-700 rounded px-1 py-px" title="เพิ่มจาก Express — ยังไม่ลงแคตตาล็อก">Express</span>}
           </div>
-          <div className="text-[10px] text-slate-400 font-mono">
+          <div className="text-[10px] text-slate-400 font-mono flex flex-wrap items-center gap-x-1.5">
             {product.alias && <span className="text-indigo-600 font-semibold">{product.alias} · </span>}
             {flatSku(product.sku)}
             {product.nameEn && product.nameTh && <span className="text-slate-300"> · {product.nameEn}</span>}
+            {!product.nameTh && <span className="font-sans not-italic text-amber-700 bg-amber-100 px-1 py-px rounded">ไม่มีชื่อไทย</span>}
+            {!product.nameEn && <span className="font-sans not-italic text-amber-700 bg-amber-100 px-1 py-px rounded">ไม่มีชื่ออังกฤษ</span>}
           </div>
+          {product.expressName && (
+            <div className="text-[11px] text-sky-800 truncate mt-0.5" title="ชื่อตามระบบ Express (อ้างอิง)">
+              <span className="text-[9px] font-bold uppercase tracking-wide bg-sky-100 text-sky-700 rounded px-1 py-px mr-1">Express</span>
+              {product.expressName}
+            </div>
+          )}
         </div>
         <button
           onClick={() => { setEditing((v) => !v); setNameTh(product.nameTh); setNameEn(product.nameEn); }}
@@ -1386,10 +1420,40 @@ function GroupProductRow({
           />
           <button
             onClick={saveName}
-            disabled={saving}
+            disabled={saving || bothNamesEmpty}
             className="px-3 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-medium flex items-center gap-1 disabled:opacity-50"
           >
             {saving ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} บันทึกชื่อ
+          </button>
+        </div>
+      )}
+      {pending && (
+        <div className={`mt-2 ml-11 px-2.5 py-1.5 rounded-lg border flex flex-wrap items-center gap-2 ${
+          product.proposalNeedsReview ? 'bg-amber-50 border-amber-200' : 'bg-indigo-50/60 border-indigo-100'
+        }`}>
+          <span className="text-[10px] text-slate-400 shrink-0">ชื่อใหม่ (EN):</span>
+          {proposalLiveDiffers && <span className="text-[11px] text-slate-400 line-through truncate max-w-[160px]">{product.nameEn || '—'}</span>}
+          <input
+            value={proposalText}
+            onChange={(e) => setProposalText(e.target.value)}
+            className="flex-1 min-w-[120px] text-sm font-medium text-slate-800 bg-transparent border-b border-dashed border-slate-300 focus:border-indigo-500 focus:outline-none py-0.5"
+          />
+          {product.proposalNeedsReview && (
+            <span className="text-[10px] font-semibold text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded shrink-0">⚠ ต้องตรวจสอบ</span>
+          )}
+          <button
+            onClick={() => decideProposalAction('approve')}
+            disabled={proposalBusy !== null}
+            className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium flex items-center gap-1 disabled:opacity-50 shrink-0"
+          >
+            {proposalBusy === 'approve' ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} อนุมัติ
+          </button>
+          <button
+            onClick={() => decideProposalAction('reject')}
+            disabled={proposalBusy !== null}
+            className="px-2.5 py-1 rounded-lg border border-slate-300 text-slate-500 hover:bg-slate-50 text-xs flex items-center gap-1 disabled:opacity-50 shrink-0"
+          >
+            {proposalBusy === 'reject' ? <Loader2 size={12} className="animate-spin" /> : <X size={12} />} ไม่ใช้
           </button>
         </div>
       )}
@@ -1567,6 +1631,11 @@ function GroupTab() {
   const [sortBy, setSortBy] = useState<'sku' | 'sub' | 'name'>('sku');
   // Anchor row index for shift-click range selection (index into the current `products` order).
   const lastIndexRef = useRef<number | null>(null);
+  // Photo currently zoomed (from any bucket's rows) — Lightbox overlay, null = closed.
+  const [zoom, setZoom] = useState<string | null>(null);
+  // ตรวจทานชื่อ pseudo-bucket: pending/flagged/approved/rejected counts for its chip + header.
+  const [proposalSummary, setProposalSummary] = useState<ProposalSummary | null>(null);
+  const [nameReviewBusy, setNameReviewBusy] = useState<'bulk' | 'seed' | null>(null);
 
   const loadGroups = useCallback(async () => {
     try {
@@ -1578,10 +1647,18 @@ function GroupTab() {
   }, []);
   useEffect(() => { loadGroups().finally(() => setLoading(false)); }, [loadGroups]);
 
+  const loadProposalSummary = useCallback(() => {
+    getProposalSummary().then(setProposalSummary).catch(() => {});
+  }, []);
+  useEffect(() => { loadProposalSummary(); }, [loadProposalSummary]);
+
   const loadProducts = useCallback(async (bucket: string, query: string) => {
     setProdLoading(true);
     try {
-      const base = bucket === 'unassigned' ? { filter: 'unassigned' as const } : { group: bucket };
+      const base =
+        bucket === 'unassigned' ? { filter: 'unassigned' as const } :
+        bucket === 'proposals' ? { filter: 'proposals' as const } :
+        { group: bucket };
       const r = await getGroupProducts({ ...base, q: query, sort: sortBy });
       setProducts(r.products);
     } catch { setProducts([]); } finally { setProdLoading(false); }
@@ -1631,11 +1708,12 @@ function GroupTab() {
 
   async function changeProduct(sku: string, group: string | null) {
     // optimistic: update the row (changing group clears the sub-group), then drop it if it no
-    // longer belongs to the open bucket.
+    // longer belongs to the open bucket. ตรวจทานชื่อ ('proposals') membership is about
+    // proposalStatus, not catalogGroup — a re-group must NOT drop the row from that bucket.
     setProducts((ps) => {
       const updated = ps.map((p) => (p.sku === sku ? { ...p, catalogGroup: group, catalogSubgroup: null } : p));
       if (sel === 'unassigned') return updated.filter((p) => p.catalogGroup === null);
-      if (sel) return updated.filter((p) => p.catalogGroup === sel);
+      if (sel && sel !== 'proposals') return updated.filter((p) => p.catalogGroup === sel);
       return updated;
     });
     try {
@@ -1644,6 +1722,39 @@ function GroupTab() {
     } catch {
       if (sel) loadProducts(sel, q); // revert to server truth on failure
     }
+  }
+
+  // After a single-row approve/reject: patch the row locally, drop it from the ตรวจทานชื่อ bucket
+  // view (it's no longer pending), and refresh the summary counts (cheap — just 4 numbers).
+  function afterProposalDecide(sku: string, patch: { nameEn: string; proposalStatus: 'approved' | 'rejected' }) {
+    setProducts((ps) => {
+      const updated = ps.map((p) => (p.sku === sku ? { ...p, ...patch } : p));
+      if (sel === 'proposals') return updated.filter((p) => p.proposalStatus === 'pending');
+      return updated;
+    });
+    loadProposalSummary();
+  }
+
+  async function bulkApproveSafeNames() {
+    const safe = proposalSummary ? proposalSummary.pending - proposalSummary.review : 0;
+    if (safe <= 0) return;
+    if (!window.confirm(
+      `อนุมัติชื่อที่ปลอดภัย ${safe.toLocaleString('th-TH')} รายการทั้งหมด?\n` +
+      `ชื่อจริงจะถูกอัปเดตทันที (รายการที่ต้อง “ตรวจสอบ” จะไม่ถูกแตะ)`,
+    )) return;
+    setNameReviewBusy('bulk');
+    try {
+      await bulkApproveSafe();
+      await Promise.all([loadProposalSummary(), loadProducts('proposals', q)]);
+    } finally { setNameReviewBusy(null); }
+  }
+
+  async function seedProposals() {
+    setNameReviewBusy('seed');
+    try {
+      await loadProposals();
+      await Promise.all([loadProposalSummary(), loadProducts('proposals', q)]);
+    } finally { setNameReviewBusy(null); }
   }
 
   async function changeSubgroup(sku: string, sub: string | null) {
@@ -1681,7 +1792,10 @@ function GroupTab() {
   }
   const allSelected = products.length > 0 && products.every((p) => selected.has(p.sku));
   // True size of the open bucket (from the uncapped groupBy), vs how many rows actually loaded.
-  const bucketTotal = sel === 'unassigned' ? unassigned : (groups.find((g) => g.key === sel)?.count ?? products.length);
+  const bucketTotal =
+    sel === 'unassigned' ? unassigned :
+    sel === 'proposals' ? (proposalSummary?.pending ?? products.length) :
+    (groups.find((g) => g.key === sel)?.count ?? products.length);
   // Loaded fewer than the bucket holds (only possible if a bucket ever exceeds the fetch cap) —
   // "select all" would then miss the overflow, so we say so instead of moving a silent subset.
   const truncated = !q.trim() && products.length < bucketTotal;
@@ -1739,8 +1853,9 @@ function GroupTab() {
   }
 
   const byPillar = (pl: Pillar) => groups.filter((g) => g.pillar === pl);
-  const selName = sel === 'unassigned' ? 'ยังไม่จัดกลุ่ม' : groups.find((g) => g.key === sel)?.nameTh ?? '';
+  const selName = sel === 'unassigned' ? 'ยังไม่จัดกลุ่ม' : sel === 'proposals' ? 'ตรวจทานชื่อ' : groups.find((g) => g.key === sel)?.nameTh ?? '';
   const assigned = total - unassigned;
+  const safeNameCount = proposalSummary ? proposalSummary.pending - proposalSummary.review : 0;
 
   if (loading) {
     return <div className="text-slate-400 py-8 text-center"><Loader2 size={18} className="animate-spin inline" /> กำลังโหลด…</div>;
@@ -1785,6 +1900,26 @@ function GroupTab() {
 
       {/* group overview by pillar */}
       <div className="space-y-4">
+        <div>
+          <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-2">ชื่อสินค้า</div>
+          <div className="flex flex-wrap gap-2">
+            <button
+              onClick={() => { setSel(sel === 'proposals' ? null : 'proposals'); setQ(''); }}
+              className={`px-3 py-2 rounded-xl border text-sm flex items-center gap-2 transition ${
+                sel === 'proposals'
+                  ? 'border-indigo-500 bg-indigo-50 ring-2 ring-indigo-100'
+                  : (proposalSummary?.pending ?? 0) > 0
+                    ? 'border-slate-200 bg-white hover:border-indigo-300'
+                    : 'border-dashed border-slate-200 bg-slate-50 text-slate-400'
+              }`}
+            >
+              <span className="font-medium">ตรวจทานชื่อ</span>
+              <span className={`text-xs font-bold tabular-nums ${(proposalSummary?.pending ?? 0) > 0 ? 'text-indigo-600' : 'text-slate-300'}`}>
+                {proposalSummary?.pending ?? 0}
+              </span>
+            </button>
+          </div>
+        </div>
         {PILLAR_ORDER.map((pl) => (
           <div key={pl}>
             <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-2">{PILLAR_LABEL[pl]}</div>
@@ -1826,6 +1961,25 @@ function GroupTab() {
               >
                 <Trash2 size={14} /> ล้างถังขยะ ({openGroup?.count.toLocaleString('th-TH')})
               </button>
+            )}
+            {sel === 'proposals' && (
+              <>
+                <button
+                  onClick={bulkApproveSafeNames}
+                  disabled={nameReviewBusy !== null || safeNameCount <= 0}
+                  className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium flex items-center gap-1.5 disabled:opacity-40 whitespace-nowrap"
+                >
+                  {nameReviewBusy === 'bulk' ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
+                  อนุมัติชื่อที่ปลอดภัยทั้งหมด{safeNameCount > 0 ? ` (${safeNameCount.toLocaleString('th-TH')})` : ''}
+                </button>
+                <button
+                  onClick={seedProposals}
+                  disabled={nameReviewBusy !== null}
+                  className="px-3 py-1.5 rounded-xl border border-slate-300 bg-white text-slate-600 hover:bg-slate-50 text-sm flex items-center gap-1.5 disabled:opacity-50 whitespace-nowrap"
+                >
+                  {nameReviewBusy === 'seed' ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />} โหลดข้อเสนอ
+                </button>
+              </>
             )}
             <div className="relative flex-1 min-w-[200px]">
               <Search size={15} className="absolute left-3 top-2.5 text-slate-400" />
@@ -1929,29 +2083,21 @@ function GroupTab() {
                   onChangeGroup={changeProduct}
                   onChangeSubgroup={changeSubgroup}
                   onRenamed={patchName}
+                  onZoom={setZoom}
+                  onProposalDecided={afterProposalDecide}
                 />
               ))}
             </div>
           )}
         </div>
       )}
+      {zoom && <Lightbox photoSku={zoom} onClose={() => setZoom(null)} />}
     </div>
   );
 }
 
-// ── Name normalization review (ตรวจทานชื่อ) ──────────────────────────────
-// Review AI-normalized English names before they replace the live name. NOTHING here changes a
-// live product name until you press อนุมัติ — proposals are staged server-side. Approving copies
-// the proposed name onto the live product (and makes it searchable); rejecting leaves it as-is.
-const PROPOSAL_FILTERS: { key: ProposalFilter; label: string; count: (s: ProposalSummary) => number }[] = [
-  { key: 'pending', label: 'รอตรวจ', count: (s) => s.pending },
-  { key: 'review', label: '⚠ ต้องตรวจสอบ', count: (s) => s.review },
-  { key: 'approved', label: 'อนุมัติแล้ว', count: (s) => s.approved },
-  { key: 'rejected', label: 'ไม่ใช้', count: (s) => s.rejected },
-  { key: 'all', label: 'ทั้งหมด', count: (s) => s.total },
-];
-
-// Full-size product photo overlay — click anywhere or press Esc to close.
+// Full-size product photo overlay — click anywhere or press Esc to close. Used by GroupTab's
+// zoom-on-thumbnail (every จัดกลุ่ม bucket, including ตรวจทานชื่อ).
 function Lightbox({ photoSku, onClose }: { photoSku: string; onClose: () => void }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
@@ -1969,295 +2115,6 @@ function Lightbox({ photoSku, onClose }: { photoSku: string; onClose: () => void
         className="max-w-[90vw] max-h-[85vh] rounded-2xl bg-white object-contain shadow-2xl"
         onError={onClose}
       />
-    </div>
-  );
-}
-
-function ReviewTab() {
-  const [groups, setGroups] = useState<CatalogGroupInfo[]>([]);
-  const [summary, setSummary] = useState<ProposalSummary | null>(null);
-  const [filter, setFilter] = useState<ProposalFilter>('pending');
-  const [q, setQ] = useState('');
-  const [rows, setRows] = useState<NameProposalRow[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [busy, setBusy] = useState<'load' | 'bulk' | null>(null);
-  // photoSku currently zoomed in the lightbox (null = closed)
-  const [zoom, setZoom] = useState<string | null>(null);
-
-  const loadSummary = useCallback(() => { getProposalSummary().then(setSummary).catch(() => {}); }, []);
-  useEffect(() => { getGroups().then((g) => setGroups(g.groups)).catch(() => {}); }, []);
-  useEffect(() => { loadSummary(); }, [loadSummary]);
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    try { const { products } = await getProposals(filter, q); setRows(products); }
-    catch { setRows([]); }
-    finally { setLoading(false); }
-  }, [filter, q]);
-  useEffect(() => { const t = setTimeout(load, 250); return () => clearTimeout(t); }, [load]);
-
-  const groupLabel = useCallback((g: string | null, sub: string | null): { text: string; muted: boolean } => {
-    if (!g) return { text: 'ยังไม่จัดกลุ่ม', muted: true };
-    const grp = groups.find((x) => x.key === g);
-    const gName = grp?.nameTh ?? g;
-    const sName = sub ? (grp?.subgroups.find((s) => s.code === sub)?.nameTh ?? sub) : '';
-    return { text: sName ? `${gName} › ${sName}` : gName, muted: false };
-  }, [groups]);
-
-  // After a decide: update the row in place, or drop it if it no longer matches the open filter.
-  function afterDecide(r: NameProposalRow) {
-    setRows((rs) => rs.flatMap((x) => {
-      if (x.sku !== r.sku) return [x];
-      const merged = { ...x, ...r, alias: x.alias, catalogGroup: x.catalogGroup, catalogSubgroup: x.catalogSubgroup };
-      const keep =
-        filter === 'all' ? true :
-        filter === 'pending' ? merged.status === 'pending' :
-        filter === 'review' ? merged.status === 'pending' && merged.needsReview :
-        filter === 'approved' ? merged.status === 'approved' :
-        merged.status === 'rejected';
-      return keep ? [merged] : [];
-    }));
-    loadSummary();
-  }
-
-  async function seed() {
-    setBusy('load');
-    try { await loadProposals(); await Promise.all([loadSummary(), load()]); }
-    finally { setBusy(null); }
-  }
-  async function bulk() {
-    const n = summary ? summary.pending - summary.review : 0;
-    if (n <= 0) return;
-    if (!window.confirm(
-      `อนุมัติชื่อที่ปลอดภัย ${n.toLocaleString('th-TH')} รายการทั้งหมด?\n` +
-      `ชื่อจริงจะถูกอัปเดตทันที (รายการที่ต้อง “ตรวจสอบ” จะไม่ถูกแตะ)`,
-    )) return;
-    setBusy('bulk');
-    try { await bulkApproveSafe(); await Promise.all([loadSummary(), load()]); }
-    finally { setBusy(null); }
-  }
-
-  const total = summary?.total ?? 0;
-  const done = (summary?.approved ?? 0) + (summary?.rejected ?? 0);
-  const safeN = summary ? summary.pending - summary.review : 0;
-  const pct = total > 0 ? Math.round((done / total) * 100) : 0;
-
-  return (
-    <div className="max-w-4xl">
-      <div className="bg-white rounded-2xl border border-slate-200 p-5 mb-4">
-        <h2 className="font-semibold text-slate-800 mb-1 flex items-center gap-2">
-          <ClipboardCheck size={18} className="text-indigo-600" /> ตรวจทานชื่อสินค้า
-        </h2>
-        <p className="text-sm text-slate-500 mb-3">
-          ทบทวนชื่ออังกฤษที่ระบบปรับให้ก่อนบันทึกลงระบบจริง — <b>ชื่อจริงจะยังไม่เปลี่ยนจนกว่าคุณจะกด “อนุมัติ”</b>{' '}
-          ชื่อเดิมจะขีดฆ่าไว้ให้เทียบ · แก้ข้อความในช่องได้ก่อนอนุมัติ · รายการ <span className="text-amber-700">⚠ ต้องตรวจสอบ</span> (สี/เฉดที่ระบบเดาไม่ได้) เก็บไว้ให้ทีมดูร่วมกัน
-        </p>
-
-        {total === 0 ? (
-          <button onClick={seed} disabled={busy !== null}
-            className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold flex items-center gap-2 disabled:opacity-50">
-            {busy === 'load' ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />} โหลดข้อเสนอชื่อเพื่อเริ่มตรวจทาน
-          </button>
-        ) : (
-          <>
-            {/* progress */}
-            <div className="flex items-center gap-3 mb-3">
-              <div className="flex-1 h-2 rounded-full bg-slate-100 overflow-hidden">
-                <div className="h-full bg-emerald-500 transition-all" style={{ width: `${pct}%` }} />
-              </div>
-              <span className="text-xs text-slate-500 tabular-nums shrink-0">
-                ตรวจแล้ว <b className="text-slate-700">{done.toLocaleString('th-TH')}</b> / {total.toLocaleString('th-TH')}
-              </span>
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <button onClick={bulk} disabled={busy !== null || safeN <= 0}
-                className="px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold flex items-center gap-1.5 disabled:opacity-40">
-                {busy === 'bulk' ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />}
-                อนุมัติชื่อที่ปลอดภัยทั้งหมด{safeN > 0 ? ` (${safeN.toLocaleString('th-TH')})` : ''}
-              </button>
-              <span className="text-[11px] text-slate-400">รายการที่ต้องตรวจสอบจะไม่ถูกอนุมัติอัตโนมัติ</span>
-              <button onClick={seed} disabled={busy !== null}
-                className="ml-auto text-xs text-slate-400 hover:text-slate-600 flex items-center gap-1" title="โหลดข้อเสนอที่ยังไม่มีในระบบ">
-                {busy === 'load' ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />} โหลดเพิ่ม
-              </button>
-            </div>
-          </>
-        )}
-      </div>
-
-      {/* filters + search */}
-      <div className="flex flex-wrap items-center gap-2 mb-3">
-        <div className="relative flex-1 min-w-[200px]">
-          <Search size={16} className="absolute left-3 top-2.5 text-slate-400" />
-          <input
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            placeholder="ค้นหาชื่อ / รหัสสินค้า…"
-            className="w-full pl-9 pr-3 py-2 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
-          />
-        </div>
-        <div className="flex flex-wrap gap-1">
-          {PROPOSAL_FILTERS.map((f) => (
-            <button
-              key={f.key}
-              onClick={() => setFilter(f.key)}
-              className={`px-3 py-2 rounded-xl text-sm font-medium border flex items-center gap-1.5 ${
-                filter === f.key
-                  ? f.key === 'review' ? 'bg-amber-500 text-white border-amber-500' : 'bg-indigo-600 text-white border-indigo-600'
-                  : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'
-              }`}
-            >
-              {f.label}
-              {summary && <span className={`text-xs tabular-nums ${filter === f.key ? 'opacity-80' : 'text-slate-400'}`}>{f.count(summary).toLocaleString('th-TH')}</span>}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div className="bg-white rounded-2xl border border-slate-200 p-4">
-        {loading ? (
-          <div className="text-slate-400 py-8 text-center"><Loader2 size={18} className="animate-spin inline" /> กำลังโหลด…</div>
-        ) : rows.length === 0 ? (
-          <p className="text-sm text-slate-400 py-8 text-center">
-            {total === 0 ? 'ยังไม่มีข้อเสนอ — กด “โหลดข้อเสนอชื่อ” ด้านบน' : 'ไม่มีรายการในตัวกรองนี้'}
-          </p>
-        ) : (
-          <div className="divide-y divide-slate-100 max-h-[64vh] overflow-auto">
-            {rows.map((r) => (
-              <ProposalRow key={r.sku} row={r} groupLabel={groupLabel} onDecided={afterDecide} onZoom={setZoom} />
-            ))}
-          </div>
-        )}
-      </div>
-      {zoom && <Lightbox photoSku={zoom} onClose={() => setZoom(null)} />}
-    </div>
-  );
-}
-
-function ProposalRow({
-  row, groupLabel, onDecided, onZoom,
-}: {
-  row: NameProposalRow;
-  groupLabel: (g: string | null, sub: string | null) => { text: string; muted: boolean };
-  onDecided: (r: NameProposalRow) => void;
-  onZoom: (photoSku: string) => void;
-}) {
-  const proposed = (row.proposedNameEn ?? '').trim();
-  const [text, setText] = useState(proposed);
-  const [open, setOpen] = useState(false);
-  const [busy, setBusy] = useState<'approve' | 'reject' | null>(null);
-  // Discard any abandoned in-place edit when the row's proposal/status changes. ProposalRow is
-  // reused across decides (same key=sku, no remount), so local text must not outlive the row
-  // state it belonged to — otherwise a rejected row's inline approve could write leftover text.
-  useEffect(() => { setText((row.proposedNameEn ?? '').trim()); setOpen(false); }, [row.sku, row.proposedNameEn, row.status]);
-  const gl = groupLabel(row.catalogGroup, row.catalogSubgroup);
-  const flagged = row.needsReview && row.status === 'pending';
-  const editable = row.status === 'pending' || open;
-  const liveDiffers = proposed !== row.nameEn.trim();
-
-  async function decide(action: 'approve' | 'reject') {
-    setBusy(action);
-    try {
-      // Only send edited text when the editor is actually visible (editable). An inline approve on
-      // a closed approved/rejected row approves the STORED proposal, never leftover local text.
-      const nameEn = action === 'approve' && editable ? text.trim() : undefined;
-      const { product } = await decideProposal(row.sku, action, nameEn);
-      onDecided(product);
-      setOpen(false);
-    } catch { /* leave the row as-is on failure */ } finally { setBusy(null); }
-  }
-  function startEdit() { setText(proposed); setOpen(true); }
-
-  return (
-    <div className={`py-2.5 ${flagged ? 'bg-amber-50/60 -mx-4 px-4' : ''}`}>
-      <div className="flex items-start gap-2.5">
-        {row.photoSku ? (
-          <button type="button" onClick={() => onZoom(row.photoSku!)} title="คลิกเพื่อขยายรูป" className="shrink-0 cursor-zoom-in rounded hover:ring-2 hover:ring-indigo-300">
-            <Thumb photoSku={row.photoSku} size={38} />
-          </button>
-        ) : (
-          <Thumb photoSku={null} size={38} />
-        )}
-        <div className="min-w-0 flex-1">
-          {editable ? (
-            <>
-              {liveDiffers && <div className="text-[13px] text-slate-400 line-through truncate">{row.nameEn || '—'}</div>}
-              <input
-                value={text}
-                onChange={(e) => setText(e.target.value)}
-                className="w-full text-sm font-semibold text-slate-800 bg-transparent border-b border-dashed border-slate-300 focus:border-indigo-500 focus:outline-none py-0.5"
-              />
-            </>
-          ) : (
-            <>
-              <div className={`text-sm truncate ${row.status === 'approved' ? 'font-semibold text-slate-800' : 'text-slate-600'}`}>
-                {row.nameEn || '—'}
-              </div>
-              {row.status === 'rejected' && liveDiffers && (
-                <div className="text-[11px] text-slate-400 truncate">เสนอ: {proposed}</div>
-              )}
-            </>
-          )}
-          <div className="text-[10px] text-slate-400 font-mono mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
-            {row.alias && <span className="text-indigo-600 font-semibold">{row.alias}</span>}
-            <span>{flatSku(row.sku)}</span>
-            <span className={gl.muted ? 'text-amber-600' : 'text-slate-500'}>· {gl.text}</span>
-            {flagged && <span className="font-sans not-italic text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded font-semibold">⚠ ต้องตรวจสอบ</span>}
-          </div>
-          {row.nameTh && <div className="text-[11px] text-slate-400 truncate mt-0.5">{row.nameTh}</div>}
-          {row.expressName && (
-            <div className="text-[11px] text-sky-800 truncate mt-0.5" title="ชื่อตามระบบ Express (อ้างอิง)">
-              <span className="text-[9px] font-bold uppercase tracking-wide bg-sky-100 text-sky-700 rounded px-1 py-px mr-1">Express</span>
-              {row.expressName}
-            </div>
-          )}
-        </div>
-        <StockPill stock={row.stock} reorderPoint={row.reorderPoint} />
-        <div className="shrink-0 flex items-center gap-1.5">
-          {row.status === 'pending' && (
-            <>
-              <button onClick={() => decide('approve')} disabled={busy !== null}
-                className="px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium flex items-center gap-1 disabled:opacity-50">
-                {busy === 'approve' ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} อนุมัติ
-              </button>
-              <button onClick={() => decide('reject')} disabled={busy !== null}
-                className="px-2.5 py-1.5 rounded-lg border border-slate-300 text-slate-500 hover:bg-slate-50 text-xs flex items-center gap-1 disabled:opacity-50">
-                {busy === 'reject' ? <Loader2 size={13} className="animate-spin" /> : <X size={13} />} ไม่ใช้
-              </button>
-            </>
-          )}
-          {row.status === 'approved' && (open ? (
-            <>
-              <button onClick={() => decide('approve')} disabled={busy !== null}
-                className="px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium flex items-center gap-1 disabled:opacity-50">
-                {busy === 'approve' ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} บันทึก
-              </button>
-              <button onClick={() => { setOpen(false); setText(proposed); }} className="px-2 py-1.5 text-xs text-slate-400 hover:text-slate-600">ยกเลิก</button>
-            </>
-          ) : (
-            <>
-              <span className="text-emerald-600 text-xs font-medium flex items-center gap-1"><Check size={13} /> อนุมัติแล้ว</span>
-              <button onClick={startEdit} className="text-slate-400 hover:text-indigo-600 p-1" title="แก้ไขชื่อ"><Pencil size={13} /></button>
-            </>
-          ))}
-          {row.status === 'rejected' && !open && (
-            <>
-              <span className="text-slate-400 text-xs">ไม่ใช้แล้ว</span>
-              <button onClick={() => decide('approve')} disabled={busy !== null} className="text-xs text-indigo-600 hover:underline">อนุมัติ</button>
-              <button onClick={startEdit} className="text-slate-400 hover:text-indigo-600 p-1" title="แก้ไขชื่อ"><Pencil size={13} /></button>
-            </>
-          )}
-          {row.status === 'rejected' && open && (
-            <>
-              <button onClick={() => decide('approve')} disabled={busy !== null}
-                className="px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium flex items-center gap-1 disabled:opacity-50">
-                {busy === 'approve' ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} บันทึก
-              </button>
-              <button onClick={() => { setOpen(false); setText(proposed); }} className="px-2 py-1.5 text-xs text-slate-400 hover:text-slate-600">ยกเลิก</button>
-            </>
-          )}
-        </div>
-      </div>
     </div>
   );
 }
