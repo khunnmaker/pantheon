@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { Category } from '../lib/api';
 
 // Groups a `group`-bearing list into buckets in FIRST-APPEARANCE order. Callers pass
@@ -74,6 +74,16 @@ export default function CategoryPicker({
   // Selected chip is scrolled out of view (different/collapsed group) — surface it as text.
   const showSelectedHint = !!selected && selected.group !== expandedGroup;
 
+  const chipsRef = useRef<HTMLDivElement>(null);
+  const skipScroll = useRef(true);
+  useEffect(() => {
+    if (skipScroll.current) {
+      skipScroll.current = false;
+      return;
+    }
+    if (expandedGroup) chipsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }, [expandedGroup]);
+
   return (
     <div className="space-y-2">
       <div className="flex flex-wrap gap-2">
@@ -91,7 +101,7 @@ export default function CategoryPicker({
         ))}
       </div>
       {visibleGroup && (
-        <div className="flex flex-wrap gap-2">
+        <div ref={chipsRef} className="flex flex-wrap gap-2">
           {visibleGroup.items.map((c) => (
             <button
               key={c.id}
