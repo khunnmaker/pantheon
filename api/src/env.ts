@@ -21,6 +21,10 @@ const schema = z.object({
   // fail closed and are never retried through the Prominent LINE client.
   APPDENT_LINE_CHANNEL_ACCESS_TOKEN: z.string().default(''),
   APPDENT_OWNER_LINE_USER_ID: z.string().default(''),
+  // Mali's separate staff-only LINE OA. Both credentials are optional so a
+  // deployment without the OA configured boots normally and ignores its webhook.
+  MALI_LINE_CHANNEL_ACCESS_TOKEN: z.string().default(''),
+  MALI_LINE_CHANNEL_SECRET: z.string().default(''),
   // Set to "1"/"true" to never actually push to LINE (testing/staging safety).
   LINE_DRY_RUN: z.string().default(''),
 
@@ -32,6 +36,8 @@ const schema = z.object({
   DRAFT_IMAGE_MAX: z.coerce.number().int().positive().default(3),
   DRAFT_IMAGE_MAX_BYTES: z.coerce.number().int().positive().default(3750000), // raw bytes; ×4/3 base64 ≈ Anthropic's 5MB/image wire limit
   KB_INJECT_ALL_MAX: z.coerce.number().int().positive().default(120),
+  MALI_DAILY_LIMIT: z.coerce.number().int().positive().default(30),
+  MALI_MIN_SIMILARITY: z.coerce.number().min(0).max(1).default(0.55),
   PICTURE_REFRESH_DAYS: z.coerce.number().int().positive().default(7), // staleness window: re-fetch a customer's LINE picture at most once per this many days
 
   WEB_ORIGIN: z.string().default('http://localhost:5173'),

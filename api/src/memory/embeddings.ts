@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { prisma } from '../db/prisma.js';
 import { env } from '../env.js';
 import { estimateCostUsd } from '../llm/pricing.js';
+import type { Role } from '../auth/jwt.js';
 
 // ── EmbeddingProvider (swappable, spec §3) ───────────────────────────────
 // Default: Voyage AI `voyage-3` → 1024-dim vectors (matches vector(1024)).
@@ -226,4 +227,82 @@ export async function findSimilarKb(
   } catch {
     return null;
   }
+}
+
+// ── Mali knowledge embeddings (separate table; never shared with Minerva) ──
+
+export interface RetrievedKnowledgeArticle {
+  id: string;
+  title: string;
+  body: string;
+  departmentId: string;
+  audience: string;
+  lineExposable: boolean;
+  similarity: number;
+}
+
+export function knowledgeArticleEmbeddingText(article: { title: string; body: string }): string {
+  return [article.title, article.body].filter(Boolean).join('\n');
+}
+
+async function storeKnowledgeEmbedding(articleId: string, vec: number[]): Promise<void> {
+  const lit = toVectorLiteral(vec);
+  await prisma.$executeRaw`
+    INSERT INTO knowledge_embedding (article_id, embedding)
+    VALUES (${articleId}, ${lit}::vector)
+    ON CONFLICT (article_id) DO UPDATE SET embedding = EXCLUDED.embedding`;
+}
+
+export async function deleteKnowledgeEmbedding(articleId: string): Promise<void> {
+  try {
+    await prisma.$executeRaw`DELETE FROM knowledge_embedding WHERE article_id = ${articleId}`;
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn('[mali] delete embedding failed for', articleId, err);
+  }
+}
+
+// Best-effort, matching Minerva's KB embedding behavior. On failure, remove a
+// possibly stale vector so edited content can never be retrieved by its old text.
+export async function embedKnowledgeArticle(articleId: string, text: string): Promise<void> {
+  if (!embeddingsAvailable()) return;
+  try {
+    const [vec] = await embed([text], 'document', undefined, { app: 'mali', feature: 'kb-embed' });
+    await storeKnowledgeEmbedding(articleId, vec);
+  } catch (err) {
+    await deleteKnowledgeEmbedding(articleId);
+    // eslint-disable-next-line no-console
+    console.warn('[mali] article embed failed for', articleId, err);
+  }
+}
+
+// Top-K published articles, with audience and LINE exposure enforced in SQL
+// before ranking/limiting. Restricted rows never enter application memory.
+export async function retrieveRelevantKnowledge(
+  queryVec: number[],
+  role: Role,
+  channel: 'line' | 'web',
+  k = 6,
+): Promise<RetrievedKnowledgeArticle[]> {
+  const lit = toVectorLiteral(queryVec);
+  const audienceClause = role === 'supervisor'
+    ? Prisma.sql`TRUE`
+    : role === 'gm' || role === 'central'
+      ? Prisma.sql`ka.audience IN ('everyone', 'gm_plus')`
+      : Prisma.sql`ka.audience = 'everyone'`;
+  const channelClause = channel === 'line'
+    ? Prisma.sql`ka."lineExposable" = true`
+    : Prisma.sql`TRUE`;
+
+  return prisma.$queryRaw<RetrievedKnowledgeArticle[]>`
+    SELECT ka.id, ka.title, ka.body, ka."departmentId",
+           ka.audience, ka."lineExposable",
+           1 - (ke.embedding <=> ${lit}::vector) AS similarity
+    FROM knowledge_embedding ke
+    JOIN "KnowledgeArticle" ka ON ka.id = ke.article_id
+    WHERE ka.status = 'published'
+      AND ${audienceClause}
+      AND ${channelClause}
+    ORDER BY ke.embedding <=> ${lit}::vector
+    LIMIT ${k}`;
 }

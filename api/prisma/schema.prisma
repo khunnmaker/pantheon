@@ -168,6 +168,44 @@ model Agent {
   apolloEvents             ApolloEvent[]
 }
 
+model KnowledgeArticle {
+  id               String   @id @default(cuid())
+  title            String
+  body             String
+  departmentId     String
+  audience         String
+  lineExposable    Boolean  @default(true)
+  status           String
+  source           String
+  authorAgentId    String
+  sourceQuestionId String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}
+
+model KnowledgeDepartment {
+  id               String   @id @default(cuid())
+  code             String   @unique
+  nameTh           String
+  answererAgentIds String[]
+}
+
+model KnowledgeQuestion {
+  id                   String   @id @default(cuid())
+  askerAgentId        String
+  channel             String
+  questionText        String
+  status              String
+  matchedArticleIds   String[]
+  topSimilarity       Float?
+  departmentId        String?
+  answererAgentId     String?
+  humanAnswer         String?
+  distilledArticleId String?
+  askedAt             DateTime @default(now())
+  answeredAt          DateTime?
+}
+
 // ─── Apollo: employee work management ──────────────────────────────────────
 
 model ApolloProject {
