@@ -99,4 +99,14 @@ describe('syncStaff role seeding', () => {
     expect(emails).not.toContain('mail@prominent.local');
     expect(mocks.deleteMany).not.toHaveBeenCalled();
   });
+
+  it('grants Mail (Central Office) juno access without widening win or poopae (2026-07-21)', () => {
+    const mail = EMPLOYEES.find((e) => e.slug === 'mail');
+    expect(mail?.apps).toContain('juno');
+    expect(mail?.role).toBe('central');
+    for (const slug of ['win', 'poopae']) {
+      const employee = EMPLOYEES.find((e) => e.slug === slug);
+      expect(employee?.apps).not.toContain('juno');
+    }
+  });
 });

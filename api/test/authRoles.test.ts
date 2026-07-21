@@ -43,6 +43,11 @@ describe('unified auth roles', () => {
     expect(auth.hasAppAccess(agent('central', ['apollo']), 'juno')).toBe(false);
   });
 
+  it('admits a central account to juno ONLY once granted (Mail, 2026-07-21) — the role stays employee-equivalent, not widened', () => {
+    expect(auth.hasAppAccess(agent('central', ['minerva', 'ceres', 'apollo']), 'juno')).toBe(false);
+    expect(auth.hasAppAccess(agent('central', ['minerva', 'ceres', 'apollo', 'juno']), 'juno')).toBe(true);
+  });
+
   it('keeps bearer, session, and OA-sync scopes separate', () => {
     const bearer = auth.signToken(agent('supervisor'));
     const session = auth.signSessionToken(agent('supervisor'), 'manager');

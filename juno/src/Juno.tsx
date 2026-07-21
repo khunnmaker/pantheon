@@ -161,10 +161,19 @@ function MethodCell({ p }: { p: Payment }) {
   return <div className="max-w-[110px] truncate" title={p.bank}>{p.bank}</div>;
 }
 
+// Mail (Central Office, per-person) rides the SAME bills-only scope as gm — mirrors the
+// server's BILL_ISSUER_EMAILS in api/src/routes/juno.ts exactly. Keyed on email (not role:
+// her role is 'central', not 'gm') so a future 4th bill issuer is a one-line add in both places.
+const BILL_ISSUER_EMAILS = new Set(['mail@prominent.local']);
+
 export default function Juno({ agent, onLogout }: { agent: Agent; onLogout: () => void }) {
   // Owner 2026-07-15: employees (FIN) see the บิลมือ tab READ-ONLY — ledger + print, no
   // issue/edit/void (server already 403s their bill mutations; buttons hidden in Bills.tsx).
-  const scope = agent.role === 'supervisor' ? 'full' : agent.role === 'gm' ? 'billsOnly' : 'readBills';
+  const scope = agent.role === 'supervisor'
+    ? 'full'
+    : agent.role === 'gm' || BILL_ISSUER_EMAILS.has(agent.email)
+      ? 'billsOnly'
+      : 'readBills';
   // CEO-only actions (mirrors the server's supervisor gate in api/src/routes/juno.ts): reports,
   // CSV export, bank-file import, clearing a flag, and hard delete. gm never reaches these
   // views because its scope is billsOnly; employees retain the non-CEO finance controls.
