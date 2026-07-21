@@ -156,6 +156,77 @@ describe('Ceres v2 request submission and AI pre-screen', () => {
     expect(mocks.callClaude).not.toHaveBeenCalled();
   });
 
+  it('creates an advance below the AI floor and tags the skip reason "advance", not "below_floor"', async () => {
+    const request = await createStaffRequest({
+      requestType: 'advance', entity: 'PROM', categoryGroups: ['Operations'], amount: '100.00', reason: '',
+    }, {
+      id: 'staff-1', email: 'staff@example.test', name: 'Staff', role: 'staff', apps: ['ceres'], authVersion: 0,
+    });
+
+    expect(request).toEqual(expect.objectContaining({ aiScreenStatus: 'clear' }));
+    expect(mocks.createEvent).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        kind: 'submitted',
+        payload: expect.objectContaining({ ai: 'skipped_by_policy', policyReason: 'advance' }),
+      }),
+    });
+    expect(mocks.createReview).not.toHaveBeenCalled();
+    expect(mocks.updateRequests).not.toHaveBeenCalled();
+    expect(mocks.callClaude).not.toHaveBeenCalled();
+  });
+
+  it('skips the AI screen for a ฿499 reimbursement below the ฿500 floor, regardless of type', async () => {
+    mocks.findMedia.mockResolvedValue({
+      id: 'receipt-1', purpose: 'reimbursement_receipt', sha256: 'receipt-hash',
+      uploadedById: 'staff-1', uploadedByName: 'Staff', createdAt: new Date(),
+    });
+
+    const request = await createStaffRequest({
+      requestType: 'reimbursement', entity: 'PROM', category: 'general', amount: '499.00', reason: 'taxi',
+      requestPhotoUploadId: 'receipt-1',
+    }, {
+      id: 'staff-1', email: 'staff@example.test', name: 'Staff', role: 'staff', apps: ['ceres'], authVersion: 0,
+    });
+
+    expect(request).toEqual(expect.objectContaining({ approvalStatus: 'pending_nee', aiScreenStatus: 'clear' }));
+    expect(mocks.createRequest).toHaveBeenCalledWith({
+      data: expect.objectContaining({ requestType: 'reimbursement', amount: '499.00', aiScreenStatus: 'clear' }),
+    });
+    expect(mocks.createEvent).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        kind: 'submitted',
+        payload: expect.objectContaining({ ai: 'skipped_by_policy', policyReason: 'below_floor' }),
+      }),
+    });
+    // Never touches ai_review_pending: no AI review row, no verdict-apply update, no LLM call.
+    expect(mocks.createReview).not.toHaveBeenCalled();
+    expect(mocks.updateRequests).not.toHaveBeenCalled();
+    expect(mocks.callClaude).not.toHaveBeenCalled();
+  });
+
+  it('still screens a ฿500.00 reimbursement (floor is strictly-less-than, not inclusive)', async () => {
+    mocks.findMedia.mockResolvedValue({
+      id: 'receipt-1', purpose: 'reimbursement_receipt', sha256: 'receipt-hash',
+      uploadedById: 'staff-1', uploadedByName: 'Staff', createdAt: new Date(),
+    });
+    mocks.llmAvailable.mockReturnValue(false);
+
+    await createStaffRequest({
+      requestType: 'reimbursement', entity: 'PROM', category: 'general', amount: '500.00', reason: 'taxi',
+      requestPhotoUploadId: 'receipt-1',
+    }, {
+      id: 'staff-1', email: 'staff@example.test', name: 'Staff', role: 'staff', apps: ['ceres'], authVersion: 0,
+    });
+
+    // Enters the normal pre-screen path at creation time, same as any other reimbursement
+    // with no LLM key configured: pending → fail-closed escalate via applyAIResult.
+    expect(mocks.createRequest).toHaveBeenCalledWith({
+      data: expect.objectContaining({ requestType: 'reimbursement', amount: '500.00', aiScreenStatus: 'pending' }),
+    });
+    expect(mocks.createReview).toHaveBeenCalled();
+    expect(mocks.updateRequests).toHaveBeenCalled();
+  });
+
   it('accepts a newly added active category name', async () => {
     mocks.findCategory.mockResolvedValue({
       name: 'ค่าอาหารและเครื่องดื่ม', active: true, ceiling: '',
@@ -225,7 +296,9 @@ describe('Ceres v2 request submission and AI pre-screen', () => {
     });
     mocks.llmAvailable.mockReturnValue(false);
     await createStaffRequest({
-      requestType: 'reimbursement', entity: 'PROM', category: 'general', amount: '100.00', reason: 'taxi',
+      // Amount is deliberately above the ฿500 AI-skip floor so this still exercises the
+      // normal pre-screen path (see the floor-specific tests above for the <฿500 behavior).
+      requestType: 'reimbursement', entity: 'PROM', category: 'general', amount: '600.00', reason: 'taxi',
       requestPhotoUploadId: 'receipt-1',
     }, {
       id: 'staff-1', email: 'staff@example.test', name: 'Staff', role: 'staff', apps: ['ceres'], authVersion: 0,
