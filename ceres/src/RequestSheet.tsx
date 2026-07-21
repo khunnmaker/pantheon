@@ -8,7 +8,6 @@ import {
   ChevronLeft,
   Wallet,
   Receipt,
-  ShoppingCart,
   ImageOff,
   Image as ImageIcon,
 } from 'lucide-react';
@@ -22,6 +21,7 @@ import {
   type OcrResult,
   type DuplicateReceipt,
 } from './lib/api';
+import { REQUEST_TYPE_LABEL, PAYER_CHOICE_LABEL, type PayerChoice } from './lib/requestLabels';
 import { useMediaUrl } from './lib/media';
 import { downscaleImage } from './lib/image';
 import { useCeres } from './lib/bootstrapContext';
@@ -29,13 +29,18 @@ import CategoryPicker, { groupByCategoryGroup } from './components/CategoryPicke
 
 const AMOUNT_RE = /^\d+(\.\d{1,2})?$/;
 
-const TYPE_META: Record<V2RequestType, { label: string; sub: string; icon: React.ReactNode }> = {
+// Front-door merge (owner decision, 2026-07-21): the type chooser only offers two doors —
+// เบิกล่วงหน้า (advance, unchanged) and ขอเบิก (which then asks the REQUIRED payer toggle
+// below to resolve to the actual backend type: reimbursement or purchase). 'khobik' is a
+// front-end-only concept — it never reaches the wire; see resolvedType below.
+type FrontDoorType = 'advance' | 'khobik';
+
+const FRONT_DOOR_META: Record<FrontDoorType, { label: string; sub: string; icon: React.ReactNode }> = {
   advance: { label: 'เบิกล่วงหน้า', sub: 'รับเงินไปใช้ล่วงหน้า', icon: <Wallet size={26} /> },
-  reimbursement: { label: 'สำรองจ่าย-ขอคืน', sub: 'จ่ายไปก่อน แนบใบเสร็จขอคืนเงิน', icon: <Receipt size={26} /> },
-  purchase: { label: 'ขอให้ซื้อ', sub: 'ให้บริษัทช่วยซื้อของให้', icon: <ShoppingCart size={26} /> },
+  khobik: { label: 'ขอเบิก', sub: 'จ่ายเองแล้วขอคืน หรือให้บริษัทจ่ายให้ก่อน', icon: <Receipt size={26} /> },
 };
 
-function purposeFor(type: V2RequestType): MediaPurpose {
+function purposeFor(type: V2RequestType | null): MediaPurpose {
   return type === 'reimbursement' ? 'reimbursement_receipt' : 'request_photo';
 }
 
@@ -71,7 +76,25 @@ export default function RequestSheet({
   const groupOptions = groupByCategoryGroup(categories).map((g) => g.group);
 
   const [step, setStep] = useState<'type' | 'form'>(editing || prefill ? 'form' : 'type');
-  const [requestType, setRequestType] = useState<V2RequestType>(editing?.requestType ?? (prefill ? 'purchase' : 'advance'));
+  // Front-door merge (2026-07-21) — frontDoor picks which door was tapped; payerChoice only
+  // matters when frontDoor is 'khobik' and resolves the actual backend type. Contextual
+  // inherits (owner-approved exception to "no lazy defaults"): editing an existing
+  // reimbursement/purchase pre-sets payerChoice from the stored type; a template prefill
+  // pre-sets the purchase side — both land straight on 'form' with the toggle already
+  // resolved (but still changeable). A brand-new ขอเบิก request starts with NO payerChoice —
+  // the toggle is a required explicit tap.
+  const [frontDoor, setFrontDoor] = useState<FrontDoorType>(
+    editing ? (editing.requestType === 'advance' ? 'advance' : 'khobik') : prefill ? 'khobik' : 'advance',
+  );
+  const [payerChoice, setPayerChoice] = useState<PayerChoice | null>(() => {
+    if (editing && editing.requestType !== 'advance') return editing.requestType;
+    if (prefill) return 'purchase';
+    return null;
+  });
+  const [payerError, setPayerError] = useState('');
+  // The actual backend type once resolved — null while ขอเบิก is chosen but the payer
+  // toggle hasn't been tapped yet (blocks submit via validate()'s invalid_payer check).
+  const requestType: V2RequestType | null = frontDoor === 'advance' ? 'advance' : payerChoice;
 
   // NO lazy defaults (owner rule, 2026-07-18) — entity/category start empty for a NEW
   // request; only an edit of an existing request pre-fills its own prior values. A
@@ -120,13 +143,16 @@ export default function RequestSheet({
   const galleryInputRef = useRef<HTMLInputElement>(null);
 
   const selectedCategory = categories.find((c) => c.id === categoryId) || null;
-  const meta = TYPE_META[requestType];
+  // Header/title label — generic "ขอเบิก" until the payer toggle resolves it, then the
+  // specific ขอเบิก · จ่ายเองแล้ว / ขอเบิก · ให้บริษัทจ่าย wording (shared helper, same text
+  // every other screen uses for this request's type).
+  const headerLabel = requestType ? REQUEST_TYPE_LABEL[requestType] : 'ขอเบิก';
 
   const mountedRef = useRef(false);
   useEffect(() => {
-    // Switching type after a photo was already staged for the OLD purpose clears it —
-    // the server validates purpose against requestType, so a stale upload would fail.
-    // Skip the very first run (mount) so an editing request's existing photo survives.
+    // Switching the resolved type after a photo was already staged for the OLD purpose
+    // clears it — the server validates purpose against requestType, so a stale upload would
+    // fail. Skip the very first run (mount) so an editing request's existing photo survives.
     if (mountedRef.current) {
       setPhotoUploadId(null);
       setLocalPreview(null);
@@ -170,6 +196,9 @@ export default function RequestSheet({
 
   function validate(): string {
     if (!AMOUNT_RE.test(amount.trim()) || Number(amount) <= 0) return 'invalid_amount';
+    // ขอเบิก's payer toggle is required before anything else about the resolved type can be
+    // validated — mirrors the old up-front type step, just moved into the form.
+    if (frontDoor === 'khobik' && !payerChoice) return 'invalid_payer';
     // Reason is optional for advance only — the precise detail comes at liquidation.
     if (requestType !== 'advance' && !reason.trim()) return 'missing_reason';
     if (!entity) return 'invalid_entity';
@@ -189,27 +218,32 @@ export default function RequestSheet({
       setSubmitError(
         problem === 'invalid_amount'
           ? 'กรอกจำนวนเงินให้ถูกต้อง (มากกว่า 0)'
-          : problem === 'missing_reason'
-            ? 'กรุณากรอกเหตุผล'
-            : problem === 'invalid_entity'
-              ? 'กรุณาเลือกบริษัท'
-              : problem === 'invalid_category'
-                ? 'กรุณาเลือกหมวดหมู่'
-                : problem === 'invalid_group'
-                  ? 'เลือกกลุ่มอย่างน้อย 1 กลุ่ม'
-                  : 'กรุณาถ่ายรูปใบเสร็จก่อนส่งคำขอ',
+          : problem === 'invalid_payer'
+            ? 'กรุณาเลือกวิธีจ่ายเงิน'
+            : problem === 'missing_reason'
+              ? 'กรุณากรอกเหตุผล'
+              : problem === 'invalid_entity'
+                ? 'กรุณาเลือกบริษัท'
+                : problem === 'invalid_category'
+                  ? 'กรุณาเลือกหมวดหมู่'
+                  : problem === 'invalid_group'
+                    ? 'เลือกกลุ่มอย่างน้อย 1 กลุ่ม'
+                    : 'กรุณาถ่ายรูปใบเสร็จก่อนส่งคำขอ',
       );
       if (problem === 'invalid_amount') setAmountError('กรอกจำนวนเงินให้ถูกต้อง');
+      if (problem === 'invalid_payer') setPayerError('กรุณาเลือกวิธีจ่ายเงิน');
       if (problem === 'invalid_group') setGroupsError('เลือกกลุ่มอย่างน้อย 1 กลุ่ม');
       return;
     }
     if (requestType !== 'advance' && !selectedCategory) return;
+    // Guaranteed non-null past validate() — either 'advance', or payerChoice (checked above).
+    const finalType = requestType!;
 
     setSubmitBusy(true);
     try {
-      const body = requestType === 'advance'
+      const body = finalType === 'advance'
         ? {
-            requestType,
+            requestType: finalType,
             entity,
             categoryGroups,
             amount: amount.trim(),
@@ -217,7 +251,7 @@ export default function RequestSheet({
             requestPhotoUploadId: photoUploadId,
           }
         : {
-            requestType,
+            requestType: finalType,
             entity,
             category: selectedCategory!.name,
             amount: amount.trim(),
@@ -254,7 +288,7 @@ export default function RequestSheet({
               </button>
             )}
             <div className="font-semibold text-base">
-              {step === 'type' ? 'ส่งคำขอเงิน' : editing ? `แก้ไข: ${meta.label}` : meta.label}
+              {step === 'type' ? 'ส่งคำขอเงิน' : editing ? `แก้ไข: ${headerLabel}` : headerLabel}
             </div>
           </div>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600 p-1">
@@ -264,21 +298,25 @@ export default function RequestSheet({
 
         {step === 'type' ? (
           <div className="p-4 space-y-2.5">
-            {(Object.keys(TYPE_META) as V2RequestType[]).map((t) => (
+            {(Object.keys(FRONT_DOOR_META) as FrontDoorType[]).map((t) => (
               <button
                 key={t}
                 onClick={() => {
-                  setRequestType(t);
+                  setFrontDoor(t);
+                  // Fresh required tap every time a door is (re)picked — no carrying over a
+                  // previous session's payer choice (owner "no lazy defaults" rule).
+                  setPayerChoice(null);
+                  setPayerError('');
                   setStep('form');
                 }}
                 className="w-full min-h-[76px] rounded-2xl border-2 border-slate-200 hover:border-amber-400 hover:bg-amber-50 flex items-center gap-3 px-4 py-3 text-left transition-colors"
               >
                 <div className="shrink-0 w-11 h-11 rounded-full bg-amber-100 text-amber-700 flex items-center justify-center">
-                  {TYPE_META[t].icon}
+                  {FRONT_DOOR_META[t].icon}
                 </div>
                 <div className="min-w-0">
-                  <div className="font-bold text-base">{TYPE_META[t].label}</div>
-                  <div className="text-xs text-slate-500">{TYPE_META[t].sub}</div>
+                  <div className="font-bold text-base">{FRONT_DOOR_META[t].label}</div>
+                  <div className="text-xs text-slate-500">{FRONT_DOOR_META[t].sub}</div>
                 </div>
               </button>
             ))}
@@ -286,6 +324,40 @@ export default function RequestSheet({
         ) : (
           <>
             <div className="p-4 space-y-4">
+              {/* Payer toggle — only for ขอเบิก, REQUIRED, NO pre-selection on a brand-new
+                  request (contextual inherits only: editing pre-sets from the stored type,
+                  a template prefill pre-sets the purchase side — both still changeable). */}
+              {frontDoor === 'khobik' && (
+                <div>
+                  <div className="text-xs font-semibold text-slate-500 mb-1.5">ใครจ่ายเงิน</div>
+                  <div className="space-y-2">
+                    {(Object.keys(PAYER_CHOICE_LABEL) as PayerChoice[]).map((choice) => (
+                      <button
+                        key={choice}
+                        type="button"
+                        onClick={() => {
+                          setPayerChoice(choice);
+                          setPayerError('');
+                        }}
+                        className={`w-full min-h-[52px] rounded-xl border-2 text-left px-4 py-3 text-sm font-semibold transition-colors ${
+                          payerChoice === choice
+                            ? 'bg-amber-600 border-amber-600 text-white'
+                            : 'border-slate-300 text-slate-700 hover:bg-slate-50'
+                        }`}
+                      >
+                        {PAYER_CHOICE_LABEL[choice]}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="text-xs text-slate-400 mt-1.5">เลือกให้ตรงก่อนกรอกรายละเอียดอื่น</div>
+                  {payerError && (
+                    <div className="flex items-center gap-1 text-rose-600 text-xs mt-1">
+                      <AlertTriangle size={12} /> {payerError}
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* Amount — primary input #1 */}
               <div>
                 <div className="text-xs font-semibold text-slate-500 mb-1.5">จำนวนเงิน</div>

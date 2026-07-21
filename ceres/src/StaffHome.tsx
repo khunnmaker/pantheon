@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import {
   AlertTriangle,
   Bell,
+  ChevronRight,
   Crown,
   Home,
   ListChecks,
@@ -57,11 +58,18 @@ export default function StaffHome({
   openRequestOnMount = false,
   onOpenMine,
   onOpenSettings,
+  onSubmittedForApproval,
 }: {
   embeddedView?: 'home' | 'mine';
   openRequestOnMount?: boolean;
   onOpenMine?: () => void;
   onOpenSettings?: () => void;
+  // GM submit→approve bridge (2026-07-21) — present ONLY when this StaffHome is the GM's own
+  // embedded ของฉัน tab (Md.tsx's 'my-submit' view, gm role only — CEO-authored requests route
+  // to the GM's queue, not the CEO's own, so the jump target wouldn't be theirs). Called with
+  // the new request's id right after a fresh (non-edit) submit succeeds; Md.tsx wires this to
+  // its existing goToApprovalWithPrefill grammar to jump to อนุมัติ with the card highlighted.
+  onSubmittedForApproval?: (requestId: string) => void;
 } = {}) {
   const { bootstrap, agent, onLogout } = useCeres();
   const viewKeys: View[] = ['home', 'mine', 'settings'];
@@ -73,6 +81,10 @@ export default function StaffHome({
   const [requestReloadKey, setRequestReloadKey] = useState(0);
   const [detailRequestId, setDetailRequestId] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState('');
+  // Only set right after a fresh GM self-submit (see onSubmittedForApproval above) — holds
+  // the button that jumps straight to the อนุมัติ queue. Not auto-dismissed with the message
+  // (see the effect below) so it stays tappable, not just a flash.
+  const [successAction, setSuccessAction] = useState<{ label: string; onClick: () => void } | null>(null);
   const [search, setSearch] = useState('');
 
   // ── หน้าแรก data (2026-07-19 redesign) ────────────────────────────────────────────────
@@ -85,10 +97,12 @@ export default function StaffHome({
   const [expenseSheetFor, setExpenseSheetFor] = useState<StaffRequest | null>(null);
 
   useEffect(() => {
-    if (!successMsg) return;
+    // Don't auto-dismiss while a "ไปอนุมัติเลย" action is attached — the GM needs time to
+    // read it and tap, not have it vanish on the same 2.5s timer as a plain confirmation.
+    if (!successMsg || successAction) return;
     const t = setTimeout(() => setSuccessMsg(''), 2500);
     return () => clearTimeout(t);
-  }, [successMsg]);
+  }, [successMsg, successAction]);
 
   function openNewRequest() {
     setEditingRequest(null);
@@ -193,8 +207,20 @@ export default function StaffHome({
 
       <main className={`max-w-md mx-auto ${embeddedView ? '' : 'p-4'}`}>
         {successMsg && (
-          <div className="mb-3 px-3 py-2 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-700 text-sm">
-            {successMsg}
+          <div className="mb-3 px-3 py-2 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-700 text-sm flex items-center justify-between gap-2">
+            <span>{successMsg}</span>
+            {successAction && (
+              <button
+                onClick={() => {
+                  successAction.onClick();
+                  setSuccessMsg('');
+                  setSuccessAction(null);
+                }}
+                className="shrink-0 flex items-center gap-1 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold"
+              >
+                {successAction.label} <ChevronRight size={13} />
+              </button>
+            )}
           </div>
         )}
 
@@ -310,8 +336,20 @@ export default function StaffHome({
         <RequestSheet
           editing={editingRequest}
           onClose={() => setRequestSheetOpen(false)}
-          onSaved={() => {
-            setSuccessMsg(editingRequest ? 'แก้ไขคำขอเรียบร้อย' : 'ส่งคำขอแล้ว กำลังรอตรวจ');
+          onSaved={(request) => {
+            if (editingRequest) {
+              setSuccessMsg('แก้ไขคำขอเรียบร้อย');
+              setSuccessAction(null);
+            } else {
+              setSuccessMsg('ส่งคำขอแล้ว กำลังรอตรวจ');
+              // Bridge only on a fresh submit (never an edit) — see onSubmittedForApproval's
+              // own doc comment for why this prop only exists on the GM's own embedded tab.
+              setSuccessAction(
+                onSubmittedForApproval
+                  ? { label: 'ไปอนุมัติเลย', onClick: () => onSubmittedForApproval(request.id) }
+                  : null,
+              );
+            }
             setRequestReloadKey((key) => key + 1);
           }}
         />

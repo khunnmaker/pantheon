@@ -24,6 +24,7 @@ import {
   type CeoOverview as CeoOverviewData,
   type StaffRequest,
 } from './lib/api';
+import { REQUEST_TYPE_LABEL } from './lib/requestLabels';
 import { MediaThumb } from './lib/media';
 import { PayPanel } from './PayPanel';
 
@@ -49,12 +50,6 @@ const REQUEST_STATUS_LABEL: Record<string, string> = {
   pending_ceo: 'รอ CEO',
   approved: 'อนุมัติแล้ว',
   void: 'ยกเลิก',
-};
-
-const V2_TYPE_LABEL: Record<StaffRequest['requestType'], string> = {
-  advance: 'เบิกล่วงหน้า',
-  reimbursement: 'สำรองจ่าย-ขอคืน',
-  purchase: 'ขอให้ซื้อ',
 };
 
 export default function CeoOverview({
@@ -261,7 +256,7 @@ function EscalationCard({
             <span className="font-semibold text-sm">{r.requestedByName}</span>
             <span className="font-bold">{baht(r.amountNum)}</span>
           </div>
-          <div className="text-xs text-slate-500">{V2_TYPE_LABEL[r.requestType]} · GM อนุมัติแล้ว</div>
+          <div className="text-xs text-slate-500">{REQUEST_TYPE_LABEL[r.requestType]} · GM อนุมัติแล้ว</div>
           <div className="flex flex-wrap gap-1.5 mt-1">
             <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 text-xs">{r.entity}</span>
             <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 text-xs">{r.category}</span>
@@ -360,7 +355,7 @@ function EscalationCard({
 // ภาพรวม tab render the identical daily outflow-by-lane/type markup. Title is overridable
 // because the desktop screen's date picker can point at a day other than today.
 const OUTFLOW_LANE_LABEL: Record<string, string> = { cash: 'เงินสด', transfer: 'โอน' };
-const OUTFLOW_TYPE_LABEL: Record<string, string> = { advance: 'เบิกล่วงหน้า', reimbursement: 'สำรองจ่าย-ขอคืน', purchase: 'ขอให้ซื้อ', unknown: 'อื่นๆ' };
+const OUTFLOW_TYPE_LABEL: Record<string, string> = { ...REQUEST_TYPE_LABEL, unknown: 'อื่นๆ' };
 
 export function DailyOutflowSection({
   dailyOutflow,

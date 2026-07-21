@@ -306,6 +306,20 @@ function ManagementApp({ isCeo }: { isCeo: boolean }) {
     setView('my-submit');
   }
 
+  // GM submit→approve bridge (2026-07-21) — after a GM submits their own request from the
+  // embedded ของฉัน tab (StaffHome's onSubmittedForApproval, wired below), jump straight to
+  // อนุมัติ with that card highlighted. Same grammar as goToApprovalWithPrefill's legacy-queue
+  // jump, just targeting the v2 NeeApprovalQueue instead of MdApproval. Cleared on leaving
+  // 'approvals' so a later visit doesn't keep an old highlight around.
+  const [highlightApprovalId, setHighlightApprovalId] = useState<string | null>(null);
+  useEffect(() => {
+    if (activeView !== 'approvals') setHighlightApprovalId(null);
+  }, [activeView]);
+  function goToApprovalQueueWithRequest(requestId: string) {
+    setHighlightApprovalId(requestId);
+    setView('approvals');
+  }
+
   function openTemplateRequest(prefill: RequestSheetPrefill) {
     setTemplateRequestPrefill(prefill);
   }
@@ -469,9 +483,13 @@ function ManagementApp({ isCeo }: { isCeo: boolean }) {
         ))}
         {activeView === 'approvals' && !isCeo && (
           isDesktop ? (
-            <ApprovalsComposedView prefill={approvalPrefill} onConsumePrefill={() => setApprovalPrefill(null)} />
+            <ApprovalsComposedView
+              prefill={approvalPrefill}
+              onConsumePrefill={() => setApprovalPrefill(null)}
+              highlightRequestId={highlightApprovalId}
+            />
           ) : (
-            <NeeApprovalQueue />
+            <NeeApprovalQueue highlightRequestId={highlightApprovalId} />
           )
         )}
         {activeView === 'fulfillment' && !isCeo && <NeeFulfillmentQueue />}
@@ -496,6 +514,10 @@ function ManagementApp({ isCeo }: { isCeo: boolean }) {
             openRequestOnMount={autoOpenOwnRequest}
             onOpenMine={() => setView('my-requests')}
             onOpenSettings={() => setView('settings')}
+            // GM only — a CEO's own submitted requests route to the GM's queue (CEO is the
+            // final authority, not a jump target for their own request), so the bridge stays
+            // undefined for isCeo and StaffHome simply doesn't show the "ไปอนุมัติเลย" action.
+            onSubmittedForApproval={!isCeo ? goToApprovalQueueWithRequest : undefined}
           />
         )}
         {activeView === 'my-requests' && (
@@ -564,13 +586,15 @@ function NavButton({
 function ApprovalsComposedView({
   prefill,
   onConsumePrefill,
+  highlightRequestId,
 }: {
   prefill: ApprovalPrefill | null;
   onConsumePrefill: () => void;
+  highlightRequestId?: string | null;
 }) {
   return (
     <div className="space-y-6">
-      <NeeApprovalQueue />
+      <NeeApprovalQueue highlightRequestId={highlightRequestId} />
       <div className="pt-4 border-t border-slate-200">
         <div className="text-sm font-semibold text-slate-500 mb-2">ตรวจใบเสร็จค่าใช้จ่าย</div>
         <MdApproval prefill={prefill} onConsumePrefill={onConsumePrefill} />
