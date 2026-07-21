@@ -8,7 +8,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 // from mutable fixtures so the same harness covers both the business logic and access control.
 
 const mocks = vi.hoisted(() => {
-  const role = { value: 'employee' };
+  const role = { value: 'staff' };
   const email = { value: 'fin@example.test' };
   const authed = { value: true };
   const payment = {
@@ -91,7 +91,7 @@ const baseXsDoc = (overrides: Record<string, unknown> = {}) => ({
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mocks.role.value = 'employee';
+  mocks.role.value = 'staff';
   mocks.email.value = 'fin@example.test';
   mocks.authed.value = true;
   mocks.paymentBankMatch.findMany.mockResolvedValue([]);
@@ -408,7 +408,7 @@ describe('GET /api/juno/xs — the XS tab', () => {
     await app.close();
   });
 
-  it('FIN (employee) is allowed', async () => {
+  it('FIN (staff) is allowed', async () => {
     const app = await server();
     mocks.xsDoc.findMany.mockResolvedValueOnce([]);
     const res = await app.inject({ method: 'GET', url: '/api/juno/xs' });
