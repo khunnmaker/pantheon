@@ -49,6 +49,8 @@ export interface Message {
   attachmentRef: string | null;
   attachmentName: string | null; // original filename for received files
   aiCaption?: string | null; // AI-generated caption for an image attachment (names it in a quote snippet)
+  translatedText?: string | null; // AI Thai translation of a non-Thai customer text message
+  sourceLang?: string | null; // short lowercase language code detected for translatedText (e.g. "en")
   financeSentAt: string | null; // when a slip was forwarded to finance
   autoSent?: boolean;
   quotedMessageId?: string | null; // our Message.id this bubble quote-replies to (both directions)
@@ -64,6 +66,7 @@ export interface CustomerLite {
   category: string | null;
   stage: string | null;
   suggestedStage: string | null;
+  replyLang?: string | null; // short lowercase language code detected from the customer's last non-Thai message (null/absent = Thai or never detected)
   pictureUrl?: string | null; // LINE profile/group picture (fallback icon when absent/broken)
   firstSeen?: string;
   lastSeen: string;
@@ -301,6 +304,14 @@ export const addProductToDraft = (messageId: string, sku: string, role: 'main' |
 // Polish an agent's drafted reply (grammar/wording) without changing meaning/numbers.
 export const rewriteText = (text: string) =>
   authed<{ text: string; note: string | null }>('/api/rewrite', { method: 'POST', body: JSON.stringify({ text }) });
+
+// Translate a staff-written Thai reply into the customer's detected language
+// (Customer.replyLang). 400 { error: 'no_target_lang' } when the customer has none set.
+export const translateText = (text: string, customerId: string) =>
+  authed<{ text: string; note: string | null; lang: string }>('/api/translate', {
+    method: 'POST',
+    body: JSON.stringify({ text, customerId }),
+  });
 
 export interface ReplyResult {
   ok: boolean;

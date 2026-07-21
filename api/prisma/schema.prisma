@@ -53,6 +53,10 @@ model Customer {
   stage             String?
   // the AI's pending stage suggestion; staff accept → stage. null = none/already accepted
   suggestedStage    String?
+  // bilingual support: short lowercase language code (e.g. "en","zh","ja","my") the AI detected
+  // from the customer's last non-Thai message — set by translateInbound, read by the console's
+  // outbound 🌐 translate button. null = never detected a non-Thai message (or Thai-only).
+  replyLang         String?
   // "ตอบแล้ว" cutoff: messages at/before this are handled (e.g. answered on LINE OA
   // directly). The AI drafts only from messages AFTER it, and the chat is not "waiting".
   answeredThroughAt DateTime?
@@ -97,6 +101,11 @@ model Message {
   attachmentName   String?
   // Short AI-generated description used to make customer images meaningful in later history.
   aiCaption        String?
+  // Bilingual support (customer text messages only): AI translation of a non-Thai customer
+  // message into Thai for staff to read, + the short lowercase language code it detected
+  // (e.g. "en","zh","ja","my"). Both null when the message is Thai (or not yet translated).
+  translatedText   String?
+  sourceLang       String?
   // LINE quote-reply support. quoteToken = LINE's token to quote THIS message in a later
   // send (issued for inbound text/sticker/image/video and outbound text/image; never exposed to the client).
   // quotedMessageId

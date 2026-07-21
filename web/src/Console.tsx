@@ -4,10 +4,10 @@ import {
   Send, Check, CheckCircle2, RefreshCw, Brain, GraduationCap, Wand2, Pencil, AlertTriangle, Search,
   Download, Paperclip, Camera, Banknote, X, ChevronDown, ChevronUp, Crown, Pin, CornerUpLeft, Volume2, VolumeX,
   ExternalLink, Eye, ArrowLeft, Sparkles,
-  Eraser,
+  Eraser, Languages,
 } from 'lucide-react';
 import {
-  getQueue, getCustomers, getCustomer, searchCustomers, logout as logoutSuite, regenerateDraft, rewriteText, sendReply, setNickname, setCategory, setStage, STAGES,
+  getQueue, getCustomers, getCustomer, searchCustomers, logout as logoutSuite, regenerateDraft, rewriteText, translateText, sendReply, setNickname, setCategory, setStage, STAGES,
   pinCustomer, unpinCustomer,
   uploadAttachment, getLearned, getLearnedMetrics, promoteLearned, rejectLearned, flagLearned, resolveLearned, endSession, API_URL, flatSku, getToken,
   getFinanceAudits, resolveFinanceAudit, type FinanceAudit,
@@ -238,6 +238,18 @@ function MessageBody({ m }: { m: Message }) {
         </div>
       </div>
     );
+  // Inbound bilingual support: a Thai translation sits under a non-Thai customer text
+  // message so staff can read it without leaving the bubble (never sent to the customer).
+  if (m.translatedText) {
+    return (
+      <div>
+        <div>{m.text}</div>
+        <div className="mt-1.5 pt-1.5 border-t border-slate-200 text-[12.5px] text-slate-500">
+          🌐 {m.translatedText}
+        </div>
+      </div>
+    );
+  }
   return <>{m.text}</>;
 }
 
@@ -645,6 +657,11 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
   const [rewriting, setRewriting] = useState(false);
   const [nickEdit, setNickEdit] = useState<{ code: string; nickname: string } | null>(null);
   const [rewriteNote, setRewriteNote] = useState<string | null>(null);
+  const [translating, setTranslating] = useState(false);
+  // Staff-only "ต้นฉบับภาษาไทย" note: the composer text just before a 🌐 translate call
+  // overwrote it, so staff can still see what they originally wrote. Shared by both
+  // composers below (only one is ever visible at a time), same lifecycle as rewriteNote.
+  const [translateOriginal, setTranslateOriginal] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [searchResults, setSearchResults] = useState<CustomerLite[] | null>(null);
   const [pinnedIds, setPinnedIds] = useState<Set<string>>(new Set()); // this agent's pinned customer ids (private)
@@ -676,6 +693,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
   const [replyingTo, setReplyingTo] = useState<string | null>(null); // Message.id being LINE-quote-replied
   const [freeProducts, setFreeProducts] = useState<PendingProduct[]>([]); // catalog photos picked in the answered-state composer (no draft to attach to)
   const [freeRewriting, setFreeRewriting] = useState(false);
+  const [freeTranslating, setFreeTranslating] = useState(false);
   const [prodSearchOpen, setProdSearchOpen] = useState(false);
   const [prodSearchQ, setProdSearchQ] = useState('');
   const [prodSearchResults, setProdSearchResults] = useState<PendingProduct[]>([]);
@@ -722,6 +740,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
       setNeedsConfirm(false);
       setQrConfirmId(null);
       setRewriteNote(null);
+      setTranslateOriginal(null);
       // Preserve the staff's photo selection across reloads (their own ร่างใหม่ AND the
       // live draft:new socket push that follows): keep any selected SKU still present in
       // the new picker; only fall back to the AI's default pick when none survive (i.e.
@@ -867,6 +886,30 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
         setDetail((d) => (d ? { ...d, oaRead: payload.oaRead } : d));
       }
     };
+    // Live patch for the inbound bilingual translation (translateInbound, fired best-effort
+    // after ingest) — updates the bubble's 🌐 translation and the customer's detected
+    // language in place, without a full conversation reload.
+    const onMessageUpdate = (payload: {
+      customerId: string;
+      id: string;
+      translatedText?: string | null;
+      sourceLang?: string | null;
+      replyLang?: string | null;
+    }) => {
+      if (selectedRef.current !== payload.customerId) return;
+      setDetail((d) => {
+        if (!d) return d;
+        return {
+          ...d,
+          customer: payload.replyLang ? { ...d.customer, replyLang: payload.replyLang } : d.customer,
+          messages: d.messages.map((m) =>
+            m.id === payload.id
+              ? { ...m, translatedText: payload.translatedText ?? m.translatedText, sourceLang: payload.sourceLang ?? m.sourceLang }
+              : m,
+          ),
+        };
+      });
+    };
     const onConversation = (payload: { customerId: string; ended?: boolean; message?: Message }) => {
       refreshLists().catch(() => undefined);
       if (selectedRef.current !== payload.customerId) return;
@@ -887,6 +930,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
     };
     socket.on('connect_error', onConnectError);
     socket.on('message:new', onMessage);
+    socket.on('message:update', onMessageUpdate);
     socket.on('draft:new', onDraft);
     socket.on('draft:queued', onDraftQueued);
     socket.on('draft:cleared', onDraftCleared);
@@ -898,6 +942,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
     return () => {
       socket.off('connect_error', onConnectError);
       socket.off('message:new', onMessage);
+      socket.off('message:update', onMessageUpdate);
       socket.off('draft:new', onDraft);
       socket.off('draft:queued', onDraftQueued);
       socket.off('draft:cleared', onDraftCleared);
@@ -1071,6 +1116,29 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
     }
   }
 
+  // 🌐 button. Translates the composer text (staff's Thai) into the customer's detected
+  // language (Customer.replyLang) — staff still review + press อนุมัติ & ส่ง as usual.
+  async function translate() {
+    if (translating || sending || !editText.trim()) return;
+    const target = detail?.customer.replyLang;
+    if (!target || target === 'th') return;
+    setTranslating(true);
+    setError('');
+    try {
+      const original = editText.trim();
+      const res = await translateText(original, detail!.customer.id);
+      setEditText(res.text);
+      setTranslateOriginal(original); // staff-only note — the Thai text just replaced
+      setRewriteNote(res.note); // staff-only note — shown OUTSIDE the reply box
+      setNeedsConfirm(false); // text changed — re-check numbers on send
+      flashToast('แปลข้อความแล้ว — ตรวจทานก่อนส่ง');
+    } catch (e) {
+      setError('แปลข้อความไม่สำเร็จ: ' + (e as Error).message);
+    } finally {
+      setTranslating(false);
+    }
+  }
+
   const toggleProductSku = (sku: string) => {
     setSelectedProductSkus((prev) => (prev.includes(sku) ? prev.filter((s) => s !== sku) : [...prev, sku]));
     setSelectionDirty(true); // selection changed → next ✨ re-drafts about it
@@ -1214,6 +1282,29 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
       setError('เรียบเรียงใหม่ไม่สำเร็จ: ' + (e as Error).message);
     } finally {
       setFreeRewriting(false);
+    }
+  }
+
+  // 🌐 button for the already-answered composer: translate the free-text message into
+  // the customer's detected language (Customer.replyLang).
+  async function freeTranslate() {
+    if (freeTranslating || freeSending || !freeText.trim()) return;
+    const target = detail?.customer.replyLang;
+    if (!target || target === 'th') return;
+    setFreeTranslating(true);
+    setError('');
+    try {
+      const original = freeText.trim();
+      const res = await translateText(original, detail!.customer.id);
+      setFreeText(res.text);
+      setTranslateOriginal(original); // staff-only note — the Thai text just replaced
+      setRewriteNote(res.note); // staff-only note — shown OUTSIDE the reply box
+      setFreeNeedsConfirm(false); // text changed — re-check numbers on send
+      flashToast('แปลข้อความแล้ว — ตรวจทานก่อนส่ง');
+    } catch (e) {
+      setError('แปลข้อความไม่สำเร็จ: ' + (e as Error).message);
+    } finally {
+      setFreeTranslating(false);
     }
   }
 
@@ -1984,9 +2075,16 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                           <button type="button" onClick={() => void stopAutosend()} className="font-semibold underline hover:text-amber-950">ยกเลิก</button>
                         </div>
                       )}
+                      {translateOriginal && (
+                        <div className="text-xs text-slate-600 bg-slate-100 border border-slate-200 rounded-lg p-2 flex items-start gap-1.5">
+                          <Languages size={14} className="shrink-0 mt-0.5 text-slate-500" />
+                          <span className="flex-1"><span className="font-semibold">ต้นฉบับภาษาไทย</span> (ไม่ส่งให้ลูกค้า): {translateOriginal}</span>
+                          <button type="button" onClick={() => setTranslateOriginal(null)} className="text-slate-400 hover:text-rose-500 shrink-0"><X size={14} /></button>
+                        </div>
+                      )}
                       <textarea value={editText} onChange={(e) => {
                         if (detail?.autosendSchedule && e.target.value !== editText) void stopAutosend();
-                        setEditText(e.target.value); setNeedsConfirm(false); setRewriteNote(null);
+                        setEditText(e.target.value); setNeedsConfirm(false); setRewriteNote(null); setTranslateOriginal(null);
                       }} rows={4}
                         className="w-full flex-1 min-h-[120px] p-3 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-sky-400 resize-none" placeholder="พิมพ์/แก้คำตอบก่อนส่ง… (วางรูป Ctrl+V ได้)" />
                       {rewriteNote && (
@@ -2005,13 +2103,15 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                           <button type="button" onClick={() => setUpload(null)} className="text-slate-400 hover:text-rose-500"><X size={14} /></button>
                         </div>
                       )}
-                      <div className="grid grid-cols-[auto_auto_auto_auto_1fr_1fr_1fr] gap-2">
-                        <button type="button" disabled={uploading || sending || rewriting} onClick={openCamera}
+                      <div className={detail?.customer.replyLang && detail.customer.replyLang !== 'th'
+                        ? 'grid grid-cols-[auto_auto_auto_auto_1fr_1fr_1fr_1fr] gap-2'
+                        : 'grid grid-cols-[auto_auto_auto_auto_1fr_1fr_1fr] gap-2'}>
+                        <button type="button" disabled={uploading || sending || rewriting || translating} onClick={openCamera}
                           title="ถ่ายรูปแล้วส่ง" aria-label="ถ่ายรูปแล้วส่ง"
                           className="px-2.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 flex items-center justify-center disabled:opacity-50">
                           {uploading ? <Loader2 size={16} className="animate-spin" /> : <Camera size={16} />}
                         </button>
-                        <button type="button" onClick={() => fileRef.current?.click()} disabled={uploading || sending || rewriting}
+                        <button type="button" onClick={() => fileRef.current?.click()} disabled={uploading || sending || rewriting || translating}
                           title="แนบรูป/ไฟล์" aria-label="แนบรูป/ไฟล์"
                           className="px-2.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 flex items-center justify-center disabled:opacity-50">
                           {uploading ? <Loader2 size={16} className="animate-spin" /> : <Paperclip size={16} />}
@@ -2026,17 +2126,24 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                           className="px-2 py-2 rounded-xl bg-slate-100 hover:bg-rose-100 text-slate-600 hover:text-rose-600 flex items-center justify-center">
                           <Eraser size={16} />
                         </button>
-                        <button onClick={() => regenerate()} disabled={sending || rewriting}
+                        <button onClick={() => regenerate()} disabled={sending || rewriting || translating}
                           title="ร่างคำตอบใหม่จากบทสนทนา + สินค้าที่เลือก (ไม่ใช้ข้อความที่พิมพ์ในกล่อง)"
                           className="min-w-0 px-2 py-2 rounded-xl bg-slate-200 hover:bg-slate-300 text-slate-700 text-sm font-semibold flex items-center justify-center gap-1 disabled:opacity-50">
                           <RefreshCw size={17} />
                         </button>
-                        <button onClick={rewrite} disabled={rewriting || sending || (!editText.trim() && !(selectionDirty && selectedProductSkus.length))}
+                        <button onClick={rewrite} disabled={rewriting || sending || translating || (!editText.trim() && !(selectionDirty && selectedProductSkus.length))}
                           title="ให้ AI ช่วยแก้ไวยากรณ์/เรียบเรียง โดยใช้ข้อความที่พิมพ์ + สินค้าที่เลือก + บทสนทนา (ถ้าเพิ่งเลือกสินค้า จะร่างใหม่โดยรวมข้อมูลสินค้าเข้ากับข้อความที่พิมพ์)"
                           className="min-w-0 px-2 py-2 rounded-xl bg-indigo-100 hover:bg-indigo-200 text-indigo-700 text-sm font-semibold flex items-center justify-center gap-1 disabled:opacity-50">
                           {rewriting ? <Loader2 size={17} className="animate-spin" /> : <Wand2 size={17} />}
                         </button>
-                        <button onClick={approve} disabled={sending || rewriting || !editText.trim()}
+                        {detail?.customer.replyLang && detail.customer.replyLang !== 'th' && (
+                          <button onClick={translate} disabled={translating || sending || rewriting || !editText.trim()}
+                            title="แปลข้อความเป็นภาษาของลูกค้า (ตรวจทานก่อนส่ง)"
+                            className="min-w-0 px-2 py-2 rounded-xl bg-teal-100 hover:bg-teal-200 text-teal-700 text-sm font-semibold flex items-center justify-center gap-1 disabled:opacity-50">
+                            {translating ? <Loader2 size={17} className="animate-spin" /> : <Languages size={17} />}
+                          </button>
+                        )}
+                        <button onClick={approve} disabled={sending || rewriting || translating || !editText.trim()}
                           title={needsConfirm ? 'ยืนยันส่ง (คำตอบมีราคา)' : 'อนุมัติและส่งให้ลูกค้า'}
                           className={'min-w-0 px-2 py-2 rounded-xl text-white text-sm font-semibold flex items-center justify-center gap-1 disabled:opacity-50 ' + (needsConfirm ? 'bg-amber-600 hover:bg-amber-700' : 'bg-sky-600 hover:bg-sky-700')}>
                           {sending ? <Loader2 size={17} className="animate-spin" /> : <Send size={17} />}
@@ -2128,7 +2235,14 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                         </div>
                       )}
                       {replyBar}
-                      <textarea value={freeText} onChange={(e) => { setFreeText(e.target.value); setFreeNeedsConfirm(false); setRewriteNote(null); }} rows={3}
+                      {translateOriginal && (
+                        <div className="text-xs text-slate-600 bg-slate-100 border border-slate-200 rounded-lg p-2 flex items-start gap-1.5">
+                          <Languages size={14} className="shrink-0 mt-0.5 text-slate-500" />
+                          <span className="flex-1"><span className="font-semibold">ต้นฉบับภาษาไทย</span> (ไม่ส่งให้ลูกค้า): {translateOriginal}</span>
+                          <button type="button" onClick={() => setTranslateOriginal(null)} className="text-slate-400 hover:text-rose-500 shrink-0"><X size={14} /></button>
+                        </div>
+                      )}
+                      <textarea value={freeText} onChange={(e) => { setFreeText(e.target.value); setFreeNeedsConfirm(false); setRewriteNote(null); setTranslateOriginal(null); }} rows={3}
                         className="w-full flex-1 min-h-[100px] p-3 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-sky-400 resize-none" placeholder="พิมพ์ข้อความถึงลูกค้า… (วางรูป Ctrl+V ได้)" />
                       {rewriteNote && (
                         <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-2 flex items-start gap-1.5">
@@ -2138,13 +2252,15 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                       )}
                       {/* Same column template + button classes as the pending composer's row so the
                           two states look identical in size. */}
-                      <div className="grid grid-cols-[auto_auto_auto_auto_1fr_1fr_1fr] gap-2">
-                        <button type="button" disabled={uploading || freeSending} onClick={openCamera}
+                      <div className={detail?.customer.replyLang && detail.customer.replyLang !== 'th'
+                        ? 'grid grid-cols-[auto_auto_auto_auto_1fr_1fr_1fr_1fr] gap-2'
+                        : 'grid grid-cols-[auto_auto_auto_auto_1fr_1fr_1fr] gap-2'}>
+                        <button type="button" disabled={uploading || freeSending || freeTranslating} onClick={openCamera}
                           title="ถ่ายรูปแล้วส่งทันที" aria-label="ถ่ายรูปแล้วส่งทันที"
                           className="px-2.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 flex items-center justify-center disabled:opacity-50">
                           {uploading ? <Loader2 size={16} className="animate-spin" /> : <Camera size={16} />}
                         </button>
-                        <button type="button" onClick={() => fileRef.current?.click()} disabled={uploading || freeSending}
+                        <button type="button" onClick={() => fileRef.current?.click()} disabled={uploading || freeSending || freeTranslating}
                           title="แนบรูป/ไฟล์" aria-label="แนบรูป/ไฟล์"
                           className="px-2.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 flex items-center justify-center disabled:opacity-50">
                           {uploading ? <Loader2 size={16} className="animate-spin" /> : <Paperclip size={16} />}
@@ -2165,11 +2281,18 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                           className="min-w-0 px-2 py-2 rounded-xl bg-slate-200 hover:bg-slate-300 text-slate-700 text-sm font-semibold flex items-center justify-center gap-1 disabled:opacity-50">
                           {(forceDrafting || detail.generating) ? <Loader2 size={17} className="animate-spin" /> : <RefreshCw size={17} />}
                         </button>
-                        <button onClick={freeRewrite} disabled={freeRewriting || freeSending || !freeText.trim()}
+                        <button onClick={freeRewrite} disabled={freeRewriting || freeSending || freeTranslating || !freeText.trim()}
                           title="ให้ AI ช่วยแก้ไวยากรณ์/เรียบเรียงข้อความนี้"
                           className="min-w-0 px-2 py-2 rounded-xl bg-indigo-100 hover:bg-indigo-200 text-indigo-700 text-sm font-semibold flex items-center justify-center gap-1 disabled:opacity-50">
                           {freeRewriting ? <Loader2 size={17} className="animate-spin" /> : <Wand2 size={17} />}
                         </button>
+                        {detail?.customer.replyLang && detail.customer.replyLang !== 'th' && (
+                          <button onClick={freeTranslate} disabled={freeTranslating || freeSending || freeRewriting || !freeText.trim()}
+                            title="แปลข้อความเป็นภาษาของลูกค้า (ตรวจทานก่อนส่ง)"
+                            className="min-w-0 px-2 py-2 rounded-xl bg-teal-100 hover:bg-teal-200 text-teal-700 text-sm font-semibold flex items-center justify-center gap-1 disabled:opacity-50">
+                            {freeTranslating ? <Loader2 size={17} className="animate-spin" /> : <Languages size={17} />}
+                          </button>
+                        )}
                         <button onClick={freeSend} disabled={(!freeText.trim() && !upload && !freeProducts.length) || freeSending}
                           title={freeNeedsConfirm ? 'ยืนยันส่ง (ข้อความมีราคา)' : 'ส่งข้อความให้ลูกค้า'}
                           className={'min-w-0 px-2 py-2 rounded-xl text-white text-sm font-semibold flex items-center justify-center gap-1 disabled:opacity-50 ' + (freeNeedsConfirm ? 'bg-amber-600 hover:bg-amber-700' : 'bg-sky-600 hover:bg-sky-700')}>

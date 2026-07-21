@@ -7,6 +7,7 @@ import { requireAuth, requireApp } from '../auth/middleware.js';
 import { fetchDisplayName, fetchGroupName } from '../line/client.js';
 import { generateDraftForMessage } from '../llm/draft.js';
 import { rewriteText } from '../llm/rewrite.js';
+import { translateOutbound } from '../llm/translate.js';
 import { hasPrice } from '../llm/guardrails.js';
 import { readImageContent } from '../line/contentStore.js';
 import { PRODUCT_PHOTO_DIR } from './content.js';
@@ -57,6 +58,7 @@ const uploadBody = z.object({
 });
 
 const rewriteBody = z.object({ text: z.string().min(1).max(4000) });
+const translateBody = z.object({ text: z.string().min(1).max(4000), customerId: z.string().min(1) });
 
 export async function messageRoutes(app: FastifyInstance) {
   app.addHook('preHandler', requireAuth);
@@ -413,6 +415,28 @@ export async function messageRoutes(app: FastifyInstance) {
     } catch (err) {
       req.log.error({ err }, 'rewrite failed');
       return reply.code(502).send({ error: 'rewrite_failed' });
+    }
+  });
+
+  // POST /api/translate — translate a staff-written Thai reply into the customer's detected
+  // language (Customer.replyLang, set by translateInbound). 400 when the customer has no
+  // detected non-Thai language — the composer button is hidden in that case, but the guard
+  // covers a raw API call too.
+  app.post('/api/translate', async (req, reply) => {
+    const parsed = translateBody.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'invalid_body' });
+    const customer = await prisma.customer.findUnique({
+      where: { id: parsed.data.customerId },
+      select: { replyLang: true },
+    });
+    const target = customer?.replyLang;
+    if (!target || target === 'th') return reply.code(400).send({ error: 'no_target_lang' });
+    try {
+      const result = await translateOutbound(parsed.data.text, target);
+      return { text: result.text, note: result.note, lang: target };
+    } catch (err) {
+      req.log.error({ err }, 'translate failed');
+      return reply.code(502).send({ error: 'translate_failed' });
     }
   });
 }

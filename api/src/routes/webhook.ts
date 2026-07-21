@@ -6,6 +6,7 @@ import { scheduleDraft, nonTextNeedsHuman, KIND_LABEL } from '../llm/draftQueue.
 import { prisma } from '../db/prisma.js';
 import { pushToConsole } from '../ws/io.js';
 import { handleStaffBindCommand } from '../line/staffBind.js';
+import { isNonThaiText, translateInbound } from '../llm/translate.js';
 
 // Cap events processed per webhook request (LINE batches are normally small).
 const MAX_EVENTS = 50;
@@ -118,6 +119,8 @@ export async function webhookRoutes(app: FastifyInstance) {
           if (!isGroup || mentioned) {
             scheduleDraft(customerId, msgId, 'text');
           }
+          // Bilingual support: best-effort, fire-and-forget — never blocks/delays ingest.
+          if (isNonThaiText(text)) void translateInbound(msgId);
           continue;
         }
 
