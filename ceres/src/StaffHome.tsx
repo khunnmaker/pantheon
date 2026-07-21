@@ -11,7 +11,6 @@ import {
   Search,
   Send,
   Settings as SettingsIcon,
-  Wallet,
 } from 'lucide-react';
 import { useHashTab } from '@pantheon/ui';
 import {
@@ -25,6 +24,7 @@ import {
 } from './lib/api';
 import { useCeres } from './lib/bootstrapContext';
 import { MediaThumb } from './lib/media';
+import AppSwitcher from './AppSwitcher';
 import MyRequests, { statusMeta, TYPE_LABEL } from './MyRequests';
 import RequestSheet from './RequestSheet';
 import RequestDetail from './RequestDetail';
@@ -63,7 +63,7 @@ export default function StaffHome({
   onOpenMine?: () => void;
   onOpenSettings?: () => void;
 } = {}) {
-  const { bootstrap, onLogout } = useCeres();
+  const { bootstrap, agent, onLogout } = useCeres();
   const viewKeys: View[] = ['home', 'mine', 'settings'];
   const [view, setView] = useHashTab<View>(viewKeys, 'home');
   const activeView = embeddedView ?? view;
@@ -169,8 +169,8 @@ export default function StaffHome({
       {!embeddedView && <header className="bg-white border-b border-slate-200 sticky top-0 z-20">
         <div className="max-w-md mx-auto px-4 h-14 flex items-center justify-between">
           <div className="flex items-center gap-2 text-amber-700 min-w-0">
-            <Wallet size={20} className="shrink-0" />
-            <span className="font-bold text-base truncate">{bootstrap.party?.name || bootstrap.agent.name}</span>
+            <AppSwitcher agent={agent} />
+            <span className="text-slate-400 text-sm truncate">· {bootstrap.party?.name || bootstrap.agent.name}</span>
           </div>
           <div className="flex items-center gap-3 shrink-0">
             {PORTAL_URL && (
