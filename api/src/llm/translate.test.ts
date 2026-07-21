@@ -6,7 +6,10 @@ const mocks = vi.hoisted(() => ({
   pushToConsole: vi.fn(),
   messageFindUnique: vi.fn(),
   messageUpdate: vi.fn(),
+  customerFindUnique: vi.fn(),
   customerUpdate: vi.fn(),
+  draftFindUnique: vi.fn(),
+  draftUpdate: vi.fn(),
 }));
 
 vi.mock('./anthropic.js', () => ({
@@ -17,7 +20,8 @@ vi.mock('../ws/io.js', () => ({ pushToConsole: mocks.pushToConsole }));
 vi.mock('../db/prisma.js', () => ({
   prisma: {
     message: { findUnique: mocks.messageFindUnique, update: mocks.messageUpdate },
-    customer: { update: mocks.customerUpdate },
+    customer: { findUnique: mocks.customerFindUnique, update: mocks.customerUpdate },
+    draft: { findUnique: mocks.draftFindUnique, update: mocks.draftUpdate },
   },
 }));
 
@@ -25,7 +29,9 @@ import {
   isNonThaiText,
   parseInboundTranslation,
   parseOutboundTranslation,
+  translateDraftToThai,
   translateInbound,
+  translateMessageToThai,
   translateOutbound,
 } from './translate.js';
 
@@ -33,7 +39,9 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.llmAvailable.mockReturnValue(true);
   mocks.messageUpdate.mockResolvedValue({});
+  mocks.customerFindUnique.mockResolvedValue(null);
   mocks.customerUpdate.mockResolvedValue({});
+  mocks.draftUpdate.mockResolvedValue({});
 });
 
 describe('isNonThaiText', () => {
@@ -152,10 +160,76 @@ describe('translateInbound', () => {
     expect(mocks.messageFindUnique).not.toHaveBeenCalled();
   });
 
-  it('is a no-op when the message is not a customer message', async () => {
-    mocks.messageFindUnique.mockResolvedValue({ id: 'msg-1', customerId: 'cust-1', role: 'agent', text: 'hi' });
+  it('is a no-op when the message text is empty', async () => {
+    mocks.messageFindUnique.mockResolvedValue({ id: 'msg-1', customerId: 'cust-1', role: 'customer', text: '' });
     await translateInbound('msg-1');
     expect(mocks.callClaude).not.toHaveBeenCalled();
+  });
+
+  it('agent-role message translates and does NOT update Customer.replyLang', async () => {
+    mocks.messageFindUnique.mockResolvedValue({
+      id: 'msg-1', customerId: 'cust-1', role: 'agent', text: 'Hello, yes we have stock.',
+    });
+    mocks.callClaude.mockResolvedValue('{"lang":"en","thai":"สวัสดีค่ะ มีของค่ะ"}');
+
+    await translateMessageToThai('msg-1');
+
+    expect(mocks.messageUpdate).toHaveBeenCalledWith({
+      where: { id: 'msg-1' },
+      data: { translatedText: 'สวัสดีค่ะ มีของค่ะ', sourceLang: 'en' },
+    });
+    expect(mocks.customerUpdate).not.toHaveBeenCalled();
+    expect(mocks.pushToConsole).toHaveBeenCalledWith('message:update', {
+      customerId: 'cust-1',
+      id: 'msg-1',
+      translatedText: 'สวัสดีค่ะ มีของค่ะ',
+      sourceLang: 'en',
+    });
+  });
+
+  it('customer-role still updates Customer.replyLang (unchanged behavior via the alias)', async () => {
+    mocks.messageFindUnique.mockResolvedValue({
+      id: 'msg-1', customerId: 'cust-1', role: 'customer', text: 'Hello, is this in stock?',
+    });
+    mocks.callClaude.mockResolvedValue('{"lang":"en","thai":"สวัสดีค่ะ มีสินค้านี้ไหมคะ"}');
+
+    await translateInbound('msg-1');
+
+    expect(mocks.customerUpdate).toHaveBeenCalledWith({
+      where: { id: 'cust-1' },
+      data: { replyLang: 'en' },
+    });
+  });
+
+  it('knownThai path skips callClaude and stores the given Thai text verbatim', async () => {
+    mocks.messageFindUnique.mockResolvedValue({
+      id: 'msg-1', customerId: 'cust-1', role: 'agent', text: 'Hello, yes we have stock.',
+    });
+    mocks.customerFindUnique.mockResolvedValue({ replyLang: 'en' });
+
+    await translateMessageToThai('msg-1', { knownThai: 'สวัสดีค่ะ มีของค่ะ' });
+
+    expect(mocks.callClaude).not.toHaveBeenCalled();
+    expect(mocks.messageUpdate).toHaveBeenCalledWith({
+      where: { id: 'msg-1' },
+      data: { translatedText: 'สวัสดีค่ะ มีของค่ะ', sourceLang: 'en' },
+    });
+    // agent role — Customer.replyLang is never touched by the knownThai path either.
+    expect(mocks.customerUpdate).not.toHaveBeenCalled();
+  });
+
+  it('knownThai path falls back to null sourceLang when the customer has none', async () => {
+    mocks.messageFindUnique.mockResolvedValue({
+      id: 'msg-1', customerId: 'cust-1', role: 'agent', text: 'Hello, yes we have stock.',
+    });
+    mocks.customerFindUnique.mockResolvedValue(null);
+
+    await translateMessageToThai('msg-1', { knownThai: 'สวัสดีค่ะ มีของค่ะ' });
+
+    expect(mocks.messageUpdate).toHaveBeenCalledWith({
+      where: { id: 'msg-1' },
+      data: { translatedText: 'สวัสดีค่ะ มีของค่ะ', sourceLang: null },
+    });
   });
 
   it('never throws when callClaude rejects', async () => {
@@ -197,5 +271,57 @@ describe('translateOutbound', () => {
     mocks.callClaude.mockResolvedValue('{"note":"เอ๊ะ"}');
     const result = await translateOutbound('สวัสดีค่ะ', 'en');
     expect(result.text).toBe('สวัสดีค่ะ');
+  });
+});
+
+describe('translateDraftToThai', () => {
+  it('translates a non-Thai draft, stores Draft.translatedText, and pushes draft:update', async () => {
+    mocks.draftFindUnique.mockResolvedValue({
+      id: 'draft-1', messageId: 'msg-1', draftText: 'Hello, yes we have stock.',
+    });
+    mocks.messageFindUnique.mockResolvedValue({ customerId: 'cust-1' });
+    mocks.callClaude.mockResolvedValue('{"lang":"en","thai":"สวัสดีค่ะ มีของค่ะ"}');
+
+    await translateDraftToThai('draft-1');
+
+    expect(mocks.draftUpdate).toHaveBeenCalledWith({
+      where: { id: 'draft-1' },
+      data: { translatedText: 'สวัสดีค่ะ มีของค่ะ' },
+    });
+    expect(mocks.pushToConsole).toHaveBeenCalledWith('draft:update', {
+      customerId: 'cust-1',
+      draftId: 'draft-1',
+      translatedText: 'สวัสดีค่ะ มีของค่ะ',
+    });
+  });
+
+  it('does not persist or push when the model response fails to parse (malformed JSON)', async () => {
+    mocks.draftFindUnique.mockResolvedValue({
+      id: 'draft-1', messageId: 'msg-1', draftText: 'Hello, yes we have stock.',
+    });
+    mocks.messageFindUnique.mockResolvedValue({ customerId: 'cust-1' });
+    mocks.callClaude.mockResolvedValue('not json');
+
+    await translateDraftToThai('draft-1');
+
+    expect(mocks.draftUpdate).not.toHaveBeenCalled();
+    expect(mocks.pushToConsole).not.toHaveBeenCalled();
+  });
+
+  it('does not fire (never calls callClaude) when the draft text is already Thai', async () => {
+    mocks.draftFindUnique.mockResolvedValue({
+      id: 'draft-1', messageId: 'msg-1', draftText: 'สวัสดีค่ะ มีของค่ะ',
+    });
+
+    await translateDraftToThai('draft-1');
+
+    expect(mocks.callClaude).not.toHaveBeenCalled();
+    expect(mocks.draftUpdate).not.toHaveBeenCalled();
+  });
+
+  it('never throws when the draft is missing', async () => {
+    mocks.draftFindUnique.mockResolvedValue(null);
+    await expect(translateDraftToThai('draft-1')).resolves.toBeUndefined();
+    expect(mocks.callClaude).not.toHaveBeenCalled();
   });
 });

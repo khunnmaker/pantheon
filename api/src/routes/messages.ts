@@ -7,7 +7,7 @@ import { requireAuth, requireApp } from '../auth/middleware.js';
 import { fetchDisplayName, fetchGroupName } from '../line/client.js';
 import { generateDraftForMessage } from '../llm/draft.js';
 import { rewriteText } from '../llm/rewrite.js';
-import { translateOutbound } from '../llm/translate.js';
+import { isNonThaiText, translateOutbound, translateMessageToThai } from '../llm/translate.js';
 import { hasPrice } from '../llm/guardrails.js';
 import { readImageContent } from '../line/contentStore.js';
 import { PRODUCT_PHOTO_DIR } from './content.js';
@@ -49,6 +49,10 @@ const replyBody = z.object({
   attachProductSkus: z.array(z.string()).max(20).optional(), // catalog photos to attach
   uploadId: z.string().max(80).optional(), // attach a staff-uploaded photo/file
   replyToMessageId: z.string().max(60).optional(), // our Message.id to LINE-quote in this reply
+  // Bilingual support: when finalText IS the untouched output of a prior 🌐 outbound-translate
+  // call, this is that Thai source verbatim — lets a non-Thai sent reply get its Thai shown
+  // back to staff for free (no LLM round-trip). Omitted when the staff typed/edited by hand.
+  thaiSource: z.string().min(1).max(4000).optional(),
 });
 
 const uploadBody = z.object({
@@ -393,6 +397,12 @@ export async function messageRoutes(app: FastifyInstance) {
     }
     if (attach?.attachmentType === 'image' && parsed.data.uploadId) {
       void captionStaffUpload(result.message.id, parsed.data.uploadId);
+    }
+    // Bilingual support: a sent agent reply in a non-Thai language (an AI draft that came out
+    // in the customer's language, or staff typing/pasting a foreign language by hand) also
+    // gets a Thai translation for staff. Best-effort, fire-and-forget.
+    if (isNonThaiText(finalText)) {
+      void translateMessageToThai(result.message.id, parsed.data.thaiSource ? { knownThai: parsed.data.thaiSource } : undefined);
     }
     return {
       ok: true,

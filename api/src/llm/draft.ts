@@ -14,6 +14,7 @@ import { selectRelevantKb } from '../memory/kbRetrieval.js';
 import { collectBurstImages, renderBurstQuestion } from './draftImages.js';
 import { runVisionPasses } from './visionDraft.js';
 import { classifyDraftLane } from '../autosend/lane.js';
+import { isNonThaiText, translateDraftToThai } from './translate.js';
 import {
   collectProductPhotoSkus,
   productNamesByPhotoSku,
@@ -332,6 +333,11 @@ export async function generateDraftForMessage(
       lane,
     },
   });
+
+  // Bilingual support: the AI sometimes drafts its reply in the customer's own language
+  // (e.g. the customer wrote Chinese) — best-effort, fire-and-forget Thai translation so
+  // staff can read what they're about to approve. Never blocks the draft response.
+  if (isNonThaiText(draft.draftText)) void translateDraftToThai(draft.id);
 
   // Stage suggestion: when the AI infers a stage that differs from the confirmed one,
   // surface it for staff to accept (never auto-apply). Clears the suggestion if it matches.

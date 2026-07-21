@@ -238,13 +238,18 @@ function MessageBody({ m }: { m: Message }) {
         </div>
       </div>
     );
-  // Inbound bilingual support: a Thai translation sits under a non-Thai customer text
-  // message so staff can read it without leaving the bubble (never sent to the customer).
+  // Bilingual support: a Thai translation sits under a non-Thai text message so staff can
+  // read it without leaving the bubble (never sent to the customer) — customer messages
+  // (translateInbound) AND sent agent replies (an AI draft/typed text that came out non-Thai).
+  // Agent bubbles sit on a solid sky-600 background with white text, so the muted slate
+  // styling used for customer bubbles (white bg) would be invisible — use a light-on-dark
+  // variant there instead.
   if (m.translatedText) {
     return (
       <div>
         <div>{m.text}</div>
-        <div className="mt-1.5 pt-1.5 border-t border-slate-200 text-[12.5px] text-slate-500">
+        <div className={'mt-1.5 pt-1.5 border-t text-[12.5px] ' +
+          (agentUp ? 'border-white/30 text-white/85' : 'border-slate-200 text-slate-500')}>
           🌐 {m.translatedText}
         </div>
       </div>
@@ -910,6 +915,16 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
         };
       });
     };
+    // Live patch for the AI-draft bilingual translation (translateDraftToThai, fired
+    // best-effort after the draft is saved) — updates the pending draft's 🌐 note in place
+    // without a full conversation reload.
+    const onDraftUpdate = (payload: { customerId: string; draftId: string; translatedText?: string | null }) => {
+      if (selectedRef.current !== payload.customerId) return;
+      setDetail((d) => {
+        if (!d || !d.pendingDraft || d.pendingDraft.id !== payload.draftId) return d;
+        return { ...d, pendingDraft: { ...d.pendingDraft, translatedText: payload.translatedText ?? d.pendingDraft.translatedText } };
+      });
+    };
     const onConversation = (payload: { customerId: string; ended?: boolean; message?: Message }) => {
       refreshLists().catch(() => undefined);
       if (selectedRef.current !== payload.customerId) return;
@@ -932,6 +947,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
     socket.on('message:new', onMessage);
     socket.on('message:update', onMessageUpdate);
     socket.on('draft:new', onDraft);
+    socket.on('draft:update', onDraftUpdate);
     socket.on('draft:queued', onDraftQueued);
     socket.on('draft:cleared', onDraftCleared);
     socket.on('draft:failed', onDraftFailed);
@@ -944,6 +960,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
       socket.off('message:new', onMessage);
       socket.off('message:update', onMessageUpdate);
       socket.off('draft:new', onDraft);
+      socket.off('draft:update', onDraftUpdate);
       socket.off('draft:queued', onDraftQueued);
       socket.off('draft:cleared', onDraftCleared);
       socket.off('draft:failed', onDraftFailed);
@@ -1065,7 +1082,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
     setSending(true);
     setError('');
     try {
-      const res = await sendReply(msgId, editText.trim(), needsConfirm, selectedProductSkus.length ? selectedProductSkus : undefined, upload?.uploadId, replyingTo ?? undefined);
+      const res = await sendReply(msgId, editText.trim(), needsConfirm, selectedProductSkus.length ? selectedProductSkus : undefined, upload?.uploadId, replyingTo ?? undefined, translateOriginal ?? undefined);
       if ('needsConfirm' in res) {
         setNeedsConfirm(true);
         setError('คำตอบมีราคา — โปรดตรวจสอบตัวเลขแล้วกด "ยืนยันส่ง" อีกครั้ง');
@@ -1246,7 +1263,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
     setError('');
     try {
       const skus = freeProducts.length ? freeProducts.map((p) => p.sku) : undefined;
-      const res = await sendMessage(selectedId, freeText.trim(), upload?.uploadId, freeNeedsConfirm, skus, replyingTo ?? undefined);
+      const res = await sendMessage(selectedId, freeText.trim(), upload?.uploadId, freeNeedsConfirm, skus, replyingTo ?? undefined, translateOriginal ?? undefined);
       if ('needsConfirm' in res) {
         setFreeNeedsConfirm(true);
         setError('ข้อความมีราคา — โปรดตรวจสอบตัวเลขแล้วกดส่งอีกครั้งเพื่อยืนยัน');
@@ -2087,6 +2104,17 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                         setEditText(e.target.value); setNeedsConfirm(false); setRewriteNote(null); setTranslateOriginal(null);
                       }} rows={4}
                         className="w-full flex-1 min-h-[120px] p-3 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-sky-400 resize-none" placeholder="พิมพ์/แก้คำตอบก่อนส่ง… (วางรูป Ctrl+V ได้)" />
+                      {detail?.pendingDraft?.translatedText && (
+                        // Display-only aid: the AI sometimes drafts its reply in the customer's own
+                        // language (e.g. Chinese) — this is a Thai translation of THAT draft, for
+                        // staff to read before editing/approving. Never sent to the customer, never
+                        // cleared on a composer edit (the draft it describes hasn't changed) — it only
+                        // changes when a new draft loads, since it's read straight from detail state.
+                        <div className="text-xs text-slate-600 bg-slate-100 border border-slate-200 rounded-lg p-2 flex items-start gap-1.5">
+                          <Languages size={14} className="shrink-0 mt-0.5 text-slate-500" />
+                          <span className="flex-1"><span className="font-semibold">คำแปลร่าง</span> (ไม่ส่งให้ลูกค้า): {detail.pendingDraft.translatedText}</span>
+                        </div>
+                      )}
                       {rewriteNote && (
                         <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-2 flex items-start gap-1.5">
                           <AlertTriangle size={14} className="shrink-0 mt-0.5" />

@@ -381,6 +381,10 @@ model Draft {
   crossSellSkus   String[]
   // Conservative automation classification. null means manual review/send only.
   lane            String?
+  // Bilingual support: read-only Thai translation of a non-Thai draftText (e.g. the AI
+  // drafted its reply in the customer's language, Chinese). Display-only staff aid — never
+  // sent to the customer, never overwrites draftText. Set best-effort by translateDraftToThai.
+  translatedText  String?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 }

@@ -33,6 +33,7 @@ const draft = {
   id: 'draft-1', messageId: 'message-1', type: 'draft',
   draftText: 'ได้รับสลิปแล้วค่ะ เดี๋ยวเจ้าหน้าที่ตรวจสอบให้นะคะ', lane: 'slip_ack',
   usedKb: [], note: null, retrievedMsgIds: [], productSku: null, candidateSkus: [], crossSellSkus: [],
+  translatedText: null,
   createdAt: now, updatedAt: now,
 };
 const customerMessage = {

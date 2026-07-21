@@ -88,6 +88,7 @@ export interface Draft {
   note: string | null;
   productSku?: string | null;
   lane?: string | null;
+  translatedText?: string | null; // AI Thai translation of a non-Thai draftText (display-only)
   createdAt: string;
   updatedAt?: string;
 }
@@ -328,10 +329,14 @@ export async function sendReply(
   attachProductSkus?: string[],
   uploadId?: string,
   replyToMessageId?: string, // our Message.id to LINE-quote in this reply
+  // When finalText is the untouched output of a prior 🌐 outbound-translate call, its
+  // faithful Thai source — lets the server show a Thai translation of the sent reply
+  // back to staff for free (no LLM round-trip). See translateOriginal in Console.tsx.
+  thaiSource?: string,
 ): Promise<ReplyResult | { needsConfirm: true } | { alreadyReplied: true }> {
   const res = await authedResponse(`/api/messages/${messageId}/reply`, {
     method: 'POST',
-    body: JSON.stringify({ finalText, confirmNumbers, attachProductSkus, uploadId, replyToMessageId }),
+    body: JSON.stringify({ finalText, confirmNumbers, attachProductSkus, uploadId, replyToMessageId, thaiSource }),
   });
   if (res.status === 428) return { needsConfirm: true }; // reply has a price; staff must confirm
   if (res.status === 409) return { alreadyReplied: true }; // someone already answered this one
@@ -401,10 +406,12 @@ export async function sendMessage(
   confirmNumbers?: boolean,
   attachProductSkus?: string[],
   replyToMessageId?: string, // our Message.id to LINE-quote
+  // See sendReply's thaiSource — same deal for the free-message composer.
+  thaiSource?: string,
 ): Promise<{ message: Message; dryRun: boolean } | { needsConfirm: true }> {
   const res = await authedResponse(`/api/customers/${customerId}/message`, {
     method: 'POST',
-    body: JSON.stringify({ text, uploadId, confirmNumbers, attachProductSkus, replyToMessageId }),
+    body: JSON.stringify({ text, uploadId, confirmNumbers, attachProductSkus, replyToMessageId, thaiSource }),
   });
   if (res.status === 428) return { needsConfirm: true }; // message has a price; staff must confirm
   if (!res.ok) throw new Error(`HTTP ${res.status}`);

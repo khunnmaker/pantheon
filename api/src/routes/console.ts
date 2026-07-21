@@ -14,6 +14,7 @@ import { pushToConsole } from '../ws/io.js';
 import { isLow } from '../stock/helpers.js';
 import { hasPrice } from '../llm/guardrails.js';
 import { captionStaffUpload } from '../llm/captionImage.js';
+import { isNonThaiText, translateMessageToThai } from '../llm/translate.js';
 import { cancelAutosendForCustomer, getActiveAutosend } from '../autosend/scheduler.js';
 import {
   bumpClearEpoch,
@@ -497,6 +498,9 @@ export async function consoleRoutes(app: FastifyInstance) {
       attachProductSkus: z.array(z.string()).max(20).optional(), // catalog photos to attach (only when no upload)
       confirmNumbers: z.boolean().optional(),
       replyToMessageId: z.string().max(60).optional(), // our Message.id to LINE-quote in this message
+      // Bilingual support: when text IS the untouched output of a prior 🌐 outbound-translate
+      // call, this is that Thai source verbatim (see messages.ts's /reply thaiSource).
+      thaiSource: z.string().min(1).max(4000).optional(),
     }).safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: 'invalid_body' });
     const text = (parsed.data.text ?? '').trim();
@@ -593,6 +597,11 @@ export async function consoleRoutes(app: FastifyInstance) {
     });
     if (attach?.attachmentType === 'image' && uploadId) {
       void captionStaffUpload(message.id, uploadId);
+    }
+    // Bilingual support: a sent agent message in a non-Thai language also gets a Thai
+    // translation for staff. Best-effort, fire-and-forget.
+    if (isNonThaiText(text)) {
+      void translateMessageToThai(message.id, parsed.data.thaiSource ? { knownThai: parsed.data.thaiSource } : undefined);
     }
     await prisma.customer.update({ where: { id: customer.id }, data: { lastSeen: new Date() } });
     pushToConsole('conversation:update', { customerId: customer.id, message });

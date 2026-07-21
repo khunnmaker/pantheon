@@ -58,17 +58,100 @@ export function parseInboundTranslation(raw: string): InboundTranslation | null 
   }
 }
 
-// Best-effort, fire-and-forget: translate a non-Thai customer TEXT message to Thai so
-// staff can read it, and remember the customer's language for the outbound 🌐 button.
-// Never throws — the inbound ingest pipeline has already succeeded by the time this runs.
-export async function translateInbound(messageId: string): Promise<void> {
+export interface TranslateMessageOpts {
+  // Trusted staff-side Thai text already known verbatim (e.g. the composer text the staff
+  // just sent WAS the untouched output of a prior 🌐 outbound-translate call, so its Thai
+  // source is already on hand). Skips the LLM entirely — zero-cost path.
+  knownThai?: string;
+}
+
+// Best-effort, fire-and-forget: translate a non-Thai TEXT message (customer OR agent) to
+// Thai so staff can read it, and — for a customer message — remember the customer's
+// language for the outbound 🌐 button. Never throws — the caller has already succeeded
+// (ingest, or a completed send) by the time this runs.
+export async function translateMessageToThai(messageId: string, opts?: TranslateMessageOpts): Promise<void> {
+  try {
+    if (!opts?.knownThai && !llmAvailable()) return;
+    const message = await prisma.message.findUnique({ where: { id: messageId } });
+    if (!message || (message.role !== 'customer' && message.role !== 'agent') || !message.text) return;
+
+    let thai: string;
+    let sourceLang: string | null;
+    if (opts?.knownThai) {
+      // Zero-cost path: the Thai text is already trusted verbatim (e.g. the untouched
+      // output of a prior 🌐 outbound-translate). sourceLang mirrors the customer's already-
+      // detected language (whatever it was that got this reply written in a foreign
+      // language in the first place); missing/never-detected just stores null.
+      const customer = await prisma.customer.findUnique({
+        where: { id: message.customerId },
+        select: { replyLang: true },
+      });
+      thai = opts.knownThai;
+      sourceLang = customer?.replyLang ?? null;
+    } else {
+      const raw = await callClaude(
+        `ข้อความ:\n"""\n${message.text}\n"""`,
+        INBOUND_SYSTEM,
+        500,
+        undefined,
+        { app: 'minerva', feature: 'translate' },
+      );
+      const parsed = parseInboundTranslation(raw);
+      if (!parsed) return;
+      thai = parsed.thai;
+      sourceLang = parsed.lang;
+    }
+
+    await prisma.message.update({
+      where: { id: messageId },
+      data: { translatedText: thai, sourceLang },
+    });
+
+    // Only a CUSTOMER message updates the customer's detected reply language — an agent
+    // writing/sending non-Thai text must never change what the customer is assumed to speak.
+    let replyLangUpdated: string | null = null;
+    if (message.role === 'customer' && sourceLang) {
+      await prisma.customer
+        .update({ where: { id: message.customerId }, data: { replyLang: sourceLang } })
+        .catch(() => undefined);
+      replyLangUpdated = sourceLang;
+    }
+
+    pushToConsole('message:update', {
+      customerId: message.customerId,
+      id: messageId,
+      translatedText: thai,
+      sourceLang,
+      ...(replyLangUpdated ? { replyLang: replyLangUpdated } : {}),
+    });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn('[translate] message translation failed', err);
+  }
+}
+
+// Compatibility alias — the webhook ingest call site (and the original name) reads better
+// as "inbound" even though the implementation is now shared with outbound agent replies.
+export const translateInbound = translateMessageToThai;
+
+// Best-effort, fire-and-forget: translate a non-Thai AI DRAFT (e.g. the customer wrote in
+// Chinese and the draft itself came out in Chinese) to Thai so staff can read what they're
+// about to approve before sending. Display-only staff aid — never sent to the customer,
+// never overwrites draftText. Re-checks isNonThaiText itself (defense in depth, same as
+// translateMessageToThai's own role/text checks) so a stray call on a Thai draft is a no-op.
+export async function translateDraftToThai(draftId: string): Promise<void> {
   try {
     if (!llmAvailable()) return;
-    const message = await prisma.message.findUnique({ where: { id: messageId } });
-    if (!message || message.role !== 'customer' || !message.text) return;
+    const draft = await prisma.draft.findUnique({ where: { id: draftId } });
+    if (!draft || !isNonThaiText(draft.draftText)) return;
+    const message = await prisma.message.findUnique({
+      where: { id: draft.messageId },
+      select: { customerId: true },
+    });
+    if (!message) return;
 
     const raw = await callClaude(
-      `ข้อความจากลูกค้า:\n"""\n${message.text}\n"""`,
+      `ข้อความ (ร่างคำตอบของ AI ถึงลูกค้า):\n"""\n${draft.draftText}\n"""`,
       INBOUND_SYSTEM,
       500,
       undefined,
@@ -77,24 +160,11 @@ export async function translateInbound(messageId: string): Promise<void> {
     const parsed = parseInboundTranslation(raw);
     if (!parsed) return;
 
-    await prisma.message.update({
-      where: { id: messageId },
-      data: { translatedText: parsed.thai, sourceLang: parsed.lang },
-    });
-    await prisma.customer
-      .update({ where: { id: message.customerId }, data: { replyLang: parsed.lang } })
-      .catch(() => undefined);
-
-    pushToConsole('message:update', {
-      customerId: message.customerId,
-      id: messageId,
-      translatedText: parsed.thai,
-      sourceLang: parsed.lang,
-      replyLang: parsed.lang,
-    });
+    await prisma.draft.update({ where: { id: draftId }, data: { translatedText: parsed.thai } });
+    pushToConsole('draft:update', { customerId: message.customerId, draftId, translatedText: parsed.thai });
   } catch (err) {
     // eslint-disable-next-line no-console
-    console.warn('[translate] inbound translation failed', err);
+    console.warn('[translate] draft translation failed', err);
   }
 }
 
