@@ -120,7 +120,7 @@ describe('voidStaffRequest — state transitions', () => {
     expect(result.approvalStatus).toBe('void');
   });
 
-  it('auto-reverses a paid (cash) request then voids it, in one transaction, restoring the box', async () => {
+  it('auto-reverses a paid (cash) purchase then voids it — movements net to zero via exactly one reversal', async () => {
     mocks.findRequest.mockResolvedValue(
       baseRequest({ approvalStatus: 'approved', fulfillmentStatus: 'bought', requestType: 'purchase' }),
     );
@@ -139,10 +139,11 @@ describe('voidStaffRequest — state transitions', () => {
 
     const result = await voidStaffRequest({ requestId: 'request-1', reason: 'สั่งซื้อผิดรายการ', agent });
 
-    // One compensating movement, crediting the box back (direction 'in') for the exact
-    // amount, explicitly linked back to the original outgoing movement it reverses.
+    // Exactly ONE compensating movement, crediting the box back (direction 'in') for the
+    // exact amount, explicitly linked back to the original outgoing movement it reverses.
     expect(mocks.createMovement).toHaveBeenCalledTimes(1);
-    expect(mocks.createMovement.mock.calls[0]![0].data).toMatchObject({
+    const reversalMovement = mocks.createMovement.mock.calls[0]![0].data;
+    expect(reversalMovement).toMatchObject({
       direction: 'in',
       amount: '500.00',
       reversesMovementId: 'movement-1',
@@ -153,10 +154,61 @@ describe('voidStaffRequest — state transitions', () => {
     expect(mocks.createMoneyEvent).toHaveBeenCalledWith({
       data: expect.objectContaining({ kind: 'reversal', reversesEventId: 'purchase-event-1', amount: '500.00' }),
     });
+    // Net cash for this request (original outgoing movement + the one reversal) is exactly
+    // zero — the box ends up exactly where it started.
+    const originalMovement = { direction: 'out', amount: '500.00' };
+    const net = [originalMovement, reversalMovement].reduce(
+      (sum, m) => sum + (m.direction === 'in' ? Number(m.amount) : -Number(m.amount)), 0,
+    );
+    expect(net).toBe(0);
     // Final state: void, fulfillment flipped to reversed by the composed reverse mechanics.
     expect(mocks.updateRequest).toHaveBeenLastCalledWith({
       where: { id: 'request-1' },
       data: expect.objectContaining({ approvalStatus: 'void' }),
+    });
+    expect(mocks.createRequestEvent).toHaveBeenCalledWith({
+      data: expect.objectContaining({ kind: 'voided', payload: expect.objectContaining({ reversedFulfillment: true }) }),
+    });
+  });
+
+  it('auto-reverses a paid (cash) reimbursement then voids it — movements net to zero via exactly one reversal', async () => {
+    mocks.findRequest.mockResolvedValue(
+      baseRequest({ approvalStatus: 'approved', fulfillmentStatus: 'paid', requestType: 'reimbursement', amount: '300.00' }),
+    );
+    const paymentEvent = {
+      id: 'payment-event-2',
+      requestId: 'request-1',
+      kind: 'payment',
+      lane: 'cash',
+      amount: '300.00',
+      cashMovementId: 'movement-5',
+      reversesEventId: null,
+      createdAt: new Date('2026-07-20T03:00:00.000Z'),
+    };
+    mocks.findMoneyEvents.mockResolvedValue([paymentEvent]);
+    mocks.findMoneyEvent.mockResolvedValue(paymentEvent);
+
+    const result = await voidStaffRequest({ requestId: 'request-1', reason: 'จ่ายผิดคน', agent });
+
+    expect(result.approvalStatus).toBe('void');
+    expect(mocks.createMovement).toHaveBeenCalledTimes(1);
+    const reversalMovement = mocks.createMovement.mock.calls[0]![0].data;
+    expect(reversalMovement).toMatchObject({
+      direction: 'in',
+      amount: '300.00',
+      reversesMovementId: 'movement-5',
+      type: 'reversal',
+    });
+    expect(mocks.createMoneyEvent).toHaveBeenCalledWith({
+      data: expect.objectContaining({ kind: 'reversal', reversesEventId: 'payment-event-2', amount: '300.00' }),
+    });
+    const originalMovement = { direction: 'out', amount: '300.00' };
+    const net = [originalMovement, reversalMovement].reduce(
+      (sum, m) => sum + (m.direction === 'in' ? Number(m.amount) : -Number(m.amount)), 0,
+    );
+    expect(net).toBe(0);
+    expect(mocks.createRequestEvent).toHaveBeenCalledWith({
+      data: expect.objectContaining({ kind: 'voided', payload: expect.objectContaining({ reversedFulfillment: true }) }),
     });
   });
 
@@ -212,22 +264,48 @@ describe('voidStaffRequest — state transitions', () => {
     expect(mocks.updateRequest).not.toHaveBeenCalled();
   });
 
-  it('allows voiding an advance whose liquidation is fully returned via refunds (no children, zero remaining)', async () => {
+  // REGRESSION GUARD (adversarial review, 2026-07-21) — the ONLY way voidStaffRequest
+  // reaches this line for an advance is liquidationSatang(...).remaining === 0 with zero
+  // live children, which can only be true because refund event(s) already returned the
+  // full advance amount to the box. Reversing the original payment ON TOP of that refund
+  // would inject a second, phantom inflow (payment −1000, refund +1000 already nets the box
+  // to 0; a reversal would add another +1000, overcrediting the box by the full advance).
+  // So this case must NOT reverse — voiding is a pure status flip once the refund already
+  // closed the cash math. This test fails loudly (extra reversal event/movement, net !== 0)
+  // if that regresses.
+  it('voids a fully-refunded advance WITHOUT reversing the payment (no double-credit)', async () => {
     mocks.findRequest.mockResolvedValue(
       baseRequest({ requestType: 'advance', approvalStatus: 'approved', fulfillmentStatus: 'settling', amount: '1000.00' }),
     );
     const paymentEvent = { id: 'payment-event-1', requestId: 'request-1', kind: 'payment', lane: 'cash', amount: '1000.00', cashMovementId: 'movement-1', reversesEventId: null, createdAt: new Date('2026-07-19T00:00:00.000Z') };
     const refundEvent = { id: 'refund-event-1', requestId: 'request-1', kind: 'refund', lane: 'cash', amount: '1000.00', cashMovementId: 'movement-9', reversesEventId: null, createdAt: new Date('2026-07-19T01:00:00.000Z') };
     mocks.findMoneyEvents.mockResolvedValue([paymentEvent, refundEvent]);
-    mocks.findMoneyEvent.mockResolvedValue(paymentEvent);
     mocks.findExpenses.mockResolvedValue([]);
 
     const result = await voidStaffRequest({ requestId: 'request-1', reason: 'คืนครบแล้ว ปิดคำขอ', agent });
 
     expect(result.approvalStatus).toBe('void');
-    // Reverses the live payment (refund isn't "live fulfillment" — payment/purchase only).
-    expect(mocks.createMoneyEvent).toHaveBeenCalledWith({
-      data: expect.objectContaining({ kind: 'reversal', reversesEventId: 'payment-event-1' }),
+    // No reversal event, no compensating movement, and reverseRequestMoneyEventInTx's own
+    // event lookup never even ran — the reversal path is skipped entirely for advances.
+    expect(mocks.createMoneyEvent).not.toHaveBeenCalled();
+    expect(mocks.createMovement).not.toHaveBeenCalled();
+    expect(mocks.findMoneyEvent).not.toHaveBeenCalled();
+
+    // Net cash for this request — the payment (out 1000) and the refund that already
+    // happened (in 1000), plus anything the void call itself created (nothing) — is
+    // exactly zero. A regression that re-adds the reversal would push this to +1000.
+    const existingMovements = [
+      { direction: 'out', amount: '1000.00' }, // the original payment
+      { direction: 'in', amount: '1000.00' },  // the refund that already closed it out
+    ];
+    const createdMovements = mocks.createMovement.mock.calls.map((c) => c[0].data);
+    const net = [...existingMovements, ...createdMovements].reduce(
+      (sum, m) => sum + (m.direction === 'in' ? Number(m.amount) : -Number(m.amount)), 0,
+    );
+    expect(net).toBe(0);
+
+    expect(mocks.createRequestEvent).toHaveBeenCalledWith({
+      data: expect.objectContaining({ kind: 'voided', payload: expect.objectContaining({ reversedFulfillment: false }) }),
     });
   });
 

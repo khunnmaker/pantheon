@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   findRequest: vi.fn(),
   findManyRequests: vi.fn(),
   findExpense: vi.fn(),
+  findManyExpenses: vi.fn(),
   findParty: vi.fn(),
   findFirstFlag: vi.fn(),
   createFlag: vi.fn(),
@@ -22,7 +23,7 @@ vi.mock('../src/env.js', () => ({ env: { CERES_CEO_THRESHOLD: 5000, CERES_FLOOR:
 vi.mock('../src/db/prisma.js', () => ({
   prisma: {
     ceresPaymentRequest: { findUnique: mocks.findRequest, findMany: mocks.findManyRequests },
-    ceresExpense: { findUnique: mocks.findExpense, findMany: vi.fn().mockResolvedValue([]) },
+    ceresExpense: { findUnique: mocks.findExpense, findMany: mocks.findManyExpenses },
     ceresParty: { findFirst: mocks.findParty },
     ceresFlag: {
       findFirst: mocks.findFirstFlag,
@@ -60,7 +61,8 @@ const staffRequest = {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mocks.findManyRequests.mockResolvedValue([]); // ageStuckAIReviews() no-op
+  mocks.findManyRequests.mockResolvedValue([]); // ageStuckAIReviews() no-op / filterVisibleToMessenger default
+  mocks.findManyExpenses.mockResolvedValue([]);
   mocks.findFirstFlag.mockResolvedValue(null);
   mocks.createFlag.mockImplementation(async ({ data }) => ({ id: 'flag-1', createdAt: new Date(), resolvedAt: null, resolvedById: null, resolvedByName: '', resolutionNote: '', ...data }));
 });
@@ -192,6 +194,66 @@ describe('POST /api/ceres/flags/:id/resolve — gm/ceo', () => {
     });
     expect(response.statusCode).toBe(200);
     expect(response.json().flag).toMatchObject({ status: 'resolved', resolutionNote: 'ตรวจแล้วถูกต้อง' });
+    await app.close();
+  });
+});
+
+// IDOR fix (adversarial review, 2026-07-21): GET /flags/counts used to return open-flag
+// counts for ANY id the caller passed, with no visibility check — a messenger could probe
+// whether some other person's request/expense had an open flag by just guessing/enumerating
+// ids. Now a messenger's ids are narrowed server-side to what they can actually see BEFORE
+// counting; filtered-out ids simply don't appear (no error, no existence signal).
+describe('GET /api/ceres/flags/counts — visibility-filtered for messengers', () => {
+  it("a messenger requesting another staff member's request id gets no count back (id filtered out, not an error)", async () => {
+    // request-1 is owned by staff-1 (see `staffRequest` above). Requesting caller is
+    // staff-2 — filterVisibleToMessenger's ceresPaymentRequest.findMany(where: requestedById:
+    // 'staff-2') finds nothing, so the id is dropped before groupBy ever runs.
+    mocks.findManyRequests.mockResolvedValue([]);
+    const app = buildApp(agentFor('staff', 'staff-2'));
+    const response = await app.inject({
+      method: 'GET', url: '/api/ceres/flags/counts?targetType=request&targetIds=request-1',
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json().counts).toEqual({});
+    expect(mocks.groupByFlags).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('the request\'s own owner (staff-1) gets the real count for their own request', async () => {
+    mocks.findManyRequests.mockResolvedValue([{ id: 'request-1' }]); // staff-1 owns it
+    mocks.groupByFlags.mockResolvedValue([{ targetId: 'request-1', _count: { _all: 2 } }]);
+    const app = buildApp(agentFor('staff', 'staff-1'));
+    const response = await app.inject({
+      method: 'GET', url: '/api/ceres/flags/counts?targetType=request&targetIds=request-1',
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json().counts).toEqual({ 'request-1': 2 });
+    await app.close();
+  });
+
+  it('the GM gets the real count without any ownership filtering', async () => {
+    mocks.groupByFlags.mockResolvedValue([{ targetId: 'request-1', _count: { _all: 2 } }]);
+    const app = buildApp(agentFor('gm'));
+    const response = await app.inject({
+      method: 'GET', url: '/api/ceres/flags/counts?targetType=request&targetIds=request-1',
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json().counts).toEqual({ 'request-1': 2 });
+    // GM never triggers the messenger ownership lookup at all.
+    expect(mocks.findManyRequests).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it("a messenger requesting another party's expense id gets no count back", async () => {
+    mocks.findParty.mockResolvedValue({ id: 'party-other', agentEmail: 'staff-2@example.test' });
+    mocks.findManyExpenses.mockResolvedValue([]); // expense-1 belongs to a different party
+    const app = buildApp(agentFor('staff', 'staff-2'));
+    const response = await app.inject({
+      method: 'GET', url: '/api/ceres/flags/counts?targetType=expense&targetIds=expense-1',
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json().counts).toEqual({});
+    expect(mocks.groupByFlags).not.toHaveBeenCalled();
     await app.close();
   });
 });

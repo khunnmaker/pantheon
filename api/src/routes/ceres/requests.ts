@@ -501,7 +501,10 @@ export function requestsRoutes(app: FastifyInstance) {
       if (!parsed.success) return reply.code(400).send({ error: 'invalid_body' });
       try {
         const request = await voidStaffRequest({ requestId: req.params.id, reason: parsed.data.reason, agent: req.agent! });
-        return { request: toStaffRequestRow(request) };
+        const review = request.aiReviewId
+          ? await prisma.ceresAIReview.findUnique({ where: { id: request.aiReviewId } })
+          : null;
+        return { request: toStaffRequestRow(request, review) };
       } catch (err) {
         return voidError(reply, err);
       }

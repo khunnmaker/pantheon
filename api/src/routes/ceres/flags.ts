@@ -81,12 +81,13 @@ export function flagsRoutes(app: FastifyInstance) {
   // GET /api/ceres/flags/counts?targetType=request&targetIds=id1,id2,... — open-flag counts
   // for a batch of ids, ANY authenticated Ceres persona (see flags.ts's getFlagCounts doc —
   // this is what lets a staff member's own request cards show a 🚩 badge without the
-  // gm/ceo-only GET /flags above).
+  // gm/ceo-only GET /flags above). A messenger's ids are narrowed to what they can actually
+  // see server-side (getFlagCounts) — this route never trusts the caller's own filtering.
   app.get('/api/ceres/flags/counts', { preHandler: requireCeresRole('messenger', 'gm', 'ceo') }, async (req, reply) => {
     const parsed = z.object({ targetType: z.enum(FLAG_TARGET_TYPES), targetIds: z.string().min(1) }).safeParse(req.query ?? {});
     if (!parsed.success) return reply.code(400).send({ error: 'invalid_query' });
     const ids = [...new Set(parsed.data.targetIds.split(',').map((id) => id.trim()).filter(Boolean))].slice(0, 500);
-    const counts = await getFlagCounts(parsed.data.targetType, ids);
+    const counts = await getFlagCounts(parsed.data.targetType, ids, req.agent!);
     return { counts };
   });
 

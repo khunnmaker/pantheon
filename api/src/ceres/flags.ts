@@ -91,15 +91,41 @@ export async function resolveFlag(id: string, resolutionNote: string, agent: Aut
   });
 }
 
-// Open-flag counts for a batch of target ids — any authenticated Ceres user may call this
-// (it only reveals a COUNT for ids the caller already has in hand from a list they can
-// already see; never the flag content/author), so staff can render a 🚩 badge on their own
-// request cards without the gm/ceo-only listFlags() endpoint.
-export async function getFlagCounts(targetType: FlagTargetType, targetIds: string[]): Promise<Record<string, number>> {
+// Narrows a batch of target ids down to the ones THIS messenger can actually see — same
+// ownership rule as assertRequestVisible/assertExpenseVisible above (request: their own
+// requestedById; expense: their own party), just batched instead of one-at-a-time. Ids
+// filtered out simply don't appear in the result — no error, no existence signal.
+async function filterVisibleToMessenger(targetType: FlagTargetType, targetIds: string[], agent: AuthedAgent): Promise<string[]> {
+  if (targetType === 'expense') {
+    const own = await prisma.ceresParty.findFirst({ where: { agentEmail: agent.email } });
+    if (!own) return [];
+    const rows = await prisma.ceresExpense.findMany({
+      where: { id: { in: targetIds }, partyId: own.id },
+      select: { id: true },
+    });
+    return rows.map((r) => r.id);
+  }
+  const rows = await prisma.ceresPaymentRequest.findMany({
+    where: { id: { in: targetIds }, workflowVersion: 2, requestedById: agent.id },
+    select: { id: true },
+  });
+  return rows.map((r) => r.id);
+}
+
+// Open-flag counts for a batch of target ids. gm/ceo see counts for anything (they already
+// see every request/expense). A messenger only gets counts for ids they can actually see —
+// same visibility rule createFlag() enforces — so this endpoint can't be used to probe
+// whether some OTHER person's request/expense has an open flag on it (IDOR fix,
+// 2026-07-21 review): a messenger passing another person's id simply gets no entry back,
+// identical to passing an id that doesn't exist.
+export async function getFlagCounts(targetType: FlagTargetType, targetIds: string[], agent: AuthedAgent): Promise<Record<string, number>> {
   if (targetIds.length === 0) return {};
+  const role = ceresRole(agent);
+  const visibleIds = role === 'gm' || role === 'ceo' ? targetIds : await filterVisibleToMessenger(targetType, targetIds, agent);
+  if (visibleIds.length === 0) return {};
   const rows = await prisma.ceresFlag.groupBy({
     by: ['targetId'],
-    where: { targetType, targetId: { in: targetIds }, status: 'open' },
+    where: { targetType, targetId: { in: visibleIds }, status: 'open' },
     _count: { _all: true },
   });
   const counts: Record<string, number> = {};

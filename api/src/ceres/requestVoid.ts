@@ -82,9 +82,25 @@ export async function voidStaffRequest({ requestId, reason, agent }: VoidStaffRe
     // comes back to the box/ledger exactly as a manual reverse would, same event rows. A
     // request with no live fulfillment (never paid, or already reversed) skips straight to
     // the void write below — this is what lets an already-'reversed' request reach 'void'.
-    if (liveFulfillment) {
+    //
+    // ADVANCES ARE THE EXCEPTION — they never reach this reversal, on purpose. The guard
+    // above only lets an advance with a liveFulfillment fall through when
+    // liquidationSatang(...).remaining === 0, and with zero live children (blocked earlier)
+    // the ONLY way remaining can be 0 here is that refund events have already returned the
+    // full advance amount. That refund already brought the cash back — reversing the
+    // ORIGINAL payment on top would inject a second, phantom inflow (payment −1000,
+    // refund +1000 nets the box to 0 already; reversing the payment adds another +1000,
+    // overcrediting the box/transfer-recon by the full advance amount). So for
+    // requestType 'advance' the void here is a pure status flip: the cash math was already
+    // closed by the refund(s). A NOT-yet-refunded advance never reaches this line at all —
+    // it's stopped by has_outstanding_balance above, and the CEO's route for that case is
+    // the existing manual reverse-a-money-event endpoint (which asserts the cash physically
+    // came back) run first, which flips fulfillmentStatus to 'reversed' — at which point
+    // liveFulfillment is undefined and this whole block is skipped anyway.
+    const shouldReverse = !!liveFulfillment && existing.requestType !== 'advance';
+    if (shouldReverse) {
       await reverseRequestMoneyEventInTx(tx, {
-        eventId: liveFulfillment.id,
+        eventId: liveFulfillment!.id,
         reason: `ยกเลิกรายการโดย CEO: ${reason}`,
         createdById: agent.id,
         createdByName: agent.name,
@@ -123,7 +139,7 @@ export async function voidStaffRequest({ requestId, reason, agent }: VoidStaffRe
         payload: {
           priorApprovalStatus: before.approvalStatus,
           priorFulfillmentStatus: before.fulfillmentStatus,
-          reversedFulfillment: !!liveFulfillment,
+          reversedFulfillment: shouldReverse,
         },
       },
     });
