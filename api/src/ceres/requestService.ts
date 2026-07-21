@@ -20,6 +20,20 @@ export type V2RequestType = (typeof V2_REQUEST_TYPES)[number];
 export type V2RequestScope = 'mine' | 'queue' | 'all';
 export const STUCK_AI_REVIEW_MS = 5 * 60 * 1000;
 
+// Owner policy: below this amount (baht, `amount` is already stored/parsed in baht — see
+// `num()` in routes/ceres/common.ts) the AI pre-screen is skipped regardless of request type,
+// same as the advance fast lane. Strictly-less-than: exactly ฿500.00 still gets screened.
+export const AI_SCREEN_FLOOR_BAHT = 500;
+
+// Why the AI screen is being skipped for this request, or null if it isn't skipped.
+// Both reasons use the same `clear` + `skipped_by_policy` event mechanics as the pre-existing
+// advance fast lane; the payload's `policyReason` distinguishes them without new schema.
+function aiSkipReason(type: V2RequestType, amount: string): 'advance' | 'below_floor' | null {
+  if (type === 'advance') return 'advance';
+  if (num(amount) < AI_SCREEN_FLOOR_BAHT) return 'below_floor';
+  return null;
+}
+
 export class CeresRequestError extends Error {
   constructor(
     public code:
@@ -182,6 +196,7 @@ export async function createStaffRequest(input: V2RequestInput, agent: AuthedAge
   const { media, receiptMeta } = await validateReferences(normalized, agent);
   const party = await prisma.ceresParty.findFirst({ where: { agentEmail: agent.email, active: true } });
   if (ceresRole(agent) === 'messenger' && !party) throw new CeresRequestError('no_party');
+  const skipReason = aiSkipReason(normalized.requestType, normalized.amount);
 
   const created = await prisma.$transaction(async (tx) => {
     const request = await tx.ceresPaymentRequest.create({
@@ -204,7 +219,7 @@ export async function createStaffRequest(input: V2RequestInput, agent: AuthedAge
         ocrAmount: receiptMeta?.ocrAmount ?? '',
         ocrVendor: receiptMeta?.ocrVendor ?? '',
         ocrDate: receiptMeta?.ocrDate ?? '',
-        aiScreenStatus: normalized.requestType === 'advance' ? 'clear' : 'pending',
+        aiScreenStatus: skipReason ? 'clear' : 'pending',
       },
     });
     await tx.ceresRequestEvent.create({
@@ -213,14 +228,14 @@ export async function createStaffRequest(input: V2RequestInput, agent: AuthedAge
         kind: 'submitted',
         actorId: agent.id,
         actorName: agent.name,
-        payload: normalized.requestType === 'advance'
-          ? { ...snapshot(request), ai: 'skipped_by_policy' }
+        payload: skipReason
+          ? { ...snapshot(request), ai: 'skipped_by_policy', policyReason: skipReason }
           : snapshot(request),
       },
     });
     return request;
   });
-  return normalized.requestType === 'advance'
+  return skipReason
     ? created
     : applyAIResult(created.id, created.rowVersion);
 }
@@ -251,6 +266,7 @@ export async function editStaffRequest(
   const categoryChanged = merged.requestType !== existing.requestType || merged.category !== existing.category;
   const groupsChanged = merged.requestType !== existing.requestType || !sameGroups(merged.categoryGroups, existingGroups);
   const { media, receiptMeta } = await validateReferences(merged, agent, categoryChanged, groupsChanged);
+  const skipReason = aiSkipReason(merged.requestType, merged.amount);
 
   const updated = await prisma.$transaction(async (tx) => {
     const changed = await tx.ceresPaymentRequest.updateMany({
@@ -268,7 +284,7 @@ export async function editStaffRequest(
         ocrAmount: receiptMeta?.ocrAmount ?? '',
         ocrVendor: receiptMeta?.ocrVendor ?? '',
         ocrDate: receiptMeta?.ocrDate ?? '',
-        aiScreenStatus: merged.requestType === 'advance' ? 'clear' : 'pending',
+        aiScreenStatus: skipReason ? 'clear' : 'pending',
         aiReviewId: null,
         rowVersion: { increment: 1 },
       },
@@ -294,15 +310,15 @@ export async function editStaffRequest(
           kind: 'edited',
           actorId: agent.id,
           actorName: agent.name,
-          payload: merged.requestType === 'advance'
-            ? { before: snapshot(existing), after: snapshot(request), ai: 'skipped_by_policy' }
+          payload: skipReason
+            ? { before: snapshot(existing), after: snapshot(request), ai: 'skipped_by_policy', policyReason: skipReason }
             : { before: snapshot(existing), after: snapshot(request) },
         },
       }),
     ]);
     return request;
   });
-  return merged.requestType === 'advance'
+  return skipReason
     ? updated
     : applyAIResult(updated.id, updated.rowVersion);
 }

@@ -1,9 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
-  AlertTriangle,
   ArrowLeft,
   ArrowLeftRight,
-  Bell,
   CircleDollarSign,
   ClipboardCheck,
   Crown,
@@ -13,7 +11,6 @@ import {
   Home,
   LayoutDashboard,
   ListChecks,
-  Loader2,
   LogOut,
   MoreHorizontal,
   PiggyBank,
@@ -30,7 +27,6 @@ import {
   listExpenses,
   listStaffRequests,
   logout as logoutSuite,
-  type CeoOverview as CeoOverviewData,
 } from './lib/api';
 import AppSwitcher from './AppSwitcher';
 import MdBoard from './MdBoard';
@@ -40,7 +36,7 @@ import MdClose from './MdClose';
 import MdExpenses from './MdExpenses';
 import MdTemplates from './MdTemplates';
 import MdRecon from './MdRecon';
-import CeoOverview, { EscalationsSection, WeeklyPackSection } from './CeoOverview';
+import CeoOverview, { WeeklyPackSection } from './CeoOverview';
 import CeoHome from './CeoHome';
 import MoreMenu, { type MoreMenuGroup } from './MoreMenu';
 import NeeApprovalQueue from './NeeApprovalQueue';
@@ -77,10 +73,12 @@ type View =
   | 'settings'
   | 'my-submit'
   | 'my-requests'
-  // Desktop-only (≥1024px) CEO escalation queue — a focused single-purpose screen around the
-  // same EscalationsSection CeoHome/CeoOverview already render, so the leading tab in the CEO's
-  // desktop strip has somewhere dedicated to point. Never reachable on mobile (not in
-  // moreGroups, not in SECONDARY_VIEWS) and gm never gets it (roleInappropriate, below).
+  // Legacy key only (CEO one-flow, 2026-07-21) — รอ CEO used to be its own leading desktop
+  // tab around EscalationsSection; it's now folded into the ภาพรวม tab (EscalationsSection
+  // renders at the top of CeoOverview/CeoHome, which already happens without help from this
+  // key). Kept in the union purely so a stale/shared #ceo-queue hash redirects into ภาพรวม
+  // instead of dead-ending — see `ceoQueueRedirect` below. Never a real destination anymore:
+  // no tab points at it, gm never gets it (roleInappropriate, below).
   | 'ceo-queue'
   // Desktop-only (≥1024px) composed tabs (2026-07-18 flat-strip simplification) — each one
   // groups several of the individual keys above behind an internal segmented control. See the
@@ -196,6 +194,12 @@ function ManagementApp({ isCeo }: { isCeo: boolean }) {
   // useEffects below) instead of dead-ending.
   const desktopLegacyApprovalRedirect = isDesktop && !isCeo && view === 'legacy-approval';
   const desktopCeoHistoryRedirect = isDesktop && isCeo && view === 'ceo-history';
+  // รอ CEO folded into ภาพรวม (CEO one-flow, 2026-07-21) — not gated on isDesktop like the
+  // other *Redirect consts above: 'ceo-queue' was never a mobile destination either (see the
+  // View type comment), so a stale/shared #ceo-queue hash should land on 'home' on ANY
+  // viewport rather than only on desktop — mobile's CeoHome renders EscalationsSection near
+  // its top too, so it's a reasonable landing there as well.
+  const ceoQueueRedirect = isCeo && view === 'ceo-queue';
   const desktopCashboxRedirect = isDesktop && (view === 'board' || view === 'money' || view === 'close');
   const desktopHistoryRedirect = isDesktop && view === 'expenses';
   const desktopOtherRedirect = isDesktop && (view === 'templates' || view === 'exports' || view === 'settings');
@@ -206,6 +210,8 @@ function ManagementApp({ isCeo }: { isCeo: boolean }) {
     : desktopLegacyApprovalRedirect
     ? 'approvals'
     : desktopCeoHistoryRedirect
+    ? 'home'
+    : ceoQueueRedirect
     ? 'home'
     : desktopCashboxRedirect
     ? 'cashbox'
@@ -249,34 +255,26 @@ function ManagementApp({ isCeo }: { isCeo: boolean }) {
     return () => { cancelled = true; };
   }, [isDesktop, isCeo, view]);
 
+  // `queue` now feeds the ภาพรวม tab's pill (the old dedicated รอ CEO tab was folded into
+  // ภาพรวม, CEO one-flow 2026-07-21 — see docs/CERES_DESKTOP_NAV.md). CeoOverview/CeoHome
+  // fetch their own full escalations list once ภาพรวม is actually mounted; this effect exists
+  // purely to keep the tab-strip pills fed while a different tab is showing.
   const [ceoBadges, setCeoBadges] = useState<{ queue?: number; fulfillment?: number; recon?: number }>({});
-  const [ceoEscalations, setCeoEscalations] = useState<CeoOverviewData['escalations']>([]);
-  const [ceoQueueLoading, setCeoQueueLoading] = useState(true);
-  const [ceoQueueError, setCeoQueueError] = useState('');
-  const loadCeoQueue = useCallback(() => {
-    setCeoQueueLoading(true);
-    setCeoQueueError('');
+  const loadCeoBadges = useCallback(() => {
     getCeoOverview(todayStr())
-      .then((d) => {
-        setCeoEscalations(d.escalations);
-        setCeoBadges((c) => ({ ...c, queue: d.escalations.length, recon: d.transferReconciliation.unmatched }));
-      })
-      .catch(() => setCeoQueueError('โหลดข้อมูลไม่สำเร็จ'))
-      .finally(() => setCeoQueueLoading(false));
+      .then((d) => setCeoBadges((c) => ({ ...c, queue: d.escalations.length, recon: d.transferReconciliation.unmatched })))
+      .catch(() => {});
   }, []);
   useEffect(() => {
-    // Also fires for a bare #ceo-queue deep link on a narrow viewport (not reachable from any
-    // mobile UI, but a manually-typed/shared hash shouldn't spin forever) — everywhere else
-    // this is a desktop-only fetch.
-    if (!isCeo || !(isDesktop || view === 'ceo-queue')) return;
-    loadCeoQueue();
+    if (!isCeo || !isDesktop) return;
+    loadCeoBadges();
     listStaffRequests('all', 300)
       .then((r) => {
         const n = r.requests.filter((x) => x.approvalStatus === 'approved' && x.fulfillmentStatus === 'unfulfilled').length;
         setCeoBadges((c) => ({ ...c, fulfillment: n }));
       })
       .catch(() => {});
-  }, [isDesktop, isCeo, view, loadCeoQueue]);
+  }, [isDesktop, isCeo, view, loadCeoBadges]);
 
   // ── Internal segment state for the desktop composed tabs (กล่องเงินสด / ประวัติ / อื่นๆ) —
   // each defaults to its "ritual order" first segment, but re-primes itself whenever the raw
@@ -308,6 +306,20 @@ function ManagementApp({ isCeo }: { isCeo: boolean }) {
     setView('my-submit');
   }
 
+  // GM submit→approve bridge (2026-07-21) — after a GM submits their own request from the
+  // embedded ของฉัน tab (StaffHome's onSubmittedForApproval, wired below), jump straight to
+  // อนุมัติ with that card highlighted. Same grammar as goToApprovalWithPrefill's legacy-queue
+  // jump, just targeting the v2 NeeApprovalQueue instead of MdApproval. Cleared on leaving
+  // 'approvals' so a later visit doesn't keep an old highlight around.
+  const [highlightApprovalId, setHighlightApprovalId] = useState<string | null>(null);
+  useEffect(() => {
+    if (activeView !== 'approvals') setHighlightApprovalId(null);
+  }, [activeView]);
+  function goToApprovalQueueWithRequest(requestId: string) {
+    setHighlightApprovalId(requestId);
+    setView('approvals');
+  }
+
   function openTemplateRequest(prefill: RequestSheetPrefill) {
     setTemplateRequestPrefill(prefill);
   }
@@ -337,7 +349,7 @@ function ManagementApp({ isCeo }: { isCeo: boolean }) {
         { key: 'money', label: 'ฝากเงิน', icon: <ArrowLeftRight size={17} />, onClick: () => setView('money') },
         { key: 'close', label: 'ปิดยอดประจำวัน', icon: <FileCheck2 size={17} />, onClick: () => setView('close') },
         ...(isCeo
-          ? [{ key: 'legacy-fulfillment', label: 'จ่าย / ซื้อ', icon: <CircleDollarSign size={17} />, onClick: () => setView('legacy-fulfillment') }]
+          ? [{ key: 'legacy-fulfillment', label: 'รอจ่าย', icon: <CircleDollarSign size={17} />, onClick: () => setView('legacy-fulfillment') }]
           : []),
       ],
     },
@@ -355,12 +367,12 @@ function ManagementApp({ isCeo }: { isCeo: boolean }) {
     },
   ];
 
-  // ── Desktop (≥1024px) FLAT tab strip (2026-07-18 simplification — no group captions, no
-  // divider bars; 7 tabs for GM, 8 for CEO). Every tab still maps onto an existing mobile
-  // destination or a composed view built from existing components (see the
-  // Approvals/Cashbox/History/OtherComposedView components below + docs/CERES_DESKTOP_NAV.md
-  // for the full map). Active tab = amber underline + bold, red pill count badges — same look
-  // as before, just flattened. ──────────────────────────────────────────────────────────────
+  // ── Desktop (≥1024px) FLAT tab strip (2026-07-18 simplification, tightened to 7/7 in the
+  // 2026-07-21 CEO one-flow — no group captions, no divider bars; 7 tabs each for GM and CEO).
+  // Every tab still maps onto an existing mobile destination or a composed view built from
+  // existing components (see the Approvals/Cashbox/History/OtherComposedView components below
+  // + docs/CERES_DESKTOP_NAV.md for the full map). Active tab = amber underline + bold, red
+  // pill count badges — same look as before, just flattened. ────────────────────────────────
   type Tab = { key: View; label: string; icon: React.ReactNode; count?: number };
   const gmTabs: Tab[] = [
     { key: 'approvals', label: 'อนุมัติ', icon: <ClipboardCheck size={16} />, count: (gmCounts.approvals ?? 0) + (gmCounts.legacyApprovals ?? 0) },
@@ -371,10 +383,13 @@ function ManagementApp({ isCeo }: { isCeo: boolean }) {
     { key: 'my-submit', label: 'ของฉัน', icon: <Send size={16} /> },
     { key: 'other', label: 'อื่นๆ', icon: <MoreHorizontal size={16} /> },
   ];
+  // รอ CEO folded into ภาพรวม (CEO one-flow, 2026-07-21): the escalations queue now renders at
+  // the top of CeoOverview itself, so its old leading tab is gone (8 → 7) and its red pill
+  // count (ceoBadges.queue) moves onto ภาพรวม. "รอจ่าย" also unifies with GM's label — the old
+  // CEO-only "จ่าย/ซื้อ" name for the same NeeFulfillmentQueue destination.
   const ceoTabs: Tab[] = [
-    { key: 'ceo-queue', label: 'รอ CEO', icon: <Bell size={16} />, count: ceoBadges.queue },
-    { key: 'home', label: 'ภาพรวม', icon: <LayoutDashboard size={16} /> },
-    { key: 'legacy-fulfillment', label: 'จ่าย/ซื้อ', icon: <CircleDollarSign size={16} />, count: ceoBadges.fulfillment },
+    { key: 'home', label: 'ภาพรวม', icon: <LayoutDashboard size={16} />, count: ceoBadges.queue },
+    { key: 'legacy-fulfillment', label: 'รอจ่าย', icon: <CircleDollarSign size={16} />, count: ceoBadges.fulfillment },
     { key: 'recon', label: 'โอน/สลิป', icon: <Scale size={16} />, count: ceoBadges.recon },
     { key: 'cashbox', label: 'กล่องเงินสด', icon: <PiggyBank size={16} /> },
     { key: 'history', label: 'ประวัติ', icon: <History size={16} /> },
@@ -468,9 +483,13 @@ function ManagementApp({ isCeo }: { isCeo: boolean }) {
         ))}
         {activeView === 'approvals' && !isCeo && (
           isDesktop ? (
-            <ApprovalsComposedView prefill={approvalPrefill} onConsumePrefill={() => setApprovalPrefill(null)} />
+            <ApprovalsComposedView
+              prefill={approvalPrefill}
+              onConsumePrefill={() => setApprovalPrefill(null)}
+              highlightRequestId={highlightApprovalId}
+            />
           ) : (
-            <NeeApprovalQueue />
+            <NeeApprovalQueue highlightRequestId={highlightApprovalId} />
           )
         )}
         {activeView === 'fulfillment' && !isCeo && <NeeFulfillmentQueue />}
@@ -495,24 +514,17 @@ function ManagementApp({ isCeo }: { isCeo: boolean }) {
             openRequestOnMount={autoOpenOwnRequest}
             onOpenMine={() => setView('my-requests')}
             onOpenSettings={() => setView('settings')}
+            // GM only — a CEO's own submitted requests route to the GM's queue (CEO is the
+            // final authority, not a jump target for their own request), so the bridge stays
+            // undefined for isCeo and StaffHome simply doesn't show the "ไปอนุมัติเลย" action.
+            onSubmittedForApproval={!isCeo ? goToApprovalQueueWithRequest : undefined}
           />
         )}
         {activeView === 'my-requests' && (
           <StaffHome key="my-requests" embeddedView="mine" onOpenSettings={() => setView('settings')} />
         )}
-        {activeView === 'ceo-queue' && isCeo && (
-          ceoQueueLoading ? (
-            <div className="py-16 flex justify-center text-slate-400">
-              <Loader2 className="animate-spin" size={24} />
-            </div>
-          ) : ceoQueueError ? (
-            <div className="py-16 flex items-center justify-center gap-1 text-rose-600 text-sm">
-              <AlertTriangle size={15} /> {ceoQueueError}
-            </div>
-          ) : (
-            <EscalationsSection escalations={ceoEscalations} onDecided={loadCeoQueue} />
-          )
-        )}
+        {/* 'ceo-queue' is never activeView anymore — ceoQueueRedirect (above) always resolves
+            it to 'home' — see the View type comment for why the key still exists. */}
         {activeView === 'cashbox' && (
           <CashboxComposedView sub={cashboxTab} onSubChange={setCashboxTab} onViewPendingParty={goToApprovalWithPrefill} />
         )}
@@ -574,13 +586,15 @@ function NavButton({
 function ApprovalsComposedView({
   prefill,
   onConsumePrefill,
+  highlightRequestId,
 }: {
   prefill: ApprovalPrefill | null;
   onConsumePrefill: () => void;
+  highlightRequestId?: string | null;
 }) {
   return (
     <div className="space-y-6">
-      <NeeApprovalQueue />
+      <NeeApprovalQueue highlightRequestId={highlightRequestId} />
       <div className="pt-4 border-t border-slate-200">
         <div className="text-sm font-semibold text-slate-500 mb-2">ตรวจใบเสร็จค่าใช้จ่าย</div>
         <MdApproval prefill={prefill} onConsumePrefill={onConsumePrefill} />

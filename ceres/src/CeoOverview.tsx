@@ -3,6 +3,7 @@ import {
   Loader2,
   AlertTriangle,
   ThumbsUp,
+  Wallet,
   X,
   AlertCircle,
   Flag,
@@ -23,7 +24,9 @@ import {
   type CeoOverview as CeoOverviewData,
   type StaffRequest,
 } from './lib/api';
+import { REQUEST_TYPE_LABEL } from './lib/requestLabels';
 import { MediaThumb } from './lib/media';
+import { PayPanel } from './PayPanel';
 
 // v1 purge (2026-07-19) — MdRequests.tsx is gone; local copy matching MdMoney.tsx's pattern.
 function todayStr(): string {
@@ -47,12 +50,6 @@ const REQUEST_STATUS_LABEL: Record<string, string> = {
   pending_ceo: 'รอ CEO',
   approved: 'อนุมัติแล้ว',
   void: 'ยกเลิก',
-};
-
-const V2_TYPE_LABEL: Record<StaffRequest['requestType'], string> = {
-  advance: 'เบิกล่วงหน้า',
-  reimbursement: 'สำรองจ่าย-ขอคืน',
-  purchase: 'ขอให้ซื้อ',
 };
 
 export default function CeoOverview({
@@ -136,6 +133,23 @@ export function SectionCard({ title, children }: { title: string; children: Reac
 // Exported so CeoHome.tsx (Phase 4 CEO front door) can reuse these section renderers
 // verbatim instead of re-implementing escalation/cash/flag/settlement cards.
 export function EscalationsSection({ escalations, onDecided }: { escalations: CeoOverviewData['escalations']; onDecided: () => void }) {
+  // Cards mid-"อนุมัติและจ่ายเลย": CEO-approved but not yet reflected in the `escalations`
+  // prop (that list is owned by the parent's CeoOverviewData fetch — the row disappears from
+  // it on the next onDecided() reload, same as the rest of this section's decisions). Keyed
+  // by request id, holding the post-approve StaffRequest snapshot PayPanel needs. Mirrors
+  // NeeApprovalQueue.tsx's GM "อนุมัติและจ่ายเลย" fold-in-place (Ceres CEO one-flow,
+  // 2026-07-21) — same shared PayPanel, same collapse behavior.
+  const [paying, setPaying] = useState<Record<string, StaffRequest>>({});
+
+  function stopPaying(id: string) {
+    setPaying((current) => {
+      if (!(id in current)) return current;
+      const next = { ...current };
+      delete next[id];
+      return next;
+    });
+  }
+
   return (
     <SectionCard title="รออนุมัติ">
       {escalations.length === 0 ? (
@@ -143,7 +157,24 @@ export function EscalationsSection({ escalations, onDecided }: { escalations: Ce
       ) : (
         <div className="space-y-2">
           {escalations.map((r) => (
-            <EscalationCard key={r.id} r={r} onDecided={onDecided} />
+            <EscalationCard
+              key={r.id}
+              r={r}
+              payingRequest={paying[r.id]}
+              onApprovedForPay={(req) => setPaying((c) => ({ ...c, [r.id]: req }))}
+              onPayDone={() => {
+                stopPaying(r.id);
+                onDecided();
+              }}
+              onPayCancel={() => {
+                // Already CEO-approved by this point — a refresh just makes the card
+                // disappear from `escalations` cleanly (it no longer matches the pending
+                // queue), same as NeeApprovalQueue.tsx's onCancel for the GM lane.
+                stopPaying(r.id);
+                onDecided();
+              }}
+              onDecided={onDecided}
+            />
           ))}
         </div>
       )}
@@ -154,8 +185,28 @@ export function EscalationsSection({ escalations, onDecided }: { escalations: Ce
 // v1 purge (2026-07-19) — escalations is now v2 StaffRequest[] only (the server never
 // escalates a workflowVersion-1 row), so this card no longer branches on request shape.
 // See docs/CERES_V1_PURGE_PLAN.md.
-function EscalationCard({ r, onDecided }: { r: StaffRequest; onDecided: () => void }) {
+function EscalationCard({
+  r,
+  payingRequest,
+  onApprovedForPay,
+  onPayDone,
+  onPayCancel,
+  onDecided,
+}: {
+  r: StaffRequest;
+  // Present once "อนุมัติและจ่ายเลย" has approved this card — holds the post-approve
+  // snapshot PayPanel needs; the card renders PayPanel instead of its decide buttons.
+  payingRequest?: StaffRequest;
+  onApprovedForPay: (req: StaffRequest) => void;
+  onPayDone: () => void;
+  onPayCancel: () => void;
+  onDecided: () => void;
+}) {
   const [busy, setBusy] = useState(false);
+  // Separate from `busy` — decideAndPay() uses this so a click on "อนุมัติและจ่ายเลย"
+  // doesn't also flip the plain "CEO อนุมัติ" button's icon to a spinner (same split as
+  // NeeApprovalQueue.tsx's busyId/payBusyId).
+  const [payBusy, setPayBusy] = useState(false);
   const [error, setError] = useState('');
   const [rejecting, setRejecting] = useState(false);
   const [note, setNote] = useState('');
@@ -177,6 +228,25 @@ function EscalationCard({ r, onDecided }: { r: StaffRequest; onDecided: () => vo
     }
   }
 
+  // Combined "อนุมัติและจ่ายเลย" — CEO approve, then fold straight into the shared
+  // PayPanel, no navigation. Unlike NeeApprovalQueue's decideAndPay(), there is NO
+  // amount/forward gate on offering this button: every card in the CEO queue is already
+  // the final authority (escalated for >฿5k or an AI flag), so a successful CEO approve
+  // always resolves to 'approved' with nothing left to escalate — see
+  // decideStaffRequestByCeo() in api/src/ceres/requestService.ts.
+  async function decideAndPay() {
+    setPayBusy(true);
+    setError('');
+    try {
+      const result = await ceoDecisionV2(r.id, 'approve');
+      onApprovedForPay(result.request);
+    } catch {
+      setError('บันทึกไม่สำเร็จ ลองใหม่อีกครั้ง');
+    } finally {
+      setPayBusy(false);
+    }
+  }
+
   return (
     <div className="bg-white rounded-xl border border-amber-200 p-3">
       <div className="flex items-start gap-3">
@@ -186,7 +256,7 @@ function EscalationCard({ r, onDecided }: { r: StaffRequest; onDecided: () => vo
             <span className="font-semibold text-sm">{r.requestedByName}</span>
             <span className="font-bold">{baht(r.amountNum)}</span>
           </div>
-          <div className="text-xs text-slate-500">{V2_TYPE_LABEL[r.requestType]} · GM อนุมัติแล้ว</div>
+          <div className="text-xs text-slate-500">{REQUEST_TYPE_LABEL[r.requestType]} · GM อนุมัติแล้ว</div>
           <div className="flex flex-wrap gap-1.5 mt-1">
             <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 text-xs">{r.entity}</span>
             <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 text-xs">{r.category}</span>
@@ -221,7 +291,9 @@ function EscalationCard({ r, onDecided }: { r: StaffRequest; onDecided: () => vo
         </div>
       )}
 
-      {rejecting ? (
+      {payingRequest ? (
+        <PayPanel request={payingRequest} onDone={onPayDone} onCancel={onPayCancel} />
+      ) : rejecting ? (
         <div className="mt-2 pt-2 border-t border-slate-100 space-y-2">
           <input
             value={note}
@@ -244,21 +316,35 @@ function EscalationCard({ r, onDecided }: { r: StaffRequest; onDecided: () => vo
           </div>
         </div>
       ) : (
-        <div className="flex gap-2 mt-2 pt-2 border-t border-slate-100">
+        <div className="flex flex-col gap-2 mt-2 pt-2 border-t border-slate-100">
+          {/* Combined action — always offered here (no forward/amount gate, unlike
+              NeeApprovalQueue's GM equivalent): the CEO queue is the final authority, so
+              every card is eligible to fold straight into payment. Full-width + solid amber
+              so it reads as the strongest action, ranking above the plain CEO อนุมัติ/ปฏิเสธ
+              pair below it. */}
           <button
-            onClick={() => decide('approve')}
-            disabled={busy}
-            className="flex-1 min-h-[40px] rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold flex items-center justify-center gap-1 disabled:opacity-40"
+            onClick={decideAndPay}
+            disabled={busy || payBusy}
+            className="w-full min-h-[40px] rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-sm font-semibold flex items-center justify-center gap-1 disabled:opacity-40"
           >
-            {busy ? <Loader2 size={14} className="animate-spin" /> : <ThumbsUp size={14} />} CEO อนุมัติ
+            {payBusy ? <Loader2 size={14} className="animate-spin" /> : <Wallet size={14} />} อนุมัติและจ่ายเลย
           </button>
-          <button
-            onClick={() => setRejecting(true)}
-            disabled={busy}
-            className="flex-1 min-h-[40px] rounded-lg border border-rose-300 text-rose-600 hover:bg-rose-50 text-sm font-semibold flex items-center justify-center gap-1 disabled:opacity-40"
-          >
-            <X size={14} /> ปฏิเสธ
-          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={() => decide('approve')}
+              disabled={busy || payBusy}
+              className="flex-1 min-h-[40px] rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold flex items-center justify-center gap-1 disabled:opacity-40"
+            >
+              {busy ? <Loader2 size={14} className="animate-spin" /> : <ThumbsUp size={14} />} CEO อนุมัติ
+            </button>
+            <button
+              onClick={() => setRejecting(true)}
+              disabled={busy || payBusy}
+              className="flex-1 min-h-[40px] rounded-lg border border-rose-300 text-rose-600 hover:bg-rose-50 text-sm font-semibold flex items-center justify-center gap-1 disabled:opacity-40"
+            >
+              <X size={14} /> ปฏิเสธ
+            </button>
+          </div>
         </div>
       )}
     </div>
@@ -269,7 +355,7 @@ function EscalationCard({ r, onDecided }: { r: StaffRequest; onDecided: () => vo
 // ภาพรวม tab render the identical daily outflow-by-lane/type markup. Title is overridable
 // because the desktop screen's date picker can point at a day other than today.
 const OUTFLOW_LANE_LABEL: Record<string, string> = { cash: 'เงินสด', transfer: 'โอน' };
-const OUTFLOW_TYPE_LABEL: Record<string, string> = { advance: 'เบิกล่วงหน้า', reimbursement: 'สำรองจ่าย-ขอคืน', purchase: 'ขอให้ซื้อ', unknown: 'อื่นๆ' };
+const OUTFLOW_TYPE_LABEL: Record<string, string> = { ...REQUEST_TYPE_LABEL, unknown: 'อื่นๆ' };
 
 export function DailyOutflowSection({
   dailyOutflow,

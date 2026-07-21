@@ -49,9 +49,11 @@ model Customer {
   code              String?
   // staff-assigned area/type category (e.g. C1–C6 by zone, Lab) — one per customer
   category          String?
-  // sales-pipeline stage (ถาม/สั่งซื้อ/ส่ง/ดูแล/เสร็จ/ยกเลิก) — staff-confirmed
+  // sales-pipeline stage (ถาม/สั่งซื้อ/ส่ง/ดูแล/เสร็จ/ยกเลิก) — the AI applies this
+  // automatically from its stage inference; staff can override via the console dropdown
   stage             String?
-  // the AI's pending stage suggestion; staff accept → stage. null = none/already accepted
+  // legacy: the AI's pending stage suggestion. No longer written (the AI now applies
+  // stage directly to `stage`) — column kept only so old rows don't error; always null on new writes
   suggestedStage    String?
   // bilingual support: short lowercase language code (e.g. "en","zh","ja","my") the AI detected
   // from the customer's last non-Thai message — set by translateInbound, read by the console's

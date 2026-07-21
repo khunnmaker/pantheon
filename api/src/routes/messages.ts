@@ -8,7 +8,6 @@ import { fetchDisplayName, fetchGroupName } from '../line/client.js';
 import { generateDraftForMessage } from '../llm/draft.js';
 import { rewriteText } from '../llm/rewrite.js';
 import { isNonThaiText, translateOutbound, translateMessageToThai } from '../llm/translate.js';
-import { hasPrice } from '../llm/guardrails.js';
 import { readImageContent } from '../line/contentStore.js';
 import { PRODUCT_PHOTO_DIR } from './content.js';
 import { saveStaffUpload, readStaffUploadMeta, UPLOAD_ID_RE } from '../line/staffUploads.js';
@@ -45,7 +44,6 @@ async function resolveCustomerName(customer: {
 
 const replyBody = z.object({
   finalText: z.string().min(1),
-  confirmNumbers: z.boolean().optional(),
   attachProductSkus: z.array(z.string()).max(20).optional(), // catalog photos to attach
   uploadId: z.string().max(80).optional(), // attach a staff-uploaded photo/file
   replyToMessageId: z.string().max(60).optional(), // our Message.id to LINE-quote in this reply
@@ -300,7 +298,7 @@ export async function messageRoutes(app: FastifyInstance) {
   app.post<{ Params: { id: string } }>('/api/messages/:id/reply', async (req, reply) => {
     const parsed = replyBody.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: 'invalid_body' });
-    const { finalText, confirmNumbers } = parsed.data;
+    const { finalText } = parsed.data;
     const agent = req.agent!;
 
     const customerMsg = await prisma.message.findUnique({ where: { id: req.params.id } });
@@ -360,17 +358,6 @@ export async function messageRoutes(app: FastifyInstance) {
         imageUrls = photoSkus.map((ps) => `${base}/content/product/${ps}`);
         attach = { attachmentType: 'product', attachmentRef: photoSkus.join(',') };
       }
-    }
-
-    // Server-enforced numbers-confirm (defense in depth, spec §8): a reply that quotes a price
-    // (a number next to a currency unit — bare-number prices like "250 ค่ะ" are NOT caught) must
-    // be explicitly confirmed before it can send — enforced HERE, not just in the console, and
-    // gated on the FINAL composed sendText (including an appended attachment filename like
-    // "📎 ใบเสนอราคา2500.pdf") so a price hiding in the filename isn't missed. 428 (vs the 409
-    // already-replied claim) tells the console to ask the staff to verify and resend. Everything
-    // above this point is read-only, so gating here (instead of at the top) has no side effects.
-    if (!confirmNumbers && hasPrice(sendText)) {
-      return reply.code(428).send({ error: 'needs_confirm' });
     }
 
     // Claim this customer message atomically BEFORE sending. The unique

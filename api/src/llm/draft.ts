@@ -339,11 +339,15 @@ export async function generateDraftForMessage(
   // staff can read what they're about to approve. Never blocks the draft response.
   if (isNonThaiText(draft.draftText)) void translateDraftToThai(draft.id);
 
-  // Stage suggestion: when the AI infers a stage that differs from the confirmed one,
-  // surface it for staff to accept (never auto-apply). Clears the suggestion if it matches.
+  // Stage auto-apply: when the AI infers a stage that differs from the confirmed one,
+  // apply it directly — staff can still override via the manual dropdown. Clears any
+  // stale suggestion either way.
   if (isStage(result.stage)) {
     await prisma.customer
-      .update({ where: { id: message.customerId }, data: { suggestedStage: result.stage !== currentStage ? result.stage : null } })
+      .update({
+        where: { id: message.customerId },
+        data: result.stage !== currentStage ? { stage: result.stage, suggestedStage: null } : { suggestedStage: null },
+      })
       .catch(() => undefined);
   }
 

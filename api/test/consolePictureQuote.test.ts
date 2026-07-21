@@ -34,7 +34,6 @@ vi.mock('../src/routes/content.js', () => ({ PRODUCT_PHOTO_DIR: 'unused-test-dir
 vi.mock('../src/stages.js', () => ({ isStage: vi.fn(() => true) }));
 vi.mock('../src/ws/io.js', () => ({ pushToConsole: vi.fn() }));
 vi.mock('../src/stock/helpers.js', () => ({ isLow: vi.fn(() => false) }));
-vi.mock('../src/llm/guardrails.js', () => ({ hasPrice: vi.fn(() => false) }));
 vi.mock('../src/llm/captionImage.js', () => ({ captionStaffUpload: vi.fn() }));
 vi.mock('../src/llm/draftQueue.js', () => ({
   bumpClearEpoch: vi.fn(),

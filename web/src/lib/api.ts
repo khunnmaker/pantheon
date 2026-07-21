@@ -72,7 +72,7 @@ export interface CustomerLite {
   lastSeen: string;
 }
 
-// Sales-pipeline stages (mirror of api/src/stages.ts). AI suggests, staff confirm.
+// Sales-pipeline stages (mirror of api/src/stages.ts). AI applies automatically; staff can override.
 export const STAGES = ['ถาม', 'สั่งซื้อ', 'ส่ง', 'ดูแล', 'เสร็จ', 'ยกเลิก'];
 export interface QueueItem {
   customer: CustomerLite;
@@ -320,12 +320,10 @@ export interface ReplyResult {
   dryRun: boolean;
   learnedCaptured: boolean;
 }
-// Returns { needsConfirm: true } when the reply quotes a price and confirm wasn't set (428),
-// or { alreadyReplied: true } when this message was already answered (409 atomic claim).
+// Returns { alreadyReplied: true } when this message was already answered (409 atomic claim).
 export async function sendReply(
   messageId: string,
   finalText: string,
-  confirmNumbers?: boolean,
   attachProductSkus?: string[],
   uploadId?: string,
   replyToMessageId?: string, // our Message.id to LINE-quote in this reply
@@ -333,12 +331,11 @@ export async function sendReply(
   // faithful Thai source — lets the server show a Thai translation of the sent reply
   // back to staff for free (no LLM round-trip). See translateOriginal in Console.tsx.
   thaiSource?: string,
-): Promise<ReplyResult | { needsConfirm: true } | { alreadyReplied: true }> {
+): Promise<ReplyResult | { alreadyReplied: true }> {
   const res = await authedResponse(`/api/messages/${messageId}/reply`, {
     method: 'POST',
-    body: JSON.stringify({ finalText, confirmNumbers, attachProductSkus, uploadId, replyToMessageId, thaiSource }),
+    body: JSON.stringify({ finalText, attachProductSkus, uploadId, replyToMessageId, thaiSource }),
   });
-  if (res.status === 428) return { needsConfirm: true }; // reply has a price; staff must confirm
   if (res.status === 409) return { alreadyReplied: true }; // someone already answered this one
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json() as Promise<ReplyResult>;
@@ -371,20 +368,19 @@ export const addQuickReply = (label: string, body: string) =>
   authed<{ item: QuickReply }>('/api/quick-replies', { method: 'POST', body: JSON.stringify({ label, body }) });
 export const deleteQuickReply = (id: string) =>
   authed<{ ok: boolean }>(`/api/quick-replies/${id}`, { method: 'DELETE' });
+export const updateQuickReply = (id: string, data: { label?: string; body?: string }) =>
+  authed<{ item: QuickReply }>(`/api/quick-replies/${id}`, { method: 'PUT', body: JSON.stringify(data) });
 // Send a quick-reply template to the customer as a standalone message (does not
 // touch the pending question or the draft composer).
-// Returns { needsConfirm: true } when the template quotes a price and confirm wasn't set (428).
 export async function sendQuickReply(
   customerId: string,
   quickReplyId: string,
-  confirmNumbers?: boolean,
   replyToMessageId?: string, // our Message.id to LINE-quote
-): Promise<{ ok: boolean; message: Message; dryRun: boolean } | { needsConfirm: true }> {
+): Promise<{ ok: boolean; message: Message; dryRun: boolean }> {
   const res = await authedResponse(`/api/customers/${customerId}/quick-reply`, {
     method: 'POST',
-    body: JSON.stringify({ quickReplyId, confirmNumbers, replyToMessageId }),
+    body: JSON.stringify({ quickReplyId, replyToMessageId }),
   });
-  if (res.status === 428) return { needsConfirm: true }; // template has a price; staff must confirm
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json() as Promise<{ ok: boolean; message: Message; dryRun: boolean }>;
 }
@@ -403,17 +399,15 @@ export async function sendMessage(
   customerId: string,
   text: string,
   uploadId?: string,
-  confirmNumbers?: boolean,
   attachProductSkus?: string[],
   replyToMessageId?: string, // our Message.id to LINE-quote
   // See sendReply's thaiSource — same deal for the free-message composer.
   thaiSource?: string,
-): Promise<{ message: Message; dryRun: boolean } | { needsConfirm: true }> {
+): Promise<{ message: Message; dryRun: boolean }> {
   const res = await authedResponse(`/api/customers/${customerId}/message`, {
     method: 'POST',
-    body: JSON.stringify({ text, uploadId, confirmNumbers, attachProductSkus, replyToMessageId, thaiSource }),
+    body: JSON.stringify({ text, uploadId, attachProductSkus, replyToMessageId, thaiSource }),
   });
-  if (res.status === 428) return { needsConfirm: true }; // message has a price; staff must confirm
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json() as Promise<{ message: Message; dryRun: boolean }>;
 }

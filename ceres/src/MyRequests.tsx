@@ -18,16 +18,13 @@ import {
   type FulfillmentStatus,
   type StaffRequest,
 } from './lib/api';
+import { REQUEST_TYPE_LABEL as TYPE_LABEL } from './lib/requestLabels';
 import { MediaThumb } from './lib/media';
 
-// Exported so StaffHome's new home-screen sections (open-advance cards + the
-// "รอดำเนินการ" compact list — see docs/CERES_STAFF_HOME_PLAN.md "1") can reuse the
-// exact same type label + status-pill logic instead of re-deriving it.
-export const TYPE_LABEL: Record<StaffRequest['requestType'], string> = {
-  advance: 'เบิกล่วงหน้า',
-  reimbursement: 'สำรองจ่าย-ขอคืน',
-  purchase: 'ขอให้ซื้อ',
-};
+// Re-exported (from the shared helper) so StaffHome's home-screen sections (open-advance
+// cards + the "รอดำเนินการ" compact list — see docs/CERES_STAFF_HOME_PLAN.md "1") can reuse
+// the exact same type label + status-pill logic instead of re-deriving it.
+export { TYPE_LABEL };
 
 // Once a request is approved, its fulfillment status (paid/bought/settling/settled) is
 // more useful to the requester than the flat "อนุมัติแล้ว" — Phase 3 (cash/transfer

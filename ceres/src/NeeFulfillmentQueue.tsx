@@ -25,6 +25,7 @@ import {
   type RequestMoneyLane,
   type StaffRequest,
 } from './lib/api';
+import { REQUEST_TYPE_LABEL as TYPE_LABEL } from './lib/requestLabels';
 import { downscaleImage } from './lib/image';
 import { MediaThumb } from './lib/media';
 import { PayPanel } from './PayPanel';
@@ -34,12 +35,6 @@ import RequestDetail from './RequestDetail';
 // requests that still need the cash/transfer payout (or purchase receipt), and paid
 // advances that are still open for liquidation (returns / linked expenses). See
 // docs/CERES_REVAMP_PLAN.md "Phase 3" + api/src/ceres/requestMoney.ts.
-
-const TYPE_LABEL: Record<StaffRequest['requestType'], string> = {
-  advance: 'เบิกล่วงหน้า',
-  reimbursement: 'สำรองจ่าย-ขอคืน',
-  purchase: 'ขอให้ซื้อ',
-};
 
 const AMOUNT_RE = /^\d+(\.\d{1,2})?$/;
 

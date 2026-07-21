@@ -1,21 +1,23 @@
 import { useCallback, useEffect, useState } from 'react';
 import { AlertTriangle, CheckCircle2, Loader2, RefreshCw, ThumbsUp, Wallet, X } from 'lucide-react';
 import { ApiError, baht, listStaffRequests, neeDecision, type StaffRequest } from './lib/api';
+import { REQUEST_TYPE_LABEL as TYPE_LABEL } from './lib/requestLabels';
 import { useCeres } from './lib/bootstrapContext';
 import { MediaThumb } from './lib/media';
 import { PayPanel } from './PayPanel';
-
-const TYPE_LABEL: Record<StaffRequest['requestType'], string> = {
-  advance: 'เบิกล่วงหน้า',
-  reimbursement: 'สำรองจ่าย-ขอคืน',
-  purchase: 'ขอให้ซื้อ',
-};
 
 function willForward(request: StaffRequest, threshold: number): boolean {
   return request.amountNum > threshold || request.aiScreenStatus !== 'clear';
 }
 
-export default function NeeApprovalQueue() {
+export default function NeeApprovalQueue({
+  highlightRequestId,
+}: {
+  // GM submit→approve bridge (Md.tsx's goToApprovalQueueWithRequest, 2026-07-21) — the
+  // request a GM just submitted for themselves, jumped straight here from the ของฉัน tab.
+  // Purely a visual highlight; the queue's own data/logic is untouched.
+  highlightRequestId?: string | null;
+} = {}) {
   const { bootstrap } = useCeres();
   const [rows, setRows] = useState<StaffRequest[]>([]);
   const [loading, setLoading] = useState(true);
@@ -51,6 +53,12 @@ export default function NeeApprovalQueue() {
     const timer = setTimeout(() => setSuccess(''), 3000);
     return () => clearTimeout(timer);
   }, [success]);
+
+  // Scroll the GM's just-submitted request into view once the queue has loaded it.
+  useEffect(() => {
+    if (!highlightRequestId || loading) return;
+    document.getElementById(`request-${highlightRequestId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [highlightRequestId, loading, rows]);
 
   async function decide(request: StaffRequest, decision: 'approve' | 'reject') {
     if (decision === 'reject' && !note.trim()) {
@@ -150,8 +158,20 @@ export default function NeeApprovalQueue() {
             const aiPending = request.aiScreenStatus === 'pending';
             const ocrMismatch = !!request.ocr.amount && Number(request.ocr.amount) !== request.amountNum;
             const duplicate = /รูปเดียวกัน|หลักฐาน.*ซ้ำ|ใบเสร็จซ้ำ/.test(request.aiReview?.reasoning ?? '');
+            const highlighted = highlightRequestId === request.id;
             return (
-              <article key={request.id} className="bg-white rounded-xl border border-slate-200 p-3">
+              <article
+                key={request.id}
+                id={`request-${request.id}`}
+                className={`bg-white rounded-xl border p-3 ${
+                  highlighted ? 'border-amber-400 ring-2 ring-amber-300 ring-offset-1' : 'border-slate-200'
+                }`}
+              >
+                {highlighted && (
+                  <div className="mb-2 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 text-xs font-semibold">
+                    คำขอที่คุณเพิ่งส่ง
+                  </div>
+                )}
                 <div className="flex items-start gap-3">
                   <MediaThumb id={request.requestPhotoUploadId} size={72} alt="หลักฐานคำขอ" rounded="rounded-xl" />
                   <div className="flex-1 min-w-0">

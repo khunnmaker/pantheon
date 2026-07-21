@@ -12,7 +12,6 @@ import { PRODUCT_PHOTO_DIR } from './content.js';
 import { isStage } from '../stages.js';
 import { pushToConsole } from '../ws/io.js';
 import { isLow } from '../stock/helpers.js';
-import { hasPrice } from '../llm/guardrails.js';
 import { captionStaffUpload } from '../llm/captionImage.js';
 import { isNonThaiText, translateMessageToThai } from '../llm/translate.js';
 import { cancelAutosendForCustomer, getActiveAutosend } from '../autosend/scheduler.js';
@@ -435,7 +434,6 @@ export async function consoleRoutes(app: FastifyInstance) {
   app.post<{ Params: { id: string } }>('/api/customers/:id/quick-reply', async (req, reply) => {
     const parsed = z.object({
       quickReplyId: z.string(),
-      confirmNumbers: z.boolean().optional(),
       replyToMessageId: z.string().max(60).optional(), // our Message.id to LINE-quote
     }).safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: 'invalid_body' });
@@ -457,11 +455,6 @@ export async function consoleRoutes(app: FastifyInstance) {
       }
     }
 
-    // Same server-enforced price-confirm as /reply and /message: a priced template must be
-    // explicitly confirmed (428) — a stale price in a template is one click from the customer.
-    if (!parsed.data.confirmNumbers && hasPrice(qr.body)) {
-      return reply.code(428).send({ error: 'needs_confirm' });
-    }
     await cancelAutosendForCustomer(customer.id, 'staff_message');
 
     let sendResult;
@@ -496,7 +489,6 @@ export async function consoleRoutes(app: FastifyInstance) {
       text: z.string().max(4000).optional(),
       uploadId: z.string().max(80).optional(), // optional staff photo/file attachment
       attachProductSkus: z.array(z.string()).max(20).optional(), // catalog photos to attach (only when no upload)
-      confirmNumbers: z.boolean().optional(),
       replyToMessageId: z.string().max(60).optional(), // our Message.id to LINE-quote in this message
       // Bilingual support: when text IS the untouched output of a prior 🌐 outbound-translate
       // call, this is that Thai source verbatim (see messages.ts's /reply thaiSource).
@@ -562,13 +554,6 @@ export async function consoleRoutes(app: FastifyInstance) {
     // Nothing resolved to send (e.g. an unresolvable uploadId with no text) — don't push an empty bubble.
     if (!imageUrls.length && !sendText) return reply.code(400).send({ error: 'empty' });
 
-    // Same server-enforced price-confirm as /reply: a free-form message that quotes a price must
-    // be confirmed (428) before it sends, so a typed price can't reach a customer unchecked — gated
-    // on the FINAL composed sendText (including an appended attachment filename) so a price hiding
-    // in the filename isn't missed. Everything above this point is read-only, no side effects yet.
-    if (!parsed.data.confirmNumbers && hasPrice(sendText)) {
-      return reply.code(428).send({ error: 'needs_confirm' });
-    }
     await cancelAutosendForCustomer(customer.id, 'staff_message');
 
     let sendResult;

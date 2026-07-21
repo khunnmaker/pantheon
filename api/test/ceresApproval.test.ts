@@ -191,13 +191,15 @@ describe('Ceres v2 approval binding', () => {
     const now = new Date('2026-07-17T00:00:00Z');
     const existing = {
       id: 'request-1', workflowVersion: 2, requestedById: 'staff-1', requestedByName: 'Staff', requesterPartyId: 'party-1',
-      requestType: 'purchase', entity: 'PROM', category: 'general', categoryGroups: '', amount: '100.00', detail: 'before', payee: 'Staff',
+      // Amount stays well above the ฿500 AI-skip floor throughout — this test is about
+      // category invalidation forcing re-screening, not about the floor itself.
+      requestType: 'purchase', entity: 'PROM', category: 'general', categoryGroups: '', amount: '600.00', detail: 'before', payee: 'Staff',
       requestPhotoUploadId: null, requestPhotoSha: '', ocrAmount: '', ocrVendor: '', ocrDate: '',
       aiScreenStatus: 'clear', aiReviewId: 'old-review', approvalStatus: 'pending_nee', fulfillmentStatus: 'unfulfilled',
       neeDecidedById: null, neeDecidedByName: '', neeDecidedAt: null, neeDecisionNote: '',
       decidedById: null, decidedAt: null, decisionNote: '', rowVersion: 1, createdAt: now, updatedAt: now,
     };
-    const edited = { ...existing, amount: '200.00', detail: 'after', aiScreenStatus: 'pending', aiReviewId: null, rowVersion: 2 };
+    const edited = { ...existing, amount: '700.00', detail: 'after', aiScreenStatus: 'pending', aiReviewId: null, rowVersion: 2 };
     const screened = { ...edited, aiScreenStatus: 'clear', aiReviewId: 'review-new', rowVersion: 3 };
     mocks.findRequest.mockReset().mockResolvedValueOnce(existing).mockResolvedValueOnce(screened);
     mocks.findCategory.mockResolvedValue({ name: 'general', active: false });
@@ -212,11 +214,11 @@ describe('Ceres v2 approval binding', () => {
       ceresRequestEvent: { create: mocks.createEvent },
     }));
 
-    await editStaffRequest('request-1', { amount: '200.00', reason: 'after' }, {
+    await editStaffRequest('request-1', { amount: '700.00', reason: 'after' }, {
       id: 'staff-1', email: 'staff@example.test', name: 'Staff', role: 'staff', apps: ['ceres'], authVersion: 0,
     });
     expect(mocks.updateMany).toHaveBeenCalledWith(expect.objectContaining({
-      data: expect.objectContaining({ amount: '200.00', detail: 'after', aiScreenStatus: 'pending', aiReviewId: null }),
+      data: expect.objectContaining({ amount: '700.00', detail: 'after', aiScreenStatus: 'pending', aiReviewId: null }),
     }));
     expect(mocks.createRevision).toHaveBeenCalledOnce();
     expect(mocks.createEvent).toHaveBeenCalledWith({ data: expect.objectContaining({ kind: 'edited' }) });

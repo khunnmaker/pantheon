@@ -11,7 +11,7 @@ import {
   pinCustomer, unpinCustomer,
   uploadAttachment, getLearned, getLearnedMetrics, promoteLearned, rejectLearned, flagLearned, resolveLearned, endSession, API_URL, flatSku, getToken,
   getFinanceAudits, resolveFinanceAudit, type FinanceAudit,
-  getQuickReplies, addQuickReply, deleteQuickReply, sendQuickReply, sendMessage, sendPhotoNow, searchCatalog, addProductToDraft, readSlip, sendToFinance,
+  getQuickReplies, addQuickReply, updateQuickReply, deleteQuickReply, sendQuickReply, sendMessage, sendPhotoNow, searchCatalog, addProductToDraft, readSlip, sendToFinance,
   draftNow, clearDrafts,
   cancelAutosend, getAutosendConfig, setAutosendConfig,
   type Agent, type CustomerLite, type CustomerDetail, type Message, type LearnedAnswer, type LearnedMetrics, type PendingProduct, type QuickReply,
@@ -331,6 +331,8 @@ function PhotoStrip({ direct, cross, selected, onToggle }: {
 function QuickReplyMenu({
   quickReplies, qrOpen, setQrOpen, qrSending, quickSend,
   qrManage, setQrManage, qrLabel, setQrLabel, qrBody, setQrBody, qrSaving, saveQuickReply, removeQuickReply,
+  qrEditId, qrEditLabel, setQrEditLabel, qrEditBody, setQrEditBody, qrEditSaving,
+  startEditQuickReply, saveQuickReplyEdit, cancelEditQuickReply,
 }: {
   quickReplies: QuickReply[];
   qrOpen: boolean;
@@ -346,6 +348,15 @@ function QuickReplyMenu({
   qrSaving: boolean;
   saveQuickReply: () => void;
   removeQuickReply: (id: string) => void;
+  qrEditId: string | null;
+  qrEditLabel: string;
+  setQrEditLabel: (v: string) => void;
+  qrEditBody: string;
+  setQrEditBody: (v: string) => void;
+  qrEditSaving: boolean;
+  startEditQuickReply: (q: QuickReply) => void;
+  saveQuickReplyEdit: () => void;
+  cancelEditQuickReply: () => void;
 }) {
   return (
     <div className="relative">
@@ -361,16 +372,36 @@ function QuickReplyMenu({
           <div className="absolute bottom-full mb-1 left-0 z-30 w-64 max-h-80 overflow-y-auto bg-white border border-slate-200 rounded-xl shadow-lg p-1">
             <div className="px-2 py-1 text-[10px] text-slate-400">กดเพื่อส่งให้ลูกค้าทันที</div>
             {quickReplies.map((q) => (
-              <div key={q.id} className="flex items-center gap-1">
-                <button type="button" onClick={() => quickSend(q)} disabled={qrSending}
-                  className="flex-1 text-left text-xs px-2 py-1.5 rounded-lg hover:bg-sky-50 text-slate-700 truncate disabled:opacity-50" title={q.body}>
-                  {q.label}
-                </button>
-                {qrManage && <button type="button" onClick={() => removeQuickReply(q.id)} title="ลบ" className="text-rose-400 hover:text-rose-600 px-1"><X size={12} /></button>}
-              </div>
+              qrManage && qrEditId === q.id ? (
+                <div key={q.id} className="flex flex-col gap-1 p-1 bg-slate-50 rounded-lg">
+                  <input value={qrEditLabel} onChange={(e) => setQrEditLabel(e.target.value)} placeholder="ชื่อปุ่ม"
+                    className="text-xs px-2 py-1 rounded border border-slate-200 focus:outline-none focus:ring-1 focus:ring-sky-400" />
+                  <textarea value={qrEditBody} onChange={(e) => setQrEditBody(e.target.value)} rows={3} placeholder="ข้อความที่จะส่ง…"
+                    className="text-xs px-2 py-1 rounded border border-slate-200 resize-none focus:outline-none focus:ring-1 focus:ring-sky-400" />
+                  <div className="flex gap-1">
+                    <button type="button" onClick={saveQuickReplyEdit} disabled={qrEditSaving || !qrEditLabel.trim() || !qrEditBody.trim()}
+                      className="text-xs px-3 py-1 rounded-lg bg-sky-600 hover:bg-sky-700 text-white disabled:opacity-50">
+                      {qrEditSaving ? 'กำลังบันทึก…' : 'บันทึก'}
+                    </button>
+                    <button type="button" onClick={cancelEditQuickReply}
+                      className="text-xs px-3 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600">
+                      ยกเลิก
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div key={q.id} className="flex items-center gap-1">
+                  <button type="button" onClick={() => quickSend(q)} disabled={qrSending}
+                    className="flex-1 text-left text-xs px-2 py-1.5 rounded-lg hover:bg-sky-50 text-slate-700 truncate disabled:opacity-50" title={q.body}>
+                    {q.label}
+                  </button>
+                  {qrManage && <button type="button" onClick={() => startEditQuickReply(q)} title="แก้ไข" className="text-slate-400 hover:text-sky-600 px-1"><Pencil size={12} /></button>}
+                  {qrManage && <button type="button" onClick={() => removeQuickReply(q.id)} title="ลบ" className="text-rose-400 hover:text-rose-600 px-1"><X size={12} /></button>}
+                </div>
+              )
             ))}
             <div className="border-t border-slate-100 mt-1 pt-1">
-              <button type="button" onClick={() => setQrManage((v) => !v)}
+              <button type="button" onClick={() => { setQrManage((v) => !v); cancelEditQuickReply(); }}
                 className="w-full text-left text-[11px] text-slate-500 px-2 py-1 hover:bg-slate-50 rounded flex items-center gap-1">
                 <Pencil size={11} /> {qrManage ? 'เสร็จสิ้น' : 'แก้ไข / เพิ่มรายการ'}
               </button>
@@ -676,7 +707,6 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
   const [stageFilters, setStageFilters] = useState<string[]>(() => [...STAGES]); // all selected = show all
   const [stageOpen, setStageOpen] = useState(false);
   const [ending, setEnding] = useState(false);
-  const [needsConfirm, setNeedsConfirm] = useState(false);
   const [selectedProductSkus, setSelectedProductSkus] = useState<string[]>([]);
   const [selectionDirty, setSelectionDirty] = useState(false); // product selection changed since the last draft → ✨ re-drafts about it
   const [lightbox, setLightbox] = useState<string | null>(null); // enlarged image src (click a picture to zoom)
@@ -688,11 +718,13 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
   const [qrLabel, setQrLabel] = useState('');
   const [qrBody, setQrBody] = useState('');
   const [qrSaving, setQrSaving] = useState(false);
+  const [qrEditId, setQrEditId] = useState<string | null>(null); // quick-reply currently open for inline edit (one at a time)
+  const [qrEditLabel, setQrEditLabel] = useState('');
+  const [qrEditBody, setQrEditBody] = useState('');
+  const [qrEditSaving, setQrEditSaving] = useState(false);
   const [qrOpen, setQrOpen] = useState(false);
   const [qrSending, setQrSending] = useState(false);
-  const [qrConfirmId, setQrConfirmId] = useState<string | null>(null);
   const [freeText, setFreeText] = useState('');
-  const [freeNeedsConfirm, setFreeNeedsConfirm] = useState(false);
   const [freeSending, setFreeSending] = useState(false);
   const [forceDrafting, setForceDrafting] = useState(false);
   const [replyingTo, setReplyingTo] = useState<string | null>(null); // Message.id being LINE-quote-replied
@@ -742,8 +774,6 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
         return d;
       });
       setEditText(d.pendingDraft?.draftText ?? '');
-      setNeedsConfirm(false);
-      setQrConfirmId(null);
       setRewriteNote(null);
       setTranslateOriginal(null);
       // Preserve the staff's photo selection across reloads (their own ร่างใหม่ AND the
@@ -1082,12 +1112,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
     setSending(true);
     setError('');
     try {
-      const res = await sendReply(msgId, editText.trim(), needsConfirm, selectedProductSkus.length ? selectedProductSkus : undefined, upload?.uploadId, replyingTo ?? undefined, translateOriginal ?? undefined);
-      if ('needsConfirm' in res) {
-        setNeedsConfirm(true);
-        setError('คำตอบมีราคา — โปรดตรวจสอบตัวเลขแล้วกด "ยืนยันส่ง" อีกครั้ง');
-        return;
-      }
+      const res = await sendReply(msgId, editText.trim(), selectedProductSkus.length ? selectedProductSkus : undefined, upload?.uploadId, replyingTo ?? undefined, translateOriginal ?? undefined);
       if ('alreadyReplied' in res) {
         setError('ข้อความนี้ถูกตอบไปแล้ว');
         await refreshLists();
@@ -1124,7 +1149,6 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
       const res = await rewriteText(editText.trim());
       setEditText(res.text);
       setRewriteNote(res.note); // staff-only note — shown OUTSIDE the reply box
-      setNeedsConfirm(false); // text changed — re-check numbers on send
       flashToast('เรียบเรียงใหม่แล้ว — ตรวจทานก่อนส่ง');
     } catch (e) {
       setError('เรียบเรียงใหม่ไม่สำเร็จ: ' + (e as Error).message);
@@ -1147,7 +1171,6 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
       setEditText(res.text);
       setTranslateOriginal(original); // staff-only note — the Thai text just replaced
       setRewriteNote(res.note); // staff-only note — shown OUTSIDE the reply box
-      setNeedsConfirm(false); // text changed — re-check numbers on send
       flashToast('แปลข้อความแล้ว — ตรวจทานก่อนส่ง');
     } catch (e) {
       setError('แปลข้อความไม่สำเร็จ: ' + (e as Error).message);
@@ -1238,13 +1261,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
     setQrSending(true);
     setError('');
     try {
-      const res = await sendQuickReply(selectedId, q.id, qrConfirmId === q.id, replyingTo ?? undefined);
-      if ('needsConfirm' in res) {
-        setQrConfirmId(q.id);
-        setError('ข้อความด่วนนี้มีราคา — กดอีกครั้งเพื่อยืนยันส่ง');
-        return;
-      }
-      setQrConfirmId(null);
+      const res = await sendQuickReply(selectedId, q.id, replyingTo ?? undefined);
       setQrOpen(false);
       setReplyingTo(null); // sent — clear the quote-reply selection
       flashToast(res.dryRun ? `บันทึก "${q.label}" (โหมดทดสอบ)` : `ส่ง "${q.label}" ให้ลูกค้าแล้ว ✓`);
@@ -1263,16 +1280,10 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
     setError('');
     try {
       const skus = freeProducts.length ? freeProducts.map((p) => p.sku) : undefined;
-      const res = await sendMessage(selectedId, freeText.trim(), upload?.uploadId, freeNeedsConfirm, skus, replyingTo ?? undefined, translateOriginal ?? undefined);
-      if ('needsConfirm' in res) {
-        setFreeNeedsConfirm(true);
-        setError('ข้อความมีราคา — โปรดตรวจสอบตัวเลขแล้วกดส่งอีกครั้งเพื่อยืนยัน');
-        return;
-      }
+      const res = await sendMessage(selectedId, freeText.trim(), upload?.uploadId, skus, replyingTo ?? undefined, translateOriginal ?? undefined);
       setFreeText('');
       setUpload(null);
       setFreeProducts([]);
-      setFreeNeedsConfirm(false);
       setReplyingTo(null); // sent — clear the quote-reply selection
       flashToast(res.dryRun ? 'บันทึกแล้ว (โหมดทดสอบ)' : 'ส่งข้อความให้ลูกค้าแล้ว ✓');
     } catch {
@@ -1293,7 +1304,6 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
       const res = await rewriteText(freeText.trim());
       setFreeText(res.text);
       setRewriteNote(res.note); // staff-only note — shown OUTSIDE the reply box
-      setFreeNeedsConfirm(false); // text changed — re-check numbers on send
       flashToast('เรียบเรียงใหม่แล้ว — ตรวจทานก่อนส่ง');
     } catch (e) {
       setError('เรียบเรียงใหม่ไม่สำเร็จ: ' + (e as Error).message);
@@ -1316,7 +1326,6 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
       setFreeText(res.text);
       setTranslateOriginal(original); // staff-only note — the Thai text just replaced
       setRewriteNote(res.note); // staff-only note — shown OUTSIDE the reply box
-      setFreeNeedsConfirm(false); // text changed — re-check numbers on send
       flashToast('แปลข้อความแล้ว — ตรวจทานก่อนส่ง');
     } catch (e) {
       setError('แปลข้อความไม่สำเร็จ: ' + (e as Error).message);
@@ -1419,6 +1428,29 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
   async function removeQuickReply(id: string) {
     setQuickReplies((qs) => qs.filter((q) => q.id !== id));
     await deleteQuickReply(id).catch(() => undefined);
+  }
+  function startEditQuickReply(q: QuickReply) {
+    setQrEditId(q.id);
+    setQrEditLabel(q.label);
+    setQrEditBody(q.body);
+  }
+  function cancelEditQuickReply() {
+    setQrEditId(null);
+    setQrEditLabel('');
+    setQrEditBody('');
+  }
+  async function saveQuickReplyEdit() {
+    if (!qrEditId || !qrEditLabel.trim() || !qrEditBody.trim() || qrEditSaving) return;
+    setQrEditSaving(true);
+    try {
+      const { item } = await updateQuickReply(qrEditId, { label: qrEditLabel.trim(), body: qrEditBody.trim() });
+      setQuickReplies((qs) => qs.map((q) => (q.id === item.id ? item : q))); // keep sort order, swap in place
+      cancelEditQuickReply();
+    } catch {
+      setError('แก้ไขข้อความสำเร็จรูปไม่สำเร็จ');
+    } finally {
+      setQrEditSaving(false);
+    }
   }
 
   // agentText is passed only by the ✨ button (build on what the staff typed); ร่างใหม่ omits
@@ -1615,7 +1647,6 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
               <Clock size={10} /> {fmtTime(c.lastSeen)}
               <span className="ml-auto flex items-center gap-1 shrink-0">
                 {waiting && <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0" title="รอตอบ" />}
-                {c.suggestedStage && c.suggestedStage !== c.stage && <span className="w-1.5 h-1.5 rounded-full bg-amber-400" title={'AI แนะนำ: ' + c.suggestedStage} />}
                 {c.stage && <span className="text-[9px] px-1 py-0.5 rounded bg-indigo-100 text-indigo-700">{c.stage}</span>}
                 {c.category && <span className="text-[9px] px-1 py-0.5 rounded bg-sky-100 text-sky-700">{c.category}</span>}
                 <span role="button" tabIndex={0}
@@ -1852,13 +1883,6 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                             </>
                           )}
                         </div>
-                      )}
-                      {detail && detail.customer.suggestedStage && detail.customer.suggestedStage !== detail.customer.stage && (
-                        <button type="button" onClick={() => chooseStage(detail.customer.suggestedStage!)}
-                          title="AI แนะนำขั้นตอนนี้จากบทสนทนา — กดเพื่อยืนยัน"
-                          className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-amber-300 hover:bg-amber-200 text-amber-900 flex items-center gap-0.5 shrink-0">
-                          💡 {detail.customer.suggestedStage} ✓
-                        </button>
                       )}
                       {detail?.oaRead && (() => {
                         const rs = oaReadState(detail.oaRead.readLabel, detail.oaRead.readSeenAt, detail.messages);
@@ -2101,7 +2125,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                       )}
                       <textarea value={editText} onChange={(e) => {
                         if (detail?.autosendSchedule && e.target.value !== editText) void stopAutosend();
-                        setEditText(e.target.value); setNeedsConfirm(false); setRewriteNote(null); setTranslateOriginal(null);
+                        setEditText(e.target.value); setRewriteNote(null); setTranslateOriginal(null);
                       }} rows={4}
                         className="w-full flex-1 min-h-[120px] p-3 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-sky-400 resize-none" placeholder="พิมพ์/แก้คำตอบก่อนส่ง… (วางรูป Ctrl+V ได้)" />
                       {detail?.pendingDraft?.translatedText && (
@@ -2148,6 +2172,8 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                           quickReplies={quickReplies} qrOpen={qrOpen} setQrOpen={setQrOpen} qrSending={qrSending} quickSend={quickSend}
                           qrManage={qrManage} setQrManage={setQrManage} qrLabel={qrLabel} setQrLabel={setQrLabel} qrBody={qrBody} setQrBody={setQrBody}
                           qrSaving={qrSaving} saveQuickReply={saveQuickReply} removeQuickReply={removeQuickReply}
+                          qrEditId={qrEditId} qrEditLabel={qrEditLabel} setQrEditLabel={setQrEditLabel} qrEditBody={qrEditBody} setQrEditBody={setQrEditBody}
+                          qrEditSaving={qrEditSaving} startEditQuickReply={startEditQuickReply} saveQuickReplyEdit={saveQuickReplyEdit} cancelEditQuickReply={cancelEditQuickReply}
                         />
                         <button type="button" onClick={clearMinervaDrafts}
                           title="ล้างร่างของ Minerva ทั้งหมด" aria-label="ล้างร่างของ Minerva ทั้งหมด"
@@ -2172,8 +2198,8 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                           </button>
                         )}
                         <button onClick={approve} disabled={sending || rewriting || translating || !editText.trim()}
-                          title={needsConfirm ? 'ยืนยันส่ง (คำตอบมีราคา)' : 'อนุมัติและส่งให้ลูกค้า'}
-                          className={'min-w-0 px-2 py-2 rounded-xl text-white text-sm font-semibold flex items-center justify-center gap-1 disabled:opacity-50 ' + (needsConfirm ? 'bg-amber-600 hover:bg-amber-700' : 'bg-sky-600 hover:bg-sky-700')}>
+                          title="อนุมัติและส่งให้ลูกค้า"
+                          className="min-w-0 px-2 py-2 rounded-xl text-white text-sm font-semibold flex items-center justify-center gap-1 disabled:opacity-50 bg-sky-600 hover:bg-sky-700">
                           {sending ? <Loader2 size={17} className="animate-spin" /> : <Send size={17} />}
                         </button>
                       </div>
@@ -2270,7 +2296,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                           <button type="button" onClick={() => setTranslateOriginal(null)} className="text-slate-400 hover:text-rose-500 shrink-0"><X size={14} /></button>
                         </div>
                       )}
-                      <textarea value={freeText} onChange={(e) => { setFreeText(e.target.value); setFreeNeedsConfirm(false); setRewriteNote(null); setTranslateOriginal(null); }} rows={3}
+                      <textarea value={freeText} onChange={(e) => { setFreeText(e.target.value); setRewriteNote(null); setTranslateOriginal(null); }} rows={3}
                         className="w-full flex-1 min-h-[100px] p-3 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-sky-400 resize-none" placeholder="พิมพ์ข้อความถึงลูกค้า… (วางรูป Ctrl+V ได้)" />
                       {rewriteNote && (
                         <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-2 flex items-start gap-1.5">
@@ -2297,6 +2323,8 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                           quickReplies={quickReplies} qrOpen={qrOpen} setQrOpen={setQrOpen} qrSending={qrSending} quickSend={quickSend}
                           qrManage={qrManage} setQrManage={setQrManage} qrLabel={qrLabel} setQrLabel={setQrLabel} qrBody={qrBody} setQrBody={setQrBody}
                           qrSaving={qrSaving} saveQuickReply={saveQuickReply} removeQuickReply={removeQuickReply}
+                          qrEditId={qrEditId} qrEditLabel={qrEditLabel} setQrEditLabel={setQrEditLabel} qrEditBody={qrEditBody} setQrEditBody={setQrEditBody}
+                          qrEditSaving={qrEditSaving} startEditQuickReply={startEditQuickReply} saveQuickReplyEdit={saveQuickReplyEdit} cancelEditQuickReply={cancelEditQuickReply}
                         />
                         <button type="button" onClick={clearMinervaDrafts}
                           title="ล้างร่างของ Minerva ทั้งหมด" aria-label="ล้างร่างของ Minerva ทั้งหมด"
@@ -2322,8 +2350,8 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                           </button>
                         )}
                         <button onClick={freeSend} disabled={(!freeText.trim() && !upload && !freeProducts.length) || freeSending}
-                          title={freeNeedsConfirm ? 'ยืนยันส่ง (ข้อความมีราคา)' : 'ส่งข้อความให้ลูกค้า'}
-                          className={'min-w-0 px-2 py-2 rounded-xl text-white text-sm font-semibold flex items-center justify-center gap-1 disabled:opacity-50 ' + (freeNeedsConfirm ? 'bg-amber-600 hover:bg-amber-700' : 'bg-sky-600 hover:bg-sky-700')}>
+                          title="ส่งข้อความให้ลูกค้า"
+                          className="min-w-0 px-2 py-2 rounded-xl text-white text-sm font-semibold flex items-center justify-center gap-1 disabled:opacity-50 bg-sky-600 hover:bg-sky-700">
                           {freeSending ? <Loader2 size={17} className="animate-spin" /> : <Send size={17} />}
                         </button>
                       </div>
@@ -2414,31 +2442,82 @@ function LearningMetrics() {
           </div>
           <div className="space-y-1.5">
             <div className="text-[11px] font-semibold text-slate-500">แยกตามหมวด (อัตราส่งโดยไม่แก้)</div>
+            <div className="flex items-center gap-2 text-[10px] font-medium">
+              <div className="w-16 shrink-0" />
+              <div className="flex-1" />
+              <div className="w-10 shrink-0 text-right text-sky-700">ส่งเลย</div>
+              <div className="w-10 shrink-0 text-right text-emerald-700 leading-tight">แก้น้อย</div>
+              <div className="hidden sm:block w-9 shrink-0 text-right text-slate-400">ส่งเอง</div>
+              <div className="hidden sm:block w-9 shrink-0 text-right text-slate-400">แก้</div>
+              <div className="hidden sm:block w-9 shrink-0 text-right text-slate-400">คน</div>
+            </div>
             {m.byCategory.map((c) => (
-              <div key={c.category} className="flex items-center gap-2 text-xs">
+              <div key={c.category} className="flex items-center gap-2 text-xs"
+                title={`ส่งเลยโดยไม่แก้ ${pct(c.acceptRate)} · ยอมรับ+แก้เล็กน้อย ${pct(c.effectiveAcceptRate)} · ส่งเอง ${c.accepted} · แก้ ${c.edited} · ให้คนตอบ ${c.escalated}`}>
                 <div className="w-16 shrink-0 text-slate-600 truncate">{CAT_TH[c.category] ?? c.category}</div>
                 <div className="flex-1 h-2.5 bg-slate-100 rounded-full overflow-hidden">
                   <div className="h-full bg-sky-500 rounded-full" style={{ width: `${(c.acceptRate ?? 0) * 100}%` }} />
                 </div>
-                <div className="w-9 text-right text-slate-700 font-medium">{pct(c.acceptRate)}</div>
-                <div className="w-24 text-right text-[10px] text-emerald-700">ยอมรับ+แก้เล็กน้อย {pct(c.effectiveAcceptRate)}</div>
-                <div className="hidden sm:block w-36 shrink-0 text-[10px] text-slate-400">ส่งเอง {c.accepted}·แก้ {c.edited}·คน {c.escalated}</div>
+                <div className="w-10 shrink-0 text-right text-slate-700 font-medium">{pct(c.acceptRate)}</div>
+                <div className="w-10 shrink-0 text-right text-emerald-700">{pct(c.effectiveAcceptRate)}</div>
+                <div className="hidden sm:block w-9 shrink-0 text-right text-[10px] text-slate-400">{c.accepted}</div>
+                <div className="hidden sm:block w-9 shrink-0 text-right text-[10px] text-slate-400">{c.edited}</div>
+                <div className="hidden sm:block w-9 shrink-0 text-right text-[10px] text-slate-400">{c.escalated}</div>
               </div>
             ))}
           </div>
-          {m.byWeek.length > 0 && (
-            <div>
-              <div className="text-[11px] font-semibold text-slate-500 mb-1">แนวโน้มรายสัปดาห์ (อัตราส่งโดยไม่แก้)</div>
-              <div className="flex items-end gap-1 h-16">
-                {m.byWeek.map((w) => (
-                  <div key={w.week} className="flex-1 flex flex-col items-center justify-end" title={`สัปดาห์ ${w.week}: ${pct(w.acceptRate)} (${w.total} ดราฟ)`}>
-                    <div className="w-full bg-sky-400 rounded-t" style={{ height: `${Math.max((w.acceptRate ?? 0) * 100, 3)}%` }} />
-                    <div className="text-[8px] text-slate-400 mt-0.5">{w.week.slice(5)}</div>
-                  </div>
-                ))}
+          {m.byWeek.length > 0 && (() => {
+            const weeks = m.byWeek;
+            const n = weeks.length;
+            const VB_W = 800;
+            const VB_H = 64;
+            const PAD = 4;
+            const plotH = VB_H - PAD * 2;
+            const xAt = (i: number) => ((i + 0.5) / n) * VB_W;
+            const yAt = (pct100: number) => PAD + (1 - pct100 / 100) * plotH;
+            const segments: { x: number; y: number }[][] = [];
+            let current: { x: number; y: number }[] = [];
+            weeks.forEach((w, i) => {
+              if (w.acceptRate == null) {
+                if (current.length) { segments.push(current); current = []; }
+                return;
+              }
+              current.push({ x: xAt(i), y: yAt(w.acceptRate * 100) });
+            });
+            if (current.length) segments.push(current);
+            const linePath = (pts: { x: number; y: number }[]) =>
+              pts.map((p, idx) => `${idx === 0 ? 'M' : 'L'}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ');
+            const areaPath = (pts: { x: number; y: number }[]) =>
+              `M${pts[0].x.toFixed(1)},${VB_H} L${pts.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' L')} L${pts[pts.length - 1].x.toFixed(1)},${VB_H} Z`;
+            return (
+              <div>
+                <div className="text-[11px] font-semibold text-slate-500 mb-1">แนวโน้มรายสัปดาห์ (อัตราส่งโดยไม่แก้)</div>
+                <div className="flex gap-1">
+                  {weeks.map((w) => (
+                    <div key={`${w.week}-val`} className="flex-1 text-center text-[8px] text-slate-500 leading-none">{pct(w.acceptRate)}</div>
+                  ))}
+                </div>
+                <svg viewBox={`0 0 ${VB_W} ${VB_H}`} preserveAspectRatio="none" className="w-full h-16 block mt-0.5">
+                  {segments.map((seg, idx) => (
+                    <path key={`area-${idx}`} d={areaPath(seg)} fill="#e0f2fe" fillOpacity={0.4} stroke="none" />
+                  ))}
+                  {segments.map((seg, idx) => (
+                    <path key={`line-${idx}`} d={linePath(seg)} fill="none" stroke="#0ea5e9" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+                  ))}
+                  {weeks.map((w, i) => w.acceptRate == null ? null : (
+                    <circle key={`dot-${w.week}`} cx={xAt(i)} cy={yAt(w.acceptRate * 100)} r={2.5} fill="#0ea5e9">
+                      <title>{`สัปดาห์ ${w.week}: ${pct(w.acceptRate)} (${w.total} ดราฟ)`}</title>
+                    </circle>
+                  ))}
+                </svg>
+                <div className="flex gap-1 mt-0.5">
+                  {weeks.map((w) => (
+                    <div key={`${w.week}-label`} className="flex-1 text-center text-[8px] text-slate-400" title={`สัปดาห์ ${w.week}: ${pct(w.acceptRate)} (${w.total} ดราฟ)`}>{w.week.slice(5)}</div>
+                  ))}
+                </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
           <div className="text-[10px] text-slate-400">
             ส่งอัตโนมัติ {m.autosend.sent} · ยกเลิก {m.autosend.canceled}
             {m.autosend.lastSentAt ? ` · ล่าสุด ${fmtTime(m.autosend.lastSentAt)}` : ''}

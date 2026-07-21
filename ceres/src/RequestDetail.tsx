@@ -23,6 +23,7 @@ import {
   type RequestMoneyEvent,
   type StaffRequest,
 } from './lib/api';
+import { REQUEST_TYPE_LABEL as TYPE_LABEL } from './lib/requestLabels';
 import { useCeres } from './lib/bootstrapContext';
 import { MediaThumb } from './lib/media';
 import ExpenseSheet from './ExpenseSheet';
@@ -30,12 +31,6 @@ import ExpenseSheet from './ExpenseSheet';
 // Shared timeline/liquidation view for one v2 staff request — used by both the
 // requester (MyRequests) and management (NeeFulfillmentQueue, MdRecon). See
 // docs/CERES_REVAMP_PLAN.md "Phase 3" item 2.
-
-const TYPE_LABEL: Record<StaffRequest['requestType'], string> = {
-  advance: 'เบิกล่วงหน้า',
-  reimbursement: 'สำรองจ่าย-ขอคืน',
-  purchase: 'ขอให้ซื้อ',
-};
 
 const APPROVAL_LABEL: Record<ApprovalStatus, { label: string; cls: string }> = {
   legacy: { label: 'รอตรวจ', cls: 'bg-slate-100 text-slate-600' },
