@@ -39,15 +39,14 @@ export default function MdMoney() {
 
   return (
     <div>
-      <h2 className="text-lg font-bold mb-3">ฝากเงิน</h2>
-
       <div className="flex flex-col lg:flex-row gap-4 items-start">
         <div className="w-full max-w-md lg:w-96 lg:flex-none">
+          <h2 className="text-lg font-bold mb-3">ฝากเงิน</h2>
           <DepositForm onDone={bump} />
         </div>
 
         <div className="w-full lg:flex-1">
-          <div className="text-sm font-semibold text-slate-500 mb-2">รายการวันนี้</div>
+          <h2 className="text-lg font-bold mb-3">รายการวันนี้</h2>
           {loading ? (
             <div className="py-8 flex justify-center text-slate-400">
               <Loader2 className="animate-spin" size={20} />
