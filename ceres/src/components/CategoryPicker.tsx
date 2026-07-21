@@ -81,7 +81,7 @@ export default function CategoryPicker({
       skipScroll.current = false;
       return;
     }
-    if (expandedGroup) chipsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    if (expandedGroup) chipsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
   }, [expandedGroup]);
 
   return (
