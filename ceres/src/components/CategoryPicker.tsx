@@ -22,6 +22,22 @@ export function groupByCategoryGroup<T extends { group: string }>(items: T[]): {
   return groups;
 }
 
+// Walks up from `el` to the nearest ancestor that actually scrolls (overflow-y auto/scroll AND
+// scrollHeight > clientHeight) — the sheets hosting CategoryPicker (RequestSheet, ExpenseSheet,
+// MdTemplates, CategoryAdmin) all put that on a single `overflow-y-auto` wrapper div, but walking
+// up rather than assuming a fixed depth keeps this working if a host's markup shifts.
+function nearestScrollContainer(el: HTMLElement | null): Element {
+  let node = el?.parentElement ?? null;
+  while (node) {
+    const style = getComputedStyle(node);
+    if ((style.overflowY === 'auto' || style.overflowY === 'scroll') && node.scrollHeight > node.clientHeight) {
+      return node;
+    }
+    node = node.parentElement;
+  }
+  return document.scrollingElement ?? document.documentElement;
+}
+
 // Shared grouped category chip-picker (Ceres Phase B categories revamp, 2026-07-18) — used by
 // RequestSheet, ExpenseSheet, and MdTemplates's TemplateDialog so all three category pickers
 // look and behave identically. NEVER pre-selects: `value` starts at '' (or whatever the caller
@@ -81,7 +97,13 @@ export default function CategoryPicker({
       skipScroll.current = false;
       return;
     }
-    if (expandedGroup) chipsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    if (!expandedGroup) return;
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        const container = nearestScrollContainer(chipsRef.current);
+        container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' });
+      });
+    });
   }, [expandedGroup]);
 
   return (
