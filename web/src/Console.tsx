@@ -1673,7 +1673,6 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
               <Clock size={10} /> {fmtTime(c.lastSeen)}
               <span className="ml-auto flex items-center gap-1 shrink-0">
                 {waiting && <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0" title="รอตอบ" />}
-                {c.suggestedStage && c.suggestedStage !== c.stage && <span className="w-1.5 h-1.5 rounded-full bg-amber-400" title={'AI แนะนำ: ' + c.suggestedStage} />}
                 {c.stage && <span className="text-[9px] px-1 py-0.5 rounded bg-indigo-100 text-indigo-700">{c.stage}</span>}
                 {c.category && <span className="text-[9px] px-1 py-0.5 rounded bg-sky-100 text-sky-700">{c.category}</span>}
                 <span role="button" tabIndex={0}
@@ -1910,13 +1909,6 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                             </>
                           )}
                         </div>
-                      )}
-                      {detail && detail.customer.suggestedStage && detail.customer.suggestedStage !== detail.customer.stage && (
-                        <button type="button" onClick={() => chooseStage(detail.customer.suggestedStage!)}
-                          title="AI แนะนำขั้นตอนนี้จากบทสนทนา — กดเพื่อยืนยัน"
-                          className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-amber-300 hover:bg-amber-200 text-amber-900 flex items-center gap-0.5 shrink-0">
-                          💡 {detail.customer.suggestedStage} ✓
-                        </button>
                       )}
                       {detail?.oaRead && (() => {
                         const rs = oaReadState(detail.oaRead.readLabel, detail.oaRead.readSeenAt, detail.messages);

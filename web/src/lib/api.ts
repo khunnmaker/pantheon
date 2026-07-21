@@ -72,7 +72,7 @@ export interface CustomerLite {
   lastSeen: string;
 }
 
-// Sales-pipeline stages (mirror of api/src/stages.ts). AI suggests, staff confirm.
+// Sales-pipeline stages (mirror of api/src/stages.ts). AI applies automatically; staff can override.
 export const STAGES = ['ถาม', 'สั่งซื้อ', 'ส่ง', 'ดูแล', 'เสร็จ', 'ยกเลิก'];
 export interface QueueItem {
   customer: CustomerLite;

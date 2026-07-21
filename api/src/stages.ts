@@ -1,4 +1,5 @@
-// Sales-pipeline stages. The AI suggests one from the conversation; staff confirm.
+// Sales-pipeline stages. The AI applies one automatically from the conversation;
+// staff can override via the manual dropdown.
 // Order matters for display; not enforced as a strict sequence (a repeat customer can
 // jump straight to สั่งซื้อ). "เสร็จ" = closed/won (sale complete), "ยกเลิก" = lost/abandoned.
 export const STAGES = ['ถาม', 'สั่งซื้อ', 'ส่ง', 'ดูแล', 'เสร็จ', 'ยกเลิก'] as const;
