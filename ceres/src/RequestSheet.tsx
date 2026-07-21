@@ -10,6 +10,7 @@ import {
   Receipt,
   ShoppingCart,
   ImageOff,
+  Image as ImageIcon,
 } from 'lucide-react';
 import {
   createStaffRequest,
@@ -351,11 +352,11 @@ export default function RequestSheet({
                     </div>
                   </div>
                 ) : (
-                  <div>
+                  <div className="flex gap-2">
                     <button
                       onClick={() => fileInputRef.current?.click()}
                       disabled={uploadBusy}
-                      className={`w-full min-h-[96px] rounded-xl border-2 border-dashed flex flex-col items-center justify-center gap-1.5 font-semibold disabled:opacity-60 ${
+                      className={`flex-1 min-h-[96px] rounded-xl border-2 border-dashed flex flex-col items-center justify-center gap-1.5 font-semibold disabled:opacity-60 ${
                         requestType === 'reimbursement'
                           ? 'border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-800'
                           : 'border-slate-300 bg-slate-50 hover:bg-slate-100 text-slate-500'
@@ -376,9 +377,10 @@ export default function RequestSheet({
                     <button
                       onClick={() => galleryInputRef.current?.click()}
                       disabled={uploadBusy}
-                      className="mt-2 w-full min-h-[44px] rounded-xl border border-slate-300 text-sm font-medium hover:bg-slate-50 disabled:opacity-60"
+                      className="flex-1 min-h-[96px] rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-slate-600 font-medium flex flex-col items-center justify-center gap-1.5 disabled:opacity-60"
                     >
-                      เลือกรูปจากเครื่อง
+                      <ImageIcon size={24} />
+                      <span>เลือกรูป</span>
                     </button>
                   </div>
                 )}

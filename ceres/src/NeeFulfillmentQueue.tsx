@@ -7,6 +7,7 @@ import {
   ChevronDown,
   ChevronUp,
   Eye,
+  Image as ImageIcon,
   Loader2,
   RefreshCw,
   ShoppingCart,
@@ -197,18 +198,19 @@ function EvidenceUpload({
           </div>
         </div>
       ) : (
-        <div>
+        <div className="flex gap-2">
           <label
-            className={`w-full min-h-[80px] rounded-xl border-2 border-dashed border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-800 font-semibold flex flex-col items-center justify-center gap-1.5 cursor-pointer ${busy ? 'opacity-60' : ''}`}
+            className={`flex-1 min-h-[80px] rounded-xl border-2 border-dashed border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-800 font-semibold flex flex-col items-center justify-center gap-1.5 cursor-pointer ${busy ? 'opacity-60' : ''}`}
           >
             {busy ? <Loader2 className="animate-spin" size={20} /> : <Camera size={20} />}
             <span className="text-xs">{busy ? 'กำลังอัปโหลด…' : 'ถ่ายรูป / แนบรูป'}</span>
             <input type="file" accept="image/*" capture="environment" className="hidden" disabled={busy} onChange={onChange} />
           </label>
           <label
-            className={`mt-2 w-full min-h-[40px] rounded-lg border border-slate-300 text-xs font-medium hover:bg-slate-50 flex items-center justify-center cursor-pointer ${busy ? 'opacity-50' : ''}`}
+            className={`flex-1 min-h-[80px] rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-slate-600 font-medium flex flex-col items-center justify-center gap-1.5 cursor-pointer ${busy ? 'opacity-50' : ''}`}
           >
-            เลือกรูปจากเครื่อง
+            <ImageIcon size={20} />
+            <span className="text-xs">เลือกรูป</span>
             <input type="file" accept="image/*" className="hidden" disabled={busy} onChange={onChange} />
           </label>
         </div>

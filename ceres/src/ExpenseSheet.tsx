@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Camera, Loader2, AlertTriangle, X, Check, ImageOff } from 'lucide-react';
+import { Camera, Loader2, AlertTriangle, X, Check, ImageOff, Image as ImageIcon } from 'lucide-react';
 import { ApiError, createExpense, updateExpense, uploadReceipt, type Expense, type OcrResult, type DuplicateReceipt } from './lib/api';
 import { downscaleImage } from './lib/image';
 import { useCeres } from './lib/bootstrapContext';
@@ -230,11 +230,11 @@ export default function ExpenseSheet({
                 </button>
               </div>
             ) : (
-              <div>
+              <div className="flex gap-2">
                 <button
                   onClick={() => fileInputRef.current?.click()}
                   disabled={uploadBusy}
-                  className="w-full min-h-[96px] rounded-xl border-2 border-dashed border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-800 font-semibold flex flex-col items-center justify-center gap-1.5 disabled:opacity-60"
+                  className="flex-1 min-h-[96px] rounded-xl border-2 border-dashed border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-800 font-semibold flex flex-col items-center justify-center gap-1.5 disabled:opacity-60"
                 >
                   {uploadBusy ? (
                     <>
@@ -251,9 +251,10 @@ export default function ExpenseSheet({
                 <button
                   onClick={() => galleryInputRef.current?.click()}
                   disabled={uploadBusy}
-                  className="mt-2 w-full min-h-[44px] rounded-xl border border-slate-300 text-sm font-medium hover:bg-slate-50 disabled:opacity-60"
+                  className="flex-1 min-h-[96px] rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-slate-600 font-medium flex flex-col items-center justify-center gap-1.5 disabled:opacity-60"
                 >
-                  เลือกรูปจากเครื่อง
+                  <ImageIcon size={24} />
+                  <span>เลือกรูป</span>
                 </button>
               </div>
             )}
