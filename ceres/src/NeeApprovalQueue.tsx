@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
-import { AlertTriangle, CheckCircle2, Loader2, RefreshCw, ThumbsUp, X } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Loader2, RefreshCw, ThumbsUp, Wallet, X } from 'lucide-react';
 import { ApiError, baht, listStaffRequests, neeDecision, type StaffRequest } from './lib/api';
 import { useCeres } from './lib/bootstrapContext';
 import { MediaThumb } from './lib/media';
+import { PayPanel } from './PayPanel';
 
 const TYPE_LABEL: Record<StaffRequest['requestType'], string> = {
   advance: 'เบิกล่วงหน้า',
@@ -20,9 +21,17 @@ export default function NeeApprovalQueue() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [busyId, setBusyId] = useState('');
+  // Separate from busyId — decideAndPay() uses this so a click on "อนุมัติและจ่ายเลย"
+  // doesn't also flip the plain "อนุมัติ" button's icon to a spinner (both buttons used to
+  // share one busy flag, which read as the wrong button being in flight).
+  const [payBusyId, setPayBusyId] = useState('');
   const [rejectingId, setRejectingId] = useState('');
   const [note, setNote] = useState('');
   const [success, setSuccess] = useState('');
+  // Cards mid-"อนุมัติและจ่ายเลย": approved but not yet removed from `rows`, rendering the
+  // shared PayPanel in place of the approve/reject footer (Ceres approve-and-pay collapse,
+  // 2026-07-21 — see decideAndPay() below). Keyed by request id.
+  const [paying, setPaying] = useState<Record<string, StaffRequest>>({});
 
   const load = useCallback(() => {
     setLoading(true);
@@ -65,6 +74,41 @@ export default function NeeApprovalQueue() {
     } finally {
       setBusyId('');
     }
+  }
+
+  // The combined "อนุมัติและจ่ายเลย" action — approve, then (if the approval landed as
+  // 'approved' rather than escalating to CEO) fold the card straight into the shared
+  // PayPanel with no navigation. Separate from decide() because on success it must NOT
+  // remove the row — the card stays mounted so it can render as PayPanel.
+  async function decideAndPay(request: StaffRequest) {
+    setPayBusyId(request.id);
+    setError('');
+    try {
+      const result = await neeDecision(request.id, 'approve');
+      if (result.request.approvalStatus === 'pending_ceo') {
+        // Prediction was wrong (aiScreenStatus flipped, etc.) — same removal as a plain
+        // approve that forwards; nothing to pay yet.
+        setRows((current) => current.filter((row) => row.id !== request.id));
+        setSuccess('ส่งต่อ CEO แล้ว รออนุมัติก่อนจ่าย');
+      } else {
+        setPaying((current) => ({ ...current, [request.id]: result.request }));
+      }
+    } catch (err) {
+      setError(err instanceof ApiError && err.message === 'ai_review_pending'
+        ? 'AI ยังตรวจคำขอนี้ไม่เสร็จ กรุณารอสักครู่แล้วโหลดใหม่'
+        : 'บันทึกผลไม่สำเร็จ ลองใหม่อีกครั้ง');
+    } finally {
+      setPayBusyId('');
+    }
+  }
+
+  function stopPaying(id: string) {
+    setPaying((current) => {
+      if (!(id in current)) return current;
+      const next = { ...current };
+      delete next[id];
+      return next;
+    });
   }
 
   return (
@@ -153,62 +197,98 @@ export default function NeeApprovalQueue() {
                   </div>
                 )}
 
-                {aiPending && (
-                  <div className="mt-2 text-xs font-semibold text-amber-700">
-                    รอ AI ตรวจเสร็จก่อน จึงจะอนุมัติหรือไม่อนุมัติได้
-                  </div>
-                )}
-
-                {forward && (
-                  <div className="mt-2 px-3 py-2 rounded-xl bg-violet-50 border border-violet-200 text-violet-700 text-xs font-semibold">
-                    เมื่อกดอนุมัติ: อนุมัติแล้วส่งต่อ CEO
-                  </div>
-                )}
-
-                {rejectingId === request.id ? (
-                  <div className="mt-3 pt-3 border-t border-slate-100 space-y-2">
-                    <textarea
-                      value={note}
-                      onChange={(event) => setNote(event.target.value)}
-                      placeholder="เหตุผลที่ไม่อนุมัติ (จำเป็น)"
-                      rows={2}
-                      autoFocus
-                      className="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm resize-none"
-                    />
-                    <div className="flex gap-2">
-                      <button
-                        onClick={() => decide(request, 'reject')}
-                        disabled={busyId === request.id || aiPending || !note.trim()}
-                        className="flex-1 min-h-[42px] rounded-lg bg-rose-600 text-white text-sm font-semibold flex items-center justify-center gap-1 disabled:opacity-40"
-                      >
-                        {busyId === request.id ? <Loader2 size={14} className="animate-spin" /> : <X size={14} />} ยืนยันไม่อนุมัติ
-                      </button>
-                      <button
-                        onClick={() => { setRejectingId(''); setNote(''); }}
-                        disabled={busyId === request.id}
-                        className="px-4 min-h-[42px] rounded-lg border border-slate-300 text-slate-600 text-sm"
-                      >
-                        กลับ
-                      </button>
-                    </div>
-                  </div>
+                {paying[request.id] ? (
+                  <PayPanel
+                    request={paying[request.id]}
+                    onDone={() => {
+                      stopPaying(request.id);
+                      setRows((current) => current.filter((row) => row.id !== request.id));
+                      setSuccess('อนุมัติและบันทึกจ่ายเงินแล้ว');
+                    }}
+                    onCancel={() => {
+                      // Already approved by this point — a refresh just makes the card
+                      // disappear from the pending-approval queue cleanly (it no longer
+                      // matches scope 'queue'), no stuck state either way.
+                      stopPaying(request.id);
+                      load();
+                    }}
+                  />
                 ) : (
-                  <div className="flex gap-2 mt-3 pt-3 border-t border-slate-100">
-                    <button
-                      onClick={() => decide(request, 'approve')}
-                      disabled={busyId === request.id || aiPending}
-                      className="flex-1 min-h-[44px] rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold flex items-center justify-center gap-1 disabled:opacity-40"
-                    >
-                      {busyId === request.id ? <Loader2 size={14} className="animate-spin" /> : <ThumbsUp size={14} />} {forward ? 'อนุมัติและส่งต่อ' : 'อนุมัติ'}
-                    </button>
-                    <button
-                      onClick={() => { setRejectingId(request.id); setNote(''); }}
-                      disabled={busyId === request.id || aiPending}
-                      className="flex-1 min-h-[44px] rounded-lg border border-rose-300 text-rose-600 text-sm font-semibold flex items-center justify-center gap-1 disabled:opacity-40"
-                    >
-                      <X size={14} /> ไม่อนุมัติ
-                    </button>
-                  </div>
+                  <>
+                    {aiPending && (
+                      <div className="mt-2 text-xs font-semibold text-amber-700">
+                        รอ AI ตรวจเสร็จก่อน จึงจะอนุมัติหรือไม่อนุมัติได้
+                      </div>
+                    )}
+
+                    {forward && (
+                      <div className="mt-2 px-3 py-2 rounded-xl bg-violet-50 border border-violet-200 text-violet-700 text-xs font-semibold">
+                        เมื่อกดอนุมัติ: อนุมัติแล้วส่งต่อ CEO
+                      </div>
+                    )}
+
+                    {rejectingId === request.id ? (
+                      <div className="mt-3 pt-3 border-t border-slate-100 space-y-2">
+                        <textarea
+                          value={note}
+                          onChange={(event) => setNote(event.target.value)}
+                          placeholder="เหตุผลที่ไม่อนุมัติ (จำเป็น)"
+                          rows={2}
+                          autoFocus
+                          className="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm resize-none"
+                        />
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => decide(request, 'reject')}
+                            disabled={busyId === request.id || aiPending || !note.trim()}
+                            className="flex-1 min-h-[42px] rounded-lg bg-rose-600 text-white text-sm font-semibold flex items-center justify-center gap-1 disabled:opacity-40"
+                          >
+                            {busyId === request.id ? <Loader2 size={14} className="animate-spin" /> : <X size={14} />} ยืนยันไม่อนุมัติ
+                          </button>
+                          <button
+                            onClick={() => { setRejectingId(''); setNote(''); }}
+                            disabled={busyId === request.id}
+                            className="px-4 min-h-[42px] rounded-lg border border-slate-300 text-slate-600 text-sm"
+                          >
+                            กลับ
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex flex-col gap-2 mt-3 pt-3 border-t border-slate-100">
+                        {/* Combined action — only offered on cards predicted to approve
+                            DIRECTLY (same !forward predicate as the plain "อนุมัติ" label
+                            above); an escalating card has nothing to pay yet. Full-width +
+                            solid amber so it reads as the strongest action on the card,
+                            ranking above the plain อนุมัติ/ไม่อนุมัติ pair below it. */}
+                        {!forward && (
+                          <button
+                            onClick={() => decideAndPay(request)}
+                            disabled={busyId === request.id || payBusyId === request.id || aiPending}
+                            className="w-full min-h-[44px] rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-sm font-semibold flex items-center justify-center gap-1 disabled:opacity-40"
+                          >
+                            {payBusyId === request.id ? <Loader2 size={14} className="animate-spin" /> : <Wallet size={14} />} อนุมัติและจ่ายเลย
+                          </button>
+                        )}
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => decide(request, 'approve')}
+                            disabled={busyId === request.id || payBusyId === request.id || aiPending}
+                            className="flex-1 min-h-[44px] rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold flex items-center justify-center gap-1 disabled:opacity-40"
+                          >
+                            {busyId === request.id ? <Loader2 size={14} className="animate-spin" /> : <ThumbsUp size={14} />} {forward ? 'อนุมัติและส่งต่อ' : 'อนุมัติ'}
+                          </button>
+                          <button
+                            onClick={() => { setRejectingId(request.id); setNote(''); }}
+                            disabled={busyId === request.id || payBusyId === request.id || aiPending}
+                            className="flex-1 min-h-[44px] rounded-lg border border-rose-300 text-rose-600 text-sm font-semibold flex items-center justify-center gap-1 disabled:opacity-40"
+                          >
+                            <X size={14} /> ไม่อนุมัติ
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </>
                 )}
               </article>
             );

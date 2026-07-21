@@ -980,8 +980,8 @@ export const getTransferReconciliation = () =>
 // reverse call site so the same code always reads the same way to Nee/CEO.
 const MONEY_ERROR_TH: Record<string, string> = {
   not_found: 'ไม่พบรายการ',
-  not_approved: 'คำขอนี้ยังไม่อนุมัติ ทำรายการไม่ได้',
-  already_fulfilled: 'คำขอนี้จ่าย/ซื้อไปแล้ว',
+  not_approved: 'รายการยังไม่ได้รับอนุมัติ',
+  already_fulfilled: 'รายการนี้บันทึกจ่ายไปแล้ว',
   invalid_evidence: 'ต้องแนบหลักฐาน (สลิปโอน/ใบเสร็จซื้อ) ก่อนบันทึก',
   invalid_request_type: 'ประเภทคำขอไม่ตรงกับการทำรายการนี้',
   not_paid_advance: 'ยังไม่มีการจ่ายเงินเบิกล่วงหน้าของคำขอนี้',
@@ -992,7 +992,15 @@ const MONEY_ERROR_TH: Record<string, string> = {
 };
 export function describeMoneyError(err: unknown): string {
   if (err instanceof ApiError && err.body && typeof err.body === 'object' && 'error' in err.body) {
-    const code = String((err.body as { error: unknown }).error);
+    const body = err.body as { error: unknown; balance?: unknown };
+    const code = String(body.error);
+    // insufficient_cash carries the actual petty-cash balance in the body (see
+    // api/src/routes/ceres/requests.ts's moneyError()) — surface it inline so the GM/CEO
+    // knows exactly how short the box is, instead of a bare "not enough" message.
+    if (code === 'insufficient_cash' && body.balance !== undefined) {
+      const n = Number(body.balance);
+      if (!Number.isNaN(n)) return `เงินสดในกล่องไม่พอ (คงเหลือ ${baht(n)})`;
+    }
     return MONEY_ERROR_TH[code] ?? 'ทำรายการไม่สำเร็จ ลองใหม่อีกครั้ง';
   }
   return 'ทำรายการไม่สำเร็จ ลองใหม่อีกครั้ง';

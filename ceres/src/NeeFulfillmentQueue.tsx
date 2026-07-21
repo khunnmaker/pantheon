@@ -7,7 +7,6 @@ import {
   ChevronDown,
   ChevronUp,
   Eye,
-  Landmark,
   Loader2,
   RefreshCw,
   ShoppingCart,
@@ -16,7 +15,6 @@ import {
 import {
   baht,
   describeMoneyError,
-  fulfillStaffRequest,
   getRequestLiquidation,
   listStaffRequests,
   newIdempotencyKey,
@@ -28,6 +26,7 @@ import {
 } from './lib/api';
 import { downscaleImage } from './lib/image';
 import { MediaThumb } from './lib/media';
+import { PayPanel } from './PayPanel';
 import RequestDetail from './RequestDetail';
 
 // Nee's approved-and-awaiting-fulfillment queue (Ceres revamp Phase 3). Two lanes:
@@ -251,7 +250,7 @@ function FulfillCard({
           </button>
         </div>
       ) : (
-        <FulfillForm
+        <PayPanel
           request={request}
           onCancel={() => setOpen(false)}
           onDone={(msg) => {
@@ -261,138 +260,6 @@ function FulfillCard({
         />
       )}
     </article>
-  );
-}
-
-function FulfillForm({
-  request,
-  onCancel,
-  onDone,
-}: {
-  request: StaffRequest;
-  onCancel: () => void;
-  onDone: (msg: string) => void;
-}) {
-  // NO lazy default (owner rule, 2026-07-18) — no lane pre-selected; an explicit tap is
-  // required before this can submit (see the missing-lane check in submit() below).
-  const [lane, setLane] = useState<RequestMoneyLane | null>(null);
-  const [slipId, setSlipId] = useState<string | null>(null);
-  const [slipPreview, setSlipPreview] = useState<string | null>(null);
-  const [receiptId, setReceiptId] = useState<string | null>(null);
-  const [receiptPreview, setReceiptPreview] = useState<string | null>(null);
-  const [uploadBusy, setUploadBusy] = useState<'slip' | 'receipt' | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
-  // Stable per dialog-open — a retried tap replays the SAME server-side event instead
-  // of creating a second money movement (see requestMoney.ts's idempotencyKey).
-  const idempotencyKey = useRef(newIdempotencyKey());
-
-  const isPurchase = request.requestType === 'purchase';
-
-  async function handleUpload(kind: 'slip' | 'receipt', file: File) {
-    setError('');
-    setUploadBusy(kind);
-    try {
-      const { dataB64, contentType } = await downscaleImage(file);
-      const result = await uploadMedia(dataB64, contentType, kind === 'slip' ? 'transfer_slip' : 'purchase_receipt');
-      const preview = `data:${contentType};base64,${dataB64}`;
-      if (kind === 'slip') {
-        setSlipId(result.uploadId);
-        setSlipPreview(preview);
-      } else {
-        setReceiptId(result.uploadId);
-        setReceiptPreview(preview);
-      }
-    } catch {
-      setError('อัปโหลดรูปไม่สำเร็จ ลองใหม่อีกครั้ง');
-    } finally {
-      setUploadBusy(null);
-    }
-  }
-
-  const missingSlip = lane === 'transfer' && !slipId;
-  const missingReceipt = isPurchase && !receiptId;
-
-  async function submit() {
-    setError('');
-    if (!lane) return setError('กรุณาเลือกช่องทางจ่ายเงิน');
-    if (missingSlip) return setError('ต้องแนบสลิปโอนก่อนบันทึก');
-    if (missingReceipt) return setError('ต้องแนบใบเสร็จซื้อของก่อนบันทึก');
-    setBusy(true);
-    try {
-      await fulfillStaffRequest(request.id, {
-        lane,
-        transferSlipUploadId: slipId ?? undefined,
-        purchaseReceiptUploadId: receiptId ?? undefined,
-        idempotencyKey: idempotencyKey.current,
-      });
-      onDone(isPurchase ? 'บันทึกว่าซื้อแล้ว' : 'บันทึกจ่ายเงินแล้ว');
-    } catch (err) {
-      setError(describeMoneyError(err));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <div className="mt-3 pt-3 border-t border-slate-100 space-y-3">
-      <div>
-        <div className="text-xs font-semibold text-slate-500 mb-1.5">ช่องทางจ่ายเงิน</div>
-        <div className="grid grid-cols-2 gap-2">
-          <button
-            onClick={() => setLane('cash')}
-            className={`min-h-[44px] rounded-lg border text-sm font-semibold flex items-center justify-center gap-1.5 ${
-              lane === 'cash' ? 'bg-amber-600 border-amber-600 text-white' : 'border-slate-300 text-slate-600'
-            }`}
-          >
-            <Banknote size={15} /> จ่ายสด
-          </button>
-          <button
-            onClick={() => setLane('transfer')}
-            className={`min-h-[44px] rounded-lg border text-sm font-semibold flex items-center justify-center gap-1.5 ${
-              lane === 'transfer' ? 'bg-amber-600 border-amber-600 text-white' : 'border-slate-300 text-slate-600'
-            }`}
-          >
-            <Landmark size={15} /> โอนเงิน
-          </button>
-        </div>
-      </div>
-
-      {lane === 'transfer' && (
-        <EvidenceUpload label="สลิปโอนเงิน (จำเป็น)" preview={slipPreview} busy={uploadBusy === 'slip'} onPick={(f) => handleUpload('slip', f)} />
-      )}
-      {isPurchase && (
-        <EvidenceUpload
-          label="ใบเสร็จซื้อของ (จำเป็น)"
-          preview={receiptPreview}
-          busy={uploadBusy === 'receipt'}
-          onPick={(f) => handleUpload('receipt', f)}
-        />
-      )}
-
-      {error && (
-        <div className="flex items-center gap-1 text-rose-600 text-xs">
-          <AlertTriangle size={12} /> {error}
-        </div>
-      )}
-
-      <div className="flex gap-2">
-        <button
-          onClick={submit}
-          disabled={busy || uploadBusy !== null}
-          className="flex-1 min-h-[44px] rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold flex items-center justify-center gap-1 disabled:opacity-40"
-        >
-          {busy ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />} ยืนยัน{isPurchase ? 'ซื้อแล้ว' : 'จ่ายแล้ว'}
-        </button>
-        <button
-          onClick={onCancel}
-          disabled={busy}
-          className="px-3 min-h-[44px] rounded-lg border border-slate-300 text-sm text-slate-600 hover:bg-slate-50"
-        >
-          ยกเลิก
-        </button>
-      </div>
-    </div>
   );
 }
 
