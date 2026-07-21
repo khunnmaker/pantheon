@@ -12,11 +12,11 @@ import {
   getSummary, getPayments, setStatus, setFlag, verifyPayment, getReport, downloadCsv, baht,
   logout, getBankSummary, createPayment, uploadSlip, fileToBase64, readManualSlip, readManualCheque,
   deletePayment, confirmReceived, getWhtSummary, updatePayment, getFinanceAudits, getManualBills,
-  getPaymentCreditBalance, getReExpected,
+  getPaymentCreditBalance, getReExpected, getXsLookup, getXsDocs,
   apiErrorMessage,
   type Agent, type Payment, type PaymentStatus, type Summary,
   type Report, type PaymentFilter, type CustomerType, type PaymentSource,
-  type WhtRate, type WhtSummary, type EditPaymentBody, type DiscResolution,
+  type WhtRate, type WhtSummary, type EditPaymentBody, type DiscResolution, type XsLookupDoc,
 } from './lib/api';
 import PrintCovers from './PrintCovers';
 import Recon from './Recon';
@@ -24,6 +24,7 @@ import ReRecon from './ReRecon';
 import Discrepancies, { PaymentDiscrepancyBlock, RESOLUTION_LABELS } from './Discrepancies';
 import Audit from './Audit';
 import Bills from './Bills';
+import XsDocs from './XsDocs';
 import AppSwitcher from './AppSwitcher';
 import { useHashTab } from '@pantheon/ui';
 import {
@@ -48,7 +49,7 @@ import {
 // 'audit' = ตรวจสอบยอด: the FinanceAudit mis-read trail (slip amount ≠ OCR) — visible to ALL
 // Juno users (finance sees the flags on payments they process), but only the CEO can mark one
 // ตรวจแล้ว (resolve is supervisor-only server-side; the button is hidden otherwise).
-type View = 'inbox' | 'flags' | 'reports' | 'recon' | 'receive' | 'wht' | 'reRecon' | 'bills' | 'audit' | 'disc';
+type View = 'inbox' | 'flags' | 'reports' | 'recon' | 'receive' | 'wht' | 'reRecon' | 'bills' | 'xs' | 'audit' | 'disc';
 
 // Withholding tax (task 2) rate options — 0 (ไม่มี) plus the Thai statutory rates FIN picks
 // from in the ตรวจแล้ว dialog. Mirrors the server's WHT_RATES (api/src/routes/juno.ts).
@@ -185,7 +186,7 @@ export default function Juno({ agent, onLogout }: { agent: Agent; onLogout: () =
   const validViewKeys: View[] = scope === 'billsOnly'
     ? ['bills']
     : [
-        'inbox', 'bills',
+        'inbox', 'bills', 'xs',
         ...(isCeo ? (['receive'] as const) : []),
         'recon', 'reRecon', 'flags', 'disc', 'audit', 'wht',
         ...(isCeo ? (['reports'] as const) : []),
@@ -204,6 +205,12 @@ export default function Juno({ agent, onLogout }: { agent: Agent; onLogout: () =
   const handleBillCounts = useCallback((counts: { unpaid: number }) => {
     setBillUnpaid(counts.unpaid);
   }, []);
+  // XS tab badge (task B) — same ยังไม่จ่าย-only convention as บิลมือ; billsOnly (gm/Mail) never
+  // sees the XS tab, so this stays unfetched for that scope (mirrors billUnpaid's own skip below).
+  const [xsUnpaid, setXsUnpaid] = useState<number | undefined>(undefined);
+  const handleXsCounts = useCallback((counts: { unpaid: number }) => {
+    setXsUnpaid(counts.unpaid);
+  }, []);
 
   const refreshSummary = useCallback(() => {
     if (scope === 'billsOnly') {
@@ -217,7 +224,8 @@ export default function Juno({ agent, onLogout }: { agent: Agent; onLogout: () =
     getBankSummary().then((s) => setVerifiedUnmatched(s.verifiedUnreconciled.count)).catch(() => setVerifiedUnmatched(undefined));
     getFinanceAudits('open').then((r) => setAuditOpen(r.audits.length)).catch(() => setAuditOpen(undefined));
     getManualBills().then((r) => handleBillCounts(r.counts)).catch(() => setBillUnpaid(undefined));
-  }, [handleBillCounts, scope]);
+    getXsDocs().then((r) => handleXsCounts(r.counts)).catch(() => setXsUnpaid(undefined));
+  }, [handleBillCounts, handleXsCounts, scope]);
   useEffect(() => { refreshSummary(); }, [refreshSummary]);
 
   // The tab bar reads left→right as the money's journey (owner's 4-stage workflow,
@@ -231,6 +239,9 @@ export default function Juno({ agent, onLogout }: { agent: Agent; onLogout: () =
   // Per-role visibility unchanged from the flat bar; groups render only if non-empty.
   type Tab = { key: View; label: string; icon: React.ReactNode; count?: number };
   const billTab: Tab = { key: 'bills', label: 'MB', icon: <ReceiptText size={16} />, count: billUnpaid };
+  // XS tab (task B) sits right after MB, same group — same reason MB lives here: FIN's stage-2
+  // desk. Read-mostly (no create/void/delete; XS docs are born in Express's STTRNR6.TXT import).
+  const xsTab: Tab = { key: 'xs' as const, label: 'XS', icon: <FileText size={16} />, count: xsUnpaid };
   const tabGroups: { caption: string; tabs: Tab[] }[] = (scope === 'billsOnly'
     ? [{ caption: 'ออกบิล', tabs: [billTab] }]
     : [
@@ -240,6 +251,7 @@ export default function Juno({ agent, onLogout }: { agent: Agent; onLogout: () =
             // badge = รอตรวจ queue (actionable), not the all-time total the bar used to show
             { key: 'inbox' as const, label: 'รายการ', icon: <Inbox size={16} />, count: summary?.received },
             billTab, // full = CRUD, readBills (FIN) = read-only inside the tab
+            xsTab,
           ],
         },
         {
@@ -343,6 +355,8 @@ export default function Juno({ agent, onLogout }: { agent: Agent; onLogout: () =
           <ReRecon isCeo={isCeo} />
         ) : view === 'bills' ? (
           <Bills onCountsChanged={handleBillCounts} canDelete={canDelete} canEdit={scope !== 'readBills'} />
+        ) : view === 'xs' ? (
+          <XsDocs onCountsChanged={handleXsCounts} isCeo={isCeo} />
         ) : view === 'disc' ? (
           <Discrepancies isCeo={isCeo} onChanged={refreshSummary} />
         ) : view === 'audit' ? (
@@ -356,7 +370,7 @@ export default function Juno({ agent, onLogout }: { agent: Agent; onLogout: () =
 }
 
 // ── Payments list + detail (inbox / flags share this) ──────────────────────
-function PaymentsView({ view, onChanged, canDelete, isCeo }: { view: Exclude<View, 'reports' | 'recon' | 'reRecon' | 'bills' | 'audit' | 'disc'>; onChanged: () => void; canDelete: boolean; isCeo: boolean }) {
+function PaymentsView({ view, onChanged, canDelete, isCeo }: { view: Exclude<View, 'reports' | 'recon' | 'reRecon' | 'bills' | 'xs' | 'audit' | 'disc'>; onChanged: () => void; canDelete: boolean; isCeo: boolean }) {
   const [q, setQ] = useState('');
   const [status, setStatusFilter] = useState<'all' | PaymentStatus>('all');
   // วิธีรับเงิน (payment-method) filter — inbox only, folds the old separate เงินสด/เช็ค tab
@@ -1871,16 +1885,20 @@ const billLabel = (billNo: string) => {
   const reference = normalizeBillReference(billNo);
   return reference ? displayReceiptReference(reference) : billNo;
 };
-type BillTone = 'manual' | 'external' | 'other';
+type BillTone = 'manual' | 'external' | 'xs' | 'other';
 const billTone = (billNo: string): BillTone => normalizeBillReference(billNo)?.billKind ?? 'other';
+// XS keeps the SAME amber palette as 'external' (ex-"external" chip colour, task A) — only the
+// title changes, since XS is now its own recognized document family with a FIN-declared amount.
 const BILL_TONE_CLS: Record<BillTone, string> = {
   manual: 'bg-sky-50 text-sky-700',
   external: 'bg-amber-50 text-amber-700',
+  xs: 'bg-amber-50 text-amber-700',
   other: 'bg-rose-100 text-rose-700',
 };
 const BILL_TONE_TITLE: Record<BillTone, string> = {
   manual: 'MB',
   external: 'เลขเอกสารภายนอก',
+  xs: 'เอกสาร XS (Express)',
   other: 'ไม่รู้จักรูปแบบเลขนี้ — ตรวจสอบก่อนบันทึก',
 };
 type ReceiptToken = { kind: 're' | 'bill' | 'wrong_transfer'; value: string };
@@ -2168,6 +2186,109 @@ function WhtSection({ wht }: { wht: ReturnType<typeof useWhtControl> }) {
   );
 }
 
+// ── XS amounts (task A, owner ruling 2026-07-21) — every XS chip in the ตรวจแล้ว dialog needs a
+// FIN-declared confirmedAmount before the row can save; the imported STTRNR6.TXT `amount` is
+// never trusted enough to auto-fill (see XsDoc.amount doc comment server-side). Prefill comes
+// from GET /api/juno/xs/lookup, debounced on chip changes — same "soft check on chip change"
+// pattern as useReceiptChipsInput's MB registry effect. Once FIN edits (or clears) a value it
+// sticks — a later lookup response never clobbers what's already been typed.
+function useXsAmounts(xsNos: string[]) {
+  const [amounts, setAmounts] = useState<Record<string, string>>({});
+  const [hints, setHints] = useState<Record<string, XsLookupDoc>>({});
+  const [loading, setLoading] = useState(false);
+  const editedRef = useRef<Set<string>>(new Set());
+  const xsNosKey = xsNos.join(',');
+
+  useEffect(() => {
+    if (!xsNosKey) return;
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      setLoading(true);
+      getXsLookup(xsNosKey.split(','))
+        .then((result) => {
+          if (cancelled) return;
+          setHints((prev) => {
+            const next = { ...prev };
+            for (const doc of result.docs) next[doc.xsNo] = doc;
+            return next;
+          });
+          setAmounts((prev) => {
+            const next = { ...prev };
+            for (const doc of result.docs) {
+              if (editedRef.current.has(doc.xsNo)) continue;
+              if (doc.confirmedAmount && (Number(doc.confirmedAmount.replace(/,/g, '')) || 0) > 0) {
+                next[doc.xsNo] = doc.confirmedAmount;
+              }
+            }
+            return next;
+          });
+        })
+        .catch(() => { /* prefill is best-effort — FIN can still type the amount by hand */ })
+        .finally(() => { if (!cancelled) setLoading(false); });
+    }, 250);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [xsNosKey]);
+
+  function setAmount(xsNo: string, value: string) {
+    editedRef.current.add(xsNo);
+    setAmounts((prev) => ({ ...prev, [xsNo]: value }));
+  }
+
+  const isValid = (xsNo: string): boolean => {
+    const raw = (amounts[xsNo] ?? '').trim();
+    if (!raw) return false;
+    const n = Number(raw.replace(/,/g, ''));
+    return Number.isFinite(n) && n > 0;
+  };
+  const allValid = xsNos.every(isValid);
+
+  // Every entry sent is a valid (>0) figure — an invalid/missing one blocks save entirely
+  // (allValid gates the button), so there is nothing to filter out here.
+  function toBody(): Record<string, string> {
+    const body: Record<string, string> = {};
+    for (const xsNo of xsNos) {
+      const raw = (amounts[xsNo] ?? '').trim();
+      if (raw) body[xsNo] = raw;
+    }
+    return body;
+  }
+
+  return { amounts, setAmount, hints, loading, isValid, allValid, toBody };
+}
+
+// The ยอดเอกสาร XS section: one amount row per XS chip currently in the chips box (task A3).
+function XsAmountsSection({ xsNos, xsAmounts }: { xsNos: string[]; xsAmounts: ReturnType<typeof useXsAmounts> }) {
+  if (xsNos.length === 0) return null;
+  return (
+    <div className="rounded-lg border border-amber-200 bg-amber-50/40 p-2.5 space-y-2">
+      <div className="text-xs font-semibold text-amber-900 flex items-center gap-1.5">
+        ยอดเอกสาร XS
+        {xsAmounts.loading && <Loader2 size={11} className="animate-spin text-amber-600" />}
+      </div>
+      {xsNos.map((xsNo) => {
+        const hint = xsAmounts.hints[xsNo];
+        const hintAmount = hint ? Number(hint.amount.replace(/,/g, '')) || 0 : 0;
+        return (
+          <label key={xsNo} className="block">
+            <span className="text-[11px] text-slate-500">ยอดจริงของ {xsNo}</span>
+            <input
+              value={xsAmounts.amounts[xsNo] ?? ''}
+              onChange={(e) => xsAmounts.setAmount(xsNo, e.target.value)}
+              inputMode="decimal"
+              placeholder="0.00"
+              className="mt-0.5 w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
+            />
+            {hint?.imported && hintAmount > 0 && (
+              <div className="mt-0.5 text-[11px] text-slate-400">ยอดดิบจากรายงาน: {baht(hintAmount)} (ไม่ใช้)</div>
+            )}
+          </label>
+        );
+      })}
+      {!xsAmounts.allValid && <div className="text-[11px] text-rose-600">กรุณาใส่ยอดของเอกสาร XS ทุกใบ</div>}
+    </div>
+  );
+}
+
 // ── Check dialog (the RE check FIN performs when the receipt is issued in Express) ─────────
 // Small modal, NOT a browser prompt: this is the one place a payment can become 'verified'.
 // FIN can now type/paste SEVERAL RE numbers (one payment may cover many receipts): they go in
@@ -2179,6 +2300,10 @@ function CheckDialog({ payment, onClose, onSaved }: {
   onSaved: (p: Payment) => void;
 }) {
   const re = useReceiptChipsInput(payment.reNumbers, payment.billNos, payment.wrongTransfer);
+  // Every XS chip currently in the chips box needs its own FIN-declared amount (task A) — derived
+  // live off re.billNos so adding/removing a chip adds/removes its row automatically.
+  const xsNos = re.billNos.filter((billNo) => billTone(billNo) === 'xs');
+  const xsAmounts = useXsAmounts(xsNos);
   const [receiptName, setReceiptName] = useState(
     payment.receiptName || payment.taxInvoice.split('\n')[0]?.trim() || payment.customerName,
   );
@@ -2253,6 +2378,7 @@ function CheckDialog({ payment, onClose, onSaved }: {
 
   async function save() {
     if ((!re.valid && !resettingWrongTransfer) || saving || creditTooHigh) return;
+    if (xsNos.length > 0 && !xsAmounts.allValid) return;
     const documents = re.finalize();
     if (!documents.wrongTransfer && documents.reNumbers.length === 0 && documents.billNos.length === 0 && !resettingWrongTransfer) return;
     const hasRefundAudit = !!(payment.discResolution || payment.discResolvedAt || payment.discConfirmedAt);
@@ -2271,6 +2397,7 @@ function CheckDialog({ payment, onClose, onSaved }: {
         creditUsed: documents.wrongTransfer ? '' : creditUsed.trim(),
         discExpected: discExpected.trim(),
         ...(resolutionOptions.length ? { discResolution } : {}),
+        ...(xsNos.length > 0 ? { xsAmounts: xsAmounts.toBody() } : {}),
         undoConfirmed,
       });
       onSaved(res.payment);
@@ -2296,6 +2423,8 @@ function CheckDialog({ payment, onClose, onSaved }: {
             <span className="text-[11px] text-slate-400">ต้องมีเลขเอกสาร หรือพิมพ์ 0 (หรือ 0000000) สำหรับโอนเงินผิด</span>
           )}
         </label>
+
+        {!re.wrongTransfer && <XsAmountsSection xsNos={xsNos} xsAmounts={xsAmounts} />}
 
         {!re.wrongTransfer && <label className="block">
           <span className="text-xs text-slate-500">ชื่อบนใบเสร็จ</span>
@@ -2387,7 +2516,7 @@ function CheckDialog({ payment, onClose, onSaved }: {
           <button
             type="button"
             onClick={save}
-            disabled={(!re.valid && !resettingWrongTransfer) || saving || creditTooHigh}
+            disabled={(!re.valid && !resettingWrongTransfer) || saving || creditTooHigh || (xsNos.length > 0 && !xsAmounts.allValid)}
             className="px-4 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold flex items-center gap-1 disabled:opacity-50"
           >
             {saving ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={13} />} {resettingWrongTransfer ? 'กลับไปรอตรวจ' : 'บันทึก'}

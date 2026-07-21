@@ -439,6 +439,9 @@ export const verifyPayment = (
     creditUsed?: string;
     discExpected?: string;
     discResolution?: DiscResolution;
+    // FIN-declared per-XS amount (task A) — keyed by the XS chip's compact xsNo. Omit a chip
+    // whose XsDoc already has a confirmedAmount on file (preserved server-side).
+    xsAmounts?: Record<string, string>;
   },
 ) =>
   authed<{ ok: boolean; payment: Payment }>(`/api/juno/payments/${id}/verify`, {
@@ -454,6 +457,20 @@ export interface ReExpectedResponse {
 export const getReExpected = (nums: string[], exclude: string, signal?: AbortSignal) => {
   const params = new URLSearchParams({ nums: nums.join(','), exclude });
   return authed<ReExpectedResponse>(`/api/juno/re-expected?${params.toString()}`, { signal });
+};
+
+// ── XS amounts (task A) — the ตรวจแล้ว dialog's ยอดเอกสาร XS prefill lookup ─────────────────
+export interface XsLookupDoc {
+  xsNo: string;
+  imported: boolean;
+  amount: string; // raw STTRNR6.TXT figure — NEVER used to prefill, shown only as a muted hint
+  confirmedAmount: string;
+}
+
+export const getXsLookup = (nums: string[], signal?: AbortSignal) => {
+  if (nums.length === 0) return Promise.resolve({ docs: [] as XsLookupDoc[] });
+  const params = new URLSearchParams({ nums: nums.join(',') });
+  return authed<{ docs: XsLookupDoc[] }>(`/api/juno/xs/lookup?${params.toString()}`, { signal });
 };
 
 // ── Payment discrepancy ledger (ยอดเกิน/ขาด) ───────────────────────────────
@@ -892,6 +909,9 @@ export interface ReReconRow {
   paidGross: number; // this RE's apportioned share of the covering transfer(s) — its own receipt amount when the transfer ties out, NOT the whole payment
   diff: number; // paidGross - amount (≈0 when matched)
   paymentCount: number;
+  // XS only: the raw STTRNR6.TXT figure, present only when it differs from `amount` (the
+  // effective/priced figure) — undefined for re/mb rows and for XS rows with no override yet.
+  importedAmount?: number;
 }
 
 export interface ReReconSummary {
@@ -1079,6 +1099,48 @@ export interface ManualBillProduct {
 
 export const getManualBillProducts = (q: string) =>
   authed<{ products: ManualBillProduct[] }>(`/api/juno/products?q=${encodeURIComponent(q)}`);
+
+// ── XS (Express จ่ายสินค้าภายใน docs) tab ────────────────────────────────────
+// XS docs are born in Express's STTRNR6.TXT import (นำเข้าไฟล์ — see ReRecon.tsx's XS import
+// panel); this tab is a read-mostly registry view + the FIN-declared confirmedAmount editor +
+// CEO's ปิดเอกสาร. No create/void/delete here — mirrors the tab's plan (JUNO_XS_AMOUNTS_PLAN.md).
+export type XsDocStatus = 'closed' | 'paid' | 'unpaid';
+export type XsDocStatusFilter = 'all' | XsDocStatus;
+
+export interface XsDoc {
+  id: string;
+  xsNo: string;
+  docDate: string;
+  note: string;
+  amount: string; // raw STTRNR6.TXT figure — imported, unreliable
+  confirmedAmount: string; // FIN-declared, '' = not yet declared
+  effectiveAmount: string; // confirmedAmount when declared, else amount
+  paid: boolean;
+  closed: boolean;
+  closeNote: string;
+  paymentConfirmedAt: string | null;
+  paymentConfirmedBy: string;
+  linkedPaymentCount: number;
+  status: XsDocStatus;
+}
+
+export interface XsDocCounts { unpaid: number }
+
+export const getXsDocs = (f: { q?: string; status?: XsDocStatusFilter } = {}) => {
+  const p = new URLSearchParams();
+  if (f.q) p.set('q', f.q);
+  if (f.status && f.status !== 'all') p.set('status', f.status);
+  const query = p.toString();
+  return authed<{ docs: XsDoc[]; counts: XsDocCounts }>(`/api/juno/xs${query ? `?${query}` : ''}`);
+};
+
+// Sets confirmedAmount directly from the XS tab (outside the ตรวจแล้ว flow) — server 403s
+// anyone outside the FIN/supervisor surface, 404s an xsNo Express hasn't imported yet.
+export const setXsAmount = (xsNo: string, amount: string) =>
+  authed<{ ok: boolean; doc: { xsNo: string; confirmedAmount: string; confirmedAmountAt: string | null; confirmedAmountBy: string } }>(
+    `/api/juno/xs/${encodeURIComponent(xsNo)}/amount`,
+    { method: 'POST', body: JSON.stringify({ amount }) },
+  );
 
 // ── ตรวจสอบยอด (FinanceAudit mis-read trail) ─────────────────────────────────
 // Every time staff submit a slip amount that differs from what the AI read (OCR), Minerva logs

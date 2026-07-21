@@ -480,6 +480,11 @@ function ReDetail({ row, isCeo, onMutated }: { row: ReReconRow; isCeo: boolean; 
       <div className="mb-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500">
         <span>พนักงานขาย: <span className="text-slate-700">{row.salesName || '—'}</span></span>
         <span>ยอดตามเอกสาร: <span className="text-slate-700 font-medium">{baht(row.amount)}</span></span>
+        {/* XS only (task A): amount above is the FIN-declared confirmedAmount used for pricing —
+            this shows the raw STTRNR6.TXT figure only when it differs, never used for math. */}
+        {row.importedAmount !== undefined && (
+          <span className="text-slate-400">ยอดดิบจากรายงาน: {baht(row.importedAmount)}</span>
+        )}
         {row.paymentCount > 0 && (
           <span>รับเงินจริง (gross): <span className="text-slate-700 font-medium">{baht(row.paidGross)}</span></span>
         )}

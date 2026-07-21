@@ -34,6 +34,7 @@ import {
   searchedAmount,
 } from '../finance/rePaymentSearch.js';
 import { normalizeBillReference, normalizeReceiptReference } from '../finance/receiptReferences.js';
+import { upsertXsConfirmedAmount } from '../finance/xsAmounts.js';
 import {
   buildDiscrepancyComponents,
   componentByPaymentId,
@@ -1736,6 +1737,10 @@ export async function junoRoutes(app: FastifyInstance) {
     creditUsed: moneyStringSchema.optional(),
     discExpected: moneyStringSchema.optional(),
     discResolution: z.enum(DISC_RESOLUTIONS).optional(),
+    // FIN-declared per-XS amount (task A, owner ruling 2026-07-21) — keyed by the XS chip's
+    // compact xsNo ("XS6900342"). Omitted for a chip whose XsDoc already has a confirmedAmount
+    // on file (preserved, not cleared); required otherwise. See xs_amount_* below.
+    xsAmounts: z.record(z.string(), moneyStringSchema).optional(),
   });
   app.post<{ Params: { id: string } }>('/api/juno/payments/:id/verify', async (req, reply) => {
     const body = verifyBodySchema.safeParse(req.body);
@@ -1757,15 +1762,59 @@ export async function junoRoutes(app: FastifyInstance) {
     }
     const seenBills = new Set<string>();
     const normalizedBills: string[] = [];
+    // billKind per normalized bill value — needed below to isolate the XS chips (task A) from
+    // MB/external/other refs, which carry no confirmedAmount concept.
+    const billKindByValue = new Map<string, string>();
     for (const raw of body.data.billNos ?? []) {
       const reference = normalizeReceiptReference(raw);
       if (reference?.kind === 'wrong_transfer') { hasSentinel = true; continue; }
       if (!reference || reference.kind !== 'bill') {
         return reply.code(400).send({ error: 'invalid_bill_no', message: 'รูปแบบเลขเอกสารไม่ถูกต้อง' });
       }
-      if (!seenBills.has(reference.value)) { seenBills.add(reference.value); normalizedBills.push(reference.value); }
+      if (!seenBills.has(reference.value)) {
+        seenBills.add(reference.value);
+        normalizedBills.push(reference.value);
+        billKindByValue.set(reference.value, reference.billKind);
+      }
     }
     const hasRealDocuments = normalized.length > 0 || normalizedBills.length > 0;
+    const xsNosInRequest = normalizedBills.filter((value) => billKindByValue.get(value) === 'xs');
+
+    // XS amounts (task A): every XS chip needs a FIN-declared confirmedAmount — from xsAmounts on
+    // this request, or already on file (preserved). The imported report `amount` is NEVER a valid
+    // fallback (XsDoc.amount doc comment). Validated up front (cheap, no lock needed); the actual
+    // upsert happens inside the payment transaction below so it can never partially apply.
+    const xsAmounts = body.data.xsAmounts ?? {};
+    for (const xsNo of Object.keys(xsAmounts)) {
+      if (!xsNosInRequest.includes(xsNo)) {
+        return reply.code(400).send({
+          error: 'xs_amount_unknown', xsNo,
+          message: `เลขเอกสาร ${xsNo} ไม่ได้อยู่ในรายการเอกสารของรายการนี้`,
+        });
+      }
+    }
+    for (const [xsNo, amount] of Object.entries(xsAmounts)) {
+      if (moneyToSatang(amount) <= 0) {
+        return reply.code(400).send({ error: 'xs_amount_invalid', xsNo, message: `ยอดเอกสาร ${xsNo} ต้องมากกว่า 0` });
+      }
+    }
+    const xsNosNeedingStored = xsNosInRequest.filter((xsNo) => !(xsNo in xsAmounts));
+    if (xsNosNeedingStored.length) {
+      const storedXsDocs = await prisma.xsDoc.findMany({
+        where: { xsNo: { in: xsNosNeedingStored } },
+        select: { xsNo: true, confirmedAmount: true },
+      });
+      const storedByXsNo = new Map(storedXsDocs.map((doc) => [doc.xsNo, doc.confirmedAmount]));
+      for (const xsNo of xsNosNeedingStored) {
+        const stored = storedByXsNo.get(xsNo);
+        if (!stored || moneyToSatang(stored) <= 0) {
+          return reply.code(400).send({
+            error: 'xs_amount_required', xsNo,
+            message: `กรุณาใส่ยอดจริงของเอกสาร ${xsNo} ก่อนบันทึก (ใช้หน้าต่างตรวจแล้วทีละรายการ — ไม่รองรับในหน้าตรวจแล้วหลายรายการ)`,
+          });
+        }
+      }
+    }
     const wantsWrongTransfer = body.data.wrongTransfer === true || hasSentinel;
     if (hasSentinel && hasRealDocuments || body.data.wrongTransfer === true && hasRealDocuments) {
       return reply.code(409).send({ error: 'wrong_transfer_mixed' });
@@ -1888,6 +1937,15 @@ export async function junoRoutes(app: FastifyInstance) {
             requestedCreditSatang,
             actor,
           );
+        }
+        // Persist FIN-declared XS amounts in the SAME transaction as the payment update — a save
+        // can never advance the payment while leaving a chip's confirmedAmount stale. A chip
+        // whose amount wasn't sent (already valid on file, checked above) is left untouched —
+        // never touches paymentConfirmedAt/closeNote (a separate, CEO-only concern).
+        for (const xsNo of xsNosInRequest) {
+          const amount = xsAmounts[xsNo]?.trim();
+          if (amount === undefined) continue;
+          await upsertXsConfirmedAmount(tx, xsNo, amount, actor, now);
         }
         const payment = await tx.payment.update({
           where: { id: cur.id },
@@ -3119,7 +3177,12 @@ export async function junoRoutes(app: FastifyInstance) {
     }
     const billAmountByNo = new Map<string, string>();
     for (const b of bills) billAmountByNo.set(b.billNo, b.amount);
-    for (const x of xsDocs) billAmountByNo.set(x.xsNo, x.amount);
+    // XS pricing (task A, owner ruling 2026-07-21): the imported report `amount` is NOT trusted
+    // money-of-record — price the group against FIN's confirmedAmount when declared, falling back
+    // to the raw imported figure only until FIN checks a payment carrying this XS.
+    const xsEffectiveAmount = (x: { amount: string; confirmedAmount: string }): string =>
+      num(x.confirmedAmount) > 0 ? x.confirmedAmount : x.amount;
+    for (const x of xsDocs) billAmountByNo.set(x.xsNo, xsEffectiveAmount(x));
 
     // Connected-group verdicts across ALL document families — see buildReReconIndex.
     const reIndex = buildReReconIndex(candidatePayments, reAmountByCore, billAmountByNo);
@@ -3138,6 +3201,9 @@ export async function junoRoutes(app: FastifyInstance) {
       invoices: { docNo: string; date: string; amount: number }[];
       status: ReturnType<typeof computeReRow>['status'];
       paidGross: number; diff: number; paymentCount: number;
+      // XS only: the raw STTRNR6.TXT figure, shown as a muted hint in the row detail whenever it
+      // differs from `amount` (the effective/priced figure) — undefined for re/mb rows.
+      importedAmount?: number;
     };
 
     const reRows: DocRow[] = receipts
@@ -3176,18 +3242,20 @@ export async function junoRoutes(app: FastifyInstance) {
 
     const xsRows: DocRow[] = docType === 'xs' || docType === 'all'
       ? xsDocs
-          .filter((x) => x.xsNo >= XS_SALES_FROM && num(x.amount) > 0)
+          .filter((x) => x.xsNo >= XS_SALES_FROM && num(xsEffectiveAmount(x)) > 0)
           .filter((x) => matchesNeedle(x.xsNo, x.note))
           .filter((x) => receiptDateInRange(x.docDate))
           .map((x) => {
+            const effective = xsEffectiveAmount(x);
             const closed = x.paymentConfirmedAt !== null || recordedDocs.has(x.xsNo);
-            const c = computeReRow(x.xsNo, x.amount, reIndex, !closed);
+            const c = computeReRow(x.xsNo, effective, reIndex, !closed);
             return {
               id: x.id, docType: 'xs' as const, reNumber: x.xsNo, receiptDate: x.docDate,
               customerName: x.note, salesName: '',
-              amount: num(x.amount), notPosted: false,
+              amount: num(effective), notPosted: false,
               manualClosed: x.paymentConfirmedAt !== null, closeNote: x.closeNote,
               invoices: [], status: c.status, paidGross: c.paidGross, diff: c.diff, paymentCount: c.paymentCount,
+              ...(num(x.amount) !== num(effective) ? { importedAmount: num(x.amount) } : {}),
             };
           })
       : [];
@@ -3236,6 +3304,133 @@ export async function junoRoutes(app: FastifyInstance) {
       orderBy: { createdAt: 'asc' },
     });
     return { payments: rows.map(toRow) };
+  });
+
+  // GET /api/juno/xs/lookup?nums=XS6900342,XS6900343 — lightweight XS registry lookup that
+  // drives the ตรวจแล้ว dialog's ยอดเอกสาร XS section: prefill from any already-declared
+  // confirmedAmount, and surface the raw imported figure as a (never-prefilled) hint. Same
+  // access as POST /verify — FIN + supervisor; the bills-only lane (gm/Mail) is denied by the
+  // default-deny hook above (this route is not in GM_JUNO_ALLOWED_ROUTES).
+  const xsLookupQuerySchema = z.object({ nums: z.string().max(2000).optional() });
+  app.get('/api/juno/xs/lookup', async (req, reply) => {
+    const parsed = xsLookupQuerySchema.safeParse(req.query ?? {});
+    if (!parsed.success) return reply.code(400).send({ error: 'invalid_query' });
+    const nums = [...new Set((parsed.data.nums ?? '').split(',').map((s) => s.trim().toUpperCase()).filter(Boolean))];
+    if (nums.length === 0) return { docs: [] };
+    const rows = await prisma.xsDoc.findMany({
+      where: { xsNo: { in: nums } },
+      select: { xsNo: true, amount: true, confirmedAmount: true },
+    });
+    const byXsNo = new Map(rows.map((row) => [row.xsNo, row]));
+    const docs = nums.map((xsNo) => {
+      const row = byXsNo.get(xsNo);
+      return {
+        xsNo,
+        imported: !!row,
+        amount: row?.amount ?? '',
+        confirmedAmount: row?.confirmedAmount ?? '',
+      };
+    });
+    return { docs };
+  });
+
+  // GET /api/juno/xs?q=&status=all|paid|unpaid|closed — the XS tab: every sales-era XsDoc
+  // (xsNo >= XS_SALES_FROM; earlier internal-movement docs stay registry-only, same cutoff as
+  // GET /re's xsRows) with its LIVE status — never stored. Same surface as GET /bills for
+  // finance users: the bills-only lane (gm/Mail) is denied by the default-deny hook above (XS
+  // is not in GM_JUNO_ALLOWED_ROUTES — not their scope).
+  const xsQuerySchema = z.object({
+    q: z.string().max(120).optional(),
+    status: z.enum(['all', 'paid', 'unpaid', 'closed']).optional(),
+  });
+  app.get('/api/juno/xs', async (req, reply) => {
+    const parsed = xsQuerySchema.safeParse(req.query ?? {});
+    if (!parsed.success) return reply.code(400).send({ error: 'invalid_query' });
+    const q = parsed.data;
+
+    const docs = await prisma.xsDoc.findMany({
+      where: { xsNo: { gte: XS_SALES_FROM } },
+      orderBy: { xsNo: 'desc' },
+    });
+    // Same candidate-payment shape as GET /bills — non-void, at least one bill ref, loaded once.
+    const candidatePayments = await prisma.payment.findMany({
+      where: { status: { not: 'void' }, wrongTransferAt: null, billNos: { isEmpty: false } },
+      select: { billNos: true, status: true },
+    });
+    const paidXsNos = new Set<string>();
+    const recordedXsNos = new Set<string>();
+    const linkedCountByXsNo = new Map<string, number>();
+    for (const p of candidatePayments) {
+      for (const b of p.billNos) {
+        paidXsNos.add(b);
+        if (p.status === 'recorded') recordedXsNos.add(b);
+        linkedCountByXsNo.set(b, (linkedCountByXsNo.get(b) ?? 0) + 1);
+      }
+    }
+    // Status precedence closed > paid > unpaid (owner ruling — mirrors GET /re's MB/XS closed
+    // truth). No amount policing in status: mirrors the MB binary-paid ruling.
+    const statusOf = (xsNo: string, paymentConfirmedAt: Date | null): 'closed' | 'paid' | 'unpaid' => {
+      if (paymentConfirmedAt !== null || recordedXsNos.has(xsNo)) return 'closed';
+      if (paidXsNos.has(xsNo)) return 'paid';
+      return 'unpaid';
+    };
+
+    const allRows = docs.map((d) => {
+      const effectiveAmount = num(d.confirmedAmount) > 0 ? d.confirmedAmount : d.amount;
+      return {
+        id: d.id, xsNo: d.xsNo, docDate: d.docDate, note: d.note,
+        amount: d.amount, confirmedAmount: d.confirmedAmount, effectiveAmount,
+        paid: paidXsNos.has(d.xsNo), closed: d.paymentConfirmedAt !== null || recordedXsNos.has(d.xsNo),
+        closeNote: d.closeNote,
+        paymentConfirmedAt: d.paymentConfirmedAt?.toISOString() ?? null,
+        paymentConfirmedBy: d.paymentConfirmedBy,
+        linkedPaymentCount: linkedCountByXsNo.get(d.xsNo) ?? 0,
+        status: statusOf(d.xsNo, d.paymentConfirmedAt),
+      };
+    });
+    // Badge count = the full (q-less) sales-era set — matches how GET /bills's counts feed its tab
+    // badge even while the open tab has a search/filter applied.
+    const counts = { unpaid: allRows.filter((r) => r.status === 'unpaid').length };
+
+    const needle = q.q?.trim().toLocaleLowerCase();
+    const normalizedNeedle = q.q ? normalizeBillReference(q.q)?.value.toLocaleLowerCase() : undefined;
+    const searchedRows = needle
+      ? allRows.filter((r) => {
+          const normalizedStored = normalizeBillReference(r.xsNo)?.value.toLocaleLowerCase();
+          return r.xsNo.toLocaleLowerCase().includes(needle)
+            || (!!normalizedNeedle && normalizedStored?.includes(normalizedNeedle))
+            || r.note.toLocaleLowerCase().includes(needle);
+        })
+      : allRows;
+    const rows = !q.status || q.status === 'all' ? searchedRows : searchedRows.filter((r) => r.status === q.status);
+
+    return { docs: rows, counts };
+  });
+
+  // POST /api/juno/xs/:xsNo/amount { amount } — sets the FIN-declared confirmedAmount directly
+  // from the XS tab (outside the ตรวจแล้ว flow — e.g. correcting a figure after the fact). Same
+  // access as verify: FIN + supervisor (bills-only lane denied — not in GM_JUNO_ALLOWED_ROUTES).
+  // Existing doc only: XS docs are born in Express's STTRNR6.TXT import, never created here.
+  app.post<{ Params: { xsNo: string } }>('/api/juno/xs/:xsNo/amount', async (req, reply) => {
+    const body = z.object({ amount: moneyStringSchema }).safeParse(req.body ?? {});
+    if (!body.success) return reply.code(400).send({ error: 'invalid_body' });
+    const amount = body.data.amount.trim();
+    if (moneyToSatang(amount) <= 0) {
+      return reply.code(400).send({ error: 'xs_amount_invalid', message: 'ยอดต้องมากกว่า 0' });
+    }
+    const xsNo = req.params.xsNo.trim().toUpperCase();
+    const existing = await prisma.xsDoc.findUnique({ where: { xsNo }, select: { id: true } });
+    if (!existing) return reply.code(404).send({ error: 'not_found' });
+    const actor = req.agent?.email ?? req.agent?.id ?? '';
+    const doc = await upsertXsConfirmedAmount(prisma, xsNo, amount, actor, new Date());
+    return {
+      ok: true,
+      doc: {
+        xsNo: doc.xsNo, confirmedAmount: doc.confirmedAmount,
+        confirmedAmountAt: doc.confirmedAmountAt?.toISOString() ?? null,
+        confirmedAmountBy: doc.confirmedAmountBy,
+      },
+    };
   });
 
   // POST /api/juno/xs/import — Express's STTRNR6.TXT (รายงานจ่ายสินค้าภายใน / XS docs).

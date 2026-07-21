@@ -682,10 +682,17 @@ model XsDoc {
   xsNo               String    @unique // compact incl. prefix ("XS6900342") — joins Payment.billNos directly
   docDate            String    @default("") // as printed, dd/mm/yy Buddhist
   note               String    @default("")
-  amount             String    @default("") // sum of the doc's line values from the report
+  amount             String    @default("") // sum of the doc's line values from the report — raw/imported, UNRELIABLE (see confirmedAmount)
   paymentConfirmedAt DateTime?
   paymentConfirmedBy String    @default("")
   closeNote          String    @default("")
+  // FIN-declared per-doc amount (owner ruling 2026-07-21): the report's `amount` is not trusted
+  // money-of-record for XS docs, so FIN types the real figure in the ตรวจแล้ว dialog when checking
+  // a payment that carries this XS. '' = not yet declared. Set via POST /verify or
+  // POST /xs/:xsNo/amount — never touched by the import upsert (see xs/import UPDATE branch).
+  confirmedAmount    String    @default("")
+  confirmedAmountAt  DateTime?
+  confirmedAmountBy  String    @default("")
   importedAt         DateTime  @default(now())
   createdAt          DateTime  @default(now())
   updatedAt          DateTime  @updatedAt
