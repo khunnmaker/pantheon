@@ -3177,11 +3177,13 @@ export async function junoRoutes(app: FastifyInstance) {
     }
     const billAmountByNo = new Map<string, string>();
     for (const b of bills) billAmountByNo.set(b.billNo, b.amount);
-    // XS pricing (task A, owner ruling 2026-07-21): the imported report `amount` is NOT trusted
-    // money-of-record — price the group against FIN's confirmedAmount when declared, falling back
-    // to the raw imported figure only until FIN checks a payment carrying this XS.
-    const xsEffectiveAmount = (x: { amount: string; confirmedAmount: string }): string =>
-      num(x.confirmedAmount) > 0 ? x.confirmedAmount : x.amount;
+    // XS pricing (owner rulings 2026-07-21, twice): the imported report `amount` is NOT trusted
+    // money-of-record — only FIN's confirmedAmount prices a group. No fallback to the raw
+    // imported figure: an unconfirmed doc is worth 0 (the raw price is meaningless), which keeps
+    // an XS-only group unpriceable (⏳, never a false ✅) and alarms a mixed group until FIN
+    // types the real total.
+    const xsEffectiveAmount = (x: { confirmedAmount: string }): string =>
+      num(x.confirmedAmount) > 0 ? x.confirmedAmount : '0';
     for (const x of xsDocs) billAmountByNo.set(x.xsNo, xsEffectiveAmount(x));
 
     // Connected-group verdicts across ALL document families — see buildReReconIndex.
@@ -3242,7 +3244,10 @@ export async function junoRoutes(app: FastifyInstance) {
 
     const xsRows: DocRow[] = docType === 'xs' || docType === 'all'
       ? xsDocs
-          .filter((x) => x.xsNo >= XS_SALES_FROM && num(xsEffectiveAmount(x)) > 0)
+          // Existence still keys off the RAW figure (zero-value import = genuine internal doc,
+          // stays hidden) — but an unconfirmed sale must NOT vanish just because its effective
+          // price is 0 now; it shows at ฿0 until FIN types the real total.
+          .filter((x) => x.xsNo >= XS_SALES_FROM && (num(x.confirmedAmount) > 0 || num(x.amount) > 0))
           .filter((x) => matchesNeedle(x.xsNo, x.note))
           .filter((x) => receiptDateInRange(x.docDate))
           .map((x) => {
@@ -3376,7 +3381,8 @@ export async function junoRoutes(app: FastifyInstance) {
     };
 
     const allRows = docs.map((d) => {
-      const effectiveAmount = num(d.confirmedAmount) > 0 ? d.confirmedAmount : d.amount;
+      // Same no-fallback rule as GET /re: unconfirmed = 0, the raw import price is not money.
+      const effectiveAmount = num(d.confirmedAmount) > 0 ? d.confirmedAmount : '0';
       return {
         id: d.id, xsNo: d.xsNo, docDate: d.docDate, note: d.note,
         amount: d.amount, confirmedAmount: d.confirmedAmount, effectiveAmount,
