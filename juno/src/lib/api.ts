@@ -706,6 +706,7 @@ export interface BankImportApplyResult {
   chequeMatched: number; // cheque number + amount links created by the cheque pass
   timeMatched: number; // exact amount + Bangkok calendar-minute links created by pass B
   autoRecorded: number; // payments auto-advanced to ยืนยันใน Express by the stage-4 sweep
+  discAutoConfirmed?: number; // overpay credits auto-granted+confirmed by the same sweep (owner 2026-07-21)
 }
 
 export interface BankSuggestion {
@@ -792,7 +793,7 @@ export const applyBankImport = (token: string) =>
   });
 
 export const runBankAutomatch = () =>
-  authed<{ ok: boolean; autoMatched: number; chequeMatched: number; timeMatched: number; autoRecorded: number }>('/api/juno/bank/automatch', { method: 'POST' });
+  authed<{ ok: boolean; autoMatched: number; chequeMatched: number; timeMatched: number; autoRecorded: number; discAutoConfirmed?: number }>('/api/juno/bank/automatch', { method: 'POST' });
 
 export interface BankTxnFilter {
   status?: BankTxnStatusFilter;
@@ -840,13 +841,13 @@ export const searchPaymentTxns = (paymentId: string, q: string, signal?: AbortSi
 };
 
 export const matchPaymentTxns = (paymentId: string, bankTxnIds: string[]) =>
-  authed<{ ok: boolean; linkedSum: number; sumDelta: number }>(`/api/juno/payments/${paymentId}/match`, {
+  authed<{ ok: boolean; linkedSum: number; sumDelta: number; discAutoConfirmed?: number }>(`/api/juno/payments/${paymentId}/match`, {
     method: 'POST',
     body: JSON.stringify({ bankTxnIds }),
   });
 
 export const matchBankTxn = (txnId: string, paymentIds: string[]) =>
-  authed<{ ok: boolean; sumDelta: number }>(`/api/juno/bank/txns/${txnId}/match`, {
+  authed<{ ok: boolean; sumDelta: number; discAutoConfirmed?: number }>(`/api/juno/bank/txns/${txnId}/match`, {
     method: 'POST',
     body: JSON.stringify({ paymentIds }),
   });
@@ -926,6 +927,7 @@ export interface ReReconSummary {
 
 export interface ReImportResult {
   autoRecorded: number;
+  discAutoConfirmed?: number; // overpay credits auto-granted+confirmed by the same sweep (owner 2026-07-21)
   parsed: number;
   imported: number;
   updated: number;

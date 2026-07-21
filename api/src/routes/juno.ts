@@ -24,6 +24,7 @@ import { readChequeFromBuffer, readSlipFromBuffer } from '../llm/readSlip.js';
 import { parseReReceipts, decodeExpressBytes } from '../finance/parseReReceipts.js';
 import { parseXsDocs } from '../finance/parseXsDocs.js';
 import { autoRecordEligible } from '../finance/autoRecord.js';
+import { autoConfirmOverpayCredits } from '../finance/autoDiscConfirm.js';
 import { buildReReconIndex, computeReRow } from '../finance/reRecon.js';
 import { normalizeSlipDate } from '../finance/normalize.js';
 import {
@@ -1648,6 +1649,9 @@ export async function junoRoutes(app: FastifyInstance) {
       if (auto.paymentIds.includes(p.id)) {
         p = (await prisma.payment.findUnique({ where: { id: p.id } })) ?? p;
       }
+      // ได้รับแล้ว can also ground an overpay's money side — run the auto disc-confirm sweep too
+      // (owner ruling 2026-07-21). Not surfaced in this route's response.
+      void (await autoConfirmOverpayCredits(req.log));
     }
     return { ok: true, payment: toRow(p) };
   });
@@ -1993,6 +1997,9 @@ export async function junoRoutes(app: FastifyInstance) {
     // Late typing: FIN may verify against REs that are ALREADY clean in the last import (and
     // money already grounded) — the auto stage-4 sweep advances immediately; return fresh.
     const autoAfterVerify = await autoRecordEligible(req.log);
+    // Same reasoning: a fresh check may already be a clean, grounded overpay — auto-confirm its
+    // credit immediately too (owner ruling 2026-07-21). Not surfaced in this route's response.
+    void (await autoConfirmOverpayCredits(req.log));
     const finalRow = autoAfterVerify.paymentIds.includes(p.id)
       ? (await prisma.payment.findUnique({ where: { id: p.id } })) ?? p
       : p;
@@ -2267,6 +2274,7 @@ export async function junoRoutes(app: FastifyInstance) {
 
     const { matched, chequeMatched, timeMatched } = await runAutoMatcher(insertedIds);
     const auto = await autoRecordEligible(req.log);
+    const discAuto = await autoConfirmOverpayCredits(req.log);
 
     return {
       ok: true,
@@ -2277,6 +2285,7 @@ export async function junoRoutes(app: FastifyInstance) {
       chequeMatched,
       timeMatched,
       autoRecorded: auto.advanced,
+      discAutoConfirmed: discAuto.confirmed,
     };
   });
 
@@ -2285,7 +2294,11 @@ export async function junoRoutes(app: FastifyInstance) {
   app.post('/api/juno/bank/automatch', async (req) => {
     const { matched, chequeMatched, timeMatched } = await runAutoMatcher();
     const auto = await autoRecordEligible(req.log);
-    return { ok: true, autoMatched: matched, chequeMatched, timeMatched, autoRecorded: auto.advanced };
+    const discAuto = await autoConfirmOverpayCredits(req.log);
+    return {
+      ok: true, autoMatched: matched, chequeMatched, timeMatched,
+      autoRecorded: auto.advanced, discAutoConfirmed: discAuto.confirmed,
+    };
   });
 
   // GET /api/juno/bank/txns?status=&dir=&from=&to=&q= — the เงินเข้า/เงินออก list, with
@@ -2615,7 +2628,11 @@ export async function junoRoutes(app: FastifyInstance) {
     const linkedSum = Number(allLinks.reduce((sum, link) => sum + txnAmountNum(link.bankTxn.amount), 0).toFixed(2));
     const sumDelta = Number((linkedSum - txnAmountNum(payment.amount)).toFixed(2));
     const autoFromLink = await autoRecordEligible(req.log);
-    return { ok: true, linkedSum, sumDelta, autoRecorded: autoFromLink.advanced };
+    const discAuto = await autoConfirmOverpayCredits(req.log);
+    return {
+      ok: true, linkedSum, sumDelta,
+      autoRecorded: autoFromLink.advanced, discAutoConfirmed: discAuto.confirmed,
+    };
   });
 
   // GET /api/juno/bank/txns/:id/suggestions — ranked candidate payments for the จับคู่ panel.
@@ -2814,7 +2831,11 @@ export async function junoRoutes(app: FastifyInstance) {
     const sumDelta = Number((linkedSum - txnAmountNum(txn.amount)).toFixed(2));
 
     const autoFromLink = await autoRecordEligible(req.log);
-    return { ok: true, sumDelta, autoRecorded: autoFromLink.advanced };
+    const discAuto = await autoConfirmOverpayCredits(req.log);
+    return {
+      ok: true, sumDelta,
+      autoRecorded: autoFromLink.advanced, discAutoConfirmed: discAuto.confirmed,
+    };
   });
 
   // POST /api/juno/bank/txns/:id/unmatch { paymentId } — remove one link; recompute both
@@ -3077,6 +3098,9 @@ export async function junoRoutes(app: FastifyInstance) {
     // The import IS the stage-4 trigger now (owner 2026-07-19): freshly-clean REs advance
     // their grounded payments to ยืนยันใน Express automatically.
     const auto = await autoRecordEligible(req.log);
+    // Owner ruling 2026-07-21: the CEO's re-upload of a clean RE file IS his overpay acceptance —
+    // auto-resolve (default 'credit') + auto-confirm, granting the customer credit, no click needed.
+    const discAuto = await autoConfirmOverpayCredits(req.log);
 
     return {
       parsed: parsed.parsedCount,
@@ -3087,6 +3111,7 @@ export async function junoRoutes(app: FastifyInstance) {
       fileTotal: parsed.fileTotal,
       totalsMatch: parsed.totalsMatch,
       autoRecorded: auto.advanced,
+      discAutoConfirmed: discAuto.confirmed,
     };
   });
 

@@ -31,6 +31,9 @@ vi.mock('../src/db/prisma.js', () => ({
         // The auto stage-4 sweep (autoRecordEligible) queries { status, wrongTransferAt } only —
         // return no candidates so these tests stay focused on the matching passes.
         if (where.status === 'verified' && where.wrongTransferAt === null && Object.keys(where).length === 2) return [];
+        // autoConfirmOverpayCredits' own candidate query (juno-auto-disc) — same reasoning,
+        // unrelated to these bank-matching tests.
+        if (where.discConfirmedAt === null) return [];
         return state.payments.filter((payment) =>
           payment.status === 'verified' && !payment.reconciled && payment.source !== 'cheque' && payment.wrongTransferAt === null,
         );
@@ -47,6 +50,7 @@ vi.mock('../src/db/prisma.js', () => ({
         return data;
       }),
     },
+    reReceipt: { findMany: vi.fn(async () => []) },
     $transaction: vi.fn(async (operations: Array<Promise<unknown>>) => Promise.all(operations)),
   },
 }));
@@ -117,7 +121,7 @@ describe('Juno auto-match pass B', () => {
     const response = await runAutoMatch();
 
     expect(response.statusCode).toBe(200);
-    expect(response.json()).toEqual({ ok: true, autoMatched: 0, chequeMatched: 0, timeMatched: 1, autoRecorded: 0 });
+    expect(response.json()).toEqual({ ok: true, autoMatched: 0, chequeMatched: 0, timeMatched: 1, autoRecorded: 0, discAutoConfirmed: 0 });
     expect(state.links).toEqual([{ paymentId: 'payment-1', bankTxnId: 'txn-1', createdById: null }]);
   });
 
@@ -195,7 +199,7 @@ describe('Juno auto-match pass B', () => {
 
     const response = await runAutoMatch();
 
-    expect(response.json()).toEqual({ ok: true, autoMatched: 0, chequeMatched: 0, timeMatched: 0, autoRecorded: 0 });
+    expect(response.json()).toEqual({ ok: true, autoMatched: 0, chequeMatched: 0, timeMatched: 0, autoRecorded: 0, discAutoConfirmed: 0 });
     expect(state.links).toHaveLength(0);
   });
 });
