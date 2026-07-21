@@ -707,7 +707,6 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
   const [stageFilters, setStageFilters] = useState<string[]>(() => [...STAGES]); // all selected = show all
   const [stageOpen, setStageOpen] = useState(false);
   const [ending, setEnding] = useState(false);
-  const [needsConfirm, setNeedsConfirm] = useState(false);
   const [selectedProductSkus, setSelectedProductSkus] = useState<string[]>([]);
   const [selectionDirty, setSelectionDirty] = useState(false); // product selection changed since the last draft → ✨ re-drafts about it
   const [lightbox, setLightbox] = useState<string | null>(null); // enlarged image src (click a picture to zoom)
@@ -725,9 +724,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
   const [qrEditSaving, setQrEditSaving] = useState(false);
   const [qrOpen, setQrOpen] = useState(false);
   const [qrSending, setQrSending] = useState(false);
-  const [qrConfirmId, setQrConfirmId] = useState<string | null>(null);
   const [freeText, setFreeText] = useState('');
-  const [freeNeedsConfirm, setFreeNeedsConfirm] = useState(false);
   const [freeSending, setFreeSending] = useState(false);
   const [forceDrafting, setForceDrafting] = useState(false);
   const [replyingTo, setReplyingTo] = useState<string | null>(null); // Message.id being LINE-quote-replied
@@ -777,8 +774,6 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
         return d;
       });
       setEditText(d.pendingDraft?.draftText ?? '');
-      setNeedsConfirm(false);
-      setQrConfirmId(null);
       setRewriteNote(null);
       setTranslateOriginal(null);
       // Preserve the staff's photo selection across reloads (their own ร่างใหม่ AND the
@@ -1117,12 +1112,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
     setSending(true);
     setError('');
     try {
-      const res = await sendReply(msgId, editText.trim(), needsConfirm, selectedProductSkus.length ? selectedProductSkus : undefined, upload?.uploadId, replyingTo ?? undefined, translateOriginal ?? undefined);
-      if ('needsConfirm' in res) {
-        setNeedsConfirm(true);
-        setError('คำตอบมีราคา — โปรดตรวจสอบตัวเลขแล้วกด "ยืนยันส่ง" อีกครั้ง');
-        return;
-      }
+      const res = await sendReply(msgId, editText.trim(), selectedProductSkus.length ? selectedProductSkus : undefined, upload?.uploadId, replyingTo ?? undefined, translateOriginal ?? undefined);
       if ('alreadyReplied' in res) {
         setError('ข้อความนี้ถูกตอบไปแล้ว');
         await refreshLists();
@@ -1159,7 +1149,6 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
       const res = await rewriteText(editText.trim());
       setEditText(res.text);
       setRewriteNote(res.note); // staff-only note — shown OUTSIDE the reply box
-      setNeedsConfirm(false); // text changed — re-check numbers on send
       flashToast('เรียบเรียงใหม่แล้ว — ตรวจทานก่อนส่ง');
     } catch (e) {
       setError('เรียบเรียงใหม่ไม่สำเร็จ: ' + (e as Error).message);
@@ -1182,7 +1171,6 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
       setEditText(res.text);
       setTranslateOriginal(original); // staff-only note — the Thai text just replaced
       setRewriteNote(res.note); // staff-only note — shown OUTSIDE the reply box
-      setNeedsConfirm(false); // text changed — re-check numbers on send
       flashToast('แปลข้อความแล้ว — ตรวจทานก่อนส่ง');
     } catch (e) {
       setError('แปลข้อความไม่สำเร็จ: ' + (e as Error).message);
@@ -1273,13 +1261,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
     setQrSending(true);
     setError('');
     try {
-      const res = await sendQuickReply(selectedId, q.id, qrConfirmId === q.id, replyingTo ?? undefined);
-      if ('needsConfirm' in res) {
-        setQrConfirmId(q.id);
-        setError('ข้อความด่วนนี้มีราคา — กดอีกครั้งเพื่อยืนยันส่ง');
-        return;
-      }
-      setQrConfirmId(null);
+      const res = await sendQuickReply(selectedId, q.id, replyingTo ?? undefined);
       setQrOpen(false);
       setReplyingTo(null); // sent — clear the quote-reply selection
       flashToast(res.dryRun ? `บันทึก "${q.label}" (โหมดทดสอบ)` : `ส่ง "${q.label}" ให้ลูกค้าแล้ว ✓`);
@@ -1298,16 +1280,10 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
     setError('');
     try {
       const skus = freeProducts.length ? freeProducts.map((p) => p.sku) : undefined;
-      const res = await sendMessage(selectedId, freeText.trim(), upload?.uploadId, freeNeedsConfirm, skus, replyingTo ?? undefined, translateOriginal ?? undefined);
-      if ('needsConfirm' in res) {
-        setFreeNeedsConfirm(true);
-        setError('ข้อความมีราคา — โปรดตรวจสอบตัวเลขแล้วกดส่งอีกครั้งเพื่อยืนยัน');
-        return;
-      }
+      const res = await sendMessage(selectedId, freeText.trim(), upload?.uploadId, skus, replyingTo ?? undefined, translateOriginal ?? undefined);
       setFreeText('');
       setUpload(null);
       setFreeProducts([]);
-      setFreeNeedsConfirm(false);
       setReplyingTo(null); // sent — clear the quote-reply selection
       flashToast(res.dryRun ? 'บันทึกแล้ว (โหมดทดสอบ)' : 'ส่งข้อความให้ลูกค้าแล้ว ✓');
     } catch {
@@ -1328,7 +1304,6 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
       const res = await rewriteText(freeText.trim());
       setFreeText(res.text);
       setRewriteNote(res.note); // staff-only note — shown OUTSIDE the reply box
-      setFreeNeedsConfirm(false); // text changed — re-check numbers on send
       flashToast('เรียบเรียงใหม่แล้ว — ตรวจทานก่อนส่ง');
     } catch (e) {
       setError('เรียบเรียงใหม่ไม่สำเร็จ: ' + (e as Error).message);
@@ -1351,7 +1326,6 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
       setFreeText(res.text);
       setTranslateOriginal(original); // staff-only note — the Thai text just replaced
       setRewriteNote(res.note); // staff-only note — shown OUTSIDE the reply box
-      setFreeNeedsConfirm(false); // text changed — re-check numbers on send
       flashToast('แปลข้อความแล้ว — ตรวจทานก่อนส่ง');
     } catch (e) {
       setError('แปลข้อความไม่สำเร็จ: ' + (e as Error).message);
@@ -2151,7 +2125,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                       )}
                       <textarea value={editText} onChange={(e) => {
                         if (detail?.autosendSchedule && e.target.value !== editText) void stopAutosend();
-                        setEditText(e.target.value); setNeedsConfirm(false); setRewriteNote(null); setTranslateOriginal(null);
+                        setEditText(e.target.value); setRewriteNote(null); setTranslateOriginal(null);
                       }} rows={4}
                         className="w-full flex-1 min-h-[120px] p-3 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-sky-400 resize-none" placeholder="พิมพ์/แก้คำตอบก่อนส่ง… (วางรูป Ctrl+V ได้)" />
                       {detail?.pendingDraft?.translatedText && (
@@ -2224,8 +2198,8 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                           </button>
                         )}
                         <button onClick={approve} disabled={sending || rewriting || translating || !editText.trim()}
-                          title={needsConfirm ? 'ยืนยันส่ง (คำตอบมีราคา)' : 'อนุมัติและส่งให้ลูกค้า'}
-                          className={'min-w-0 px-2 py-2 rounded-xl text-white text-sm font-semibold flex items-center justify-center gap-1 disabled:opacity-50 ' + (needsConfirm ? 'bg-amber-600 hover:bg-amber-700' : 'bg-sky-600 hover:bg-sky-700')}>
+                          title="อนุมัติและส่งให้ลูกค้า"
+                          className="min-w-0 px-2 py-2 rounded-xl text-white text-sm font-semibold flex items-center justify-center gap-1 disabled:opacity-50 bg-sky-600 hover:bg-sky-700">
                           {sending ? <Loader2 size={17} className="animate-spin" /> : <Send size={17} />}
                         </button>
                       </div>
@@ -2322,7 +2296,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                           <button type="button" onClick={() => setTranslateOriginal(null)} className="text-slate-400 hover:text-rose-500 shrink-0"><X size={14} /></button>
                         </div>
                       )}
-                      <textarea value={freeText} onChange={(e) => { setFreeText(e.target.value); setFreeNeedsConfirm(false); setRewriteNote(null); setTranslateOriginal(null); }} rows={3}
+                      <textarea value={freeText} onChange={(e) => { setFreeText(e.target.value); setRewriteNote(null); setTranslateOriginal(null); }} rows={3}
                         className="w-full flex-1 min-h-[100px] p-3 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-sky-400 resize-none" placeholder="พิมพ์ข้อความถึงลูกค้า… (วางรูป Ctrl+V ได้)" />
                       {rewriteNote && (
                         <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-2 flex items-start gap-1.5">
@@ -2376,8 +2350,8 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                           </button>
                         )}
                         <button onClick={freeSend} disabled={(!freeText.trim() && !upload && !freeProducts.length) || freeSending}
-                          title={freeNeedsConfirm ? 'ยืนยันส่ง (ข้อความมีราคา)' : 'ส่งข้อความให้ลูกค้า'}
-                          className={'min-w-0 px-2 py-2 rounded-xl text-white text-sm font-semibold flex items-center justify-center gap-1 disabled:opacity-50 ' + (freeNeedsConfirm ? 'bg-amber-600 hover:bg-amber-700' : 'bg-sky-600 hover:bg-sky-700')}>
+                          title="ส่งข้อความให้ลูกค้า"
+                          className="min-w-0 px-2 py-2 rounded-xl text-white text-sm font-semibold flex items-center justify-center gap-1 disabled:opacity-50 bg-sky-600 hover:bg-sky-700">
                           {freeSending ? <Loader2 size={17} className="animate-spin" /> : <Send size={17} />}
                         </button>
                       </div>
