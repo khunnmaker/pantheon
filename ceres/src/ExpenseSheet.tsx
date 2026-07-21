@@ -60,6 +60,7 @@ export default function ExpenseSheet({
   const [submitError, setSubmitError] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const galleryInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!successMsg) return;
@@ -200,12 +201,20 @@ export default function ExpenseSheet({
             {receiptPreview && !noReceipt ? (
               <div className="relative">
                 <img src={receiptPreview} alt="ใบเสร็จ" className="w-full max-h-56 object-contain rounded-xl border border-slate-200 bg-slate-50" />
-                <button
-                  onClick={() => fileInputRef.current?.click()}
-                  className="mt-2 w-full min-h-[48px] rounded-xl border border-slate-300 text-sm font-medium hover:bg-slate-50"
-                >
-                  ถ่ายรูปใหม่
-                </button>
+                <div className="flex gap-2 mt-2">
+                  <button
+                    onClick={() => fileInputRef.current?.click()}
+                    className="flex-1 min-h-[48px] rounded-xl border border-slate-300 text-sm font-medium hover:bg-slate-50"
+                  >
+                    ถ่ายรูปใหม่
+                  </button>
+                  <button
+                    onClick={() => galleryInputRef.current?.click()}
+                    className="flex-1 min-h-[48px] rounded-xl border border-slate-300 text-sm font-medium hover:bg-slate-50"
+                  >
+                    เลือกรูป
+                  </button>
+                </div>
               </div>
             ) : noReceipt ? (
               <div className="flex items-center justify-between px-3 py-3 rounded-xl border border-dashed border-slate-300 bg-slate-50 text-sm text-slate-500">
@@ -221,29 +230,45 @@ export default function ExpenseSheet({
                 </button>
               </div>
             ) : (
-              <button
-                onClick={() => fileInputRef.current?.click()}
-                disabled={uploadBusy}
-                className="w-full min-h-[96px] rounded-xl border-2 border-dashed border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-800 font-semibold flex flex-col items-center justify-center gap-1.5 disabled:opacity-60"
-              >
-                {uploadBusy ? (
-                  <>
-                    <Loader2 className="animate-spin" size={22} />
-                    <span className="text-sm">AI กำลังอ่านใบเสร็จ…</span>
-                  </>
-                ) : (
-                  <>
-                    <Camera size={24} />
-                    <span>ถ่ายรูปใบเสร็จ</span>
-                  </>
-                )}
-              </button>
+              <div>
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={uploadBusy}
+                  className="w-full min-h-[96px] rounded-xl border-2 border-dashed border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-800 font-semibold flex flex-col items-center justify-center gap-1.5 disabled:opacity-60"
+                >
+                  {uploadBusy ? (
+                    <>
+                      <Loader2 className="animate-spin" size={22} />
+                      <span className="text-sm">AI กำลังอ่านใบเสร็จ…</span>
+                    </>
+                  ) : (
+                    <>
+                      <Camera size={24} />
+                      <span>ถ่ายรูปใบเสร็จ</span>
+                    </>
+                  )}
+                </button>
+                <button
+                  onClick={() => galleryInputRef.current?.click()}
+                  disabled={uploadBusy}
+                  className="mt-2 w-full min-h-[44px] rounded-xl border border-slate-300 text-sm font-medium hover:bg-slate-50 disabled:opacity-60"
+                >
+                  เลือกรูปจากเครื่อง
+                </button>
+              </div>
             )}
             <input
               ref={fileInputRef}
               type="file"
               accept="image/*"
               capture="environment"
+              className="hidden"
+              onChange={onFilePicked}
+            />
+            <input
+              ref={galleryInputRef}
+              type="file"
+              accept="image/*"
               className="hidden"
               onChange={onFilePicked}
             />

@@ -48,21 +48,37 @@ function EvidenceUpload({
       {preview ? (
         <div className="relative">
           <img src={preview} alt={label} className="w-full max-h-48 object-contain rounded-xl border border-slate-200 bg-slate-50" />
+          <div className="flex gap-2 mt-2">
+            <label
+              className={`flex-1 min-h-[40px] rounded-lg border border-slate-300 text-xs font-medium hover:bg-slate-50 flex items-center justify-center cursor-pointer ${busy ? 'opacity-50' : ''}`}
+            >
+              {busy ? 'กำลังอัปโหลด…' : 'ถ่ายรูปใหม่'}
+              <input type="file" accept="image/*" capture="environment" className="hidden" disabled={busy} onChange={onChange} />
+            </label>
+            <label
+              className={`flex-1 min-h-[40px] rounded-lg border border-slate-300 text-xs font-medium hover:bg-slate-50 flex items-center justify-center cursor-pointer ${busy ? 'opacity-50' : ''}`}
+            >
+              เลือกรูป
+              <input type="file" accept="image/*" className="hidden" disabled={busy} onChange={onChange} />
+            </label>
+          </div>
+        </div>
+      ) : (
+        <div>
+          <label
+            className={`w-full min-h-[80px] rounded-xl border-2 border-dashed border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-800 font-semibold flex flex-col items-center justify-center gap-1.5 cursor-pointer ${busy ? 'opacity-60' : ''}`}
+          >
+            {busy ? <Loader2 className="animate-spin" size={20} /> : <Camera size={20} />}
+            <span className="text-xs">{busy ? 'กำลังอัปโหลด…' : 'ถ่ายรูป / แนบรูป'}</span>
+            <input type="file" accept="image/*" capture="environment" className="hidden" disabled={busy} onChange={onChange} />
+          </label>
           <label
             className={`mt-2 w-full min-h-[40px] rounded-lg border border-slate-300 text-xs font-medium hover:bg-slate-50 flex items-center justify-center cursor-pointer ${busy ? 'opacity-50' : ''}`}
           >
-            {busy ? 'กำลังอัปโหลด…' : 'ถ่ายรูปใหม่'}
-            <input type="file" accept="image/*" capture="environment" className="hidden" disabled={busy} onChange={onChange} />
+            เลือกรูปจากเครื่อง
+            <input type="file" accept="image/*" className="hidden" disabled={busy} onChange={onChange} />
           </label>
         </div>
-      ) : (
-        <label
-          className={`w-full min-h-[80px] rounded-xl border-2 border-dashed border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-800 font-semibold flex flex-col items-center justify-center gap-1.5 cursor-pointer ${busy ? 'opacity-60' : ''}`}
-        >
-          {busy ? <Loader2 className="animate-spin" size={20} /> : <Camera size={20} />}
-          <span className="text-xs">{busy ? 'กำลังอัปโหลด…' : 'ถ่ายรูป / แนบรูป'}</span>
-          <input type="file" accept="image/*" capture="environment" className="hidden" disabled={busy} onChange={onChange} />
-        </label>
       )}
     </div>
   );

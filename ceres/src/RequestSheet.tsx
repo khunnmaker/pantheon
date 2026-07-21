@@ -116,6 +116,7 @@ export default function RequestSheet({
   const [submitBusy, setSubmitBusy] = useState(false);
   const [submitError, setSubmitError] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const galleryInputRef = useRef<HTMLInputElement>(null);
 
   const selectedCategory = categories.find((c) => c.id === categoryId) || null;
   const meta = TYPE_META[requestType];
@@ -332,42 +333,67 @@ export default function RequestSheet({
                       alt="รูปแนบ"
                       className="w-full max-h-56 object-contain rounded-xl border border-slate-200 bg-slate-50"
                     />
+                    <div className="flex gap-2 mt-2">
+                      <button
+                        onClick={() => fileInputRef.current?.click()}
+                        disabled={uploadBusy}
+                        className="flex-1 min-h-[48px] rounded-xl border border-slate-300 text-sm font-medium hover:bg-slate-50 disabled:opacity-50"
+                      >
+                        {uploadBusy ? 'กำลังอัปโหลด…' : 'ถ่ายรูปใหม่'}
+                      </button>
+                      <button
+                        onClick={() => galleryInputRef.current?.click()}
+                        disabled={uploadBusy}
+                        className="flex-1 min-h-[48px] rounded-xl border border-slate-300 text-sm font-medium hover:bg-slate-50 disabled:opacity-50"
+                      >
+                        เลือกรูป
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div>
                     <button
                       onClick={() => fileInputRef.current?.click()}
                       disabled={uploadBusy}
-                      className="mt-2 w-full min-h-[48px] rounded-xl border border-slate-300 text-sm font-medium hover:bg-slate-50 disabled:opacity-50"
+                      className={`w-full min-h-[96px] rounded-xl border-2 border-dashed flex flex-col items-center justify-center gap-1.5 font-semibold disabled:opacity-60 ${
+                        requestType === 'reimbursement'
+                          ? 'border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-800'
+                          : 'border-slate-300 bg-slate-50 hover:bg-slate-100 text-slate-500'
+                      }`}
                     >
-                      {uploadBusy ? 'กำลังอัปโหลด…' : 'ถ่ายรูปใหม่'}
+                      {uploadBusy ? (
+                        <>
+                          <Loader2 className="animate-spin" size={22} />
+                          <span className="text-sm">กำลังอัปโหลด…</span>
+                        </>
+                      ) : (
+                        <>
+                          <Camera size={24} />
+                          <span>{requestType === 'reimbursement' ? 'ถ่ายรูปใบเสร็จ' : 'ถ่ายรูป / แนบรูป'}</span>
+                        </>
+                      )}
+                    </button>
+                    <button
+                      onClick={() => galleryInputRef.current?.click()}
+                      disabled={uploadBusy}
+                      className="mt-2 w-full min-h-[44px] rounded-xl border border-slate-300 text-sm font-medium hover:bg-slate-50 disabled:opacity-60"
+                    >
+                      เลือกรูปจากเครื่อง
                     </button>
                   </div>
-                ) : (
-                  <button
-                    onClick={() => fileInputRef.current?.click()}
-                    disabled={uploadBusy}
-                    className={`w-full min-h-[96px] rounded-xl border-2 border-dashed flex flex-col items-center justify-center gap-1.5 font-semibold disabled:opacity-60 ${
-                      requestType === 'reimbursement'
-                        ? 'border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-800'
-                        : 'border-slate-300 bg-slate-50 hover:bg-slate-100 text-slate-500'
-                    }`}
-                  >
-                    {uploadBusy ? (
-                      <>
-                        <Loader2 className="animate-spin" size={22} />
-                        <span className="text-sm">กำลังอัปโหลด…</span>
-                      </>
-                    ) : (
-                      <>
-                        <Camera size={24} />
-                        <span>{requestType === 'reimbursement' ? 'ถ่ายรูปใบเสร็จ' : 'ถ่ายรูป / แนบรูป'}</span>
-                      </>
-                    )}
-                  </button>
                 )}
                 <input
                   ref={fileInputRef}
                   type="file"
                   accept="image/*"
                   capture="environment"
+                  className="hidden"
+                  onChange={onFilePicked}
+                />
+                <input
+                  ref={galleryInputRef}
+                  type="file"
+                  accept="image/*"
                   className="hidden"
                   onChange={onFilePicked}
                 />
