@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Loader2, AlertTriangle, PiggyBank, Landmark, CheckCircle2 } from 'lucide-react';
+import { Loader2, AlertTriangle, PiggyBank, CheckCircle2 } from 'lucide-react';
 import { createMovement, listMovements, baht, type Movement } from './lib/api';
-import { useCeres } from './lib/bootstrapContext';
 
 const AMOUNT_RE = /^\d+(\.\d{1,2})?$/;
 
@@ -13,11 +12,12 @@ const TYPE_META: Record<string, { label: string; cls: string }> = {
   advance: { label: 'เบิก', cls: 'bg-sky-100 text-sky-700' },
   refund: { label: 'คืน', cls: 'bg-emerald-100 text-emerald-700' },
   deposit: { label: 'ฝาก', cls: 'bg-slate-200 text-slate-600' },
-  topup: { label: 'เติม', cls: 'bg-purple-100 text-purple-700' },
+  // Historical rows only — 'topup' is no longer a postable movement type (merged into 'deposit'
+  // 2026-07-20), but old rows still carry it and must keep rendering sensibly.
+  topup: { label: 'เติมเงิน', cls: 'bg-purple-100 text-purple-700' },
 };
 
 export default function MdMoney() {
-  const { bootstrap } = useCeres();
   const [movements, setMovements] = useState<Movement[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshKey, setRefreshKey] = useState(0);
@@ -39,11 +39,10 @@ export default function MdMoney() {
 
   return (
     <div>
-      <h2 className="text-lg font-bold mb-3">ฝาก / เติมเงิน</h2>
+      <h2 className="text-lg font-bold mb-3">ฝากเงิน</h2>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
         <DepositForm onDone={bump} />
-        {bootstrap.role === 'ceo' && <TopupForm onDone={bump} />}
       </div>
 
       <div className="text-sm font-semibold text-slate-500 mb-2">รายการวันนี้</div>
@@ -148,39 +147,6 @@ function DepositForm({ onDone }: { onDone: () => void }) {
 
   return (
     <FormShell icon={<PiggyBank size={18} className="text-slate-600" />} title="ฝากเข้ากล่อง" busy={busy} error={error} success={success} onSubmit={submit}>
-      <input inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="จำนวนเงิน" className="w-full px-3 py-2.5 rounded-lg border border-slate-300 text-sm min-h-[44px]" />
-      <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="หมายเหตุ (ถ้ามี)" className="w-full px-3 py-2.5 rounded-lg border border-slate-300 text-sm min-h-[44px]" />
-    </FormShell>
-  );
-}
-
-function TopupForm({ onDone }: { onDone: () => void }) {
-  const [amount, setAmount] = useState('');
-  const [note, setNote] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
-  const [success, setSuccess] = useState(false);
-
-  async function submit() {
-    setError('');
-    setSuccess(false);
-    if (!AMOUNT_RE.test(amount) || Number(amount) <= 0) return setError('กรอกจำนวนเงินให้ถูกต้อง');
-    setBusy(true);
-    try {
-      await createMovement({ type: 'topup', amount, note: note.trim() || undefined });
-      setAmount('');
-      setNote('');
-      setSuccess(true);
-      onDone();
-    } catch {
-      setError('บันทึกไม่สำเร็จ');
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <FormShell icon={<Landmark size={18} className="text-purple-600" />} title="เติมเงิน" busy={busy} error={error} success={success} onSubmit={submit}>
       <input inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="จำนวนเงิน" className="w-full px-3 py-2.5 rounded-lg border border-slate-300 text-sm min-h-[44px]" />
       <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="หมายเหตุ (ถ้ามี)" className="w-full px-3 py-2.5 rounded-lg border border-slate-300 text-sm min-h-[44px]" />
     </FormShell>

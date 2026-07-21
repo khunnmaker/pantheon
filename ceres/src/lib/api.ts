@@ -361,7 +361,7 @@ export interface Movement {
   createdAt: string;
 }
 
-export const createMovement = (body: { type: 'deposit' | 'topup'; amount: string; note?: string }) =>
+export const createMovement = (body: { type: 'deposit'; amount: string; note?: string }) =>
   authed<{ movement: Movement }>('/api/ceres/movements', { method: 'POST', body: JSON.stringify(body) });
 
 export const listMovements = (q: { from?: string; to?: string; type?: string }) =>

@@ -334,7 +334,7 @@ function ManagementApp({ isCeo }: { isCeo: boolean }) {
       items: [
         { key: 'board', label: 'กระดานเงินสด', icon: <LayoutDashboard size={17} />, onClick: () => setView('board') },
         { key: 'legacy-approval', label: 'ตรวจใบเสร็จค่าใช้จ่าย', icon: <ClipboardCheck size={17} />, onClick: () => setView('legacy-approval') },
-        { key: 'money', label: 'ฝาก / เติมเงิน', icon: <ArrowLeftRight size={17} />, onClick: () => setView('money') },
+        { key: 'money', label: 'ฝากเงิน', icon: <ArrowLeftRight size={17} />, onClick: () => setView('money') },
         { key: 'close', label: 'ปิดยอดประจำวัน', icon: <FileCheck2 size={17} />, onClick: () => setView('close') },
         ...(isCeo
           ? [{ key: 'legacy-fulfillment', label: 'จ่าย / ซื้อ', icon: <CircleDollarSign size={17} />, onClick: () => setView('legacy-fulfillment') }]
@@ -635,7 +635,7 @@ function CashboxComposedView({
         onChange={onSubChange}
         options={[
           { key: 'board', label: 'บอร์ด', icon: <PiggyBank size={15} /> },
-          { key: 'money', label: 'ฝาก·เติม', icon: <ArrowLeftRight size={15} /> },
+          { key: 'money', label: 'ฝากเงิน', icon: <ArrowLeftRight size={15} /> },
           { key: 'close', label: 'ปิดวัน', icon: <FileCheck2 size={15} /> },
         ]}
       />

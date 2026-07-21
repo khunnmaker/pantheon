@@ -26,7 +26,7 @@ nav + "back to more" button are still `lg:hidden`; nothing about mobile changed.
 | อนุมัติ | `approvals` (desktop) | **Composed**: `NeeApprovalQueue` (v2 queue) + section header + `MdApproval` (legacy expense check) below | ✓ | — |
 | รอจ่าย / จ่าย/ซื้อ | `fulfillment` / `legacy-fulfillment` | NeeFulfillmentQueue (same component, two role-gated View keys, pre-existing) | ✓ | ✓ |
 | โอน/สลิป | `recon` | MdRecon (incl. TransferReconciliationPanel) | ✓ | ✓ |
-| กล่องเงินสด | `cashbox` | **Composed**: internal segmented control, ritual order — บอร์ด (MdBoard, default) · เบิก·คืน (MdMoney) · ปิดวัน (MdClose) | ✓ | ✓ |
+| กล่องเงินสด | `cashbox` | **Composed**: internal segmented control, ritual order — บอร์ด (MdBoard, default) · ฝากเงิน (MdMoney) · ปิดวัน (MdClose) | ✓ | ✓ |
 | ประวัติ | `history` | **Composed**: internal segmented control — ค่าใช้จ่าย (MdExpenses, default) · คำขอเดิม (MdRequests) | ✓ | ✓ |
 | ของฉัน | `my-submit` | StaffHome `embeddedView="home"` (submit button + recent 5 + "ดูคำขอทั้งหมด" → `my-requests`) — single tab, replaces the old ส่งคำขอ/คำขอ pair | ✓ | ✓ |
 | อื่นๆ | `other` | **Composed**: internal segmented control — ประจำ (MdTemplates, default) · ส่งออก (WeeklyPackSection) · ตั้งค่า (Settings) | ✓ | ✓ |
