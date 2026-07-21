@@ -11,7 +11,7 @@ vi.mock('../src/db/ensureSeeded.js', () => ({
     { email: 'md@prominent.local', name: 'Nee', role: 'gm', group: 'gm', gender: 'female' },
     { email: 'nun@prominent.local', name: 'Noon', role: 'gm', group: 'gm', gender: 'female' },
   ],
-  EMPLOYEES: [
+  STAFF: [
     { slug: 'sales', name: 'Sales', apps: ['ceres'], group: 'sales', gender: 'female' },
     { slug: 'poopae', name: 'Poopae', apps: ['ceres'], role: 'central', group: 'central', gender: 'female' },
     { slug: 'win', name: 'Win', apps: ['ceres'], role: 'central', group: 'central', gender: 'male' },
@@ -20,7 +20,7 @@ vi.mock('../src/db/ensureSeeded.js', () => ({
     // not theirs.
     { slug: 'mail', name: 'Mail', apps: ['ceres', 'juno'], role: 'central', group: 'central', gender: 'female' },
   ],
-  employeeEmail: (slug: string) => `${slug}@prominent.local`,
+  staffEmail: (slug: string) => `${slug}@prominent.local`,
 }));
 vi.mock('../src/auth/jwt.js', () => ({
   GM_APPS: ['ceres', 'minerva', 'juno', 'apollo'],
@@ -36,7 +36,7 @@ beforeEach(() => {
 });
 
 describe('buildLoginCards', () => {
-  it('returns supervisor, both password GMs, Central Office, then employees in order', async () => {
+  it('returns supervisor, both password GMs, Central Office, then staff in order', async () => {
     const cards = await buildLoginCards('ceres');
 
     expect(cards.slice(0, 6).map(({ email, kind }) => ({ email, kind }))).toEqual([

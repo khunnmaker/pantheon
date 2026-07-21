@@ -335,7 +335,7 @@ export function CashSection({ cash, onTopupDone }: { cash: CeoOverviewData['cash
             <div className="text-xl font-bold text-amber-700">{baht(cash.box.balance)}</div>
           </div>
           <div>
-            <div className="text-xs text-slate-400">เงินค้างกับพนักงาน</div>
+            <div className="text-xs text-slate-400">เงินค้างกับทีมงาน</div>
             <div className="text-xl font-bold">{baht(cash.outstandingTotal)}</div>
           </div>
         </div>

@@ -8,7 +8,7 @@ import { completeApolloTask, parseRecurrenceRule } from '../apollo/recurrence.js
 import { CALENDAR_MAX_RANGE_DAYS, buildEventData, dateSchema, eventDateRangeWhere, eventTimeSchema, expandCalendarEvents, occursOn, parseCalendarRange, parseDate, recurringEventRangeWhere, resolveCalendarScope, type EventData } from '../apollo/calendarQuery.js';
 import { notifyApolloAssignment, thaiDateKey } from '../apollo/notify.js';
 import { deleteApolloAttachment, readApolloAttachment, saveApolloAttachment } from '../apollo/attachmentStore.js';
-import { EMPLOYEES, TIER_ACCOUNTS, employeeEmail } from '../db/ensureSeeded.js';
+import { STAFF, TIER_ACCOUNTS, staffEmail } from '../db/ensureSeeded.js';
 import { isApolloManager } from '../apollo/access.js';
 import { createStaffLineBindCode, staffLineBindStatus } from '../line/staffBind.js';
 
@@ -16,7 +16,7 @@ import { createStaffLineBindCode, staffLineBindStatus } from '../line/staffBind.
 // polish (§0 of the Apollo UI spec). Built once from the static roster consts.
 const GENDER_BY_EMAIL = new Map<string, 'male' | 'female'>([
   ...TIER_ACCOUNTS.map((t) => [t.email, t.gender] as const),
-  ...EMPLOYEES.map((e) => [employeeEmail(e.slug), e.gender] as const),
+  ...STAFF.map((e) => [staffEmail(e.slug), e.gender] as const),
 ]);
 
 const prioritySchema = z.enum(['urgent', 'high', 'normal', 'low']);
@@ -282,7 +282,7 @@ export async function apolloRoutes(app: FastifyInstance) {
   app.delete<{ Params: { id: string } }>('/api/apollo/tasks/:id', async (req, reply) => {
     const allowed = await canReadTask(req, req.params.id);
     if (!allowed) return reply.code(404).send({ error: 'not_found' });
-    // Hard delete purges attachments with no undo — employees may only delete tasks they created.
+    // Hard delete purges attachments with no undo — staff may only delete tasks they created.
     if (!manager(req) && allowed.creatorId !== req.agent!.id) return reply.code(403).send({ error: 'forbidden' });
     const files = await prisma.apolloAttachment.findMany({ where: { taskId: req.params.id }, select: { uploadId: true } });
     await prisma.apolloTask.delete({ where: { id: req.params.id } });

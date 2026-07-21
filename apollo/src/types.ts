@@ -1,4 +1,4 @@
-export type Role = 'supervisor' | 'gm' | 'central' | 'employee';
+export type Role = 'supervisor' | 'gm' | 'central' | 'staff';
 export type Priority = 'urgent' | 'high' | 'normal' | 'low';
 export interface Agent { id: string; email: string; name: string; role: Role; apps: string[] }
 // gender is only populated on the agents list from GET /api/apollo/agents (roster lookup, §0 of

@@ -41,7 +41,7 @@ describe('MALI staff binding', () => {
     expect(mocks.sendMali).toHaveBeenCalledWith(
       'U-staff',
       'reply-bind',
-      expect.stringContaining('ผูก LINE กับบัญชีพนักงานสำเร็จแล้ว'),
+      expect.stringContaining('ผูก LINE กับบัญชีทีมงานสำเร็จแล้ว'),
     );
     expect(mocks.sendLine).not.toHaveBeenCalled();
   });

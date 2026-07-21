@@ -31,8 +31,8 @@ describe('retrieveRelevantKnowledge SQL scoping', () => {
     mocks.queryRaw.mockResolvedValue([]);
   });
 
-  it('puts employee audience and LINE exposure restrictions inside the retrieval SQL', async () => {
-    await retrieveRelevantKnowledge([0.1], 'employee', 'line', 6);
+  it('puts staff audience and LINE exposure restrictions inside the retrieval SQL', async () => {
+    await retrieveRelevantKnowledge([0.1], 'staff', 'line', 6);
 
     const sql = renderedQuery();
     expect(sql).toContain("ka.audience = 'everyone'");

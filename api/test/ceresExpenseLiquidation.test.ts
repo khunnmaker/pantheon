@@ -46,7 +46,7 @@ const agent = {
   id: 'staff-1',
   email: 'staff@example.test',
   name: 'Staff',
-  role: 'employee' as const,
+  role: 'staff' as const,
   apps: ['ceres'],
   authVersion: 0,
 };

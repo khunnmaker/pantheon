@@ -213,7 +213,7 @@ describe('Ceres v2 approval binding', () => {
     }));
 
     await editStaffRequest('request-1', { amount: '200.00', reason: 'after' }, {
-      id: 'staff-1', email: 'staff@example.test', name: 'Staff', role: 'employee', apps: ['ceres'], authVersion: 0,
+      id: 'staff-1', email: 'staff@example.test', name: 'Staff', role: 'staff', apps: ['ceres'], authVersion: 0,
     });
     expect(mocks.updateMany).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ amount: '200.00', detail: 'after', aiScreenStatus: 'pending', aiReviewId: null }),
@@ -243,7 +243,7 @@ describe('Ceres v2 approval binding', () => {
     }));
 
     const result = await editStaffRequest('request-groups', { amount: '200.00' }, {
-      id: 'staff-1', email: 'staff@example.test', name: 'Staff', role: 'employee', apps: ['ceres'], authVersion: 0,
+      id: 'staff-1', email: 'staff@example.test', name: 'Staff', role: 'staff', apps: ['ceres'], authVersion: 0,
     });
     expect(result).toEqual(edited);
     expect(mocks.findGroups).not.toHaveBeenCalled();
@@ -268,7 +268,7 @@ describe('Ceres v2 approval binding', () => {
     mocks.findCategory.mockResolvedValue(categoryRow);
 
     await expect(editStaffRequest('request-edit', { category: 'Unavailable' }, {
-      id: 'staff-1', email: 'staff@example.test', name: 'Staff', role: 'employee', apps: ['ceres'], authVersion: 0,
+      id: 'staff-1', email: 'staff@example.test', name: 'Staff', role: 'staff', apps: ['ceres'], authVersion: 0,
     })).rejects.toMatchObject<CeresRequestError>({ code: 'invalid_category' });
     expect(mocks.findCategory).toHaveBeenCalledWith({ where: { name: 'Unavailable' } });
     expect(mocks.transaction).not.toHaveBeenCalled();

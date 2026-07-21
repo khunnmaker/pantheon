@@ -564,7 +564,7 @@ function FinanceAuditView({ audits, onResolve, onRefresh }: { audits: FinanceAud
       <div className="px-4 py-3 border-b border-slate-200 flex items-center gap-2 shrink-0">
         <Banknote size={18} className="text-amber-600" />
         <span className="font-semibold text-slate-800">ตรวจสอบยอด</span>
-        <span className="text-xs text-slate-400">รายการที่พนักงานแก้ยอดจากสลิป ({audits.length})</span>
+        <span className="text-xs text-slate-400">รายการที่ทีมงานแก้ยอดจากสลิป ({audits.length})</span>
         <button onClick={onRefresh} className="ml-auto text-xs text-slate-500 hover:text-slate-700 flex items-center gap-1"><RefreshCw size={12} /> รีเฟรช</button>
       </div>
       <div className="flex-1 overflow-y-auto p-3 space-y-2">
@@ -2332,7 +2332,7 @@ function LearningView({ learned, flagged, isSupervisor, onPromote, onReject, onF
       {isSupervisor && <LearningMetrics />}
       <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-4">
         <div className="flex items-center justify-between mb-3">
-          <span className="font-bold text-slate-700 flex items-center gap-2"><Brain size={18} className="text-sky-600" /> คลังการเรียนรู้ — คำตอบที่พนักงานแก้</span>
+          <span className="font-bold text-slate-700 flex items-center gap-2"><Brain size={18} className="text-sky-600" /> คลังการเรียนรู้ — คำตอบที่ทีมงานแก้</span>
           <span className="text-xs text-slate-500">ทั้งหมดที่รอตรวจ: <b className="text-sky-700">{learned.length + flagged.length}</b></span>
         </div>
         <div className="flex gap-1 mb-3 border-b border-slate-200">
@@ -2366,7 +2366,7 @@ function LearningView({ learned, flagged, isSupervisor, onPromote, onReject, onF
                   <div className="text-slate-500 text-xs mb-2">ถาม: <span className="text-slate-700">{rec.customerQuestion}</span></div>
                   <div className="grid sm:grid-cols-2 gap-2 mb-2">
                     <div className="bg-slate-50 rounded-lg p-2 text-xs text-slate-500"><b className="text-slate-400">ร่างเดิมของ AI:</b><br />{rec.aiDraft || '—'}</div>
-                    <div className="bg-sky-50 rounded-lg p-2 text-xs text-sky-800"><b className="text-sky-600">คำตอบที่พนักงานปรับ:</b><br />{rec.finalAnswer}</div>
+                    <div className="bg-sky-50 rounded-lg p-2 text-xs text-sky-800"><b className="text-sky-600">คำตอบที่ทีมงานปรับ:</b><br />{rec.finalAnswer}</div>
                   </div>
                   {filter === 'flagged' && rec.flagNote && (
                     <div className="mb-2 rounded-lg border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800">

@@ -28,16 +28,16 @@ import {
 } from '../src/ceres/receiptLink.js';
 import { mediaCanBeAttachedBy } from '../src/ceres/mediaAccess.js';
 
-const employee = {
-  id: 'employee-1', email: 'employee@example.test', name: 'Employee', role: 'employee' as const,
+const staffAgent = {
+  id: 'staff-1', email: 'staff@example.test', name: 'Staff', role: 'staff' as const,
   apps: ['ceres'], authVersion: 0,
 };
-const gm = { ...employee, id: 'gm-1', role: 'gm' as const };
+const gm = { ...staffAgent, id: 'gm-1', role: 'gm' as const };
 
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.findMedia.mockResolvedValue({
-    id: 'upload-1', purpose: 'legacy_receipt', sha256: 'hash', uploadedById: 'employee-2',
+    id: 'upload-1', purpose: 'legacy_receipt', sha256: 'hash', uploadedById: 'staff-2',
     uploadedByName: 'Other', createdAt: new Date(),
   });
 });
@@ -73,16 +73,16 @@ describe('Ceres media security', () => {
       .toBe(CERES_EMBEDDED_MEDIA_URL_TTL_SECONDS);
   });
 
-  it('prevents an employee from attaching another employee upload while allowing management', async () => {
-    await expect(mediaCanBeAttachedBy('upload-1', employee, ['legacy_receipt'])).resolves.toBeNull();
+  it('prevents a staff member from attaching another staff member\'s upload while allowing management', async () => {
+    await expect(mediaCanBeAttachedBy('upload-1', staffAgent, ['legacy_receipt'])).resolves.toBeNull();
     await expect(mediaCanBeAttachedBy('upload-1', gm, ['legacy_receipt'])).resolves.toMatchObject({ id: 'upload-1' });
   });
 
   it('rejects attaching a media purpose that does not match the expense lane', async () => {
     mocks.findMedia.mockResolvedValue({
-      id: 'upload-1', purpose: 'transfer_slip', sha256: 'hash', uploadedById: employee.id,
-      uploadedByName: employee.name, createdAt: new Date(),
+      id: 'upload-1', purpose: 'transfer_slip', sha256: 'hash', uploadedById: staffAgent.id,
+      uploadedByName: staffAgent.name, createdAt: new Date(),
     });
-    await expect(mediaCanBeAttachedBy('upload-1', employee, ['legacy_receipt'])).resolves.toBeNull();
+    await expect(mediaCanBeAttachedBy('upload-1', staffAgent, ['legacy_receipt'])).resolves.toBeNull();
   });
 });

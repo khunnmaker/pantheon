@@ -155,9 +155,9 @@ describe('gm (Nee/Noon) — unchanged by the Mail grant', () => {
   });
 });
 
-describe('employee with a juno grant (e.g. Benz/Meow finance) — unchanged by the Mail grant', () => {
+describe('staff with a juno grant (e.g. Benz/Meow finance) — unchanged by the Mail grant', () => {
   beforeEach(() => {
-    mocks.agent.role = 'employee';
+    mocks.agent.role = 'staff';
     mocks.agent.email = 'benz@prominent.local';
   });
 

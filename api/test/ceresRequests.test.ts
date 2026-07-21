@@ -87,7 +87,7 @@ describe('Ceres v2 request submission and AI pre-screen', () => {
     const app = Fastify();
     app.addHook('preHandler', async (req) => {
       req.agent = {
-        id: 'staff-1', email: 'staff@example.test', name: 'Staff', role: 'employee', apps: ['ceres'], authVersion: 0,
+        id: 'staff-1', email: 'staff@example.test', name: 'Staff', role: 'staff', apps: ['ceres'], authVersion: 0,
       };
     });
     requestsRoutes(app);
@@ -110,7 +110,7 @@ describe('Ceres v2 request submission and AI pre-screen', () => {
     await expect(createStaffRequest({
       requestType: 'reimbursement', entity: 'PROM', category: 'general', amount: '100.00', reason: 'taxi',
     }, {
-      id: 'staff-1', email: 'staff@example.test', name: 'Staff', role: 'employee', apps: ['ceres'], authVersion: 0,
+      id: 'staff-1', email: 'staff@example.test', name: 'Staff', role: 'staff', apps: ['ceres'], authVersion: 0,
     })).rejects.toMatchObject<CeresRequestError>({ code: 'receipt_required' });
     expect(mocks.transaction).not.toHaveBeenCalled();
   });
@@ -120,7 +120,7 @@ describe('Ceres v2 request submission and AI pre-screen', () => {
       requestType: 'advance', entity: 'PROM', categoryGroups: ['Operations'], amount: '100.00', reason: 'taxi',
       requestedById: 'forged-user', requestedByName: 'Forged Name', requesterPartyId: 'forged-party',
     } as never, {
-      id: 'staff-1', email: 'staff@example.test', name: 'Real Staff', role: 'employee', apps: ['ceres'], authVersion: 0,
+      id: 'staff-1', email: 'staff@example.test', name: 'Real Staff', role: 'staff', apps: ['ceres'], authVersion: 0,
     });
     expect(mocks.createRequest).toHaveBeenCalledWith({
       data: expect.objectContaining({
@@ -166,7 +166,7 @@ describe('Ceres v2 request submission and AI pre-screen', () => {
       requestType: 'purchase', entity: 'PROM', category: 'ค่าอาหารและเครื่องดื่ม',
       amount: '500.00', reason: 'อาหารประชุมทีม',
     }, {
-      id: 'staff-1', email: 'staff@example.test', name: 'Staff', role: 'employee', apps: ['ceres'], authVersion: 0,
+      id: 'staff-1', email: 'staff@example.test', name: 'Staff', role: 'staff', apps: ['ceres'], authVersion: 0,
     });
 
     expect(mocks.createRequest).toHaveBeenCalledWith({
@@ -182,7 +182,7 @@ describe('Ceres v2 request submission and AI pre-screen', () => {
     await expect(createStaffRequest({
       requestType: 'purchase', entity: 'PROM', category: 'Unavailable', amount: '100.00', reason: 'test',
     }, {
-      id: 'staff-1', email: 'staff@example.test', name: 'Staff', role: 'employee', apps: ['ceres'], authVersion: 0,
+      id: 'staff-1', email: 'staff@example.test', name: 'Staff', role: 'staff', apps: ['ceres'], authVersion: 0,
     })).rejects.toMatchObject<CeresRequestError>({ code: 'invalid_category' });
     expect(mocks.transaction).not.toHaveBeenCalled();
   });
@@ -195,7 +195,7 @@ describe('Ceres v2 request submission and AI pre-screen', () => {
     await expect(createStaffRequest({
       requestType: 'advance', entity: 'PROM', categoryGroups: ['Unavailable'], amount: '100.00', reason: '',
     }, {
-      id: 'staff-1', email: 'staff@example.test', name: 'Staff', role: 'employee', apps: ['ceres'], authVersion: 0,
+      id: 'staff-1', email: 'staff@example.test', name: 'Staff', role: 'staff', apps: ['ceres'], authVersion: 0,
     })).rejects.toMatchObject<CeresRequestError>({ code: 'invalid_group' });
     expect(mocks.transaction).not.toHaveBeenCalled();
   });
@@ -204,7 +204,7 @@ describe('Ceres v2 request submission and AI pre-screen', () => {
     const app = Fastify();
     app.addHook('preHandler', async (req) => {
       req.agent = {
-        id: 'staff-1', email: 'staff@example.test', name: 'Staff', role: 'employee', apps: ['ceres'], authVersion: 0,
+        id: 'staff-1', email: 'staff@example.test', name: 'Staff', role: 'staff', apps: ['ceres'], authVersion: 0,
       };
     });
     requestsRoutes(app);
@@ -228,7 +228,7 @@ describe('Ceres v2 request submission and AI pre-screen', () => {
       requestType: 'reimbursement', entity: 'PROM', category: 'general', amount: '100.00', reason: 'taxi',
       requestPhotoUploadId: 'receipt-1',
     }, {
-      id: 'staff-1', email: 'staff@example.test', name: 'Staff', role: 'employee', apps: ['ceres'], authVersion: 0,
+      id: 'staff-1', email: 'staff@example.test', name: 'Staff', role: 'staff', apps: ['ceres'], authVersion: 0,
     });
     expect(mocks.createRequest).toHaveBeenCalledWith({
       data: expect.objectContaining({ requestType: 'reimbursement', aiScreenStatus: 'pending' }),

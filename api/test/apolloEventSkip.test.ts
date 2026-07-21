@@ -9,7 +9,7 @@ const mocks = vi.hoisted(() => ({
   eventFindUnique: vi.fn(),
   eventUpdate: vi.fn(),
   // Mutable caller identity so tests can switch who's asking without rebuilding the mock module.
-  caller: { id: 'owner-1', role: 'employee' },
+  caller: { id: 'owner-1', role: 'staff' },
 }));
 
 vi.mock('../src/auth/middleware.js', () => ({
@@ -25,7 +25,7 @@ vi.mock('../src/db/prisma.js', () => ({
 // These pull env/LINE/fs chains at import time — the skip route touches none of them.
 vi.mock('../src/apollo/notify.js', () => ({ notifyApolloAssignment: vi.fn(), thaiDateKey: () => '2026-07-17' }));
 vi.mock('../src/apollo/attachmentStore.js', () => ({ deleteApolloAttachment: vi.fn(), readApolloAttachment: vi.fn(), saveApolloAttachment: vi.fn() }));
-vi.mock('../src/db/ensureSeeded.js', () => ({ EMPLOYEES: [], TIER_ACCOUNTS: [], employeeEmail: (slug: string) => `${slug}@example.test` }));
+vi.mock('../src/db/ensureSeeded.js', () => ({ STAFF: [], TIER_ACCOUNTS: [], staffEmail: (slug: string) => `${slug}@example.test` }));
 vi.mock('../src/line/staffBind.js', () => ({ createStaffLineBindCode: vi.fn(), staffLineBindStatus: vi.fn() }));
 
 import { apolloRoutes } from '../src/routes/apollo.js';
@@ -51,7 +51,7 @@ const skip = async (app: Awaited<ReturnType<typeof buildApp>>, date: unknown) =>
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.caller.id = 'owner-1';
-  mocks.caller.role = 'employee';
+  mocks.caller.role = 'staff';
   mocks.eventFindUnique.mockResolvedValue({ ...seriesEvent, skipDates: [...seriesEvent.skipDates] });
   mocks.eventUpdate.mockImplementation(async ({ data }: { data: { skipDates: string[] } }) => ({ id: 'evt-1', ...seriesEvent, ...data }));
 });

@@ -5,7 +5,7 @@ const mocks = vi.hoisted(() => ({
   findUnique: vi.fn(),
   deleteMany: vi.fn(),
   hashPassword: vi.fn(async (value: string) => `test-hash-for:${value}`),
-  env: { AGENT_PINS: '', EMPLOYEE_PINS: '' },
+  env: { AGENT_PINS: '', EMPLOYEE_PINS: '', STAFF_PINS: '' },
 }));
 
 vi.mock('../src/db/prisma.js', () => ({
@@ -30,7 +30,7 @@ vi.mock('../src/llm/prewarm.js', () => ({ prewarmDraftCache: vi.fn() }));
 vi.mock('../src/env.js', () => ({ env: mocks.env }));
 vi.mock('../src/catalog/productEmbeddings.js', () => ({ backfillProductEmbeddings: vi.fn() }));
 
-import { EMPLOYEES, syncStaff } from '../src/db/ensureSeeded.js';
+import { STAFF, syncStaff } from '../src/db/ensureSeeded.js';
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -39,6 +39,7 @@ beforeEach(() => {
   vi.stubEnv('MD_PASSWORD', 'test-legacy-fallback-password');
   mocks.env.AGENT_PINS = '';
   mocks.env.EMPLOYEE_PINS = '';
+  mocks.env.STAFF_PINS = '';
   mocks.findUnique.mockResolvedValue(null);
   mocks.upsert.mockResolvedValue({});
   mocks.deleteMany.mockResolvedValue({ count: 0 });
@@ -73,15 +74,15 @@ describe('syncStaff role seeding', () => {
     ['missing', ''],
     ['present but deprecated', ',nun:928374'],
   ])('a %s nun PIN neither skips Noon nor freezes pruning', async (_label, nunPin) => {
-    const allEmployeePins = EMPLOYEES
-      .filter((employee) => employee.slug !== 'nun')
-      .map((employee, index) => `${employee.slug}:${200000 + index}`)
+    const allStaffPins = STAFF
+      .filter((staff) => staff.slug !== 'nun')
+      .map((staff, index) => `${staff.slug}:${200000 + index}`)
       .join(',');
-    mocks.env.EMPLOYEE_PINS = `${allEmployeePins}${nunPin}`;
+    mocks.env.EMPLOYEE_PINS = `${allStaffPins}${nunPin}`;
 
     await syncStaff();
 
-    expect(EMPLOYEES.some((employee) => employee.slug === 'nun')).toBe(false);
+    expect(STAFF.some((staff) => staff.slug === 'nun')).toBe(false);
     const noonWrites = mocks.upsert.mock.calls
       .map(([args]) => args)
       .filter((write) => write.where.email === 'nun@prominent.local');
@@ -101,12 +102,25 @@ describe('syncStaff role seeding', () => {
   });
 
   it('grants Mail (Central Office) juno access without widening win or poopae (2026-07-21)', () => {
-    const mail = EMPLOYEES.find((e) => e.slug === 'mail');
+    const mail = STAFF.find((e) => e.slug === 'mail');
     expect(mail?.apps).toContain('juno');
     expect(mail?.role).toBe('central');
     for (const slug of ['win', 'poopae']) {
-      const employee = EMPLOYEES.find((e) => e.slug === slug);
-      expect(employee?.apps).not.toContain('juno');
+      const staff = STAFF.find((e) => e.slug === slug);
+      expect(staff?.apps).not.toContain('juno');
     }
+  });
+
+  it('STAFF_PINS (canonical) overrides a conflicting slug in EMPLOYEE_PINS and AGENT_PINS', async () => {
+    mocks.env.AGENT_PINS = 'poopae:111111';
+    mocks.env.EMPLOYEE_PINS = 'poopae:222222';
+    mocks.env.STAFF_PINS = 'poopae:333333,win:444444,mail:555555';
+
+    await syncStaff();
+
+    const writes = mocks.upsert.mock.calls.map(([args]) => args);
+    const poopae = writes.find((w) => w.where.email === 'poopae@prominent.local');
+    // hashPassword is called with the raw secret, so the mock hash reveals which PIN won.
+    expect(poopae?.create.passwordHash).toBe('test-hash-for:333333');
   });
 });

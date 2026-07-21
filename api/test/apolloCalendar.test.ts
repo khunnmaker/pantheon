@@ -35,12 +35,12 @@ describe('Apollo calendar scope resolution (resolveCalendarScope)', () => {
     expect(resolveCalendarScope(true, 'mgr-1', undefined)).toEqual({ assigneeId: undefined, memberProjectOnly: false });
   });
 
-  it('employee self scope (omitted param or own id) stays unrestricted by project membership — the old forced-to-self behavior', () => {
+  it('staff self scope (omitted param or own id) stays unrestricted by project membership — the old forced-to-self behavior', () => {
     expect(resolveCalendarScope(false, 'self-1', undefined)).toEqual({ assigneeId: 'self-1', memberProjectOnly: false });
     expect(resolveCalendarScope(false, 'self-1', 'self-1')).toEqual({ assigneeId: 'self-1', memberProjectOnly: false });
   });
 
-  it('employee peer/all/none scope is now HONORED but carries the member-project clause', () => {
+  it('staff peer/all/none scope is now HONORED but carries the member-project clause', () => {
     expect(resolveCalendarScope(false, 'self-1', 'agent-9')).toEqual({ assigneeId: 'agent-9', memberProjectOnly: true });
     expect(resolveCalendarScope(false, 'self-1', 'all')).toEqual({ assigneeId: undefined, memberProjectOnly: true });
     expect(resolveCalendarScope(false, 'self-1', 'none')).toEqual({ assigneeId: null, memberProjectOnly: true });
@@ -48,7 +48,7 @@ describe('Apollo calendar scope resolution (resolveCalendarScope)', () => {
 });
 
 describe('Apollo event masking (maskEvent): visibility matrix — own/CEO/public get full payload, else masked', () => {
-  const agent = { id: 'owner-1', name: 'Owner One', email: 'owner@prominent.local', role: 'employee' };
+  const agent = { id: 'owner-1', name: 'Owner One', email: 'owner@prominent.local', role: 'staff' };
   const privateRaw = {
     id: 'evt-1', agentId: 'owner-1', title: 'หมอฟัน', note: 'คลินิกบางนา', visibility: 'private',
     date: new Date('2026-07-20T00:00:00.000Z'), endDate: null,
@@ -87,7 +87,7 @@ describe('Apollo event masking (maskEvent): visibility matrix — own/CEO/public
 
   it('never leaks private title/note to a non-CEO manager viewer (e.g. gm/Nee) — regression: manager() must not be used here', () => {
     // The route computes viewerIsCeo as EXACTLY role === 'supervisor', so a gm viewer always
-    // calls in with false here, same as any other non-CEO employee — this is what would break
+    // calls in with false here, same as any other non-CEO staff member — this is what would break
     // if maskEvent (or its caller) ever swapped in the manager() helper (which also covers 'gm').
     const masked = maskEvent(privateRaw, 'gm-1', false);
     expect(masked.own).toBe(false);
@@ -371,7 +371,7 @@ describe('Apollo recurring-candidate where-fragment (recurringEventRangeWhere)',
 });
 
 describe('Apollo calendar expansion rows (expandCalendarEvents) — masking + THE REBASE TRAP', () => {
-  const agent = { id: 'owner-1', name: 'Owner One', email: 'owner@prominent.local', role: 'employee' };
+  const agent = { id: 'owner-1', name: 'Owner One', email: 'owner@prominent.local', role: 'staff' };
   const from = parseDate('2026-07-01') as Date;
   const to = parseDate('2026-07-31') as Date;
   const raw = (over: Partial<RawCalendarEvent> = {}): RawCalendarEvent => ({

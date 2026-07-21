@@ -3,17 +3,17 @@ import { hasAppAccess, type AuthedAgent } from '../auth/jwt.js';
 import { authedAgentFromToken } from '../auth/middleware.js';
 
 // Ceres has its own persona vocabulary layered on top of the unified tiers
-// (see auth/jwt.ts Role): a CENTRAL/EMPLOYEE with the 'ceres' app grant acts as
+// (see auth/jwt.ts Role): a CENTRAL/STAFF with the 'ceres' app grant acts as
 // "messenger" (the self-entry persona — couriers, sales, housekeeper alike);
-// A gm tier is Ceres management; central/employee accounts with a grant use the messenger persona;
+// A gm tier is Ceres management; central/staff accounts with a grant use the messenger persona;
 // the CEO is the Dr. M supervisor account.
 export type CeresRole = 'messenger' | 'gm' | 'ceo';
 
 export function ceresRole(agent: AuthedAgent): CeresRole | null {
   if (agent.role === 'supervisor') return 'ceo';
   if (agent.role === 'gm') return 'gm';
-  if ((agent.role === 'central' || agent.role === 'employee') && hasAppAccess(agent, 'ceres')) return 'messenger';
-  return null; // employee without the ceres grant — no Ceres access
+  if ((agent.role === 'central' || agent.role === 'staff') && hasAppAccess(agent, 'ceres')) return 'messenger';
+  return null; // staff without the ceres grant — no Ceres access
 }
 
 function bearer(req: FastifyRequest): string | null {
@@ -23,9 +23,9 @@ function bearer(req: FastifyRequest): string | null {
 }
 
 // preHandler: require a valid account that resolves to a Ceres persona (an
-// central/employee need the 'ceres' grant; gm/supervisor are implicit).
+// central/staff need the 'ceres' grant; gm/supervisor are implicit).
 export const requireCeresAuth: preHandlerHookHandler = async (req: FastifyRequest, reply: FastifyReply) => {
-  const agent = await authedAgentFromToken(bearer(req), ['supervisor', 'gm', 'central', 'employee']);
+  const agent = await authedAgentFromToken(bearer(req), ['supervisor', 'gm', 'central', 'staff']);
   if (!agent) {
     return reply.code(401).send({ error: 'unauthorized' });
   }

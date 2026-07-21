@@ -18,7 +18,7 @@ export default function Admin() {
 
   if (!agent) return <StaffLogin onLogin={setAgent} />;
 
-  // Order-desk staff (an employee with the 'diana' app grant) manage orders + product info
+  // Order-desk staff (a staff member with the 'diana' app grant) manage orders + product info
   // but NOT clinic approval — that unlocks pricing, so it stays supervisor-only (matches the API).
   const isSupervisor = agent.role === 'supervisor';
   const activeTab = tab === 'clinics' && !isSupervisor ? 'orders' : tab;

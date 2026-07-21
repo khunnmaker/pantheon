@@ -1,6 +1,6 @@
 import { hasAppAccess, type AuthedAgent } from '../auth/jwt.js';
 import { prisma } from '../db/prisma.js';
-import { EMPLOYEES, TIER_ACCOUNTS, employeeEmail } from '../db/ensureSeeded.js';
+import { STAFF, TIER_ACCOUNTS, staffEmail } from '../db/ensureSeeded.js';
 
 type AuditAgent = Pick<AuthedAgent, 'id' | 'email' | 'name' | 'role' | 'apps'> & { authVersion: number };
 
@@ -28,7 +28,7 @@ async function main(): Promise<void> {
   ]);
 
   const agents = agentsRaw.filter(
-    (agent): agent is AuditAgent => ['supervisor', 'gm', 'central', 'employee'].includes(agent.role),
+    (agent): agent is AuditAgent => ['supervisor', 'gm', 'central', 'staff'].includes(agent.role),
   );
   const agentByEmail = new Map(agents.map((agent) => [emailKey(agent.email), agent]));
   const activePartiesByEmail = new Map<string, typeof parties>();
@@ -50,9 +50,9 @@ async function main(): Promise<void> {
 
   const expectedTargets = [
     ...TIER_ACCOUNTS.map((account) => ({ email: account.email, name: account.name })),
-    ...EMPLOYEES
-      .filter((employee) => employee.apps.includes('ceres'))
-      .map((employee) => ({ email: employeeEmail(employee.slug), name: employee.name })),
+    ...STAFF
+      .filter((staff) => staff.apps.includes('ceres'))
+      .map((staff) => ({ email: staffEmail(staff.slug), name: staff.name })),
   ];
   const targetAccountsMissingAgent = expectedTargets
     .filter((target) => !agentByEmail.has(emailKey(target.email)))
@@ -65,7 +65,7 @@ async function main(): Promise<void> {
   const targetRequestersWithoutActiveParty = expectedTargets
     .flatMap((target) => {
       const agent = agentByEmail.get(emailKey(target.email));
-      if (!agent || (agent.role !== 'employee' && agent.role !== 'central')) return [];
+      if (!agent || (agent.role !== 'staff' && agent.role !== 'central')) return [];
       return activePartiesByEmail.has(emailKey(agent.email)) ? [] : [identifiesAgent(agent)];
     });
 
@@ -73,7 +73,7 @@ async function main(): Promise<void> {
     .filter(([, linkedParties]) => linkedParties.length > 1)
     .map(([email, linkedParties]) => `${email}: ${sorted(linkedParties.map((party) => party.id)).join(', ')}`);
   const grantedStaffWithoutActiveParty = agents
-    .filter((agent) => (agent.role === 'employee' || agent.role === 'central') && hasAppAccess(agent, 'ceres'))
+    .filter((agent) => (agent.role === 'staff' || agent.role === 'central') && hasAppAccess(agent, 'ceres'))
     .filter((agent) => !activePartiesByEmail.has(emailKey(agent.email)))
     .map(identifiesAgent);
 

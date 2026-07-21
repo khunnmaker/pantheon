@@ -10,23 +10,23 @@ import { BILL_ISSUER_EMAILS } from './juno.js';
 // 'juno' grant, not 'minerva'). Supervisors pass every requireApp, so the Minerva console
 // (web/, supervisor-only) keeps working unchanged.
 //
-// READ (list) is open to employees/supervisor so finance can SEE the flags on payments they
+// READ (list) is open to staff/supervisor so finance can SEE the flags on payments they
 // process; gm is denied at the router hook. RESOLVE stays supervisor-only via requireRole.
 export async function financeRoutes(app: FastifyInstance) {
   app.addHook('preHandler', requireAuth);
   app.addHook('preHandler', requireApp('juno'));
   // Owner decision 2026-07-13: gm is bills-only in Juno; the separate FinanceAudit router
-  // is entirely outside that lane. Employees and supervisors retain their existing access.
+  // is entirely outside that lane. Staff and supervisors retain their existing access.
   // Mail (per-person BILL_ISSUER_EMAILS, 2026-07-21) rides the same bills-only lane as gm and
-  // is denied here too — she must not inherit the employee FinanceAudit surface just because
-  // her 'central' role otherwise behaves like an employee elsewhere.
+  // is denied here too — she must not inherit the staff FinanceAudit surface just because
+  // her 'central' role otherwise behaves like staff elsewhere.
   app.addHook('preHandler', async (req, reply) => {
     if (req.agent?.role === 'gm' || BILL_ISSUER_EMAILS.has(req.agent?.email ?? '')) {
       return reply.code(403).send({ error: 'forbidden' });
     }
   });
 
-  // GET /api/finance/audits?status=open|resolved|all — readable by finance employees and the
+  // GET /api/finance/audits?status=open|resolved|all — readable by finance staff and the
   // supervisor; the router hook above denies gm.
   app.get('/api/finance/audits', async (req) => {
     const status = (req.query as { status?: string })?.status ?? 'open';

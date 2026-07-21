@@ -4,7 +4,7 @@ This smoke test exercises the production Ceres workflow-v2 staff request through
 
 ## Safety contract
 
-- Run only inside the production Railway **API container**, where `EMPLOYEE_PINS` and `GM_PASSWORD` (or legacy fallback `MD_PASSWORD`) already exist.
+- Run only inside the production Railway **API container**, where `STAFF_PINS` (or the legacy `EMPLOYEE_PINS`/`AGENT_PINS` fallback) and `GM_PASSWORD` (or legacy fallback `MD_PASSWORD`) already exist.
 - Do not pass credentials on the command line, copy them into the file, print the environment, or run with shell tracing.
 - The script uses `http://localhost:${PORT:-3000}` and never calls a public hostname.
 - It creates a 5 THB `advance` request with memo `ทดสอบระบบ (smoke test) — จะถูก reverse` and never enters the CEO decision path.
@@ -22,7 +22,7 @@ Do not source an environment file. Railway supplies the variables to the already
 
 ## Expected behavior
 
-1. The script intersects the canonical seeded Ceres employee slugs with `EMPLOYEE_PINS` and `/api/auth/logins?app=ceres`, logs in one PIN account, and verifies its messenger bootstrap/party.
+1. The script intersects the canonical seeded Ceres staff slugs with `STAFF_PINS` (merged with the legacy `EMPLOYEE_PINS`/`AGENT_PINS` fallbacks) and `/api/auth/logins?app=ceres`, logs in one PIN account, and verifies its messenger bootstrap/party.
 2. It creates the v2 advance and polls `GET /api/ceres/requests/:id` for `aiScreenStatus`.
 3. `escalate` is a successful fail-closed branch: the requester cancels the request and all GM/CEO/money steps are skipped.
 4. `clear` continues with Nee's GM login and `nee-decision`. A status other than `approved` is cancelled without touching CEO and reported `PARTIAL`.

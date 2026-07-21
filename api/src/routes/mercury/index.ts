@@ -15,7 +15,7 @@ import { adjustStock } from '../../stock/adjust.js';
 // plus a scoped sub-plugin gated by requireApp('mercury') for everything else. This mirrors the
 // ceres route shape (public logins + a requireApp gate) and the juno gate (whole-plugin
 // requireApp). While Mercury is owner-only, requireApp('mercury') resolves to just the
-// supervisor (Dr. M) — granting an employee later is a one-line Agent.apps edit, no code change.
+// supervisor (Dr. M) — granting a staff member later is a one-line Agent.apps edit, no code change.
 
 const MERCURY_STATUSES = ['pending', 'ordered', 'received', 'cancelled'] as const;
 type MercuryStatus = (typeof MERCURY_STATUSES)[number];

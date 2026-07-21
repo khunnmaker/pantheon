@@ -44,7 +44,7 @@ export default function Settings() {
     }
   }
 
-  const roleLabel = bootstrap.role === 'ceo' ? 'CEO' : bootstrap.role === 'gm' ? 'GM' : 'พนักงาน';
+  const roleLabel = bootstrap.role === 'ceo' ? 'CEO' : bootstrap.role === 'gm' ? 'GM' : 'ทีมงาน';
 
   return (
     <div className="space-y-5">

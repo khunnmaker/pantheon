@@ -22,8 +22,8 @@ vi.mock('../src/db/prisma.js', () => ({
 import { ageStuckAIReviews, getStaffRequest } from '../src/ceres/requestService.js';
 import { requestsRoutes } from '../src/routes/ceres/requests.js';
 
-const employee = (id: string) => ({
-  id, email: `${id}@example.test`, name: id, role: 'employee' as const, apps: ['ceres'], authVersion: 0,
+const staffAgent = (id: string) => ({
+  id, email: `${id}@example.test`, name: id, role: 'staff' as const, apps: ['ceres'], authVersion: 0,
 });
 
 beforeEach(() => {
@@ -41,11 +41,11 @@ beforeEach(() => {
 });
 
 describe('Ceres v2 request access', () => {
-  it('rejects employee and Central Office callers at both human-decision routes', async () => {
-    for (const role of ['employee', 'central'] as const) {
+  it('rejects staff and Central Office callers at both human-decision routes', async () => {
+    for (const role of ['staff', 'central'] as const) {
       const app = Fastify();
       app.addHook('preHandler', async (req) => {
-        req.agent = { ...employee(`${role}-1`), role };
+        req.agent = { ...staffAgent(`${role}-1`), role };
       });
       requestsRoutes(app);
       for (const suffix of ['nee-decision', 'ceo-decision']) {
@@ -59,16 +59,16 @@ describe('Ceres v2 request access', () => {
     }
   });
 
-  it('lets an employee read their own request', async () => {
-    await expect(getStaffRequest('request-1', employee('staff-1'))).resolves.toMatchObject({ id: 'request-1' });
+  it('lets a staff member read their own request', async () => {
+    await expect(getStaffRequest('request-1', staffAgent('staff-1'))).resolves.toMatchObject({ id: 'request-1' });
   });
 
-  it('hides another employee request as not found', async () => {
-    await expect(getStaffRequest('request-1', employee('staff-2'))).rejects.toMatchObject({ code: 'not_found' });
+  it('hides another staff member\'s request as not found', async () => {
+    await expect(getStaffRequest('request-1', staffAgent('staff-2'))).rejects.toMatchObject({ code: 'not_found' });
   });
 
   it('lets management read a staff request', async () => {
-    const gm = { ...employee('gm-1'), role: 'gm' as const, apps: [] };
+    const gm = { ...staffAgent('gm-1'), role: 'gm' as const, apps: [] };
     await expect(getStaffRequest('request-1', gm)).resolves.toMatchObject({ id: 'request-1' });
   });
 

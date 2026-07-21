@@ -1,8 +1,8 @@
 // Typed API client for the Ceres petty-cash UI. Talks to the SHARED Minerva Fastify
 // backend (the /api/ceres/* routes — see api/src/routes/ceres/p1.ts, common.ts, index.ts).
-// Raw auth roles: 'supervisor' | 'gm' | 'central' | 'employee'. GET /api/ceres/bootstrap
+// Raw auth roles: 'supervisor' | 'gm' | 'central' | 'staff'. GET /api/ceres/bootstrap
 // normalizes that into the Ceres vocabulary 'messenger' | 'gm' | 'ceo'
-// ('central'/'employee' -> 'messenger', 'supervisor' -> 'ceo') — always trust the bootstrap role
+// ('central'/'staff' -> 'messenger', 'supervisor' -> 'ceo') — always trust the bootstrap role
 // for UI routing/branching, never the raw login role.
 
 import { fetchWithSessionRenewal, renewSuiteSessionOnce } from '@pantheon/ui';
@@ -10,7 +10,7 @@ import { fetchWithSessionRenewal, renewSuiteSessionOnce } from '@pantheon/ui';
 export const API_URL: string = import.meta.env.VITE_API_URL ?? 'http://localhost:3000';
 
 // Raw Agent-table role as returned by POST /api/auth/login.
-export type Role = 'supervisor' | 'gm' | 'central' | 'employee';
+export type Role = 'supervisor' | 'gm' | 'central' | 'staff';
 export interface Agent {
   id: string;
   email: string;
@@ -29,7 +29,7 @@ import type { AppName } from '@pantheon/ui';
 export type { AppName };
 
 // Mirror of the server's hasAppAccess (api/src/auth/jwt.ts): supervisor → everything;
-// gm → Ceres + Minerva + Juno + Apollo (GM_APPS); central/employee → their own per-person
+// gm → Ceres + Minerva + Juno + Apollo (GM_APPS); central/staff → their own per-person
 // Agent.apps grant list. Same copy every suite app's AppSwitcher.tsx carries locally.
 export function hasAppAccess(agent: Agent, app: AppName): boolean {
   if (agent.role === 'supervisor') return true;
@@ -252,7 +252,7 @@ export interface LoginName {
   group: string;                 // ceo | gm | central | sales | finance | messengers | stores | others
   gender: 'male' | 'female';     // drives the cute (DiceBear) avatar
 }
-// PUBLIC — no auth required. Ordered: supervisor, GM, Central Office, then other employee cards.
+// PUBLIC — no auth required. Ordered: supervisor, GM, Central Office, then other staff cards.
 export const getLogins = () => fetch(`${API_URL}/api/ceres/logins`).then((r) => r.json() as Promise<LoginName[]>);
 
 export interface OcrResult {

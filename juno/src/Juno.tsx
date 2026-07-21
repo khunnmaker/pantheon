@@ -167,7 +167,7 @@ function MethodCell({ p }: { p: Payment }) {
 const BILL_ISSUER_EMAILS = new Set(['mail@prominent.local']);
 
 export default function Juno({ agent, onLogout }: { agent: Agent; onLogout: () => void }) {
-  // Owner 2026-07-15: employees (FIN) see the บิลมือ tab READ-ONLY — ledger + print, no
+  // Owner 2026-07-15: staff (FIN) see the บิลมือ tab READ-ONLY — ledger + print, no
   // issue/edit/void (server already 403s their bill mutations; buttons hidden in Bills.tsx).
   const scope = agent.role === 'supervisor'
     ? 'full'
@@ -176,7 +176,7 @@ export default function Juno({ agent, onLogout }: { agent: Agent; onLogout: () =
       : 'readBills';
   // CEO-only actions (mirrors the server's supervisor gate in api/src/routes/juno.ts): reports,
   // CSV export, bank-file import, clearing a flag, and hard delete. gm never reaches these
-  // views because its scope is billsOnly; employees retain the non-CEO finance controls.
+  // views because its scope is billsOnly; staff retain the non-CEO finance controls.
   const isCeo = agent.role === 'supervisor';
   // Keys THIS agent's tab bar actually renders — mirrors the role filters in tabGroups below
   // (minus the count-only bits, which don't affect which keys exist). Feeds useHashTab so a
@@ -197,7 +197,7 @@ export default function Juno({ agent, onLogout }: { agent: Agent; onLogout: () =
   const canDelete = isCeo;
   // ใบเสร็จตรวจแล้ว ยังไม่พบเงินเข้า count — the badge on the ธนาคาร tab (owner 2026-07-18)
   const [verifiedUnmatched, setVerifiedUnmatched] = useState<number | undefined>(undefined);
-  // open FinanceAudit (ตรวจสอบยอด) count — employee/supervisor badge; gm skips this request.
+  // open FinanceAudit (ตรวจสอบยอด) count — staff/supervisor badge; gm skips this request.
   const [auditOpen, setAuditOpen] = useState<number | undefined>(undefined);
   const [billUnpaid, setBillUnpaid] = useState<number | undefined>(undefined);
   // Badge = ยังไม่จ่าย only (owner 2026-07-18).
@@ -268,7 +268,7 @@ export default function Juno({ agent, onLogout }: { agent: Agent; onLogout: () =
           tabs: [
             { key: 'flags' as const, label: 'ปักธง', icon: <Flag size={16} />, count: summary?.flagged },
             { key: 'disc' as const, label: 'เกิน/ขาด', icon: <Scale size={16} />, count: summary?.discrepancyOpen },
-            // ตรวจยอด (FinanceAudit) stays employee/supervisor-visible; only the CEO can resolve.
+            // ตรวจยอด (FinanceAudit) stays staff/supervisor-visible; only the CEO can resolve.
             { key: 'audit' as const, label: 'ตรวจสอบ', icon: <Banknote size={16} />, count: auditOpen },
           ],
         },
@@ -1730,7 +1730,7 @@ function Detail({ payment, onClose, onUpdate, onDelete, onPrint, canDelete, isCe
             {p.mismatch && (
               <div className="mx-4 mt-3 p-2 rounded-lg bg-rose-50 text-rose-700 text-xs flex items-start gap-1">
                 <AlertTriangle size={14} className="mt-0.5 shrink-0" />
-                ยอดที่พนักงานกรอกไม่ตรงกับที่ AI อ่านจากสลิป — ควรตรวจสอบ
+                ยอดที่ทีมงานกรอกไม่ตรงกับที่ AI อ่านจากสลิป — ควรตรวจสอบ
               </div>
             )}
 

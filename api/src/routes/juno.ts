@@ -68,13 +68,13 @@ import {
 
 // Owner decision 2026-07-21: Mail (Central Office, role 'central') gets the SAME bills-CRUD
 // lane as Nee/Noon (gm) — MB issue/edit/void + product picker, nothing else. This is a
-// per-person grant, NOT a role widening: the 'central' role stays employee-equivalent
+// per-person grant, NOT a role widening: the 'central' role stays staff-equivalent
 // everywhere else. Named + OR'd into the gm check below (see the juno preHandler) so a future
 // 4th bill issuer is a one-line add here.
 export const BILL_ISSUER_EMAILS = new Set(['mail@prominent.local']);
 
 // Owner decision 2026-07-13: the gm tier is default-deny inside Juno and may use only
-// the manual-bill lane plus its read-only product picker. Employees keep the existing Juno
+// the manual-bill lane plus its read-only product picker. Staff keep the existing Juno
 // surface except that issuing/editing/voiding manual bills belongs to gm/supervisor only.
 // Keys deliberately use Fastify's route pattern (req.routeOptions.url), never the raw URL.
 const GM_JUNO_ALLOWED_ROUTES = new Set([
@@ -84,20 +84,20 @@ const GM_JUNO_ALLOWED_ROUTES = new Set([
   'POST /api/juno/bills/:id/void',
   'GET /api/juno/products',
 ]);
-const EMPLOYEE_JUNO_DENIED_ROUTES = new Set([
+const STAFF_JUNO_DENIED_ROUTES = new Set([
   'POST /api/juno/bills',
   'PATCH /api/juno/bills/:id',
   'POST /api/juno/bills/:id/void',
   // hard delete is supervisor-only INSIDE the handler too (gm is blocked by default-deny
   // above — deletion is deliberately NOT in Nee's allowlist); this entry keeps the
-  // "employees never mutate bills" invariant readable in one place.
+  // "staff never mutate bills" invariant readable in one place.
   'DELETE /api/juno/bills/:id',
 ]);
 
 // Juno finance API. Reads the Payment table (written by Minerva's /to-finance hook) and
 // owns the finance lifecycle: verify → record, flag-queue triage, tax-invoice tracking,
 // and reporting/export. INCOME / LINE-slip only for the MVP. Access starts with requireApp('juno'):
-// supervisor + granted employees keep the finance surface, while gm is narrowed by the hook
+// supervisor + granted staff keep the finance surface, while gm is narrowed by the hook
 // below to manual bills/products only (owner decision 2026-07-13). See JUNO_BRIEF.md.
 //
 // PHASE B (see JUNO_PROCESS_BRIEF.md): bank import (KBIZ + K SHOP) + reconciliation
@@ -784,7 +784,7 @@ export async function junoRoutes(app: FastifyInstance) {
       return;
     }
 
-    if (role === 'employee' && EMPLOYEE_JUNO_DENIED_ROUTES.has(routeKey)) {
+    if (role === 'staff' && STAFF_JUNO_DENIED_ROUTES.has(routeKey)) {
       return reply.code(403).send({ error: 'forbidden' });
     }
   });
@@ -1238,7 +1238,7 @@ export async function junoRoutes(app: FastifyInstance) {
 
   // GET /api/juno/wht/summary?from=&to= — period totals for the หัก ณ ที่จ่าย (WHT, task 2)
   // tab: count + net(received)/wht/gross(full-price) over non-void payments with a withheld amount,
-  // in the given Thai-day range. Visible to employee/supervisor users (list + totals only — no
+  // in the given Thai-day range. Visible to staff/supervisor users (list + totals only — no
   // certificate tracking) — same requireApp('juno') gate as the rest of this file, no extra
   // supervisor check (contrast with the CEO-only /reports below).
   const whtSummaryQuerySchema = z.object({
@@ -3034,7 +3034,7 @@ export async function junoRoutes(app: FastifyInstance) {
 
   // GET /api/juno/re?status=&q=&from=&to= — the กระทบยอด RE tab: every imported RE, each
   // cross-checked LIVE against current Payments (never stored — always up to date). Visible
-  // to employee/supervisor users (no supervisor gate, unlike the import above). Built in ≤2 queries
+  // to staff/supervisor users (no supervisor gate, unlike the import above). Built in ≤2 queries
   // total (ReReceipt list + one Payment scan), never one query per RE.
   // The owner's XS docs are a SALES channel only from this number on (owner ruling 2026-07-19);
   // earlier XS docs are genuine internal movements (samples/loans) and stay registry-only.

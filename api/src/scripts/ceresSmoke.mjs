@@ -112,7 +112,7 @@ async function api(path, { method = 'GET', token, body, timeoutMs = 30_000 } = {
   }
 }
 
-function parseEmployeePins(raw) {
+function parsePinMap(raw) {
   const pins = new Map();
   for (const entry of raw.split(',')) {
     const trimmed = entry.trim();
@@ -318,14 +318,15 @@ function finish(result, exitCode) {
 async function main() {
   let intendedPartial = false;
   try {
-    // Same merge as api/src/env.ts: AGENT_PINS is the legacy name, EMPLOYEE_PINS wins on slug clash.
-    const rawPins = [process.env.AGENT_PINS, process.env.EMPLOYEE_PINS].filter(Boolean).join(',');
+    // Same merge as api/src/env.ts: AGENT_PINS is the legacy name, EMPLOYEE_PINS the
+    // transitional name, STAFF_PINS canonical — later entries win on slug clash.
+    const rawPins = [process.env.AGENT_PINS, process.env.EMPLOYEE_PINS, process.env.STAFF_PINS].filter(Boolean).join(',');
     const gmPassword = process.env.GM_PASSWORD || process.env.MD_PASSWORD;
-    assert(rawPins.length > 0, 'EMPLOYEE_PINS_and_AGENT_PINS_missing');
+    assert(rawPins.length > 0, 'STAFF_PINS_and_EMPLOYEE_PINS_and_AGENT_PINS_missing');
     assert(typeof gmPassword === 'string' && gmPassword.length > 0, 'GM_PASSWORD_and_MD_PASSWORD_missing');
-    const pins = parseEmployeePins(rawPins);
+    const pins = parsePinMap(rawPins);
     const configuredSlugs = STAFF_SLUGS.filter((slug) => pins.has(slug));
-    assert(configuredSlugs.length > 0, 'no_seeded_ceres_employee_in_EMPLOYEE_PINS');
+    assert(configuredSlugs.length > 0, 'no_seeded_ceres_staff_in_STAFF_PINS');
 
     const cards = await api('/api/auth/logins?app=ceres');
     assert(Array.isArray(cards), 'ceres_login_cards_invalid');
@@ -335,8 +336,8 @@ async function main() {
         .map((card) => card.email),
     );
     const staffSlug = configuredSlugs.find((slug) => cardEmails.has(`${slug}@prominent.local`));
-    assert(Boolean(staffSlug), 'configured_ceres_employee_not_seeded');
-    record('PASS', 'runtime configuration and staff selection', 'local API reachable; seeded Ceres employee selected');
+    assert(Boolean(staffSlug), 'configured_ceres_staff_not_seeded');
+    record('PASS', 'runtime configuration and staff selection', 'local API reachable; seeded Ceres staff selected');
 
     const staffEmail = `${staffSlug}@prominent.local`;
     const staffLogin = await login(staffEmail, pins.get(staffSlug));

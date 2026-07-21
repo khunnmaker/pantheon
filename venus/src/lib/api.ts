@@ -8,10 +8,10 @@ import { fetchWithSessionRenewal, renewSuiteSessionOnce } from '@pantheon/ui';
 export const API_URL: string = import.meta.env.VITE_API_URL ?? 'http://localhost:3000';
 
 // Access to Venus is per-grant, enforced server-side via requireApp('venus') (see
-// api/src/routes/venus.ts): supervisor always has access; employees need the explicit
+// api/src/routes/venus.ts): supervisor always has access; staff need the explicit
 // 'venus' grant (Agent.apps); gm is excluded. The login screen does not hard-block by
-// role — an ungranted employee logs in fine and gets a friendly 403 state instead (App.tsx).
-export type Role = 'supervisor' | 'gm' | 'central' | 'employee';
+// role — an ungranted staff member logs in fine and gets a friendly 403 state instead (App.tsx).
+export type Role = 'supervisor' | 'gm' | 'central' | 'staff';
 export interface Agent {
   id: string;
   email: string;
@@ -245,7 +245,7 @@ export function clearSession(): void {
 let onUnauthorized: (() => void) | null = null;
 export function setOnUnauthorized(fn: (() => void) | null): void { onUnauthorized = fn; }
 
-// Notified on a 403 (authenticated but WITHOUT the 'venus' grant — e.g. an employee the
+// Notified on a 403 (authenticated but WITHOUT the 'venus' grant — e.g. a staff member the
 // owner hasn't granted Venus yet). Distinct from 401: the session stays valid, we just show
 // a friendly "no access" state rather than bouncing to Login (which they'd just pass again).
 let onForbidden: (() => void) | null = null;
@@ -272,7 +272,7 @@ async function authed<T>(path: string, init?: RequestInit): Promise<T> {
 
 // Same shared login endpoint every service uses — any live account may authenticate here;
 // per-app access is enforced server-side by requireApp('venus') on the app's own routes
-// (api/src/routes/venus.ts): supervisor always has access, employees need the explicit
+// (api/src/routes/venus.ts): supervisor always has access, staff need the explicit
 // 'venus' grant, gm is excluded.
 export async function login(email: string, password: string): Promise<{ token: string; agent: Agent }> {
   const res = await fetch(`${API_URL}/api/auth/login`, {
@@ -319,7 +319,7 @@ export interface LoginName {
   gender?: string;
 }
 // PUBLIC — no auth required. Ordered: supervisor first (kind 'password'), then any
-// granted GM/Central Office/employee cards. Uses the GENERAL suite endpoint (not an app-owned one like
+// granted GM/Central Office/staff cards. Uses the GENERAL suite endpoint (not an app-owned one like
 // Ceres's /api/ceres/logins) since Venus access is grant-based, not role-based.
 export const getLogins = () =>
   fetch(`${API_URL}/api/auth/logins?app=venus`).then((r) => {

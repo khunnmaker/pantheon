@@ -83,12 +83,12 @@ function mockCategoryStore() {
   }));
 }
 
-async function adminApp(role: 'employee' | 'gm' | 'supervisor') {
+async function adminApp(role: 'staff' | 'gm' | 'supervisor') {
   const app = Fastify();
   app.addHook('preHandler', async (req) => {
     req.agent = {
       id: 'agent-1', email: 'agent@example.test', name: 'Agent', role,
-      apps: role === 'employee' ? ['ceres'] : [], authVersion: 0,
+      apps: role === 'staff' ? ['ceres'] : [], authVersion: 0,
     };
   });
   categoryAdminRoutes(app);
@@ -110,7 +110,7 @@ beforeEach(() => {
 describe('Ceres category admin routes', () => {
   it('rejects messenger access and lets a GM list all rows', async () => {
     mocks.categories[2]!.active = false;
-    const messenger = await adminApp('employee');
+    const messenger = await adminApp('staff');
     const denied = await messenger.inject({ method: 'GET', url: '/api/ceres/admin/categories' });
     expect(denied.statusCode).toBe(403);
     await messenger.close();

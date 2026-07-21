@@ -30,7 +30,7 @@ export default function QuickCreate({ date, anchor, agents, me, scope, projects,
   onClose: () => void; onChanged: () => void; onMoreOptions: (payload: MoreOptionsPayload) => void;
 }) {
   const nonArchivedProjects = projects.filter((p) => !p.archived);
-  const showTaskTab = nonArchivedProjects.length > 0; // an employee with no member project can't create a task — don't show a tab that always 403s
+  const showTaskTab = nonArchivedProjects.length > 0; // a staff member with no member project can't create a task — don't show a tab that always 403s
   const scopeIsPerson = agents.some((a) => a.id === scope);
 
   const [tab, setTab] = useState<'event' | 'task'>('event');

@@ -121,7 +121,7 @@ export async function authRoutes(app: FastifyInstance) {
     // computer in active use stays remembered indefinitely; the original 7d/30d idle tier
     // determines when it lapses.
     // Pre-tier cookies were all 30d, so a missing claim preserves that legacy lifetime. New
-    // cookies always carry the tier and therefore never upgrade an employee during renewal.
+    // cookies always carry the tier and therefore never upgrade a staff member during renewal.
     const sessionTier: SessionTier = sessionClaims?.id === agent.id
       ? sessionClaims.sessionTier ?? 'manager'
       : sessionTierForRole(agent.role);
@@ -151,7 +151,7 @@ export async function authRoutes(app: FastifyInstance) {
   });
 
   // PUBLIC GET /api/auth/logins?app=minerva|vesta|juno|ceres — the name-card list for that
-  // app's login screen (supervisor, then GM, Central Office, then other employees granted that app).
+  // app's login screen (supervisor, then GM, Central Office, then other staff granted that app).
   // Names + emails only — no roles/ids beyond `kind`.
   app.get('/api/auth/logins', async (req, reply) => {
     const app_ = (req.query as { app?: string })?.app;

@@ -15,7 +15,7 @@ const agent = (apps: string[]) => ({
   id: 'agent-1',
   email: 'staff@example.test',
   name: 'Staff',
-  role: 'employee' as const,
+  role: 'staff' as const,
   apps,
   authVersion: 0,
 });
@@ -38,7 +38,7 @@ describe('Ceres authentication status contract', () => {
     await app.close();
   });
 
-  it('returns 403 when an authenticated employee lacks the Ceres grant', async () => {
+  it('returns 403 when an authenticated staff member lacks the Ceres grant', async () => {
     authMocks.authedAgentFromToken.mockResolvedValue(agent([]));
     const app = await authProbe();
     const response = await app.inject({
@@ -51,7 +51,7 @@ describe('Ceres authentication status contract', () => {
     await app.close();
   });
 
-  it('admits an authenticated employee with the Ceres grant', async () => {
+  it('admits an authenticated staff member with the Ceres grant', async () => {
     authMocks.authedAgentFromToken.mockResolvedValue(agent(['ceres']));
     const app = await authProbe();
     const response = await app.inject({ method: 'GET', url: '/probe' });

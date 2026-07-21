@@ -12,7 +12,7 @@ vi.mock('../src/db/prisma.js', () => ({
 vi.mock('../src/line/send.js', () => ({ sendLineText: mocks.sendLineText }));
 vi.mock('../src/auth/middleware.js', () => ({
   requireAuth: async (req: any) => {
-    req.agent = { id: 'staff-1', email: 'staff@example.test', name: 'Staff', role: 'employee', apps: ['ceres'], authVersion: 0 };
+    req.agent = { id: 'staff-1', email: 'staff@example.test', name: 'Staff', role: 'staff', apps: ['ceres'], authVersion: 0 };
   },
 }));
 

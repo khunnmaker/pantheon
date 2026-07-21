@@ -32,7 +32,7 @@ export function initIo(server: HttpServer): IOServer {
     authedAgentFromToken(token)
       .then((agent) => {
         if (!agent) return next(new Error('unauthorized'));
-        // The console is Minerva-facing — a Ceres-only employee (or a role without Minerva) must not
+        // The console is Minerva-facing — a Ceres-only staff member (or a role without Minerva) must not
         // get a live socket into sales conversations.
         if (!hasAppAccess(agent, 'minerva')) return next(new Error('unauthorized'));
         (socket.data as SocketData).agent = agent;

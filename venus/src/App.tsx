@@ -13,7 +13,7 @@ export default function App() {
   );
   const [booting, setBooting] = useState<boolean>(() => !getToken());
   // Access to Venus is per-grant (requireApp('venus') server-side) — the login screen
-  // does not block by role, so a logged-in-but-ungranted account (e.g. an employee not
+  // does not block by role, so a logged-in-but-ungranted account (e.g. a staff member not
   // yet granted) is only discovered when the app's first authenticated data call 403s.
   const [forbidden, setForbidden] = useState(false);
 

@@ -1,5 +1,5 @@
 import { prisma } from '../db/prisma.js';
-import { TIER_ACCOUNTS, EMPLOYEES, employeeEmail } from '../db/ensureSeeded.js';
+import { TIER_ACCOUNTS, STAFF, staffEmail } from '../db/ensureSeeded.js';
 import { GM_APPS, type AppName } from './jwt.js';
 
 export interface LoginCard {
@@ -14,21 +14,21 @@ export interface LoginCard {
 
 // Shared "who can log in to app X" name-card list, used by BOTH the public
 // GET /api/auth/logins?app= (Minerva/Vesta/Juno/general) and GET /api/ceres/logins (Ceres).
-// Order: supervisor first, then password GMs, Central Office, and other employees. GMs use implicit
-// GM_APPS; Central Office/employees are filtered by their declared app grants.
+// Order: supervisor first, then password GMs, Central Office, and other staff. GMs use implicit
+// GM_APPS; Central Office/staff are filtered by their declared app grants.
 // Only accounts that actually exist in the DB
 // (provisioned) are returned. Names + emails only — no roles/ids beyond `kind`.
 export async function buildLoginCards(app: AppName): Promise<LoginCard[]> {
   const supervisor = TIER_ACCOUNTS.find((t) => t.role === 'supervisor')!;
   const gms = TIER_ACCOUNTS.filter((t) => t.role === 'gm');
-  const employeesForApp = EMPLOYEES.filter((e) => e.apps.includes(app));
-  const centrals = employeesForApp.filter((e) => e.role === 'central');
-  const otherEmployees = employeesForApp.filter((e) => (e.role ?? 'employee') === 'employee');
+  const staffForApp = STAFF.filter((e) => e.apps.includes(app));
+  const centrals = staffForApp.filter((e) => e.role === 'central');
+  const otherStaff = staffForApp.filter((e) => (e.role ?? 'staff') === 'staff');
 
   const candidateEmails = [
     supervisor.email,
     ...(GM_APPS.includes(app) ? gms.map((gm) => gm.email) : []),
-    ...[...centrals, ...otherEmployees].map((e) => employeeEmail(e.slug)),
+    ...[...centrals, ...otherStaff].map((e) => staffEmail(e.slug)),
   ];
 
   const existing = await prisma.agent.findMany({
@@ -48,8 +48,8 @@ export async function buildLoginCards(app: AppName): Promise<LoginCard[]> {
       }
     }
   }
-  for (const e of [...centrals, ...otherEmployees]) {
-    const email = employeeEmail(e.slug);
+  for (const e of [...centrals, ...otherStaff]) {
+    const email = staffEmail(e.slug);
     if (known.has(email)) cards.push({ email, name: e.name, kind: 'pin', group: e.group, gender: e.gender });
   }
   return cards;

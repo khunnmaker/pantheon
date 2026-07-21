@@ -21,7 +21,7 @@ list — each only when its table is empty.
 | Var | Value |
 |---|---|
 | `GM_PASSWORD` | Nee's GM login password (login email remains `md@prominent.local`). `MD_PASSWORD` is accepted as a fallback, so the existing Railway variable may remain untouched during rollout. |
-| `EMPLOYEE_PINS` | **One var for all EMPLOYEES slugs**, including `nun`, `poopae`, `win`, and `mail` — **exactly 6 digits per PIN** (non-6-digit entries skipped with a warning; weak PINs like 123456 warned). Someone missing from the list simply can't log in yet, and stale-account pruning stays disabled until everyone listed is provisioned, so adding the three Central Office accounts is safe before their Railway PINs exist. |
+| `STAFF_PINS` | **One var for all STAFF slugs**, including `nun`, `poopae`, `win`, and `mail` — **exactly 6 digits per PIN** (non-6-digit entries skipped with a warning; weak PINs like 123456 warned). `EMPLOYEE_PINS`/`AGENT_PINS` are accepted as deprecated fallbacks (`STAFF_PINS` wins on any slug clash). Someone missing from the list simply can't log in yet, and stale-account pruning stays disabled until everyone listed is provisioned, so adding the three Central Office accounts is safe before their Railway PINs exist. |
 | `CEO_LINE_USER_ID` | optional, suite-wide — the CEO's LINE userId for escalation pushes from the Prominent OA. To find it: message the OA from the personal account, then read the `Customer.lineUserId` of that chat (console or DB). Leave unset to disable pushes (escalations still appear in the CEO tab). |
 | `CERES_FLOOR` | optional, default `40000` (top-up trigger) |
 | `CERES_CEO_THRESHOLD` | optional, default `5000` (mandatory CEO pre-approval above this) |
@@ -31,13 +31,13 @@ Slug → person: nadeer NaDeer · anny Anny · noey Noey (sales — Minerva + Ce
 arm อาร์ม · man แมน · boonson บุญสอน · kaew แก้ว · lungko ลุงโก๊ะ · wong วง · paeng แป๋ง ·
 nun นุ่น · pin พิณ · da ด้า (couriers — Ceres) · lekmaeban เล็กแม่บ้าน (housekeeper — Ceres).
 **นี is Nee the GM — she logs in with `GM_PASSWORD` (`MD_PASSWORD` fallback), not a PIN.** The CEO logs in with the
-existing Dr. M supervisor account — no new login. What each employee can open is a per-person
+existing Dr. M supervisor account — no new login. What each staff member can open is a per-person
 grant list (`Agent.apps`), edited later in Jupiter's admin screen — position changes never
 touch env vars again.
 
 ### Ceres access and SSO
 
-- `supervisor` and `gm` Agents have implicit Ceres access. `central` and `employee` Agents need
+- `supervisor` and `gm` Agents have implicit Ceres access. `central` and `staff` Agents need
   `ceres` in `Agent.apps`.
 - A logged-out Ceres entry tries the shared suite cookie, then redirects to Pantheon with
   `?redirect=<complete-ceres-url>`. Ceres account cards never appear on the normal path.
@@ -71,12 +71,12 @@ npm run ceres:sso-readiness
 
 The command is read-only, prints counts and identifiers only, and exits non-zero when it finds
 any of the following: an active person party without a live Agent or Ceres access; a canonical
-target account that is missing or lacks its grant/implicit access; an employee/Central Office requester or
+target account that is missing or lacks its grant/implicit access; a staff/Central Office requester or
 other granted staff account without an active email-linked `CeresParty`; duplicate active party
 links for one email; or a historical expense whose referenced party row no longer exists.
 
 Repair grants and party links additively, rerun until green, then confirm the production Ceres
-origin, shared-cookie domain, and representative supervisor, GM, Central Office, employee, and original
+origin, shared-cookie domain, and representative supervisor, GM, Central Office, staff, and original
 messenger portal round trips. Never copy credential values into the audit or deployment log.
 
 ### B. Compatibility release (default for this phase)
@@ -97,7 +97,7 @@ Rollback is configuration/frontend-only:
    redeploy the previous Ceres frontend if the portal redirect itself must be reverted.
 2. Keep central `/api/auth/login`, existing Agent credentials/grants, bearer auth, shared cookies,
    `CeresParty` mappings, and historical party snapshots unchanged.
-3. No database rollback is needed. Do not restore `CERES_MESSENGER_PINS`; `EMPLOYEE_PINS` remains
+3. No database rollback is needed. Do not restore `CERES_MESSENGER_PINS`; `STAFF_PINS` remains
    the suite-wide staff credential source.
 4. If shared-cookie configuration is the fault, `?local=1` obtains a normal bearer token through
    central auth while SSO is repaired.

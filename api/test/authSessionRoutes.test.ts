@@ -36,7 +36,7 @@ const baseAgent = {
   email: 'staff@example.test',
   name: 'Staff',
   passwordHash: 'hash',
-  role: 'employee' as const,
+  role: 'staff' as const,
   apps: ['apollo'],
   authVersion: 0,
 };
@@ -69,7 +69,7 @@ describe('auth session routes', () => {
     }
   });
 
-  it('rolls an employee cookie at the original 7d tier and reissues a 12h bearer', async () => {
+  it('rolls a staff cookie at the original 7d tier and reissues a 12h bearer', async () => {
     const app = Fastify();
     await authRoutes(app);
 
@@ -81,7 +81,7 @@ describe('auth session routes', () => {
     expect(login.statusCode).toBe(200);
     expect(login.headers['set-cookie']).toContain('Max-Age=604800');
     const session = cookieToken(String(login.headers['set-cookie']));
-    expect(verifyToken(session, { scope: SESSION_SCOPE })).toMatchObject({ sessionTier: 'employee' });
+    expect(verifyToken(session, { scope: SESSION_SCOPE })).toMatchObject({ sessionTier: 'staff' });
 
     const me = await app.inject({
       method: 'GET',
@@ -99,7 +99,7 @@ describe('auth session routes', () => {
 
   it('invalidates old suite tokens while exempting the OA-sync scoped token', async () => {
     const oldBearer = signToken(baseAgent);
-    const oldSession = signSessionToken(baseAgent, 'employee');
+    const oldSession = signSessionToken(baseAgent, 'staff');
     const oaSync = signOaSyncToken(baseAgent);
     mocks.findUnique.mockResolvedValue({ ...baseAgent, authVersion: 1 });
 
@@ -133,7 +133,7 @@ describe('auth session routes', () => {
   });
 
   it('logout can identify the agent from the cookie when no bearer is supplied', async () => {
-    const session = signSessionToken(baseAgent, 'employee');
+    const session = signSessionToken(baseAgent, 'staff');
     const app = Fastify();
     await authRoutes(app);
     const logout = await app.inject({

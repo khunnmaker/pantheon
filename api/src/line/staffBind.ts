@@ -59,10 +59,10 @@ export async function handleStaffBindCommand(
   if (!agent) {
     await sendText('รหัสผูก LINE ไม่ถูกต้องหรือหมดอายุแล้ว');
   } else if (already && already.id !== agent.id) {
-    await sendText('LINE นี้ผูกกับบัญชีพนักงานอื่นแล้ว กรุณาติดต่อหัวหน้า');
+    await sendText('LINE นี้ผูกกับบัญชีทีมงานอื่นแล้ว กรุณาติดต่อหัวหน้า');
   } else {
     await prisma.agent.update({ where: { id: agent.id }, data: { lineUserId, lineBindCode: null } });
-    await sendText(`ผูก LINE กับบัญชีพนักงานสำเร็จแล้ว (${agent.name})`);
+    await sendText(`ผูก LINE กับบัญชีทีมงานสำเร็จแล้ว (${agent.name})`);
   }
   return true;
 }

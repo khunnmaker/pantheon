@@ -6,6 +6,6 @@ describe('Apollo manager role gate', () => {
     expect(isApolloManager('supervisor')).toBe(true);
     expect(isApolloManager('gm')).toBe(true);
     expect(isApolloManager('central')).toBe(false);
-    expect(isApolloManager('employee')).toBe(false);
+    expect(isApolloManager('staff')).toBe(false);
   });
 });

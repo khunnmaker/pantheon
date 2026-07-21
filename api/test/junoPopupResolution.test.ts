@@ -18,7 +18,7 @@ const mocks = vi.hoisted(() => {
 
 vi.mock('../src/auth/middleware.js', () => ({
   requireAuth: async (req: { agent?: unknown }) => {
-    req.agent = { id: 'agent-1', email: 'fin@example.test', name: 'FIN', role: 'employee', apps: ['juno'] };
+    req.agent = { id: 'agent-1', email: 'fin@example.test', name: 'FIN', role: 'staff', apps: ['juno'] };
   },
   requireApp: () => async () => undefined,
   requireRole: () => async () => undefined,

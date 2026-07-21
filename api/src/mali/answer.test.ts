@@ -47,7 +47,7 @@ describe('answerMaliQuestion', () => {
     mocks.retrieve.mockResolvedValue([{ ...article, similarity: 0.54 }]);
 
     const result = await answerMaliQuestion({
-      agent: { id: 'agent-1', role: 'employee' },
+      agent: { id: 'agent-1', role: 'staff' },
       questionText: 'ลางานอย่างไร',
       channel: 'line',
       now: new Date('2026-07-20T17:30:00.000Z'),
@@ -61,7 +61,7 @@ describe('answerMaliQuestion', () => {
 
   it('logs answered_auto and appends deterministic article-title citations above the gate', async () => {
     const result = await answerMaliQuestion({
-      agent: { id: 'agent-1', role: 'employee' },
+      agent: { id: 'agent-1', role: 'staff' },
       questionText: 'ลางานอย่างไร',
       channel: 'line',
     });
@@ -69,7 +69,7 @@ describe('answerMaliQuestion', () => {
     expect(result.status).toBe('answered_auto');
     expect(result.message).toContain('กรุณายื่นคำขอในระบบก่อนวันลาค่ะ');
     expect(result.message).toMatch(/ที่มา: วิธีขออนุมัติวันลา$/);
-    expect(mocks.retrieve).toHaveBeenCalledWith([0.1, 0.2], 'employee', 'line', 6);
+    expect(mocks.retrieve).toHaveBeenCalledWith([0.1, 0.2], 'staff', 'line', 6);
     expect(mocks.callClaude).toHaveBeenCalledWith(
       'ลางานอย่างไร',
       expect.stringContaining('ตอบคำถามจากบทความที่ให้มาเท่านั้น'),
@@ -84,7 +84,7 @@ describe('answerMaliQuestion', () => {
     mocks.callClaude.mockResolvedValue('น้องมะลิไม่ทราบค่ะ');
 
     const result = await answerMaliQuestion({
-      agent: { id: 'agent-1', role: 'employee' },
+      agent: { id: 'agent-1', role: 'staff' },
       questionText: 'เรื่องที่ไม่มีในบทความ',
       channel: 'line',
     });
@@ -97,7 +97,7 @@ describe('answerMaliQuestion', () => {
     mocks.count.mockResolvedValue(2);
 
     const result = await answerMaliQuestion({
-      agent: { id: 'agent-1', role: 'employee' },
+      agent: { id: 'agent-1', role: 'staff' },
       questionText: 'คำถามถัดไป',
       channel: 'line',
     });

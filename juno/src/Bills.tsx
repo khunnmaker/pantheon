@@ -41,7 +41,7 @@ function BillStatusChip({ status }: { status: ManualBillStatus }) {
 
 // canDelete = CEO-only ลบถาวร (mirrors the payment drawer's gate; server 403s non-supervisor).
 // canEdit = gm/supervisor only (owner 2026-07-15): FIN sees the ledger + print but never
-// issues/edits/voids — mirrors the server's EMPLOYEE_JUNO_DENIED_ROUTES 403s.
+// issues/edits/voids — mirrors the server's STAFF_JUNO_DENIED_ROUTES 403s.
 export default function Bills({ onCountsChanged, canDelete, canEdit }: { onCountsChanged: (counts: ManualBillCounts) => void; canDelete: boolean; canEdit: boolean }) {
   const [q, setQ] = useState('');
   const [status, setStatus] = useState<ManualBillStatusFilter>('all');

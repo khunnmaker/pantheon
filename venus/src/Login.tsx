@@ -4,13 +4,13 @@ import { login, setSession, getLogins, type Agent, type LoginName } from './lib/
 
 // Venus login — suite card-list pattern (same shape as Ceres/Juno/Jupiter): pick your
 // name card, 'password'-kind cards (supervisor/gm) open a password field, 'pin'-kind
-// cards (employees) open a 6-digit PIN pad. Falls back to a manual email/password form
+// cards (staff) open a 6-digit PIN pad. Falls back to a manual email/password form
 // (AdminLogin) if the card list fails to load.
 //
 // Unlike Ceres, the login screen does NOT hard-block by role: access to Venus is
-// per-grant (requireApp('venus') server-side — supervisor always in, employees need the
+// per-grant (requireApp('venus') server-side — supervisor always in, staff need the
 // explicit 'venus' grant, gm excluded). Any account that authenticates here is let in;
-// an ungranted employee gets a friendly 403 state after login instead (see App.tsx).
+// an ungranted staff member gets a friendly 403 state after login instead (see App.tsx).
 export default function Login({ onLogin }: { onLogin: (agent: Agent) => void }) {
   const [manual, setManual] = useState(false);
 

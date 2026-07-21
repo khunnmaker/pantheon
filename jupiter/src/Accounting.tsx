@@ -81,7 +81,7 @@ type Tab = 'overview' | 'journal' | 'txns' | 'reports' | 'ai-cost';
 // The whole component is supervisor-only (gated by the caller in App.tsx) with no further
 // per-tab role split inside it, so the base 4 tabs are always valid. "ต้นทุน AI" hits a
 // supervisor-only endpoint underneath (GET /api/jupiter/token-usage), so — since `jupiter`
-// app access can in principle be granted to a non-supervisor agent (central/employee `apps`
+// app access can in principle be granted to a non-supervisor agent (central/staff `apps`
 // list) — that one tab is additionally gated on agent.role here, both in the tab list
 // (useHashTab falls back to the default for a now-invalid hash) and in the nav button.
 const ACCT_TABS: Tab[] = ['overview', 'journal', 'txns', 'reports'];

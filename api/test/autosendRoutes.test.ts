@@ -46,7 +46,7 @@ describe('autosend config authorization', () => {
   });
 
   it('rejects an agent from both config endpoints', async () => {
-    mocks.role = 'employee';
+    mocks.role = 'staff';
     const app = Fastify(); await autosendRoutes(app);
     expect((await app.inject({ method: 'GET', url: '/api/autosend/config' })).statusCode).toBe(403);
     expect((await app.inject({ method: 'POST', url: '/api/autosend/config', payload: { enabled: true, delaySeconds: 60 } })).statusCode).toBe(403);

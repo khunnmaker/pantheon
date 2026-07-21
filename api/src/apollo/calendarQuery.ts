@@ -48,8 +48,8 @@ export interface CalendarScope {
    *  (tasks) / no-one (events — see resolveCalendarScope's doc), string = one agent id. */
   assigneeId?: string | null;
   /** true when the tasks where-clause must ALSO restrict to projects the viewer is a member
-   *  of. Only ever true for an employee's non-self scope — a manager sees every project, and
-   *  an employee's own self-scope is unrestricted (exactly the old forced-to-self behavior). */
+   *  of. Only ever true for a staff member's non-self scope — a manager sees every project, and
+   *  a staff member's own self-scope is unrestricted (exactly the old forced-to-self behavior). */
   memberProjectOnly: boolean;
 }
 
@@ -58,10 +58,10 @@ export interface CalendarScope {
  * - manager: assignee param drives it directly, exactly as before — a specific agentId scopes
  *   to that person, 'none' scopes to unassigned-only, 'all'/omitted means everyone; never
  *   member-restricted (managers already see across every project).
- * - employee, self scope (param omitted, or equal to the viewer's own id): own assigned tasks
+ * - staff, self scope (param omitted, or equal to the viewer's own id): own assigned tasks
  *   in any non-archived project — the old forced-to-self behavior, unrestricted by project
  *   membership.
- * - employee, any other scope ('all' | 'none' | someone else's id): now HONORED — peers may
+ * - staff, any other scope ('all' | 'none' | someone else's id): now HONORED — peers may
  *   check each other's availability — but member-restricted, so tasks only ever surface within
  *   projects the viewer is already a member of (no new task info leaks beyond what the board
  *   already shows them). Events carry no such restriction (see the GET /calendar route): the

@@ -92,7 +92,7 @@ export default function Login({ onLogin }: { onLogin: (agent: Agent) => void }) 
           <Bot size={24} />
           <h1 className="text-xl font-bold">Minerva</h1>
         </div>
-        <p className="text-sm text-slate-500 mb-5">คอนโซลพนักงาน · เลือกชื่อเพื่อเข้าสู่ระบบ</p>
+        <p className="text-sm text-slate-500 mb-5">คอนโซลทีมงาน · เลือกชื่อเพื่อเข้าสู่ระบบ</p>
 
         {view === 'list' ? (
           <>

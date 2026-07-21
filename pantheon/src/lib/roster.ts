@@ -3,7 +3,7 @@
 // type a password; everyone else uses a masked auto-submit 6-digit PIN).
 //
 // Emails follow the suite convention (<slug>@prominent.local) and MUST mirror the seeded
-// accounts in api/src/db/ensureSeeded.ts (TIER_ACCOUNTS + EMPLOYEES) — that seed is the single
+// accounts in api/src/db/ensureSeeded.ts (TIER_ACCOUNTS + STAFF) — that seed is the single
 // source of truth for who can log in. A card whose email isn't a seeded account simply can't
 // log in (the api rejects it). This roster is DISPLAY only; it never sets backend roles/apps.
 //
@@ -93,7 +93,7 @@ export const ROLE_GROUPS: RoleGroup[] = [
     color: 'bg-rose-600',
     members: [
       // Benz & Meow are the finance (Juno) staff. These cards must stay in step with the
-      // seeded finance accounts in api/src/db/ensureSeeded.ts (provisioned via EMPLOYEE_PINS on
+      // seeded finance accounts in api/src/db/ensureSeeded.ts (provisioned via STAFF_PINS on
       // Railway) — edit both places when finance staff change.
       { email: slugEmail('benz'), label: 'Benz', cred: 'pin', gender: 'female' },
       { email: slugEmail('meow'), label: 'Meow', cred: 'pin', gender: 'female' },

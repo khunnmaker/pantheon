@@ -8,14 +8,14 @@ import { backfillProductEmbeddings } from '../catalog/productEmbeddings.js';
 
 // Canonical staff roster — the single source of truth for who can log in.
 // Synced on every boot (see syncStaff): names/roles come from here, passwords from the
-// named env var(s), and any account NOT in TIER_ACCOUNTS + EMPLOYEES is removed. Passwords
+// named env var(s), and any account NOT in TIER_ACCOUNTS + STAFF is removed. Passwords
 // are never committed — only the env-var NAME lives in code.
 //
 // Four tiers (unified auth):
 //   supervisor — Dr. M, implicit access to everything.
 //   gm         — Nee and Noon, implicit access via GM_APPS in auth/jwt.ts (including scoped Juno).
-//   central    — Central Office; employee-equivalent per-person app access today.
-//   employee   — all staff; per-person app access via Agent.apps (owner-edited, Pantheon's
+//   central    — Central Office; staff-equivalent per-person app access today.
+//   staff      — all staff; per-person app access via Agent.apps (owner-edited, Pantheon's
 //                admin UI — boot-sync never overwrites it on an existing row).
 // `group` + `gender` are DISPLAY metadata for the suite login screens (role-grouped tiles +
 // cute avatars) — they mirror Pantheon's portal grouping and have nothing to do with auth.
@@ -27,21 +27,21 @@ export const TIER_ACCOUNTS = [
   { email: 'nun@prominent.local', name: 'นุ่น', role: 'gm', pwEnvs: ['GM_PASSWORD', 'MD_PASSWORD'], group: 'gm', gender: 'female' },
 ] as const;
 
-// Every employee, each with their own 6-digit PIN (EMPLOYEE_PINS) and a per-person set of
-// app grants. NOTE: Nee and Noon are GM tier accounts above — they are NOT employee rows (the
+// Every staff member, each with their own 6-digit PIN (STAFF_PINS) and a per-person set of
+// app grants. NOTE: Nee and Noon are GM tier accounts above — they are NOT staff rows (the
 // old MESSENGERS list wrongly included her under a "nee" slug; fixed here).
 // `group` + `gender`: DISPLAY metadata for the login screens (see TIER_ACCOUNTS note). The
 // group mirrors Pantheon's portal grouping — note นุ่น displays under GM and พิณ/เล็ก under Others.
-type EmployeeSeed = {
+type StaffSeed = {
   slug: string;
   name: string;
   apps: readonly string[];
-  role?: 'central' | 'employee';
+  role?: 'central' | 'staff';
   group: string;
   gender: 'male' | 'female';
 };
 
-export const EMPLOYEES: readonly EmployeeSeed[] = [
+export const STAFF: readonly StaffSeed[] = [
   { slug: 'nadeer', name: 'NaDeer', apps: ['minerva', 'ceres', 'apollo'], group: 'sales', gender: 'female' },
   { slug: 'anny', name: 'Anny', apps: ['minerva', 'ceres', 'apollo'], group: 'sales', gender: 'female' },
   { slug: 'noey', name: 'Noey', apps: ['minerva', 'ceres', 'apollo'], group: 'sales', gender: 'female' },
@@ -60,7 +60,7 @@ export const EMPLOYEES: readonly EmployeeSeed[] = [
   { slug: 'win', name: 'วิน', apps: ['minerva', 'ceres', 'apollo'], role: 'central', group: 'central', gender: 'male' },
   // Mail (Central Office) — owner-granted per-person MB bills-CRUD access in Juno (2026-07-21),
   // same lane as Nee/Noon (see BILL_ISSUER_EMAILS in routes/juno.ts). Her 'central' role stays
-  // employee-equivalent everywhere else — this is a per-person grant, not a role widening.
+  // staff-equivalent everywhere else — this is a per-person grant, not a role widening.
   { slug: 'mail', name: 'เมล', apps: ['minerva', 'ceres', 'apollo', 'juno'], role: 'central', group: 'central', gender: 'female' },
   { slug: 'pin', name: 'พิณ', apps: ['ceres', 'apollo'], group: 'others', gender: 'male' },
   { slug: 'lekmaeban', name: 'เล็กแม่บ้าน', apps: ['ceres', 'apollo'], group: 'others', gender: 'female' }, // housekeeper — enters expenses like everyone
@@ -71,7 +71,7 @@ export const EMPLOYEES: readonly EmployeeSeed[] = [
   { slug: 'meow', name: 'Meow', apps: ['minerva', 'juno', 'ceres', 'apollo'], group: 'finance', gender: 'female' },
 ];
 
-export const employeeEmail = (slug: string): string => `${slug}@prominent.local`;
+export const staffEmail = (slug: string): string => `${slug}@prominent.local`;
 
 // Weak/common 6-digit PINs — still accepted (never lock someone out over this) but
 // worth a boot-log nudge to change them. Never paired with the actual value in a log.
@@ -80,11 +80,11 @@ const WEAK_PINS = new Set([
   '555555', '666666', '777777', '888888', '999999', '112233', '121212',
 ]);
 
-// Parse a PIN map env ("name:pin,name:pin") → Map of key → 6-digit PIN. Used for EMPLOYEE_PINS
-// (all EMPLOYEES entries, keyed by slug) and the deprecated AGENT_PINS transition fallback. Invalid
-// entries are warned and skipped (a malformed env must never lock anyone out). Weak PINs are
-// accepted but warned.
-export function parseAgentPins(raw: string, label = 'AGENT_PINS'): Map<string, string> {
+// Parse a PIN map env ("name:pin,name:pin") → Map of key → 6-digit PIN. Used for STAFF_PINS
+// (all STAFF entries, keyed by slug) and the deprecated EMPLOYEE_PINS/AGENT_PINS transition
+// fallbacks. Invalid entries are warned and skipped (a malformed env must never lock anyone
+// out). Weak PINs are accepted but warned.
+export function parsePinMap(raw: string, label = 'STAFF_PINS'): Map<string, string> {
   const pins = new Map<string, string>();
   for (const entry of raw.split(',')) {
     const trimmed = entry.trim();
@@ -107,14 +107,14 @@ export function parseAgentPins(raw: string, label = 'AGENT_PINS'): Map<string, s
   return pins;
 }
 
-// Reconcile the agent table to the canonical roster (TIER_ACCOUNTS + EMPLOYEES) on boot.
+// Reconcile the agent table to the canonical roster (TIER_ACCOUNTS + STAFF) on boot.
 // Idempotent: upserts names/roles/passwords and prunes stale logins. A missing password/PIN
 // skips just that account (never seeds a blank/default password); pruning is guarded so a
 // misconfigured env can never delete the last working login.
 //
 // Staff credentials come from env: SEED_PASSWORD (Dr. M), GM_PASSWORD or fallback MD_PASSWORD
-// (Nee and Noon), EMPLOYEE_PINS (all
-// employees, "slug:pin,…"). An account with no configured secret is skipped — never seeded with
+// (Nee and Noon), STAFF_PINS (all
+// staff, "slug:pin,…"). An account with no configured secret is skipped — never seeded with
 // a blank/default — and a fully-unprovisioned env can never prune/lock everyone out (see the
 // allProvisioned guard below). The old AGENT_PINS / STAFF_PASSWORD / CERES_MD_PASSWORD transition
 // fallbacks were removed 2026-07-07 once the new vars were confirmed live on Railway.
@@ -150,25 +150,29 @@ export async function syncStaff(): Promise<void> {
     });
   }
 
-  // Employees, each with their own 6-digit PIN and per-person app grants. Accept BOTH the
-  // current EMPLOYEE_PINS and the legacy AGENT_PINS name (some deployments never renamed the
-  // Railway var): start from AGENT_PINS, then overlay EMPLOYEE_PINS so the canonical name wins
-  // on any slug that appears in both. Either var alone fully provisions the roster.
-  const employeePins = parseAgentPins(env.AGENT_PINS, 'AGENT_PINS');
-  for (const [slug, pin] of parseAgentPins(env.EMPLOYEE_PINS, 'EMPLOYEE_PINS')) {
-    employeePins.set(slug, pin);
+  // Staff, each with their own 6-digit PIN and per-person app grants. Accept STAFF_PINS
+  // (canonical) plus the legacy EMPLOYEE_PINS and AGENT_PINS names (some deployments never
+  // renamed the Railway var): start from AGENT_PINS, overlay EMPLOYEE_PINS, then overlay
+  // STAFF_PINS so the canonical name wins on any slug that appears in more than one. Any
+  // one var alone fully provisions the roster.
+  const staffPins = parsePinMap(env.AGENT_PINS, 'AGENT_PINS');
+  for (const [slug, pin] of parsePinMap(env.EMPLOYEE_PINS, 'EMPLOYEE_PINS')) {
+    staffPins.set(slug, pin);
   }
-  if (employeePins.delete('nun')) {
+  for (const [slug, pin] of parsePinMap(env.STAFF_PINS, 'STAFF_PINS')) {
+    staffPins.set(slug, pin);
+  }
+  if (staffPins.delete('nun')) {
     // eslint-disable-next-line no-console
     console.warn('[staff] PIN entry for "nun" is deprecated and ignored; Noon uses GM_PASSWORD');
   }
-  for (const e of EMPLOYEES) {
-    const email = employeeEmail(e.slug);
-    const pin = employeePins.get(e.slug);
+  for (const e of STAFF) {
+    const email = staffEmail(e.slug);
+    const pin = staffPins.get(e.slug);
     if (!pin) {
       allProvisioned = false;
       // eslint-disable-next-line no-console
-      console.warn(`[staff] no PIN configured for employee "${e.slug}" — skipping ${email}`);
+      console.warn(`[staff] no PIN configured for staff "${e.slug}" — skipping ${email}`);
       continue;
     }
     const existing = await prisma.agent.findUnique({
@@ -180,19 +184,19 @@ export async function syncStaff(): Promise<void> {
         ? existing.passwordHash
         : await hashPassword(pin);
     // apps: the roster declaration is the FLOOR of a person's grants — every app listed in
-    // EMPLOYEES is applied as a UNION with whatever is already on the row (ADDITIVE: a declared
+    // STAFF is applied as a UNION with whatever is already on the row (ADDITIVE: a declared
     // grant is always present, but any extra grant added out-of-band survives). This lets an
-    // owner-requested grant change (edit EMPLOYEES) actually propagate to existing rows, while
+    // owner-requested grant change (edit STAFF) actually propagate to existing rows, while
     // never removing a grant on deploy — so no one is ever locked out. To REVOKE, remove the
-    // app from EMPLOYEES here (it stops being re-added) or pull the PIN to kill the login entirely.
+    // app from STAFF here (it stops being re-added) or pull the PIN to kill the login entirely.
     const mergedApps = existing
       ? Array.from(new Set([...existing.apps, ...e.apps]))
       : [...e.apps];
     const appsGrew = existing !== null && mergedApps.length > existing.apps.length;
     await prisma.agent.upsert({
       where: { email },
-      update: { name: e.name, role: e.role ?? 'employee', passwordHash, apps: mergedApps },
-      create: { email, name: e.name, role: e.role ?? 'employee', passwordHash, apps: [...e.apps] },
+      update: { name: e.name, role: e.role ?? 'staff', passwordHash, apps: mergedApps },
+      create: { email, name: e.name, role: e.role ?? 'staff', passwordHash, apps: [...e.apps] },
     });
     if (appsGrew) {
       // eslint-disable-next-line no-console
@@ -200,10 +204,10 @@ export async function syncStaff(): Promise<void> {
     }
   }
 
-  // Prune stale accounts only once EVERY canonical account (tier accounts + employees) is
+  // Prune stale accounts only once EVERY canonical account (tier accounts + staff) is
   // provisioned, so old logins keep working until the new ones are fully in place (e.g.
-  // before EMPLOYEE_PINS is set) and a misconfigured env can never lock everyone out.
-  const emails = [...TIER_ACCOUNTS.map((t) => t.email), ...EMPLOYEES.map((e) => employeeEmail(e.slug))];
+  // before STAFF_PINS is set) and a misconfigured env can never lock everyone out.
+  const emails = [...TIER_ACCOUNTS.map((t) => t.email), ...STAFF.map((e) => staffEmail(e.slug))];
   if (allProvisioned) {
     const { count } = await prisma.agent.deleteMany({ where: { email: { notIn: emails } } });
     if (count > 0) {

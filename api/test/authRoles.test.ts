@@ -9,7 +9,7 @@ beforeAll(async () => {
   auth = await import('../src/auth/jwt.js');
 });
 
-const agent = (role: 'supervisor' | 'gm' | 'central' | 'employee', apps: string[] = []) => ({
+const agent = (role: 'supervisor' | 'gm' | 'central' | 'staff', apps: string[] = []) => ({
   id: `${role}-1`, email: `${role}@example.test`, name: role, role, apps, authVersion: 0,
 });
 
@@ -32,6 +32,30 @@ describe('unified auth roles', () => {
     expect(auth.verifyToken(token)).toMatchObject({ id: 'legacy-central-1', role: 'agm', authVersion: 0 });
   });
 
+  it('accepts a legacy employee role claim (pre-rename token) at token verification', () => {
+    const token = jwt.sign(
+      { email: 'legacy-staff@example.test', name: 'Legacy Staff', role: 'employee' },
+      'unit-test-jwt-secret',
+      { subject: 'legacy-staff-1', algorithm: 'HS256', expiresIn: '1h' },
+    );
+    expect(auth.verifyToken(token)).toMatchObject({ id: 'legacy-staff-1', role: 'employee', authVersion: 0 });
+  });
+
+  it('maps a legacy sessionTier:"employee" cookie claim onto "staff" on verification', () => {
+    const token = jwt.sign(
+      {
+        email: 'legacy-staff@example.test',
+        name: 'Legacy Staff',
+        role: 'employee',
+        scope: auth.SESSION_SCOPE,
+        sessionTier: 'employee',
+      },
+      'unit-test-jwt-secret',
+      { subject: 'legacy-staff-1', algorithm: 'HS256', expiresIn: '7d' },
+    );
+    expect(auth.verifyToken(token, { scope: auth.SESSION_SCOPE })).toMatchObject({ sessionTier: 'staff' });
+  });
+
   it('gives gm the implicit GM_APPS set', () => {
     for (const app of auth.GM_APPS) expect(auth.hasAppAccess(agent('gm'), app)).toBe(true);
     expect(auth.hasAppAccess(agent('gm'), 'venus')).toBe(false);
@@ -43,7 +67,7 @@ describe('unified auth roles', () => {
     expect(auth.hasAppAccess(agent('central', ['apollo']), 'juno')).toBe(false);
   });
 
-  it('admits a central account to juno ONLY once granted (Mail, 2026-07-21) — the role stays employee-equivalent, not widened', () => {
+  it('admits a central account to juno ONLY once granted (Mail, 2026-07-21) — the role stays staff-equivalent, not widened', () => {
     expect(auth.hasAppAccess(agent('central', ['minerva', 'ceres', 'apollo']), 'juno')).toBe(false);
     expect(auth.hasAppAccess(agent('central', ['minerva', 'ceres', 'apollo', 'juno']), 'juno')).toBe(true);
   });
@@ -65,8 +89,8 @@ describe('unified auth roles', () => {
       const claims = jwt.decode(token) as jwt.JwtPayload;
       return Number(claims.exp) - Number(claims.iat);
     };
-    expect(seconds(auth.signToken(agent('employee')))).toBe(12 * 60 * 60);
-    expect(seconds(auth.signSessionToken(agent('employee'), 'employee'))).toBe(7 * 24 * 60 * 60);
+    expect(seconds(auth.signToken(agent('staff')))).toBe(12 * 60 * 60);
+    expect(seconds(auth.signSessionToken(agent('staff'), 'staff'))).toBe(7 * 24 * 60 * 60);
     expect(seconds(auth.signSessionToken(agent('gm'), 'manager'))).toBe(30 * 24 * 60 * 60);
   });
 });

@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Apollo — employee task and project management",
+  "description": "Apollo — staff task and project management",
   "scripts": {
     "dev": "vite --host --port 5180",
     "build": "tsc -b && node build.mjs",

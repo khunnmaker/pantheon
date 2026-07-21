@@ -15,7 +15,7 @@ const mocks = vi.hoisted(() => ({
   createCategories: vi.fn(),
 }));
 
-vi.mock('../src/db/ensureSeeded.js', () => ({ EMPLOYEES: [], employeeEmail: vi.fn() }));
+vi.mock('../src/db/ensureSeeded.js', () => ({ STAFF: [], staffEmail: vi.fn() }));
 vi.mock('../src/db/prisma.js', () => ({
   prisma: {
     cashAccount: { count: vi.fn().mockResolvedValue(1) },

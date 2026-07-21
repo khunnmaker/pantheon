@@ -1,19 +1,19 @@
 import jwt from 'jsonwebtoken';
 import { env } from '../env.js';
 
-// Unified auth: four live tiers. 'agm'/'md'/'agent'/'messenger' are RETIRED roles — no live Agent row
-// can carry them after boot (ensureSeeded heals every row to one of the four below) — but a
-// pre-deploy bearer/session token signed under an old scheme may still carry one until expiry.
-export type Role = 'supervisor' | 'gm' | 'central' | 'employee';
+// Unified auth: four live tiers. 'agm'/'md'/'agent'/'messenger'/'employee' are RETIRED roles — no
+// live Agent row can carry them after boot (ensureSeeded heals every row to one of the four below)
+// — but a pre-deploy bearer/session token signed under an old scheme may still carry one until expiry.
+export type Role = 'supervisor' | 'gm' | 'central' | 'staff';
 // Every live role, as a runtime tuple. Use where an endpoint means "any authenticated
 // account" and then gates per-app inside the handler (see middleware.requireAnyAuth /
 // the Pantheon badges route). Mirrors LIVE_ROLES in middleware.ts; adding a future role
 // here keeps those "any account" paths from silently omitting it.
-export const ALL_ROLES = ['supervisor', 'gm', 'central', 'employee'] as const;
+export const ALL_ROLES = ['supervisor', 'gm', 'central', 'staff'] as const;
 // Accepted at TOKEN VERIFICATION ONLY, so an old token isn't rejected outright mid-rollout;
 // every consumer re-reads the LIVE Agent row (see authedAgentFromToken), which decides real
-// access and can never itself be 'agm'/'md'/'agent'/'messenger' post-boot.
-const TOKEN_ROLES = ['supervisor', 'gm', 'central', 'employee', 'agm', 'md', 'agent', 'messenger'] as const;
+// access and can never itself be 'agm'/'md'/'agent'/'messenger'/'employee' post-boot.
+const TOKEN_ROLES = ['supervisor', 'gm', 'central', 'staff', 'employee', 'agm', 'md', 'agent', 'messenger'] as const;
 type TokenRole = (typeof TOKEN_ROLES)[number];
 
 // The suite's app names — the SINGLE source of truth (runtime tuple + type). requireApp,
@@ -70,14 +70,14 @@ export function signOaSyncToken(agent: TokenAgent): string {
 // still re-read from the live Agent row per request, so removing/demoting an account revokes
 // a remembered device immediately despite the TTL. The bearer tokens apps hold stay 12h.
 export const SESSION_SCOPE = 'session';
-export type SessionTier = 'manager' | 'employee';
+export type SessionTier = 'manager' | 'staff';
 export const SESSION_MAX_AGE_SECONDS: Record<SessionTier, number> = {
   manager: 30 * 24 * 60 * 60,
-  employee: 7 * 24 * 60 * 60,
+  staff: 7 * 24 * 60 * 60,
 };
 
 export function sessionTierForRole(role: Role): SessionTier {
-  return role === 'supervisor' || role === 'gm' ? 'manager' : 'employee';
+  return role === 'supervisor' || role === 'gm' ? 'manager' : 'staff';
 }
 
 export function signSessionToken(agent: TokenAgent, sessionTier: SessionTier): string {
@@ -113,7 +113,14 @@ export function verifyToken(
     if (!p.sub || !TOKEN_ROLES.includes(p.role)) return null;
     const scope = typeof p.scope === 'string' ? p.scope : undefined;
     if (scope && scope !== opts?.scope) return null; // scoped token: only valid on a matching-scope path
-    const sessionTier = p.sessionTier === 'manager' || p.sessionTier === 'employee' ? p.sessionTier : undefined;
+    // Legacy cookies signed before the employee→staff rename still carry sessionTier:'employee';
+    // map them onto 'staff' on read so they keep their original (shorter) TTL tier.
+    const sessionTier =
+      p.sessionTier === 'manager' || p.sessionTier === 'staff'
+        ? p.sessionTier
+        : p.sessionTier === 'employee'
+          ? 'staff'
+          : undefined;
     const authVersion = Number.isInteger(p.authVersion) && Number(p.authVersion) >= 0 ? Number(p.authVersion) : 0;
     return {
       id: String(p.sub),
@@ -131,7 +138,7 @@ export function verifyToken(
 
 // supervisor → everything; gm → Ceres + Minerva + Juno + Apollo. The Juno grant admits GMs,
 // while routes/juno.ts narrows them to bills/products only (owner decision 2026-07-13).
-// central/employee → their own per-person Agent.apps grant list.
+// central/staff → their own per-person Agent.apps grant list.
 export const GM_APPS: readonly AppName[] = ['ceres', 'minerva', 'juno', 'apollo'];
 export function hasAppAccess(agent: AuthedAgent, app: AppName): boolean {
   // Mali is an all-staff app. Article audience is enforced by Mali's own queries.

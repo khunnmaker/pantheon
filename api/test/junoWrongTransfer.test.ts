@@ -2,7 +2,7 @@ import Fastify from 'fastify';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => {
-  const role = { value: 'employee' };
+  const role = { value: 'staff' };
   const payment = {
     findUnique: vi.fn(), update: vi.fn(), findMany: vi.fn(), count: vi.fn(), updateMany: vi.fn(),
   };
@@ -66,7 +66,7 @@ async function server() {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mocks.role.value = 'employee';
+  mocks.role.value = 'staff';
   mocks.paymentBankMatch.findMany.mockResolvedValue([]);
   mocks.paymentBankMatch.count.mockResolvedValue(0);
   mocks.reReceipt.findMany.mockResolvedValue([]);

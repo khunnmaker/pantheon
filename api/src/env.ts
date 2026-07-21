@@ -48,10 +48,13 @@ const schema = z.object({
   // host-only cookie, no cross-subdomain SSO. See api/src/auth/cookies.ts.
   COOKIE_DOMAIN: z.string().default(''),
 
-  // Unified auth: every employee's 6-digit PIN, "slug:pin,slug:pin" (slug = EMPLOYEES entry).
+  // Unified auth: every staff member's 6-digit PIN, "slug:pin,slug:pin" (slug = STAFF entry).
+  STAFF_PINS: z.string().default(''),
+  // Legacy name for the same map (pre-rename) — some deployments still maintain the var under
+  // EMPLOYEE_PINS. Read as an equal source and merged in (STAFF_PINS wins on any slug clash).
   EMPLOYEE_PINS: z.string().default(''),
   // Legacy name for the same map — some deployments still maintain the var under AGENT_PINS.
-  // Read as an equal source and merged with EMPLOYEE_PINS (EMPLOYEE_PINS wins on any slug clash).
+  // Read as an equal source and merged in (STAFF_PINS wins on any slug clash, then EMPLOYEE_PINS).
   AGENT_PINS: z.string().default(''),
   // Unified auth: Nee and Noon intentionally share this GM password. MD_PASSWORD remains a deployment fallback.
   GM_PASSWORD: z.string().default(''),

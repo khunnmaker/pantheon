@@ -46,7 +46,7 @@ export default function Audit({ isCeo, onResolved }: { isCeo: boolean; onResolve
       <div className="flex items-center gap-2 text-emerald-700">
         <Banknote size={20} />
         <h1 className="text-lg font-bold text-slate-800">ตรวจสอบยอด</h1>
-        <span className="text-xs text-slate-400">รายการที่พนักงานแก้ยอดจากสลิป ({audits.length})</span>
+        <span className="text-xs text-slate-400">รายการที่ทีมงานแก้ยอดจากสลิป ({audits.length})</span>
         <button onClick={load} className="ml-auto text-xs text-slate-500 hover:text-slate-700 flex items-center gap-1">
           <RefreshCw size={13} /> รีเฟรช
         </button>

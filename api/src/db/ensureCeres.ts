@@ -1,5 +1,5 @@
 import { prisma } from './prisma.js';
-import { EMPLOYEES, employeeEmail } from './ensureSeeded.js';
+import { STAFF, staffEmail } from './ensureSeeded.js';
 
 // Carrier-bucket parties (kind "carrier") — expenses booked against a courier
 // rather than a person. sortOrder 100+ so they always list after the messengers.
@@ -51,10 +51,10 @@ export async function ensureCeres(): Promise<void> {
     }
 
     if ((await prisma.ceresParty.count()) === 0) {
-      const persons = EMPLOYEES.map((e, i) => ({
+      const persons = STAFF.map((e, i) => ({
         name: e.name,
         kind: 'person',
-        agentEmail: employeeEmail(e.slug),
+        agentEmail: staffEmail(e.slug),
         sortOrder: i,
       }));
       const carriers = CARRIERS.map((c) => ({
@@ -70,13 +70,13 @@ export async function ensureCeres(): Promise<void> {
 
     // Idempotent roster fixups (run every boot; cheap). Production was seeded from the
     // pre-unification roster (13 "messenger" parties on m-<slug>@ emails, incl. นี), so:
-    //  (a) every EMPLOYEE gets a person party linked to the CURRENT <slug>@ email —
+    //  (a) every STAFF entry gets a person party linked to the CURRENT <slug>@ email —
     //      relinks the old m-<slug>@ rows and creates missing parties (e.g. the three
     //      sales, who also enter expenses under the unified model);
-    //  (b) the party named "นี" is Nee the GM, not an employee (owner correction) —
+    //  (b) the party named "นี" is Nee the GM, not staff (owner correction) —
     //      unlink + deactivate it, but NEVER delete (append-only history).
-    for (const [i, e] of EMPLOYEES.entries()) {
-      const email = employeeEmail(e.slug);
+    for (const [i, e] of STAFF.entries()) {
+      const email = staffEmail(e.slug);
       const party = await prisma.ceresParty.findUnique({ where: { name: e.name } });
       if (!party) {
         await prisma.ceresParty.create({
@@ -97,7 +97,7 @@ export async function ensureCeres(): Promise<void> {
         data: { agentEmail: null, active: false },
       });
       // eslint-disable-next-line no-console
-      console.log('[seed] unlinked/deactivated party "นี" (she is the GM, not an employee)');
+      console.log('[seed] unlinked/deactivated party "นี" (she is the GM, not staff)');
     }
 
     await prisma.ceresCategory.createMany({
