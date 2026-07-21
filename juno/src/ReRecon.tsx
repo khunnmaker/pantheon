@@ -483,7 +483,7 @@ function ReDetail({ row, isCeo, onMutated }: { row: ReReconRow; isCeo: boolean; 
         {/* XS only (task A): amount above is the FIN-declared confirmedAmount used for pricing —
             this shows the raw STTRNR6.TXT figure only when it differs, never used for math. */}
         {row.importedAmount !== undefined && (
-          <span className="text-slate-400">ยอดดิบจากรายงาน: {baht(row.importedAmount)}</span>
+          <span className="text-slate-400">ยอดดิบจากรายงาน: {baht(row.importedAmount)} (ไม่ใช้)</span>
         )}
         {row.paymentCount > 0 && (
           <span>รับเงินจริง (gross): <span className="text-slate-700 font-medium">{baht(row.paidGross)}</span></span>

@@ -281,16 +281,17 @@ describe('POST /api/juno/xs/import — UPDATE branch never touches confirmedAmou
   });
 });
 
-describe('GET /api/juno/re — XS pricing uses confirmedAmount over the raw imported figure', () => {
-  it('prices by confirmedAmount when declared, falls back to raw when not, and surfaces a zero-imported-but-confirmed doc', async () => {
+describe('GET /api/juno/re — XS pricing uses confirmedAmount ONLY (no raw fallback, owner 2026-07-21)', () => {
+  it('prices by confirmedAmount when declared, shows an unconfirmed doc at 0, and surfaces a zero-imported-but-confirmed doc', async () => {
     const app = await server();
     mocks.xsDoc.findMany.mockResolvedValueOnce([
       // override: raw 100, FIN declared 250 — priced at 250; importedAmount shown (differs)
       baseXsDoc({ id: 'x1', xsNo: 'XS6900341', amount: '100.00', confirmedAmount: '250.00' }),
-      // fallback: no confirmedAmount — priced at the raw 300; no importedAmount hint (same figure)
+      // unconfirmed: raw 300 is meaningless — row still listed (raw > 0 = real sale) but priced
+      // at 0, with the raw surfaced only as the importedAmount hint.
       baseXsDoc({ id: 'x2', xsNo: 'XS6900342', amount: '300.00', confirmedAmount: '' }),
       // zero-imported-but-confirmed: raw amount 0 would have been filtered out pre-task-A; now
-      // appears because the effective (confirmedAmount) is > 0.
+      // appears because the confirmedAmount is > 0.
       baseXsDoc({ id: 'x3', xsNo: 'XS6900343', amount: '0.00', confirmedAmount: '150.00' }),
     ]);
     mocks.payment.findMany.mockResolvedValueOnce([
@@ -311,8 +312,7 @@ describe('GET /api/juno/re — XS pricing uses confirmedAmount over the raw impo
 
     const byNo = new Map(rows.map((r) => [r.reNumber, r]));
     expect(byNo.get('XS6900341')).toMatchObject({ amount: 250, status: 'matched', importedAmount: 100 });
-    expect(byNo.get('XS6900342')).toMatchObject({ amount: 300, status: 'unpaid' });
-    expect(byNo.get('XS6900342')).not.toHaveProperty('importedAmount');
+    expect(byNo.get('XS6900342')).toMatchObject({ amount: 0, status: 'unpaid', importedAmount: 300 });
     expect(byNo.get('XS6900343')).toMatchObject({ amount: 150, status: 'matched', importedAmount: 0 });
     await app.close();
   });
@@ -338,8 +338,8 @@ describe('GET /api/juno/xs — the XS tab', () => {
   const docs = () => [
     baseXsDoc({ id: 'd-closed', xsNo: 'XS6900340', paymentConfirmedAt: new Date('2026-07-20T00:00:00Z'), paymentConfirmedBy: 'ceo@x' }),
     baseXsDoc({ id: 'd-recorded', xsNo: 'XS6900341', note: 'recorded via payment' }),
-    baseXsDoc({ id: 'd-paid', xsNo: 'XS6900342', note: 'paid, not recorded' }),
-    baseXsDoc({ id: 'd-unpaid', xsNo: 'XS6900343', note: 'nothing yet' }),
+    baseXsDoc({ id: 'd-paid', xsNo: 'XS6900342', note: 'paid, not recorded', amount: '300.00', confirmedAmount: '450.00' }),
+    baseXsDoc({ id: 'd-unpaid', xsNo: 'XS6900343', note: 'nothing yet', amount: '300.00' }),
   ];
   const candidatePayments = () => [
     { billNos: ['XS6900341'], status: 'recorded' },
@@ -356,8 +356,9 @@ describe('GET /api/juno/xs — the XS tab', () => {
     const byNo = new Map(body.docs.map((d: { xsNo: string }) => [d.xsNo, d]));
     expect(byNo.get('XS6900340')).toMatchObject({ status: 'closed', closed: true });
     expect(byNo.get('XS6900341')).toMatchObject({ status: 'closed', closed: true, paid: true }); // recorded payment wins over 'paid'
-    expect(byNo.get('XS6900342')).toMatchObject({ status: 'paid', paid: true, closed: false });
-    expect(byNo.get('XS6900343')).toMatchObject({ status: 'unpaid', paid: false, closed: false });
+    expect(byNo.get('XS6900342')).toMatchObject({ status: 'paid', paid: true, closed: false, effectiveAmount: '450.00' });
+    // no confirmedAmount → effectiveAmount '0', NEVER the raw imported figure (owner 2026-07-21)
+    expect(byNo.get('XS6900343')).toMatchObject({ status: 'unpaid', paid: false, closed: false, effectiveAmount: '0' });
     expect(body.counts).toEqual({ unpaid: 1 });
     await app.close();
   });

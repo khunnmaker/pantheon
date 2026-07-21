@@ -11,7 +11,7 @@ import {
   pinCustomer, unpinCustomer,
   uploadAttachment, getLearned, getLearnedMetrics, promoteLearned, rejectLearned, flagLearned, resolveLearned, endSession, API_URL, flatSku, getToken,
   getFinanceAudits, resolveFinanceAudit, type FinanceAudit,
-  getQuickReplies, addQuickReply, deleteQuickReply, sendQuickReply, sendMessage, sendPhotoNow, searchCatalog, addProductToDraft, readSlip, sendToFinance,
+  getQuickReplies, addQuickReply, updateQuickReply, deleteQuickReply, sendQuickReply, sendMessage, sendPhotoNow, searchCatalog, addProductToDraft, readSlip, sendToFinance,
   draftNow, clearDrafts,
   cancelAutosend, getAutosendConfig, setAutosendConfig,
   type Agent, type CustomerLite, type CustomerDetail, type Message, type LearnedAnswer, type LearnedMetrics, type PendingProduct, type QuickReply,
@@ -331,6 +331,8 @@ function PhotoStrip({ direct, cross, selected, onToggle }: {
 function QuickReplyMenu({
   quickReplies, qrOpen, setQrOpen, qrSending, quickSend,
   qrManage, setQrManage, qrLabel, setQrLabel, qrBody, setQrBody, qrSaving, saveQuickReply, removeQuickReply,
+  qrEditId, qrEditLabel, setQrEditLabel, qrEditBody, setQrEditBody, qrEditSaving,
+  startEditQuickReply, saveQuickReplyEdit, cancelEditQuickReply,
 }: {
   quickReplies: QuickReply[];
   qrOpen: boolean;
@@ -346,6 +348,15 @@ function QuickReplyMenu({
   qrSaving: boolean;
   saveQuickReply: () => void;
   removeQuickReply: (id: string) => void;
+  qrEditId: string | null;
+  qrEditLabel: string;
+  setQrEditLabel: (v: string) => void;
+  qrEditBody: string;
+  setQrEditBody: (v: string) => void;
+  qrEditSaving: boolean;
+  startEditQuickReply: (q: QuickReply) => void;
+  saveQuickReplyEdit: () => void;
+  cancelEditQuickReply: () => void;
 }) {
   return (
     <div className="relative">
@@ -361,16 +372,36 @@ function QuickReplyMenu({
           <div className="absolute bottom-full mb-1 left-0 z-30 w-64 max-h-80 overflow-y-auto bg-white border border-slate-200 rounded-xl shadow-lg p-1">
             <div className="px-2 py-1 text-[10px] text-slate-400">กดเพื่อส่งให้ลูกค้าทันที</div>
             {quickReplies.map((q) => (
-              <div key={q.id} className="flex items-center gap-1">
-                <button type="button" onClick={() => quickSend(q)} disabled={qrSending}
-                  className="flex-1 text-left text-xs px-2 py-1.5 rounded-lg hover:bg-sky-50 text-slate-700 truncate disabled:opacity-50" title={q.body}>
-                  {q.label}
-                </button>
-                {qrManage && <button type="button" onClick={() => removeQuickReply(q.id)} title="ลบ" className="text-rose-400 hover:text-rose-600 px-1"><X size={12} /></button>}
-              </div>
+              qrManage && qrEditId === q.id ? (
+                <div key={q.id} className="flex flex-col gap-1 p-1 bg-slate-50 rounded-lg">
+                  <input value={qrEditLabel} onChange={(e) => setQrEditLabel(e.target.value)} placeholder="ชื่อปุ่ม"
+                    className="text-xs px-2 py-1 rounded border border-slate-200 focus:outline-none focus:ring-1 focus:ring-sky-400" />
+                  <textarea value={qrEditBody} onChange={(e) => setQrEditBody(e.target.value)} rows={3} placeholder="ข้อความที่จะส่ง…"
+                    className="text-xs px-2 py-1 rounded border border-slate-200 resize-none focus:outline-none focus:ring-1 focus:ring-sky-400" />
+                  <div className="flex gap-1">
+                    <button type="button" onClick={saveQuickReplyEdit} disabled={qrEditSaving || !qrEditLabel.trim() || !qrEditBody.trim()}
+                      className="text-xs px-3 py-1 rounded-lg bg-sky-600 hover:bg-sky-700 text-white disabled:opacity-50">
+                      {qrEditSaving ? 'กำลังบันทึก…' : 'บันทึก'}
+                    </button>
+                    <button type="button" onClick={cancelEditQuickReply}
+                      className="text-xs px-3 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600">
+                      ยกเลิก
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div key={q.id} className="flex items-center gap-1">
+                  <button type="button" onClick={() => quickSend(q)} disabled={qrSending}
+                    className="flex-1 text-left text-xs px-2 py-1.5 rounded-lg hover:bg-sky-50 text-slate-700 truncate disabled:opacity-50" title={q.body}>
+                    {q.label}
+                  </button>
+                  {qrManage && <button type="button" onClick={() => startEditQuickReply(q)} title="แก้ไข" className="text-slate-400 hover:text-sky-600 px-1"><Pencil size={12} /></button>}
+                  {qrManage && <button type="button" onClick={() => removeQuickReply(q.id)} title="ลบ" className="text-rose-400 hover:text-rose-600 px-1"><X size={12} /></button>}
+                </div>
+              )
             ))}
             <div className="border-t border-slate-100 mt-1 pt-1">
-              <button type="button" onClick={() => setQrManage((v) => !v)}
+              <button type="button" onClick={() => { setQrManage((v) => !v); cancelEditQuickReply(); }}
                 className="w-full text-left text-[11px] text-slate-500 px-2 py-1 hover:bg-slate-50 rounded flex items-center gap-1">
                 <Pencil size={11} /> {qrManage ? 'เสร็จสิ้น' : 'แก้ไข / เพิ่มรายการ'}
               </button>
@@ -688,6 +719,10 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
   const [qrLabel, setQrLabel] = useState('');
   const [qrBody, setQrBody] = useState('');
   const [qrSaving, setQrSaving] = useState(false);
+  const [qrEditId, setQrEditId] = useState<string | null>(null); // quick-reply currently open for inline edit (one at a time)
+  const [qrEditLabel, setQrEditLabel] = useState('');
+  const [qrEditBody, setQrEditBody] = useState('');
+  const [qrEditSaving, setQrEditSaving] = useState(false);
   const [qrOpen, setQrOpen] = useState(false);
   const [qrSending, setQrSending] = useState(false);
   const [qrConfirmId, setQrConfirmId] = useState<string | null>(null);
@@ -1420,6 +1455,29 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
     setQuickReplies((qs) => qs.filter((q) => q.id !== id));
     await deleteQuickReply(id).catch(() => undefined);
   }
+  function startEditQuickReply(q: QuickReply) {
+    setQrEditId(q.id);
+    setQrEditLabel(q.label);
+    setQrEditBody(q.body);
+  }
+  function cancelEditQuickReply() {
+    setQrEditId(null);
+    setQrEditLabel('');
+    setQrEditBody('');
+  }
+  async function saveQuickReplyEdit() {
+    if (!qrEditId || !qrEditLabel.trim() || !qrEditBody.trim() || qrEditSaving) return;
+    setQrEditSaving(true);
+    try {
+      const { item } = await updateQuickReply(qrEditId, { label: qrEditLabel.trim(), body: qrEditBody.trim() });
+      setQuickReplies((qs) => qs.map((q) => (q.id === item.id ? item : q))); // keep sort order, swap in place
+      cancelEditQuickReply();
+    } catch {
+      setError('แก้ไขข้อความสำเร็จรูปไม่สำเร็จ');
+    } finally {
+      setQrEditSaving(false);
+    }
+  }
 
   // agentText is passed only by the ✨ button (build on what the staff typed); ร่างใหม่ omits
   // it for a fresh draft from conversation + selected products.
@@ -1615,7 +1673,6 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
               <Clock size={10} /> {fmtTime(c.lastSeen)}
               <span className="ml-auto flex items-center gap-1 shrink-0">
                 {waiting && <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0" title="รอตอบ" />}
-                {c.suggestedStage && c.suggestedStage !== c.stage && <span className="w-1.5 h-1.5 rounded-full bg-amber-400" title={'AI แนะนำ: ' + c.suggestedStage} />}
                 {c.stage && <span className="text-[9px] px-1 py-0.5 rounded bg-indigo-100 text-indigo-700">{c.stage}</span>}
                 {c.category && <span className="text-[9px] px-1 py-0.5 rounded bg-sky-100 text-sky-700">{c.category}</span>}
                 <span role="button" tabIndex={0}
@@ -1852,13 +1909,6 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                             </>
                           )}
                         </div>
-                      )}
-                      {detail && detail.customer.suggestedStage && detail.customer.suggestedStage !== detail.customer.stage && (
-                        <button type="button" onClick={() => chooseStage(detail.customer.suggestedStage!)}
-                          title="AI แนะนำขั้นตอนนี้จากบทสนทนา — กดเพื่อยืนยัน"
-                          className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-amber-300 hover:bg-amber-200 text-amber-900 flex items-center gap-0.5 shrink-0">
-                          💡 {detail.customer.suggestedStage} ✓
-                        </button>
                       )}
                       {detail?.oaRead && (() => {
                         const rs = oaReadState(detail.oaRead.readLabel, detail.oaRead.readSeenAt, detail.messages);
@@ -2148,6 +2198,8 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                           quickReplies={quickReplies} qrOpen={qrOpen} setQrOpen={setQrOpen} qrSending={qrSending} quickSend={quickSend}
                           qrManage={qrManage} setQrManage={setQrManage} qrLabel={qrLabel} setQrLabel={setQrLabel} qrBody={qrBody} setQrBody={setQrBody}
                           qrSaving={qrSaving} saveQuickReply={saveQuickReply} removeQuickReply={removeQuickReply}
+                          qrEditId={qrEditId} qrEditLabel={qrEditLabel} setQrEditLabel={setQrEditLabel} qrEditBody={qrEditBody} setQrEditBody={setQrEditBody}
+                          qrEditSaving={qrEditSaving} startEditQuickReply={startEditQuickReply} saveQuickReplyEdit={saveQuickReplyEdit} cancelEditQuickReply={cancelEditQuickReply}
                         />
                         <button type="button" onClick={clearMinervaDrafts}
                           title="ล้างร่างของ Minerva ทั้งหมด" aria-label="ล้างร่างของ Minerva ทั้งหมด"
@@ -2297,6 +2349,8 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
                           quickReplies={quickReplies} qrOpen={qrOpen} setQrOpen={setQrOpen} qrSending={qrSending} quickSend={quickSend}
                           qrManage={qrManage} setQrManage={setQrManage} qrLabel={qrLabel} setQrLabel={setQrLabel} qrBody={qrBody} setQrBody={setQrBody}
                           qrSaving={qrSaving} saveQuickReply={saveQuickReply} removeQuickReply={removeQuickReply}
+                          qrEditId={qrEditId} qrEditLabel={qrEditLabel} setQrEditLabel={setQrEditLabel} qrEditBody={qrEditBody} setQrEditBody={setQrEditBody}
+                          qrEditSaving={qrEditSaving} startEditQuickReply={startEditQuickReply} saveQuickReplyEdit={saveQuickReplyEdit} cancelEditQuickReply={cancelEditQuickReply}
                         />
                         <button type="button" onClick={clearMinervaDrafts}
                           title="ล้างร่างของ Minerva ทั้งหมด" aria-label="ล้างร่างของ Minerva ทั้งหมด"

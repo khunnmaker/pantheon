@@ -72,7 +72,7 @@ export interface CustomerLite {
   lastSeen: string;
 }
 
-// Sales-pipeline stages (mirror of api/src/stages.ts). AI suggests, staff confirm.
+// Sales-pipeline stages (mirror of api/src/stages.ts). AI applies automatically; staff can override.
 export const STAGES = ['ถาม', 'สั่งซื้อ', 'ส่ง', 'ดูแล', 'เสร็จ', 'ยกเลิก'];
 export interface QueueItem {
   customer: CustomerLite;
@@ -371,6 +371,8 @@ export const addQuickReply = (label: string, body: string) =>
   authed<{ item: QuickReply }>('/api/quick-replies', { method: 'POST', body: JSON.stringify({ label, body }) });
 export const deleteQuickReply = (id: string) =>
   authed<{ ok: boolean }>(`/api/quick-replies/${id}`, { method: 'DELETE' });
+export const updateQuickReply = (id: string, data: { label?: string; body?: string }) =>
+  authed<{ item: QuickReply }>(`/api/quick-replies/${id}`, { method: 'PUT', body: JSON.stringify(data) });
 // Send a quick-reply template to the customer as a standalone message (does not
 // touch the pending question or the draft composer).
 // Returns { needsConfirm: true } when the template quotes a price and confirm wasn't set (428).
