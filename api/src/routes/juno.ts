@@ -1646,12 +1646,13 @@ export async function junoRoutes(app: FastifyInstance) {
     // this (and other) payments right now; return the fresh row so the UI shows the new stage.
     if (body.data.received) {
       const auto = await autoRecordEligible(req.log);
-      if (auto.paymentIds.includes(p.id)) {
+      // ได้รับแล้ว can also ground an overpay's money side — run the auto disc-confirm sweep too
+      // (owner ruling 2026-07-21). Count not surfaced here, but if either sweep touched THIS
+      // payment the response must carry the fresh stamps, not the pre-sweep row.
+      const discAuto = await autoConfirmOverpayCredits(req.log);
+      if (auto.paymentIds.includes(p.id) || discAuto.paymentIds.includes(p.id)) {
         p = (await prisma.payment.findUnique({ where: { id: p.id } })) ?? p;
       }
-      // ได้รับแล้ว can also ground an overpay's money side — run the auto disc-confirm sweep too
-      // (owner ruling 2026-07-21). Not surfaced in this route's response.
-      void (await autoConfirmOverpayCredits(req.log));
     }
     return { ok: true, payment: toRow(p) };
   });
@@ -1998,9 +1999,10 @@ export async function junoRoutes(app: FastifyInstance) {
     // money already grounded) — the auto stage-4 sweep advances immediately; return fresh.
     const autoAfterVerify = await autoRecordEligible(req.log);
     // Same reasoning: a fresh check may already be a clean, grounded overpay — auto-confirm its
-    // credit immediately too (owner ruling 2026-07-21). Not surfaced in this route's response.
-    void (await autoConfirmOverpayCredits(req.log));
-    const finalRow = autoAfterVerify.paymentIds.includes(p.id)
+    // credit immediately too (owner ruling 2026-07-21). Count not surfaced here, but if either
+    // sweep touched THIS payment the response must carry the fresh stamps.
+    const discAutoAfterVerify = await autoConfirmOverpayCredits(req.log);
+    const finalRow = autoAfterVerify.paymentIds.includes(p.id) || discAutoAfterVerify.paymentIds.includes(p.id)
       ? (await prisma.payment.findUnique({ where: { id: p.id } })) ?? p
       : p;
     return { ok: true, payment: toRow(finalRow) };
