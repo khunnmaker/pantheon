@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { prisma } from '../db/prisma.js';
 import { requireAuth, requireApp, requireRole } from '../auth/middleware.js';
 import { buildSlipUrl } from '../finance/slipLink.js';
+import { BILL_ISSUER_EMAILS } from './juno.js';
 
 // Audit of staff-corrected payment amounts (the "ตรวจสอบยอด" mis-read report). This now lives
 // with Juno, not Minerva: the corrections are on payments finance (Benz/Meow) verify, so the
@@ -16,8 +17,13 @@ export async function financeRoutes(app: FastifyInstance) {
   app.addHook('preHandler', requireApp('juno'));
   // Owner decision 2026-07-13: gm is bills-only in Juno; the separate FinanceAudit router
   // is entirely outside that lane. Employees and supervisors retain their existing access.
+  // Mail (per-person BILL_ISSUER_EMAILS, 2026-07-21) rides the same bills-only lane as gm and
+  // is denied here too — she must not inherit the employee FinanceAudit surface just because
+  // her 'central' role otherwise behaves like an employee elsewhere.
   app.addHook('preHandler', async (req, reply) => {
-    if (req.agent?.role === 'gm') return reply.code(403).send({ error: 'forbidden' });
+    if (req.agent?.role === 'gm' || BILL_ISSUER_EMAILS.has(req.agent?.email ?? '')) {
+      return reply.code(403).send({ error: 'forbidden' });
+    }
   });
 
   // GET /api/finance/audits?status=open|resolved|all — readable by finance employees and the

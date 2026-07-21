@@ -58,7 +58,10 @@ export const EMPLOYEES: readonly EmployeeSeed[] = [
   { slug: 'paeng', name: 'แป๋ง', apps: ['ceres', 'apollo'], group: 'messengers', gender: 'male' },
   { slug: 'poopae', name: 'ปูเป้', apps: ['minerva', 'ceres', 'apollo'], role: 'central', group: 'central', gender: 'female' },
   { slug: 'win', name: 'วิน', apps: ['minerva', 'ceres', 'apollo'], role: 'central', group: 'central', gender: 'male' },
-  { slug: 'mail', name: 'เมล', apps: ['minerva', 'ceres', 'apollo'], role: 'central', group: 'central', gender: 'female' },
+  // Mail (Central Office) — owner-granted per-person MB bills-CRUD access in Juno (2026-07-21),
+  // same lane as Nee/Noon (see BILL_ISSUER_EMAILS in routes/juno.ts). Her 'central' role stays
+  // employee-equivalent everywhere else — this is a per-person grant, not a role widening.
+  { slug: 'mail', name: 'เมล', apps: ['minerva', 'ceres', 'apollo', 'juno'], role: 'central', group: 'central', gender: 'female' },
   { slug: 'pin', name: 'พิณ', apps: ['ceres', 'apollo'], group: 'others', gender: 'male' },
   { slug: 'lekmaeban', name: 'เล็กแม่บ้าน', apps: ['ceres', 'apollo'], group: 'others', gender: 'female' }, // housekeeper — enters expenses like everyone
   { slug: 'da', name: 'ด้า', apps: ['ceres', 'apollo'], group: 'messengers', gender: 'male' },

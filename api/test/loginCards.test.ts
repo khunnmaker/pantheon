@@ -15,7 +15,10 @@ vi.mock('../src/db/ensureSeeded.js', () => ({
     { slug: 'sales', name: 'Sales', apps: ['ceres'], group: 'sales', gender: 'female' },
     { slug: 'poopae', name: 'Poopae', apps: ['ceres'], role: 'central', group: 'central', gender: 'female' },
     { slug: 'win', name: 'Win', apps: ['ceres'], role: 'central', group: 'central', gender: 'male' },
-    { slug: 'mail', name: 'Mail', apps: ['ceres'], role: 'central', group: 'central', gender: 'female' },
+    // Mail alone carries the juno grant (mirrors the 2026-07-21 owner directive) — win/poopae
+    // deliberately stay off ['ceres'] only, so buildLoginCards('juno') must show her card and
+    // not theirs.
+    { slug: 'mail', name: 'Mail', apps: ['ceres', 'juno'], role: 'central', group: 'central', gender: 'female' },
   ],
   employeeEmail: (slug: string) => `${slug}@prominent.local`,
 }));
@@ -48,5 +51,15 @@ describe('buildLoginCards', () => {
       expect.objectContaining({ kind: 'password', group: 'gm', gender: 'female' }),
     ]);
     expect(cards.slice(6).every((card) => card.kind === 'pin')).toBe(true);
+  });
+
+  it('shows a juno login card for Mail only, not win or poopae (2026-07-21 grant)', async () => {
+    const cards = await buildLoginCards('juno');
+    const emails = cards.map((card) => card.email);
+    expect(emails).toContain('mail@prominent.local');
+    expect(emails).not.toContain('win@prominent.local');
+    expect(emails).not.toContain('poopae@prominent.local');
+    // gm (Nee/Noon) keep their implicit GM_APPS juno access, unaffected by Mail's per-person grant.
+    expect(emails).toEqual(expect.arrayContaining(['md@prominent.local', 'nun@prominent.local']));
   });
 });

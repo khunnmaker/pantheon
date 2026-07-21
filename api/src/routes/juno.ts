@@ -66,6 +66,13 @@ import {
   type CreditTx,
 } from '../finance/customerCredit.js';
 
+// Owner decision 2026-07-21: Mail (Central Office, role 'central') gets the SAME bills-CRUD
+// lane as Nee/Noon (gm) — MB issue/edit/void + product picker, nothing else. This is a
+// per-person grant, NOT a role widening: the 'central' role stays employee-equivalent
+// everywhere else. Named + OR'd into the gm check below (see the juno preHandler) so a future
+// 4th bill issuer is a one-line add here.
+export const BILL_ISSUER_EMAILS = new Set(['mail@prominent.local']);
+
 // Owner decision 2026-07-13: the gm tier is default-deny inside Juno and may use only
 // the manual-bill lane plus its read-only product picker. Employees keep the existing Juno
 // surface except that issuing/editing/voiding manual bills belongs to gm/supervisor only.
@@ -767,7 +774,10 @@ export async function junoRoutes(app: FastifyInstance) {
     if (role === 'supervisor') return;
 
     const routeKey = `${req.method} ${req.routeOptions.url}`;
-    if (role === 'gm') {
+    // Mail (per-person, see BILL_ISSUER_EMAILS) rides the SAME bills-only allowlist as gm,
+    // regardless of her 'central' role — this must run before any role-keyed fallthrough
+    // below, or a central-role account with a juno grant would land unrestricted.
+    if (role === 'gm' || BILL_ISSUER_EMAILS.has(req.agent?.email ?? '')) {
       if (!GM_JUNO_ALLOWED_ROUTES.has(routeKey)) {
         return reply.code(403).send({ error: 'forbidden' });
       }
