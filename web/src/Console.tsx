@@ -1637,7 +1637,7 @@ export default function Console({ agent, onLogout }: { agent: Agent; onLogout: (
     const active = selectedId === c.id;
     const pinned = pinnedIds.has(c.id);
     return (
-      <button key={c.id} onClick={() => { setSelectedId(c.id); setMobileShowChat(true); }}
+      <button key={c.id} onClick={() => { setSelectedId(c.id); setMobileShowChat(true); setView('console'); }}
         className={'w-full text-left px-3 py-2 rounded-xl border transition ' + (active ? 'bg-sky-50 border-sky-300' : 'bg-white border-slate-100 hover:bg-slate-50')}>
         <div className="flex items-center gap-2">
           <Avatar src={c.pictureUrl} size={32} />
