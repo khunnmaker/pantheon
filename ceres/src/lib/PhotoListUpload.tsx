@@ -10,7 +10,7 @@
 // purpose baked in, so this component stays agnostic to purpose entirely.
 import { useEffect, useRef, useState } from 'react';
 import { AlertTriangle, Camera, Image as ImageIcon, Loader2, ScanLine, X } from 'lucide-react';
-import { downscaleCanvas, downscaleImage } from './image';
+import { decodeUprightCanvas, downscaleCanvas, downscaleImage } from './image';
 import { scanDocument, warmScanLibrary } from './scan';
 import { MediaThumb } from './media';
 import type { DuplicateReceipt, OcrResult } from './api';
@@ -18,6 +18,10 @@ import type { DuplicateReceipt, OcrResult } from './api';
 type UploadPayload = { dataB64: string; contentType: string };
 type PreviewChoice = 'scanned' | 'original' | 'retake';
 type PickSource = 'camera' | 'gallery';
+// 'pending' — scan still running, only the original is known yet.
+// 'found' — a document candidate was located; scannedUrl is populated.
+// 'not_found' — scan finished (or timed out / OpenCV unavailable) with nothing plausible.
+type ScanStatus = 'pending' | 'found' | 'not_found';
 
 function payloadToDataUrl(payload: UploadPayload): string {
   return `data:${payload.contentType};base64,${payload.dataB64}`;
@@ -80,15 +84,37 @@ export default function PhotoListUpload({
   useEffect(() => {
     void warmScanLibrary();
   }, []);
-  const [preview, setPreview] = useState<{ scannedUrl: string; originalUrl: string } | null>(null);
+  const [preview, setPreview] = useState<{
+    token: number;
+    originalUrl: string;
+    scannedUrl: string | null;
+    status: ScanStatus;
+  } | null>(null);
   const [showOriginal, setShowOriginal] = useState(false);
   const previewResolveRef = useRef<((choice: PreviewChoice) => void) | null>(null);
+  // Bumped once per opened preview so a scan that resolves late — after the user already
+  // accepted/retook, or after a newer photo's preview replaced this one — can tell it no
+  // longer owns the open overlay and must not mutate it (or reopen a closed one).
+  const previewTokenRef = useRef(0);
 
-  function askUserToChoose(scannedUrl: string, originalUrl: string): Promise<PreviewChoice> {
-    return new Promise((resolve) => {
+  // Opens the overlay right away showing the (already EXIF-upright) original, before the
+  // scan attempt has resolved. Returns the token this session owns (for guarding the async
+  // scan result below) plus a promise that settles when the user taps a button.
+  function openPreview(originalUrl: string): { token: number; choice: Promise<PreviewChoice> } {
+    const token = ++previewTokenRef.current;
+    setShowOriginal(false);
+    setPreview({ token, originalUrl, scannedUrl: null, status: 'pending' });
+    const choice = new Promise<PreviewChoice>((resolve) => {
       previewResolveRef.current = resolve;
-      setShowOriginal(false);
-      setPreview({ scannedUrl, originalUrl });
+    });
+    return { token, choice };
+  }
+  // Applies a (possibly late) scan result to the preview it belongs to. No-op if that
+  // preview was already closed (user chose) or superseded by a later photo's preview.
+  function applyScanResult(token: number, scannedUrl: string | null) {
+    setPreview((prev) => {
+      if (!prev || prev.token !== token) return prev;
+      return { ...prev, status: scannedUrl ? 'found' : 'not_found', scannedUrl };
     });
   }
   function choosePreview(choice: PreviewChoice) {
@@ -149,28 +175,42 @@ export default function PhotoListUpload({
     }
   }
 
-  // Runs the scan attempt for one picked file and returns the payload to upload, or null if
-  // the user chose to retake. Fails open at every stage per scan.ts's contract: any scan
-  // failure/timeout/no-document-found falls straight through to the plain (EXIF-corrected)
-  // downscaled photo with no preview shown at all — only a successful scan candidate ever
-  // pops the preview overlay.
+  // Opens the preview for one picked file immediately (EXIF-upright original), runs the scan
+  // attempt concurrently, and returns the payload to upload — or null if the user chose to
+  // retake. Fails open at every stage: any scan failure/timeout/no-document-found just keeps
+  // the original showing (with a muted note) rather than blocking or losing the photo — see
+  // scan.ts's contract. The user may accept before the scan settles at all; the late scan
+  // result is guarded by `token` so it can never mutate a preview that's since closed or been
+  // replaced by a later photo in the same batch.
   async function resolveUploadPayload(file: File): Promise<UploadPayload | null> {
-    const outcome = await scanDocument(file).catch(() => null);
-    if (!outcome) {
-      // Scanning couldn't even decode the file for processing — total fallback, identical
-      // to the pre-scan-feature path.
+    let original: HTMLCanvasElement;
+    try {
+      original = await decodeUprightCanvas(file);
+    } catch {
+      // Couldn't even decode the photo — total fallback, no preview at all, identical to the
+      // pre-scan-feature path.
       return downscaleImage(file);
     }
-    if (!outcome.scanned) {
-      // No plausible document found (or OpenCV unavailable) — still benefits from the
-      // EXIF-upright decode already done inside scanDocument.
-      return downscaleCanvas(outcome.original);
-    }
-    const scannedPayload = downscaleCanvas(outcome.scanned);
-    const originalPayload = downscaleCanvas(outcome.original);
-    const choice = await askUserToChoose(payloadToDataUrl(scannedPayload), payloadToDataUrl(originalPayload));
-    if (choice === 'retake') return null;
-    return choice === 'original' ? originalPayload : scannedPayload;
+
+    const originalPayload = downscaleCanvas(original);
+    const { token, choice } = openPreview(payloadToDataUrl(originalPayload));
+
+    let scannedPayload: UploadPayload | null = null;
+    // Fire-and-forget: never awaited by the button flow below, so the user can accept the
+    // original at any time without waiting on this. Fail-open — scanDocument never throws
+    // per its own contract, but the .catch is defensive against that contract changing.
+    void scanDocument(file)
+      .catch(() => null)
+      .then((outcome) => {
+        const found = outcome?.scanned ?? null;
+        scannedPayload = found ? downscaleCanvas(found) : null;
+        applyScanResult(token, scannedPayload ? payloadToDataUrl(scannedPayload) : null);
+      });
+
+    const picked = await choice;
+    if (picked === 'retake') return null;
+    if (picked === 'scanned' && scannedPayload) return scannedPayload;
+    return originalPayload;
   }
 
   function onCameraChange(e: React.ChangeEvent<HTMLInputElement>) {
@@ -294,9 +334,12 @@ export default function PhotoListUpload({
         </div>
       )}
 
-      {/* Scan preview overlay — only ever shown when a scan candidate was actually found
-          (see resolveUploadPayload); above the sheet's own z-50 so it reads as a step on
-          top of the open sheet, not a competing layer. */}
+      {/* Scan preview overlay — opens for EVERY photo as soon as it's picked (showing the
+          EXIF-upright original immediately), so "scan didn't find anything" is always
+          visibly distinct from "nothing happened". The scan attempt runs concurrently; see
+          resolveUploadPayload for the pending/found/not_found state machine and the token
+          guard against late results. Above the sheet's own z-50 so it reads as a step on top
+          of the open sheet, not a competing layer. */}
       {preview && (
         <div className="fixed inset-0 z-[60] bg-slate-900/60 flex items-end sm:items-center justify-center p-3">
           <div className="w-full sm:max-w-sm bg-white rounded-2xl overflow-hidden shadow-xl">
@@ -306,38 +349,53 @@ export default function PhotoListUpload({
             </div>
             <div className="px-4 pt-1.5 pb-2">
               <img
-                src={showOriginal ? preview.originalUrl : preview.scannedUrl}
+                src={showOriginal || preview.status !== 'found' ? preview.originalUrl : preview.scannedUrl!}
                 alt="ตัวอย่างรูปที่สแกน"
                 className="w-full max-h-[52vh] object-contain rounded-xl border border-slate-200 bg-slate-50"
               />
-              <button
-                type="button"
-                onClick={() => setShowOriginal((v) => !v)}
-                className="mt-2 w-full text-center text-xs text-amber-700 underline underline-offset-2"
-              >
-                {showOriginal ? 'ดูรูปที่ปรับแล้ว' : 'เทียบกับรูปเดิม'}
-              </button>
+              {preview.status === 'pending' && (
+                <div className="mt-2 flex items-center justify-center gap-1.5 text-xs text-slate-400">
+                  <Loader2 className="animate-spin" size={12} />
+                  กำลังปรับรูปแบบสแกน…
+                </div>
+              )}
+              {preview.status === 'not_found' && (
+                <div className="mt-2 text-center text-xs text-slate-400">หาขอบเอกสารไม่เจอ — ใช้รูปเดิมได้เลย</div>
+              )}
+              {preview.status === 'found' && (
+                <button
+                  type="button"
+                  onClick={() => setShowOriginal((v) => !v)}
+                  className="mt-2 w-full text-center text-xs text-amber-700 underline underline-offset-2"
+                >
+                  {showOriginal ? 'ดูรูปที่ปรับแล้ว' : 'เทียบกับรูปเดิม'}
+                </button>
+              )}
             </div>
             <div className="p-3.5 pt-1 flex flex-col gap-2">
               <button
                 type="button"
-                onClick={() => choosePreview('scanned')}
+                onClick={() => choosePreview(preview.status === 'found' && !showOriginal ? 'scanned' : 'original')}
                 className="min-h-[48px] rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-semibold text-sm"
               >
                 ใช้รูปนี้
               </button>
               <div className="grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  onClick={() => choosePreview('original')}
-                  className="min-h-[44px] rounded-xl border border-slate-300 text-slate-700 text-sm font-medium hover:bg-slate-50"
-                >
-                  ใช้รูปเดิม
-                </button>
+                {preview.status === 'found' && (
+                  <button
+                    type="button"
+                    onClick={() => choosePreview('original')}
+                    className="min-h-[44px] rounded-xl border border-slate-300 text-slate-700 text-sm font-medium hover:bg-slate-50"
+                  >
+                    ใช้รูปเดิม
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => choosePreview('retake')}
-                  className="min-h-[44px] rounded-xl border border-rose-300 text-rose-700 text-sm font-medium hover:bg-rose-50"
+                  className={`min-h-[44px] rounded-xl border border-rose-300 text-rose-700 text-sm font-medium hover:bg-rose-50 ${
+                    preview.status === 'found' ? '' : 'col-span-2'
+                  }`}
                 >
                   ถ่ายใหม่
                 </button>

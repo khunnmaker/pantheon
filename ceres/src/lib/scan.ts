@@ -37,7 +37,7 @@ interface Corner {
 const LOAD_TIMEOUT_MS = 8000;
 const WORK_MAX_EDGE = 1000; // detection runs on a shrunk copy for speed; the warp itself
 // always uses the full-resolution original so output quality isn't capped by this.
-const MIN_AREA_RATIO = 0.2; // reject contours covering too little of the frame (no document)
+const MIN_AREA_RATIO = 0.08; // reject contours covering too little of the frame (no document)
 const MAX_AREA_RATIO = 0.98; // reject "the whole photo is the contour" (no border found)
 
 let cvPromise: Promise<CvNamespace | null> | null = null;
