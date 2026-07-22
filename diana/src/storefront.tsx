@@ -159,7 +159,7 @@ function Facets({ facets, category, brand, onCategory, onBrand }: {
 }
 
 function ProductCard({ product: p }: { product: PublicProduct | PricedProduct }) {
-  const { approved, addToCart, setAuthOpen, pick } = useStore();
+  const { approved, addToCart, pick } = useStore();
   const priced = isPriced(p);
   const [imgOk, setImgOk] = useState(true);
   return (
@@ -179,18 +179,16 @@ function ProductCard({ product: p }: { product: PublicProduct | PricedProduct })
             <span aria-hidden="true">⚠</span> {pick(p.warningTh || p.warningEn, p.warningEn || p.warningTh)}
           </div>
         )}
-        <div className="pfoot">
-          {priced ? (
+        {/* Signed-out visitors get no per-card footer — the catalog header already carries
+            the single "เข้าสู่ระบบเพื่อดูราคา" call-to-action (owner feedback 2026-07-23). */}
+        {priced && (
+          <div className="pfoot">
             <div className="pprice">{formatBaht(p.price)}<small>{availLabel(pick, p.availability)}</small></div>
-          ) : (
-            <div className="pprice" style={{ fontSize: '.8rem', fontWeight: 600, color: 'var(--muted)' }}>{pick('เข้าสู่ระบบเพื่อดูราคา', 'Sign in for price')}</div>
-          )}
-          {approved && priced ? (
-            <button className="btn btn-primary btn-sm" onClick={() => addToCart(p)}><Plus size={15} /> {pick('ใส่ตะกร้า', 'Add')}</button>
-          ) : (
-            <button className="btn btn-ghost btn-sm" onClick={() => setAuthOpen(true)}>{pick('เข้าสู่ระบบ', 'Sign in')}</button>
-          )}
-        </div>
+            {approved && (
+              <button className="btn btn-primary btn-sm" onClick={() => addToCart(p)}><Plus size={15} /> {pick('ใส่ตะกร้า', 'Add')}</button>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
