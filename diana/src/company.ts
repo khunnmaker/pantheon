@@ -8,8 +8,8 @@ export const COMPANY = {
   // Optional trust-footer fields — the owner fills these with real values later.
   // Empty/undefined = the footer omits that line entirely (never renders a placeholder).
   legalNameTh: '', // Thai registered company name, e.g. "บริษัท พรอมิเน้นท์ จำกัด"
-  registrationNo: '', // 13-digit เลขทะเบียนนิติบุคคล
-  taxId: '', // เลขประจำตัวผู้เสียภาษี
+  registrationNo: '0135551010260', // 13-digit เลขทะเบียนนิติบุคคล
+  taxId: '0135551010260', // เลขประจำตัวผู้เสียภาษี
   foundedYear: '', // string (Buddhist or Christian year), e.g. "2538"
   mapUrl: undefined as string | undefined, // Google Maps link
   domain: 'prominentdental.com',
