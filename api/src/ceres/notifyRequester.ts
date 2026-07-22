@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { prisma } from '../db/prisma.js';
 import { sendLineText } from '../line/send.js';
+import { withExternalBrowser } from './lineLinks.js';
 
 const CERES_DEEP_LINK = 'https://ceres.prominentdental.com';
 
@@ -48,7 +49,7 @@ function messageFor(row: NotifyRow): string {
     const note = shortSafeText(row.note);
     if (note) lines.push(`เหตุผล: ${note}`);
   }
-  lines.push(`${CERES_DEEP_LINK}/?request=${encodeURIComponent(row.requestId)}`);
+  lines.push(withExternalBrowser(`${CERES_DEEP_LINK}/?request=${encodeURIComponent(row.requestId)}`));
   return lines.join('\n');
 }
 

@@ -36,7 +36,7 @@ describe('Ceres requester LINE notifications', () => {
     expect(message).toContain(statusText);
     expect(message).toContain('฿1234.50');
     expect(message).toContain('ประเภท:');
-    expect(message).toContain('https://ceres.prominentdental.com/?request=request-1');
+    expect(message).toContain('https://ceres.prominentdental.com/?request=request-1&openExternalBrowser=1');
     expect(message).not.toContain('files.example.test');
   });
 
