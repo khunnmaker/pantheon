@@ -12,6 +12,7 @@ import {
   type BankSuggestion, type BankSummary, type PaymentReconRow, type PaymentReconState,
   type TxnSuggestion,
 } from './lib/api';
+import { displayReceiptReference, normalizeBillReference } from './lib/receiptReferences';
 
 // กระทบยอด (bank reconciliation) tab. See JUNO_PROCESS_BRIEF.md PHASE B / B4. The owner
 // downloads KBIZ + K SHOP every Wed/Sat; this tab is where those credit lines get matched
@@ -63,6 +64,48 @@ function channelChip(channel: string): string {
   if (channel.toLowerCase().includes('cheque') || channel === 'Automatic Transfer') return 'เช็ค/อื่นๆ';
   if (channel.includes('Internet/Mobile')) return channel.replace('Internet/Mobile ', '');
   return channel || '—';
+}
+
+// A payment's FULL document list — RE(s) plus any MB/XS/external billNos, each labeled via the
+// shared displayReceiptReference convention (mirrors Juno.tsx's billLabel/billTone). Every place
+// in this tab used to show only `RE {reNumber}` (the single deprecated join mirror), which
+// rendered "RE —" for a payment whose FIN-typed documents are MB or XS instead of RE — this is
+// the one place that renders the real reNumbers[] + billNos[] arrays (owner bug report 2026-07-22).
+type DocTone = 'manual' | 'external' | 'xs' | 'other';
+const DOC_TONE_TEXT_CLS: Record<DocTone, string> = {
+  manual: 'text-sky-700',
+  external: 'text-amber-700',
+  xs: 'text-amber-700',
+  other: 'text-rose-700',
+};
+function billLabel(billNo: string): string {
+  const reference = normalizeBillReference(billNo);
+  return reference ? displayReceiptReference(reference) : billNo;
+}
+function billTone(billNo: string): DocTone {
+  return normalizeBillReference(billNo)?.billKind ?? 'other';
+}
+function paymentDocs(reNumbers: string[], billNos: string[]): { key: string; label: string; cls: string }[] {
+  return [
+    ...reNumbers.map((re) => ({ key: `re-${re}`, label: `RE ${re}`, cls: 'text-emerald-700' })),
+    ...billNos.map((billNo) => ({ key: `bill-${billNo}`, label: billLabel(billNo), cls: DOC_TONE_TEXT_CLS[billTone(billNo)] })),
+  ];
+}
+// Renders the full doc list as colored text, slash-joined — the same shape the old single
+// `RE {reNumber}` span used, just extended to every document the payment actually carries.
+function PaymentDocLabel({ reNumbers, billNos }: { reNumbers: string[]; billNos: string[] }) {
+  const docs = paymentDocs(reNumbers, billNos);
+  if (docs.length === 0) return <span className="text-slate-400">—</span>;
+  return (
+    <>
+      {docs.map((d, i) => (
+        <span key={d.key} className={`font-semibold ${d.cls}`}>
+          {i > 0 && <span className="text-slate-400 font-normal">/</span>}
+          {d.label}
+        </span>
+      ))}
+    </>
+  );
 }
 
 export default function Recon({ isCeo }: { isCeo: boolean }) {
@@ -525,8 +568,8 @@ function TxnRow({ txn, expanded, onToggle, onChanged }: {
         <div className="flex-1 min-w-0 truncate text-slate-500">{txn.payerName || txn.details}</div>
         <div className="shrink-0 flex items-center gap-1 flex-wrap justify-end max-w-[45%]">
           {txn.links.slice(0, 3).map((l) => (
-            <span key={l.paymentId} className="px-1.5 py-0.5 rounded-full text-[11px] bg-emerald-50 text-emerald-700 whitespace-nowrap">
-              RE {l.reNumber || '—'}
+            <span key={l.paymentId} className="px-1.5 py-0.5 rounded-full text-[11px] bg-slate-50 border border-slate-200 whitespace-nowrap">
+              <PaymentDocLabel reNumbers={l.reNumbers} billNos={l.billNos} />
             </span>
           ))}
           {txn.links.length > 3 && <span className="text-[11px] text-slate-400">+{txn.links.length - 3}</span>}
@@ -712,7 +755,7 @@ function TxnDetail({ txn, onChanged }: { txn: BankTxn; onChanged: (updated?: Ban
           <div className="flex flex-wrap gap-1.5 items-center">
             {txn.links.map((l) => (
               <span key={l.paymentId} className="flex items-center gap-1 px-2 py-1 rounded-lg bg-white border border-slate-200 text-xs">
-                {l.wrongTransfer ? <span className="rounded bg-rose-100 px-1 py-0.5 font-semibold text-rose-700">โอนเงินผิด</span> : <span className="font-semibold text-emerald-700">RE {l.reNumber || '—'}</span>}
+                {l.wrongTransfer ? <span className="rounded bg-rose-100 px-1 py-0.5 font-semibold text-rose-700">โอนเงินผิด</span> : <PaymentDocLabel reNumbers={l.reNumbers} billNos={l.billNos} />}
                 <span className="text-slate-400">·</span>
                 <span>{baht(parseFloat(l.amount || '0'))}</span>
                 {l.chequeNo && <>
@@ -829,7 +872,7 @@ function BankCandidateRow({ candidate, checked, onToggle }: {
   return (
     <label className="flex items-center gap-2 px-2 py-1.5 rounded-lg bg-white border border-slate-200 hover:border-emerald-300 cursor-pointer text-xs">
       <input type="checkbox" checked={checked} onChange={onToggle} className="accent-emerald-600" />
-      {candidate.wrongTransfer ? <span className="shrink-0 rounded bg-rose-100 px-1 py-0.5 font-semibold text-rose-700">โอนเงินผิด</span> : <span className="font-semibold text-emerald-700 shrink-0">RE {candidate.reNumber || '—'}</span>}
+      {candidate.wrongTransfer ? <span className="shrink-0 rounded bg-rose-100 px-1 py-0.5 font-semibold text-rose-700">โอนเงินผิด</span> : <span className="shrink-0"><PaymentDocLabel reNumbers={candidate.reNumbers} billNos={candidate.billNos} /></span>}
       <span className="shrink-0">{baht(parseFloat(candidate.amount || '0'))}</span>
       {candidate.exactAmount ? (
         <span className="px-1 py-0.5 rounded bg-emerald-50 text-emerald-600 shrink-0">ยอดตรง</span>
@@ -955,7 +998,12 @@ function ReceiptRow({ payment, expanded, onToggle, onChanged }: {
       <div onClick={onToggle} className="px-3 py-2.5 flex items-center gap-2 cursor-pointer hover:bg-emerald-50/40 text-sm">
         {expanded ? <ChevronDown size={15} className="text-slate-400 shrink-0" /> : <ChevronRight size={15} className="text-slate-400 shrink-0" />}
         <div className="w-44 shrink-0 text-slate-500 whitespace-nowrap">{receiptTimestamp(payment.transferAt, payment.createdAt)}</div>
-        <div className="w-28 shrink-0 font-semibold text-emerald-700 truncate">RE {payment.reNumber || '—'}</div>
+        <div
+          className="w-32 shrink-0 truncate"
+          title={paymentDocs(payment.reNumbers, payment.billNos).map((d) => d.label).join(' / ') || undefined}
+        >
+          <PaymentDocLabel reNumbers={payment.reNumbers} billNos={payment.billNos} />
+        </div>
         {payment.chequeNo && <span className="shrink-0 px-1.5 py-0.5 rounded-full text-[11px] bg-slate-100 text-slate-600">เช็ค {payment.chequeNo}</span>}
         {payment.ref && <span className="shrink-0 px-1.5 py-0.5 rounded-full text-[11px] font-mono bg-slate-100 text-slate-600 truncate max-w-[130px]" title="เลขอ้างอิงบนสลิป (จาก OCR)">อ้างอิง {payment.ref}</span>}
         <div className="flex-1 min-w-0 truncate text-slate-500">{payment.receiptName || payment.customerName}</div>

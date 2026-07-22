@@ -498,7 +498,10 @@ function toBankTxnRow(
     description: string; details: string; payerName: string; payerBank: string; matchStatus: string;
     refText: string; expressConfirmedAt: Date | null; expressConfirmedById: string | null;
   },
-  links: { paymentId: string; reNumber: string; chequeNo: string; receiptName: string; customerName: string; amount: string; wrongTransfer: boolean }[] = [],
+  links: {
+    paymentId: string; reNumber: string; reNumbers: string[]; billNos: string[];
+    chequeNo: string; receiptName: string; customerName: string; amount: string; wrongTransfer: boolean;
+  }[] = [],
 ) {
   const linkedSum = links.reduce((s, l) => s + txnAmountNum(l.amount), 0);
   return {
@@ -517,7 +520,12 @@ function toBankTxnRow(
     refText: t.refText,
     expressConfirmedAt: t.expressConfirmedAt ? t.expressConfirmedAt.toISOString() : null,
     expressConfirmedById: t.expressConfirmedById,
-    links: links.map((l) => ({ paymentId: l.paymentId, reNumber: l.reNumber, chequeNo: l.chequeNo, receiptName: l.receiptName, customerName: l.customerName, amount: l.amount, wrongTransfer: l.wrongTransfer })),
+    // reNumber stays for back-compat; reNumbers/billNos are the full per-payment document
+    // list (RE + MB/XS/external) — see displayReceiptReference for how the UI labels billNos.
+    links: links.map((l) => ({
+      paymentId: l.paymentId, reNumber: l.reNumber, reNumbers: l.reNumbers, billNos: l.billNos,
+      chequeNo: l.chequeNo, receiptName: l.receiptName, customerName: l.customerName, amount: l.amount, wrongTransfer: l.wrongTransfer,
+    })),
     linkedSum,
     sumDelta: links.length ? Number((linkedSum - txnAmountNum(t.amount)).toFixed(2)) : null,
   };
@@ -2349,7 +2357,15 @@ export async function junoRoutes(app: FastifyInstance) {
     const txns = await prisma.bankTxn.findMany({ where, orderBy: { txnAt: 'desc' }, take: q.limit ?? 200 });
     const links = await prisma.paymentBankMatch.findMany({
       where: { bankTxnId: { in: txns.map((t) => t.id) } },
-      select: { bankTxnId: true, payment: { select: { id: true, reNumber: true, chequeNo: true, receiptName: true, customerName: true, amount: true, wrongTransferAt: true } } },
+      select: {
+        bankTxnId: true,
+        payment: {
+          select: {
+            id: true, reNumber: true, reNumbers: true, billNos: true, chequeNo: true,
+            receiptName: true, customerName: true, amount: true, wrongTransferAt: true,
+          },
+        },
+      },
     });
     const byTxn = new Map<string, typeof links>();
     for (const l of links) byTxn.set(l.bankTxnId, [...(byTxn.get(l.bankTxnId) ?? []), l]);
@@ -2359,7 +2375,8 @@ export async function junoRoutes(app: FastifyInstance) {
         toBankTxnRow(
           t,
           (byTxn.get(t.id) ?? []).map((l) => ({
-            paymentId: l.payment.id, reNumber: l.payment.reNumber, chequeNo: l.payment.chequeNo, receiptName: l.payment.receiptName,
+            paymentId: l.payment.id, reNumber: l.payment.reNumber, reNumbers: l.payment.reNumbers, billNos: l.payment.billNos,
+            chequeNo: l.payment.chequeNo, receiptName: l.payment.receiptName,
             customerName: l.payment.customerName, amount: l.payment.amount, wrongTransfer: l.payment.wrongTransferAt !== null,
           })),
         ),
@@ -2652,7 +2669,10 @@ export async function junoRoutes(app: FastifyInstance) {
         source: { notIn: [...BANK_RECON_EXCLUDED_SOURCES] },
         id: { notIn: [...excludeIds] },
       },
-      select: { id: true, reNumber: true, chequeNo: true, receiptName: true, customerName: true, senderName: true, amount: true, transferAt: true, createdAt: true, ref: true, wrongTransferAt: true },
+      select: {
+        id: true, reNumber: true, reNumbers: true, billNos: true, chequeNo: true, receiptName: true,
+        customerName: true, senderName: true, amount: true, transferAt: true, createdAt: true, ref: true, wrongTransferAt: true,
+      },
       take: 500, // ranked below; a bound keeps this cheap even on a large backlog
     });
 
@@ -2684,6 +2704,8 @@ export async function junoRoutes(app: FastifyInstance) {
       suggestions: top.map((s) => ({
         paymentId: s.p.id,
         reNumber: s.p.reNumber,
+        reNumbers: s.p.reNumbers,
+        billNos: s.p.billNos,
         chequeNo: s.p.chequeNo,
         receiptName: s.p.receiptName,
         customerName: s.p.customerName,
@@ -2753,7 +2775,7 @@ export async function junoRoutes(app: FastifyInstance) {
         OR: [...textSearch, ...(hitIds.length ? [{ id: { in: hitIds } }] : [])],
       },
       select: {
-        id: true, reNumber: true, chequeNo: true, receiptName: true, customerName: true,
+        id: true, reNumber: true, reNumbers: true, billNos: true, chequeNo: true, receiptName: true, customerName: true,
         senderName: true, amount: true, transferAt: true, createdAt: true, ref: true, wrongTransferAt: true,
       },
       take: 60,
@@ -2780,6 +2802,8 @@ export async function junoRoutes(app: FastifyInstance) {
       results: scored.slice(0, 30).map(({ payment, days }) => ({
         paymentId: payment.id,
         reNumber: payment.reNumber,
+        reNumbers: payment.reNumbers,
+        billNos: payment.billNos,
         chequeNo: payment.chequeNo,
         receiptName: payment.receiptName,
         customerName: payment.customerName,

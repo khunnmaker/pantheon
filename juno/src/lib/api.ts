@@ -649,6 +649,10 @@ export type BankTxnStatusFilter = 'all' | 'unmatched' | 'matched' | 'confirmed';
 export interface BankTxnLink {
   paymentId: string;
   reNumber: string;
+  // Full per-payment document list (RE + MB/XS/external) — reNumber above stays as the
+  // deprecated join mirror. See juno/src/lib/receiptReferences.ts displayReceiptReference.
+  reNumbers: string[];
+  billNos: string[];
   chequeNo: string;
   receiptName: string;
   customerName: string;
@@ -712,6 +716,10 @@ export interface BankImportApplyResult {
 export interface BankSuggestion {
   paymentId: string;
   reNumber: string;
+  // Full per-payment document list (RE + MB/XS/external) — reNumber above stays as the
+  // deprecated join mirror. See juno/src/lib/receiptReferences.ts displayReceiptReference.
+  reNumbers: string[];
+  billNos: string[];
   chequeNo: string;
   receiptName: string;
   customerName: string;
