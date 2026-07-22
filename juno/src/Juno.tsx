@@ -508,6 +508,14 @@ function PaymentsView({ view, onChanged, canDelete, isCeo }: { view: Exclude<Vie
   const eligible = checkedRows.filter(
     (r) => (r.source === 'cash' || r.source === 'cheque') && !r.receivedAt && r.status !== 'void'
   );
+  // Bulk ยกเลิกการได้รับเงิน eligibility (CEO-only): mirrors the drawer's per-row undo gate
+  // exactly (CashChequeSection, ~line 1908) — cash/cheque + receivedAt set. That gate has no
+  // status check at all (not even excluding void/recorded), so this doesn't add one either:
+  // rows can auto-advance to 'recorded' via the server's autoRecord sweep right after a bulk
+  // receive, and whatever the drawer permits for those is the rule here too.
+  const undoEligible = checkedRows.filter(
+    (r) => (r.source === 'cash' || r.source === 'cheque') && !!r.receivedAt
+  );
 
   // Shift-click range select (Gmail semantics). All the logic lives in the checkbox's onClick
   // (so we can read e.shiftKey) rather than onChange — onClick also stops propagation so
@@ -586,6 +594,11 @@ function PaymentsView({ view, onChanged, canDelete, isCeo }: { view: Exclude<Vie
   // overpay sweeps can advance OTHER rows' stages as a side effect of these receives.
   function bulkConfirmReceived() {
     void runBulk(eligible, (p) => confirmReceived(p.id, true));
+  }
+  // Bulk ยกเลิกการได้รับเงิน (CEO-only). No confirm dialog — symmetric with bulkConfirmReceived:
+  // re-marking received is one click away, so an accidental undo is cheap to reverse.
+  function bulkUndoReceived() {
+    void runBulk(undoEligible, (p) => confirmReceived(p.id, false));
   }
   function bulkVoid() {
     if (!bulkVoidConfirm) {
@@ -760,6 +773,17 @@ function PaymentsView({ view, onChanged, canDelete, isCeo }: { view: Exclude<Vie
               className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-teal-600/90 hover:bg-teal-600 disabled:opacity-40"
             >
               <HandCoins size={14} /> ได้รับเงินแล้ว ({eligible.length})
+            </button>
+          )}
+          {/* Bulk ยกเลิกการได้รับเงิน — the reverse of the button above, same CEO-only/no-confirm
+              shape. Eligibility mirrors the drawer's per-row undo exactly (see undoEligible). */}
+          {isCeo && undoEligible.length > 0 && (
+            <button
+              onClick={bulkUndoReceived}
+              disabled={bulkBusy}
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-amber-600/90 hover:bg-amber-600 disabled:opacity-40"
+            >
+              <Undo2 size={14} /> ยกเลิกการได้รับเงิน ({undoEligible.length})
             </button>
           )}
           {/* Bulk flag: on the flags tab this CLEARS (เคลียร์ธง) — CEO-only, mirrors the server's
