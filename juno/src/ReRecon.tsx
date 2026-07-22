@@ -8,6 +8,23 @@ import {
   type ReReconRow, type ReReconSummary, type ReReconStatusFilter, type ReImportResult,
   type XsImportResult, type Payment, type DocReconType,
 } from './lib/api';
+import { displayReceiptReference, normalizeBillReference } from './lib/receiptReferences';
+
+// Canonical document label + tone for a billNo — mirrors Juno.tsx's billLabel/billTone (module-
+// local there, so duplicated here rather than exported across an unrelated boundary). Fixes a
+// hardcoded "MB {b}" that mislabeled every XS/external billNo as MB (cosmetic, 2026-07-22).
+type BillTone = 'manual' | 'external' | 'xs' | 'other';
+const billLabel = (billNo: string): string => {
+  const reference = normalizeBillReference(billNo);
+  return reference ? displayReceiptReference(reference) : billNo;
+};
+const billTone = (billNo: string): BillTone => normalizeBillReference(billNo)?.billKind ?? 'other';
+const BILL_TONE_CLS: Record<BillTone, string> = {
+  manual: 'bg-sky-50 text-sky-600',
+  external: 'bg-amber-50 text-amber-700',
+  xs: 'bg-amber-50 text-amber-700',
+  other: 'bg-rose-100 text-rose-700',
+};
 
 // กระทบยอด RE tab. Imports Express's periodic ARRCPDAT.TXT (AR-receipt report) and
 // cross-checks every RE against the Juno Payment(s) carrying it — the "future RE-import"
@@ -429,7 +446,7 @@ function PaymentMiniCard({ p, core }: { p: Payment; core: string }) {
               <span key={re} className={`px-1 py-0.5 rounded text-[10px] whitespace-nowrap ${re === core ? 'bg-emerald-100 text-emerald-700 font-semibold' : 'bg-slate-100 text-slate-500'}`}>RE{re}</span>
             ))}
             {p.billNos.map((b) => (
-              <span key={b} className="px-1 py-0.5 rounded text-[10px] whitespace-nowrap bg-sky-50 text-sky-600">MB {b}</span>
+              <span key={b} className={`px-1 py-0.5 rounded text-[10px] whitespace-nowrap ${BILL_TONE_CLS[billTone(b)]}`}>{billLabel(b)}</span>
             ))}
           </div>
         )}

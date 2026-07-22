@@ -26,4 +26,26 @@ describe('Juno credit-only accounting', () => {
     expect(Number(txn.amount || 0) + Number(txn.whtAmount || 0)).toBe(0);
     expect(txn).not.toHaveProperty('creditUsed');
   });
+
+  it('notes MB/XS billNos when a payment carries no RE (owner bug report 2026-07-22)', () => {
+    const payment = {
+      id: 'mb-only',
+      source: 'manual',
+      status: 'recorded',
+      amount: '1000',
+      whtAmount: '',
+      creditUsed: '0',
+      reNumbers: [] as string[],
+      billNos: ['9690001', 'XS0000012'],
+      verifiedAt: new Date('2026-07-22T00:00:00Z'),
+      createdAt: new Date('2026-07-22T00:00:00Z'),
+      receiptName: 'Customer',
+      customerName: 'Customer',
+      senderName: '',
+      note: '',
+    } as Payment;
+
+    const txn = paymentToTxn(payment);
+    expect(txn.note).toBe('MB 9690001/XS0000012');
+  });
 });

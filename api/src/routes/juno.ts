@@ -359,6 +359,7 @@ async function getDiscrepancySnapshot() {
       receivedAt: payment.receivedAt?.toISOString() ?? null,
       hasSlip: !!payment.slipUrl,
       reNumbers: payment.reNumbers,
+      billNos: payment.billNos,
       status: payment.status,
       wrongTransfer: payment.wrongTransferAt !== null,
       expected: satangToBaht(expected.expectedSatang),
@@ -1333,7 +1334,7 @@ export async function junoRoutes(app: FastifyInstance) {
         where: { customerKey: { in: keys.map(({ customerKey }) => customerKey) } },
         orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
         include: {
-          payment: { select: { id: true, transferAt: true, createdAt: true, reNumbers: true } },
+          payment: { select: { id: true, transferAt: true, createdAt: true, reNumbers: true, billNos: true } },
         },
       });
     });
@@ -1360,6 +1361,7 @@ export async function junoRoutes(app: FastifyInstance) {
         createdAt: entry.createdAt.toISOString(),
         paymentCreatedAt: entry.payment.createdAt.toISOString(),
         reNumbers: entry.payment.reNumbers,
+        billNos: entry.payment.billNos,
         actor: entry.createdBy,
       }));
       return {

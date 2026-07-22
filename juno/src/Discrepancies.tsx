@@ -16,6 +16,7 @@ import {
   type CustomerCreditsResponse,
   type Payment,
 } from './lib/api';
+import { displayReceiptReference, normalizeBillReference } from './lib/receiptReferences';
 
 export const RESOLUTION_LABELS: Record<Exclude<DiscResolution, ''>, string> = {
   refund: 'โอนคืนแล้ว',
@@ -35,6 +36,30 @@ function signedDiff(diff: number): string {
   if (diff > 0) return `เกิน +${baht(diff)}`;
   if (diff < 0) return `ขาด −${baht(Math.abs(diff))}`;
   return 'ยอดลงตัวแล้ว';
+}
+
+// A payment's FULL document list — RE(s) plus any MB/XS/external billNos, labeled via the shared
+// displayReceiptReference convention. Mirrors Recon.tsx's PaymentDocLabel/paymentDocs (owner bug
+// report 2026-07-22: MB/XS-only rows on this tab rendered a blank doc column).
+type DocTone = 'manual' | 'external' | 'xs' | 'other';
+const DOC_TONE_TEXT_CLS: Record<DocTone, string> = {
+  manual: 'text-sky-700',
+  external: 'text-amber-700',
+  xs: 'text-amber-700',
+  other: 'text-rose-700',
+};
+function billLabel(billNo: string): string {
+  const reference = normalizeBillReference(billNo);
+  return reference ? displayReceiptReference(reference) : billNo;
+}
+function billTone(billNo: string): DocTone {
+  return normalizeBillReference(billNo)?.billKind ?? 'other';
+}
+function paymentDocs(reNumbers: string[], billNos: string[]): { key: string; label: string; cls: string }[] {
+  return [
+    ...reNumbers.map((re) => ({ key: `re-${re}`, label: `RE ${re}`, cls: 'text-emerald-700' })),
+    ...billNos.map((billNo) => ({ key: `bill-${billNo}`, label: billLabel(billNo), cls: DOC_TONE_TEXT_CLS[billTone(billNo)] })),
+  ];
 }
 
 function stateOf(row: DiscrepancyRow): 'open' | 'resolved' | 'confirmed' {
@@ -149,7 +174,7 @@ export default function Discrepancies({ isCeo, onChanged }: { isCeo: boolean; on
                     <td className="px-3 py-3">
                       <div className="font-medium text-slate-800">{row.receiptName || row.customerName || '—'}</div>
                       {row.wrongTransfer && <div className="mt-1 inline-flex rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-semibold text-rose-700">โอนเงินผิด</div>}
-                      <div className="mt-1 flex flex-wrap gap-1">{row.reNumbers.map((re) => <span key={re} className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-600">RE {re}</span>)}</div>
+                      <div className="mt-1 flex flex-wrap gap-1">{paymentDocs(row.reNumbers, row.billNos).map((d) => <span key={d.key} className={`rounded bg-slate-100 px-1.5 py-0.5 text-[11px] font-semibold ${d.cls}`}>{d.label}</span>)}</div>
                     </td>
                     <td className="px-3 py-3 text-right font-semibold whitespace-nowrap">{baht(row.gross)}{row.creditUsed > 0 && <div className="text-[10px] font-normal text-emerald-700">ใช้เครดิต {baht(row.creditUsed)}</div>}</td>
                     <td className="px-3 py-3 text-right whitespace-nowrap">{baht(row.expected)}<div className="text-[10px] text-slate-400">{row.wrongTransfer ? 'ไม่มีเอกสารขาย' : row.expectedSource === 'typed' ? 'FIN กรอก' : 'จาก RE'}</div></td>
@@ -202,7 +227,7 @@ function CustomerCreditList({ data }: { data: CustomerCreditsResponse }) {
         <span className="font-bold text-emerald-700">{baht(customer.balance)}</span>
       </button>
       {open.has(customer.customerKey) && <div className="space-y-1 bg-slate-50 px-3 py-2">{customer.history.map((entry) => <div key={entry.id} className="flex items-start justify-between gap-3 rounded-lg bg-white px-3 py-2 text-xs">
-        <div><div className="text-slate-600">{entry.transferAt || fmtDate(entry.paymentCreatedAt)} · {entry.reNumbers.length ? `RE ${entry.reNumbers.join(' / ')}` : 'ไม่มี RE'}</div><div className="text-[10px] text-slate-400" title={entry.paymentId}>รายการ {entry.paymentId.slice(-8)}{entry.actor ? ` · ${entry.actor}` : ''}</div></div>
+        <div><div className="text-slate-600">{entry.transferAt || fmtDate(entry.paymentCreatedAt)} · {paymentDocs(entry.reNumbers, entry.billNos).length ? paymentDocs(entry.reNumbers, entry.billNos).map((d, i) => <span key={d.key} className={`font-semibold ${d.cls}`}>{i > 0 && <span className="text-slate-400 font-normal">/</span>}{d.label}</span>) : 'ไม่มีเอกสาร'}</div><div className="text-[10px] text-slate-400" title={entry.paymentId}>รายการ {entry.paymentId.slice(-8)}{entry.actor ? ` · ${entry.actor}` : ''}</div></div>
         <span className={`font-bold ${entry.kind === 'grant' ? 'text-emerald-700' : 'text-rose-700'}`}>{entry.kind === 'grant' ? '+' : '−'} {baht(entry.amount)}</span>
       </div>)}</div>}
     </div>)}</div>}

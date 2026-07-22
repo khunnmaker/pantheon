@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import type { Payment } from '@prisma/client';
 import { prisma } from '../db/prisma.js';
+import { displayReceiptReference, normalizeBillReference } from '../finance/receiptReferences.js';
 
 // Jupiter Phase-1b — the deity sync feed. Mirrors real money already captured elsewhere in the
 // suite INTO the group books (JupiterTxn) so the cockpit + close pack reflect reality instead of
@@ -33,7 +34,17 @@ function dec(s: string | null | undefined): Prisma.Decimal | null {
 export function paymentToTxn(p: Payment) {
   const net = p.amount || '';
   const wht = p.whtAmount || '';
-  const re = p.reNumbers?.length ? `RE ${p.reNumbers.join('/')}` : '';
+  // Doc ref covers BOTH RE and MB/XS/external billNos (owner bug report 2026-07-22: a payment
+  // recorded with only MB/XS docs booked into Jupiter with no doc ref at all). Same labeling
+  // convention as the UI (displayReceiptReference/normalizeBillReference), joined with '/'.
+  const docLabels = [
+    ...(p.reNumbers ?? []).map((value) => `RE ${value}`),
+    ...(p.billNos ?? []).map((value) => {
+      const normalized = normalizeBillReference(value);
+      return normalized ? displayReceiptReference(normalized) : value;
+    }),
+  ];
+  const re = docLabels.join('/');
   return {
     companyCode: COMPANY,
     direction: 'income',

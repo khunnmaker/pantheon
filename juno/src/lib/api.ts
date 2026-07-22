@@ -485,6 +485,7 @@ export interface DiscrepancyRow {
   source: PaymentSource;
   hasSlip: boolean;
   reNumbers: string[];
+  billNos: string[];
   status: PaymentStatus;
   wrongTransfer: boolean;
   reconciled: boolean;
@@ -535,6 +536,7 @@ export interface CustomerCreditHistoryEntry {
   createdAt: string;
   paymentCreatedAt: string;
   reNumbers: string[];
+  billNos: string[];
   actor: string;
 }
 
