@@ -230,6 +230,19 @@ describe('Ceres advance liquidation expense receipts', () => {
     await app.close();
   });
 
+  it('blocks clearing a liquidation expense to zero receipts on edit (receipt_required)', async () => {
+    const app = buildApp();
+
+    const response = await app.inject({
+      method: 'PATCH', url: '/api/ceres/expenses/expense-1', payload: { receiptUploadIds: [] },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({ error: 'receipt_required' });
+    expect(mocks.updateExpense).not.toHaveBeenCalled();
+    await app.close();
+  });
+
   it('satisfies the receipt_required liquidation gate with an array-only payload (no singular field)', async () => {
     mocks.findMedia.mockResolvedValue({
       id: 'receipt-1', purpose: 'legacy_receipt', sha256: 'receipt-sha',

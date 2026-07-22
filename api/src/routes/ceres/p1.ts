@@ -441,6 +441,9 @@ export function p1Routes(app: FastifyInstance) {
             }
           }
         } else {
+          // A liquidation expense requires ≥1 receipt at create; clearing to zero on edit
+          // would bypass that gate.
+          if (existing.advanceRequestId) return reply.code(400).send({ error: 'receipt_required' });
           changed.receiptUploadId = null;
           changed.receiptSha = '';
         }
