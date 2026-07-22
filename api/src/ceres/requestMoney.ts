@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { prisma } from '../db/prisma.js';
+import { resolveMediaIdList, writeMediaLinksInTx } from './mediaLinks.js';
 
 export type CeresTx = Prisma.TransactionClient;
 
@@ -108,7 +109,9 @@ export interface RecordRequestMoneyInput {
   lane: z.infer<typeof requestMoneyLaneSchema>;
   amount: string;
   transferSlipUploadId?: string;
+  transferSlipUploadIds?: string[];
   purchaseReceiptUploadId?: string;
+  purchaseReceiptUploadIds?: string[];
   reversesEventId?: string;
   createdById?: string | null;
   createdByName?: string;
@@ -266,8 +269,13 @@ export async function recordRequestMoneyEventInTx(tx: CeresTx, input: RecordRequ
         }
       }
     }
-    if ((input.lane === 'transfer' && input.kind !== 'reversal' && !input.transferSlipUploadId) ||
-        (input.kind === 'purchase' && !input.purchaseReceiptUploadId)) {
+    // Array wins over singular when both are sent; either form resolves to the SAME final id
+    // list used for both the evidence-required check below and the link rows written after
+    // the event is created — element 0 stays the "primary" value on the singular columns.
+    const transferSlipIds = resolveMediaIdList(input.transferSlipUploadId, input.transferSlipUploadIds);
+    const purchaseReceiptIds = resolveMediaIdList(input.purchaseReceiptUploadId, input.purchaseReceiptUploadIds);
+    if ((input.lane === 'transfer' && input.kind !== 'reversal' && transferSlipIds.length === 0) ||
+        (input.kind === 'purchase' && purchaseReceiptIds.length === 0)) {
       throw new RequestMoneyError('invalid_evidence');
     }
 
@@ -332,8 +340,8 @@ export async function recordRequestMoneyEventInTx(tx: CeresTx, input: RecordRequ
         kind: input.kind,
         lane: input.lane,
         amount: input.amount,
-        transferSlipUploadId: input.transferSlipUploadId ?? null,
-        purchaseReceiptUploadId: input.purchaseReceiptUploadId ?? null,
+        transferSlipUploadId: transferSlipIds[0] ?? null,
+        purchaseReceiptUploadId: purchaseReceiptIds[0] ?? null,
         cashMovementId: movementId,
         reversesEventId: input.reversesEventId ?? null,
         createdById: input.createdById ?? null,
@@ -342,6 +350,10 @@ export async function recordRequestMoneyEventInTx(tx: CeresTx, input: RecordRequ
         idempotencyKey: input.idempotencyKey ?? null,
       },
     });
+    // Link rows for every element (including element 0, already on the singular columns
+    // above) — same transaction as the event row itself.
+    await writeMediaLinksInTx(tx, 'money_event', event.id, 'transfer_slip', transferSlipIds);
+    await writeMediaLinksInTx(tx, 'money_event', event.id, 'purchase_receipt', purchaseReceiptIds);
     if (direction && movementId) {
       await tx.cashMovement.create({
         data: {
@@ -415,7 +427,8 @@ export async function recordRequestMoneyEventInTx(tx: CeresTx, input: RecordRequ
         });
       }
     }
-  return event;
+  // Array form alongside the singular columns — already resolved above, no extra read.
+  return { ...event, transferSlipUploadIds: transferSlipIds, purchaseReceiptUploadIds: purchaseReceiptIds };
 }
 
 // Every standalone caller (fulfillRequest, refundAdvance, the plain reverse endpoint):
@@ -428,7 +441,9 @@ export async function fulfillRequest(input: {
   requestId: string;
   lane: z.infer<typeof requestMoneyLaneSchema>;
   transferSlipUploadId?: string;
+  transferSlipUploadIds?: string[];
   purchaseReceiptUploadId?: string;
+  purchaseReceiptUploadIds?: string[];
   createdById?: string | null;
   createdByName?: string;
   note?: string;

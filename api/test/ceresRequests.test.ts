@@ -17,6 +17,8 @@ const mocks = vi.hoisted(() => ({
   callClaude: vi.fn(),
   findMedia: vi.fn(),
   readReceiptMeta: vi.fn(),
+  findMediaLink: vi.fn(async () => []),
+  createMediaLink: vi.fn(),
 }));
 
 vi.mock('../src/env.js', () => ({
@@ -42,6 +44,7 @@ vi.mock('../src/db/prisma.js', () => ({
     ceresParty: { findFirst: mocks.findParty },
     ceresAIReview: { create: mocks.createReview },
     ceresMedia: { findUnique: mocks.findMedia },
+    ceresMediaLink: { findMany: mocks.findMediaLink },
   },
 }));
 
@@ -75,6 +78,7 @@ beforeEach(() => {
   mocks.transaction.mockImplementation(async (callback) => callback({
     ceresPaymentRequest: { create: mocks.createRequest, updateMany: mocks.updateRequests },
     ceresRequestEvent: { create: mocks.createEvent },
+    ceresMediaLink: { createMany: mocks.createMediaLink },
   }));
 });
 

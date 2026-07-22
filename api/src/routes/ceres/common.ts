@@ -68,6 +68,12 @@ export function toStaffRequestRow(
     rowVersion: number; createdAt: Date; updatedAt: Date;
   },
   review?: { verdict: string; reasoning: string; createdAt: Date } | null,
+  // The full CeresMediaLink-backed attachment list ("request_photo" purpose), ordered by
+  // sortOrder. Callers that already know it (batched list reads, or a write path that just
+  // computed it) pass it in; omitted, it falls back to [requestPhotoUploadId] / [] — correct
+  // for a legacy row with no link rows, but callers holding a real multi-image set MUST pass
+  // it explicitly or the extra images silently vanish from the response.
+  requestPhotoUploadIds?: string[],
 ) {
   return {
     id: r.id,
@@ -84,6 +90,7 @@ export function toStaffRequestRow(
     amountNum: num(r.amount),
     reason: r.detail,
     requestPhotoUploadId: r.requestPhotoUploadId,
+    requestPhotoUploadIds: requestPhotoUploadIds ?? (r.requestPhotoUploadId ? [r.requestPhotoUploadId] : []),
     ocr: { amount: r.ocrAmount, vendor: r.ocrVendor, date: r.ocrDate },
     aiScreenStatus: r.aiScreenStatus,
     aiReviewId: r.aiReviewId,
@@ -133,6 +140,10 @@ export function toExpenseRow(
   // every other call site (single-expense responses, CEO overview, CSV export) still gets the
   // field on its row without having to compute it.
   duplicateReceipt = false,
+  // The full CeresMediaLink-backed attachment list ("receipt" purpose), ordered by sortOrder.
+  // Same contract as toStaffRequestRow's requestPhotoUploadIds param above — pass it whenever
+  // it's already known, or a multi-image set silently collapses to just its primary element.
+  receiptUploadIds?: string[],
 ) {
   return {
     id: e.id,
@@ -147,6 +158,7 @@ export function toExpenseRow(
     amountNum: num(e.amount),
     spentAt: e.spentAt.toISOString(),
     receiptUploadId: e.receiptUploadId,
+    receiptUploadIds: receiptUploadIds ?? (e.receiptUploadId ? [e.receiptUploadId] : []),
     receiptUrl: e.receiptUploadId
       ? ceresReceiptUrl(base, e.receiptUploadId, Date.now(), CERES_EMBEDDED_MEDIA_URL_TTL_SECONDS)
       : null,
@@ -167,6 +179,23 @@ export function toExpenseRow(
     note: e.note,
     createdAt: e.createdAt.toISOString(),
     duplicateReceipt,
+  };
+}
+
+// CeresRequestMoneyEvent projection — adds the array form of both evidence fields
+// alongside the existing singular columns. Same optional-param/fallback contract as
+// toExpenseRow/toStaffRequestRow above.
+export function toMoneyEventRow<
+  T extends { transferSlipUploadId: string | null; purchaseReceiptUploadId: string | null },
+>(
+  e: T,
+  transferSlipUploadIds?: string[],
+  purchaseReceiptUploadIds?: string[],
+): T & { transferSlipUploadIds: string[]; purchaseReceiptUploadIds: string[] } {
+  return {
+    ...e,
+    transferSlipUploadIds: transferSlipUploadIds ?? (e.transferSlipUploadId ? [e.transferSlipUploadId] : []),
+    purchaseReceiptUploadIds: purchaseReceiptUploadIds ?? (e.purchaseReceiptUploadId ? [e.purchaseReceiptUploadId] : []),
   };
 }
 

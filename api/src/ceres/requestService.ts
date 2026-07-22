@@ -6,6 +6,12 @@ import { GROUP_COMPANY_CODES } from '../jupiter/companies.js';
 import { readCeresReceiptMeta } from './receiptStore.js';
 import { mediaCanBeAttachedBy, type CeresMediaPurpose } from './mediaAccess.js';
 import {
+  resolveMediaIdList,
+  singleTargetLinkIds,
+  writeMediaLinksInTx,
+  replaceMediaLinksInTx,
+} from './mediaLinks.js';
+import {
   AI_MODEL,
   POLICY_VERSION,
   reviewStaffRequest,
@@ -65,6 +71,7 @@ export interface V2RequestInput {
   amount: string;
   reason?: string;
   requestPhotoUploadId?: string | null;
+  requestPhotoUploadIds?: string[];
 }
 
 interface NormalizedV2RequestInput {
@@ -75,6 +82,7 @@ interface NormalizedV2RequestInput {
   amount: string;
   reason: string;
   requestPhotoUploadId?: string | null;
+  requestPhotoUploadIds?: string[];
 }
 
 type RequestRow = NonNullable<Awaited<ReturnType<typeof prisma.ceresPaymentRequest.findUnique>>>;
@@ -99,6 +107,7 @@ function sameGroups(left: string[], right: string[]): boolean {
 
 async function validateReferences(
   input: NormalizedV2RequestInput,
+  mediaIds: readonly string[],
   agent: AuthedAgent,
   validateCategory = true,
   validateGroups = true,
@@ -129,16 +138,19 @@ async function validateReferences(
     const category = await prisma.ceresCategory.findUnique({ where: { name: input.category } });
     if (!category?.active) throw new CeresRequestError('invalid_category');
   }
-  if (input.requestType === 'reimbursement' && !input.requestPhotoUploadId) {
+  if (input.requestType === 'reimbursement' && mediaIds.length === 0) {
     throw new CeresRequestError('receipt_required');
   }
 
   let media: Awaited<ReturnType<typeof mediaCanBeAttachedBy>> = null;
   let receiptMeta: Awaited<ReturnType<typeof readCeresReceiptMeta>> = null;
-  if (input.requestPhotoUploadId) {
-    media = await mediaCanBeAttachedBy(input.requestPhotoUploadId, agent, evidencePurposes(input.requestType));
-    if (!media) throw new CeresRequestError('media_not_owned');
-    receiptMeta = await readCeresReceiptMeta(input.requestPhotoUploadId);
+  for (let i = 0; i < mediaIds.length; i++) {
+    const m = await mediaCanBeAttachedBy(mediaIds[i], agent, evidencePurposes(input.requestType));
+    if (!m) throw new CeresRequestError('media_not_owned');
+    if (i === 0) {
+      media = m;
+      receiptMeta = await readCeresReceiptMeta(mediaIds[i]);
+    }
   }
   return { media, receiptMeta };
 }
@@ -193,7 +205,10 @@ async function applyAIResult(requestId: string, expectedRowVersion: number) {
 
 export async function createStaffRequest(input: V2RequestInput, agent: AuthedAgent) {
   const normalized = normalizeRequestInput(input);
-  const { media, receiptMeta } = await validateReferences(normalized, agent);
+  // Array wins over singular when both are sent (silently de-duplicated); element 0 stays
+  // the "primary" value on the existing requestPhotoUploadId/requestPhotoSha columns.
+  const mediaIds = resolveMediaIdList(normalized.requestPhotoUploadId, normalized.requestPhotoUploadIds);
+  const { media, receiptMeta } = await validateReferences(normalized, mediaIds, agent);
   const party = await prisma.ceresParty.findFirst({ where: { agentEmail: agent.email, active: true } });
   if (ceresRole(agent) === 'messenger' && !party) throw new CeresRequestError('no_party');
   const skipReason = aiSkipReason(normalized.requestType, normalized.amount);
@@ -214,7 +229,7 @@ export async function createStaffRequest(input: V2RequestInput, agent: AuthedAge
         requestType: normalized.requestType,
         approvalStatus: 'pending_nee',
         fulfillmentStatus: 'unfulfilled',
-        requestPhotoUploadId: normalized.requestPhotoUploadId ?? null,
+        requestPhotoUploadId: mediaIds[0] ?? null,
         requestPhotoSha: media?.sha256 ?? '',
         ocrAmount: receiptMeta?.ocrAmount ?? '',
         ocrVendor: receiptMeta?.ocrVendor ?? '',
@@ -222,6 +237,7 @@ export async function createStaffRequest(input: V2RequestInput, agent: AuthedAge
         aiScreenStatus: skipReason ? 'clear' : 'pending',
       },
     });
+    await writeMediaLinksInTx(tx, 'request', request.id, 'request_photo', mediaIds);
     await tx.ceresRequestEvent.create({
       data: {
         requestId: request.id,
@@ -251,6 +267,16 @@ export async function editStaffRequest(
   if (existing.approvalStatus !== 'pending_nee') throw new CeresRequestError('not_editable');
 
   const existingGroups = parseRequestCategoryGroups(existing.categoryGroups);
+  // Array wins over singular when both are sent. Neither sent = untouched: preserve
+  // whatever's already attached (link rows, else the singular column) rather than
+  // dropping it on an edit that only changes some other field.
+  const photoTouched = patch.requestPhotoUploadId !== undefined || patch.requestPhotoUploadIds !== undefined;
+  const mediaIds = photoTouched
+    ? resolveMediaIdList(patch.requestPhotoUploadId ?? null, patch.requestPhotoUploadIds)
+    : await (async () => {
+      const existingLinkIds = await singleTargetLinkIds('request', existing.id, 'request_photo');
+      return existingLinkIds.length > 0 ? existingLinkIds : resolveMediaIdList(existing.requestPhotoUploadId, undefined);
+    })();
   const merged = normalizeRequestInput({
     requestType: (patch.requestType ?? existing.requestType) as V2RequestType,
     entity: patch.entity ?? existing.entity,
@@ -259,13 +285,11 @@ export async function editStaffRequest(
       ?? ((patch.requestType ?? existing.requestType) === existing.requestType ? existingGroups : []),
     amount: patch.amount ?? existing.amount,
     reason: patch.reason ?? existing.detail,
-    requestPhotoUploadId: patch.requestPhotoUploadId === undefined
-      ? existing.requestPhotoUploadId
-      : patch.requestPhotoUploadId,
+    requestPhotoUploadId: mediaIds[0] ?? null,
   });
   const categoryChanged = merged.requestType !== existing.requestType || merged.category !== existing.category;
   const groupsChanged = merged.requestType !== existing.requestType || !sameGroups(merged.categoryGroups, existingGroups);
-  const { media, receiptMeta } = await validateReferences(merged, agent, categoryChanged, groupsChanged);
+  const { media, receiptMeta } = await validateReferences(merged, mediaIds, agent, categoryChanged, groupsChanged);
   const skipReason = aiSkipReason(merged.requestType, merged.amount);
 
   const updated = await prisma.$transaction(async (tx) => {
@@ -279,7 +303,7 @@ export async function editStaffRequest(
         amount: merged.amount,
         detail: merged.reason,
         payee: agent.name,
-        requestPhotoUploadId: merged.requestPhotoUploadId ?? null,
+        requestPhotoUploadId: mediaIds[0] ?? null,
         requestPhotoSha: media?.sha256 ?? '',
         ocrAmount: receiptMeta?.ocrAmount ?? '',
         ocrVendor: receiptMeta?.ocrVendor ?? '',
@@ -292,6 +316,9 @@ export async function editStaffRequest(
     if (changed.count !== 1) throw new CeresRequestError('conflict');
     const request = await tx.ceresPaymentRequest.findUnique({ where: { id: existing.id } });
     if (!request) throw new CeresRequestError('not_found');
+    if (photoTouched) {
+      await replaceMediaLinksInTx(tx, 'request', request.id, 'request_photo', mediaIds);
+    }
     await Promise.all([
       tx.ceresRevision.create({
         data: {

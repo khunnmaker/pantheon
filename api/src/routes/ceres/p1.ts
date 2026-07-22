@@ -19,6 +19,14 @@ import { readReceiptImage } from '../../llm/readReceipt.js';
 import { reviewExpensePostHoc } from '../../ceres/aiReview.js';
 import { ceresReceiptUrl, isValidAmount, thaiDayKey, thaiDayRange, toExpenseRow, computeBoard } from './common.js';
 import { GROUP_COMPANY_CODES } from '../../jupiter/companies.js';
+import {
+  loadLinkMap,
+  idsWithFallback,
+  resolveIdsWithFallback,
+  resolveMediaIdList,
+  replaceMediaLinksInTx,
+  writeMediaLinksInTx,
+} from '../../ceres/mediaLinks.js';
 
 // The 5 group companies (SSOT: jupiter/companies.ts, matches JupiterCompany). Widened from the
 // old ['PROM','DENL'] so Ceres can record TONR/DENC/KPKF spend and a future Ceres→Jupiter sync
@@ -151,6 +159,7 @@ export function p1Routes(app: FastifyInstance) {
     amount: z.string().refine(isValidAmount, 'invalid_amount'),
     spentAt: z.string().datetime().optional(),
     receiptUploadId: z.string().optional(),
+    receiptUploadIds: z.array(z.string().min(1)).max(10).optional(),
     ocrAmount: z.string().max(80).optional(),
     ocrVendor: z.string().max(200).optional(),
     ocrDate: z.string().max(80).optional(),
@@ -167,6 +176,9 @@ export function p1Routes(app: FastifyInstance) {
     const b = parsed.data;
     const agent = req.agent!;
     const role = ceresRoleOf(agent);
+    // Array wins over singular when both are sent (silently de-duplicated); element 0 stays
+    // the "primary" value on the existing receiptUploadId/receiptSha columns.
+    const receiptIds = resolveMediaIdList(b.receiptUploadId, b.receiptUploadIds);
 
     let partyId: string | null = null;
     let partyName = '';
@@ -210,23 +222,26 @@ export function p1Routes(app: FastifyInstance) {
       const payment = events.find((event) => event.kind === 'payment' && !reversedIds.has(event.id));
       if (!payment) return reply.code(409).send({ error: 'advance_not_paid' });
       fundingLane = payment.lane === 'transfer' ? 'transfer' : 'cash';
-      if (!b.receiptUploadId) return reply.code(400).send({ error: 'receipt_required' });
+      if (receiptIds.length === 0) return reply.code(400).send({ error: 'receipt_required' });
     }
 
     let receiptSha = '';
     let receiptMeta: Awaited<ReturnType<typeof readCeresReceiptMeta>> = null;
-    if (b.receiptUploadId) {
-      const media = await mediaCanBeAttachedBy(
-        b.receiptUploadId,
-        agent,
-        // Liquidation receipts arrive via POST /receipts (purpose 'legacy_receipt' — that
-        // pipeline carries the dup-catch + OCR); reimbursement_receipt stays accepted for
-        // media uploaded through the v2 request flow.
-        b.advanceRequestId ? ['reimbursement_receipt', 'legacy_receipt'] : ['legacy_receipt'],
-      );
-      if (!media) return reply.code(403).send({ error: 'media_not_owned' });
-      receiptMeta = await readCeresReceiptMeta(b.receiptUploadId);
-      receiptSha = media.sha256;
+    if (receiptIds.length > 0) {
+      // Liquidation receipts arrive via POST /receipts (purpose 'legacy_receipt' — that
+      // pipeline carries the dup-catch + OCR); reimbursement_receipt stays accepted for
+      // media uploaded through the v2 request flow.
+      const allowedPurposes: readonly CeresMediaPurpose[] = b.advanceRequestId
+        ? ['reimbursement_receipt', 'legacy_receipt']
+        : ['legacy_receipt'];
+      for (let i = 0; i < receiptIds.length; i++) {
+        const media = await mediaCanBeAttachedBy(receiptIds[i], agent, allowedPurposes);
+        if (!media) return reply.code(403).send({ error: 'media_not_owned' });
+        if (i === 0) {
+          receiptMeta = await readCeresReceiptMeta(receiptIds[i]);
+          receiptSha = media.sha256;
+        }
+      }
     }
 
     let expense;
@@ -258,7 +273,7 @@ export function p1Routes(app: FastifyInstance) {
             customerNote: b.customerNote ?? '',
             amount: b.amount,
             spentAt: b.spentAt ? new Date(b.spentAt) : new Date(),
-            receiptUploadId: b.receiptUploadId ?? null,
+            receiptUploadId: receiptIds[0] ?? null,
             receiptSha,
             ocrAmount: b.ocrAmount ?? receiptMeta?.ocrAmount ?? '',
             ocrVendor: b.ocrVendor ?? receiptMeta?.ocrVendor ?? '',
@@ -280,13 +295,14 @@ export function p1Routes(app: FastifyInstance) {
             },
           });
         }
+        await writeMediaLinksInTx(tx, 'expense', created.id, 'receipt', receiptIds);
         return created;
       });
     } catch (err) {
       if (err instanceof AdvanceGuard) return reply.code(409).send({ error: err.message });
       throw err;
     }
-    return { expense: toExpenseRow(expense, reqBase(req)) };
+    return { expense: toExpenseRow(expense, reqBase(req), false, receiptIds) };
   });
 
   // GET /api/ceres/expenses?scope=mine|all&status=&from=&to=&partyId=
@@ -343,7 +359,12 @@ export function p1Routes(app: FastifyInstance) {
       return ids.has(e.id) ? ids.size > 1 : ids.size > 0;
     };
 
-    return { expenses: rows.map((e) => toExpenseRow(e, base, isDuplicate(e))) };
+    // Batched multi-image lookup (no N+1): one findMany across every row's id.
+    const linkMap = await loadLinkMap('expense', rows.map((e) => e.id), 'receipt');
+    return {
+      expenses: rows.map((e) =>
+        toExpenseRow(e, base, isDuplicate(e), idsWithFallback(linkMap, e.id, e.receiptUploadId))),
+    };
   });
 
   // PATCH /api/ceres/expenses/:id — edit (own+pending for messenger; any non-settled for gm/ceo).
@@ -354,6 +375,7 @@ export function p1Routes(app: FastifyInstance) {
     amount: z.string().refine(isValidAmount, 'invalid_amount').optional(),
     spentAt: z.string().datetime().optional(),
     receiptUploadId: z.string().optional(),
+    receiptUploadIds: z.array(z.string().min(1)).max(10).optional(),
     ocrAmount: z.string().max(80).optional(),
     ocrVendor: z.string().max(200).optional(),
     ocrDate: z.string().max(80).optional(),
@@ -384,31 +406,50 @@ export function p1Routes(app: FastifyInstance) {
         if (existing.status !== 'pending') return reply.code(409).send({ error: 'not_pending' });
       }
 
-      const { reason, ...fields } = b;
+      const { reason, receiptUploadIds, ...fields } = b;
       const changed: Record<string, unknown> = {};
       for (const [k, v] of Object.entries(fields)) {
         if (v === undefined) continue;
         if (k === 'spentAt') { changed[k] = new Date(v as string); continue; }
+        if (k === 'receiptUploadId') continue; // handled below (array-aware, replaces the full link set)
         changed[k] = v;
       }
-      if (Object.keys(changed).length === 0) {
-        return { expense: toExpenseRow(existing, reqBase(req)) };
+
+      // Array wins over singular when both are sent. Neither sent (undefined/undefined) =
+      // untouched: preserve whatever's already attached (link rows, else the singular
+      // column) rather than silently dropping it on an unrelated field edit.
+      const photoTouched = b.receiptUploadId !== undefined || receiptUploadIds !== undefined;
+      let finalReceiptIds: string[];
+      if (photoTouched) {
+        finalReceiptIds = resolveMediaIdList(b.receiptUploadId, receiptUploadIds);
+        if (finalReceiptIds.length > 0) {
+          // Swapping the receipt must also refresh receiptSha, or duplicate detection
+          // would keep keying off the OLD image's hash.
+          const allowedPurposes: readonly CeresMediaPurpose[] = existing.advanceRequestId
+            ? ['reimbursement_receipt', 'legacy_receipt']
+            : ['legacy_receipt'];
+          for (let i = 0; i < finalReceiptIds.length; i++) {
+            const media = await mediaCanBeAttachedBy(finalReceiptIds[i], agent, allowedPurposes);
+            if (!media) return reply.code(403).send({ error: 'media_not_owned' });
+            if (i === 0) {
+              const meta = await readCeresReceiptMeta(finalReceiptIds[i]);
+              changed.receiptUploadId = finalReceiptIds[0];
+              changed.receiptSha = media.sha256;
+              if (!('ocrAmount' in changed)) changed.ocrAmount = meta?.ocrAmount ?? '';
+              if (!('ocrVendor' in changed)) changed.ocrVendor = meta?.ocrVendor ?? '';
+              if (!('ocrDate' in changed)) changed.ocrDate = meta?.ocrDate ?? '';
+            }
+          }
+        } else {
+          changed.receiptUploadId = null;
+          changed.receiptSha = '';
+        }
+      } else {
+        finalReceiptIds = await resolveIdsWithFallback('expense', existing.id, 'receipt', existing.receiptUploadId);
       }
-      // Swapping the receipt must also refresh receiptSha, or duplicate detection
-      // would keep keying off the OLD image's hash. Empty when the meta is missing.
-      if ('receiptUploadId' in changed) {
-        const uploadId = changed.receiptUploadId as string;
-        const media = await mediaCanBeAttachedBy(
-          uploadId,
-          agent,
-          existing.advanceRequestId ? ['reimbursement_receipt', 'legacy_receipt'] : ['legacy_receipt'],
-        );
-        if (!media) return reply.code(403).send({ error: 'media_not_owned' });
-        const meta = await readCeresReceiptMeta(uploadId);
-        changed.receiptSha = media.sha256;
-        if (!('ocrAmount' in changed)) changed.ocrAmount = meta?.ocrAmount ?? '';
-        if (!('ocrVendor' in changed)) changed.ocrVendor = meta?.ocrVendor ?? '';
-        if (!('ocrDate' in changed)) changed.ocrDate = meta?.ocrDate ?? '';
+
+      if (Object.keys(changed).length === 0) {
+        return { expense: toExpenseRow(existing, reqBase(req), false, finalReceiptIds) };
       }
 
       // Editing a non-pending row after the fact writes a revision (never a silent
@@ -444,9 +485,12 @@ export function p1Routes(app: FastifyInstance) {
           const advance = await tx.ceresPaymentRequest.findUnique({ where: { id: row.advanceRequestId } });
           if (advance) await syncAdvanceLiquidationProjection(tx, advance, { id: agent.id, name: agent.name });
         }
+        if (photoTouched) {
+          await replaceMediaLinksInTx(tx, 'expense', row.id, 'receipt', finalReceiptIds);
+        }
         return row;
       });
-      return { expense: toExpenseRow(updated, reqBase(req)) };
+      return { expense: toExpenseRow(updated, reqBase(req), false, finalReceiptIds) };
     },
   );
 
@@ -516,7 +560,8 @@ export function p1Routes(app: FastifyInstance) {
         }
         return row;
       });
-      return { expense: toExpenseRow(updated, reqBase(req)) };
+      const receiptUploadIds = await resolveIdsWithFallback('expense', updated.id, 'receipt', updated.receiptUploadId);
+      return { expense: toExpenseRow(updated, reqBase(req), false, receiptUploadIds) };
     },
   );
 
@@ -545,7 +590,8 @@ export function p1Routes(app: FastifyInstance) {
         return approved;
       });
       void reviewExpensePostHoc(updated.id).catch((err) => req.log.error({ err }, 'ceres post-hoc review failed'));
-      return { expense: toExpenseRow(updated, reqBase(req)) };
+      const receiptUploadIds = await resolveIdsWithFallback('expense', updated.id, 'receipt', updated.receiptUploadId);
+      return { expense: toExpenseRow(updated, reqBase(req), false, receiptUploadIds) };
     },
   );
 
@@ -563,7 +609,8 @@ export function p1Routes(app: FastifyInstance) {
         where: { id: existing.id },
         data: { status: 'rejected', rejectReason: body.data.reason },
       });
-      return { expense: toExpenseRow(updated, reqBase(req)) };
+      const receiptUploadIds = await resolveIdsWithFallback('expense', updated.id, 'receipt', updated.receiptUploadId);
+      return { expense: toExpenseRow(updated, reqBase(req), false, receiptUploadIds) };
     },
   );
 

@@ -13,6 +13,9 @@ const mocks = vi.hoisted(() => ({
   createRequestEvent: vi.fn(),
   queryRaw: vi.fn(),
   readReceiptMeta: vi.fn(),
+  findMediaLink: vi.fn(async () => []),
+  createMediaLink: vi.fn(),
+  deleteMediaLink: vi.fn(),
 }));
 
 vi.mock('../src/env.js', () => ({
@@ -37,6 +40,7 @@ vi.mock('../src/db/prisma.js', () => ({
     ceresRequestMoneyEvent: { findMany: mocks.findEvents },
     ceresMedia: { findUnique: mocks.findMedia },
     ceresExpense: { findUnique: mocks.findExpense },
+    ceresMediaLink: { findMany: mocks.findMediaLink },
   },
 }));
 
@@ -135,6 +139,7 @@ beforeEach(() => {
     ceresRequestMoneyEvent: { findMany: mocks.findEvents },
     ceresExpense: { create: mocks.createExpense, update: mocks.updateExpense },
     ceresRequestEvent: { create: mocks.createRequestEvent },
+    ceresMediaLink: { createMany: mocks.createMediaLink, deleteMany: mocks.deleteMediaLink },
   }));
 });
 
@@ -222,6 +227,25 @@ describe('Ceres advance liquidation expense receipts', () => {
     expect(response.json()).toEqual({ error: 'receipt_required' });
     expect(mocks.findMedia).not.toHaveBeenCalled();
     expect(mocks.transaction).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('satisfies the receipt_required liquidation gate with an array-only payload (no singular field)', async () => {
+    mocks.findMedia.mockResolvedValue({
+      id: 'receipt-1', purpose: 'legacy_receipt', sha256: 'receipt-sha',
+      uploadedById: agent.id, uploadedByName: agent.name, createdAt: new Date(),
+    });
+    const app = buildApp();
+
+    const response = await app.inject({
+      method: 'POST', url: '/api/ceres/expenses',
+      payload: { ...createPayload(), receiptUploadIds: ['receipt-1', 'receipt-2'] },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(mocks.createExpense).toHaveBeenCalledWith({
+      data: expect.objectContaining({ receiptUploadId: 'receipt-1', receiptSha: 'receipt-sha', advanceRequestId: 'advance-1' }),
+    });
     await app.close();
   });
 });

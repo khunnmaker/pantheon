@@ -6,6 +6,7 @@ const state = vi.hoisted(() => ({
   movements: [] as Array<Record<string, any>>,
   expenses: [] as Array<Record<string, any>>,
   requestEvents: [] as Array<Record<string, any>>,
+  mediaLinks: [] as Array<Record<string, any>>,
   failMovement: false,
 }));
 
@@ -72,6 +73,13 @@ function transactionClient() {
         return data;
       }),
     },
+    ceresMediaLink: {
+      createMany: vi.fn(async ({ data }: any) => {
+        state.mediaLinks.push(...data);
+        return { count: data.length };
+      }),
+      deleteMany: vi.fn(async () => ({ count: 0 })),
+    },
   };
 }
 
@@ -110,6 +118,7 @@ beforeEach(() => {
   state.movements.length = 0;
   state.expenses.length = 0;
   state.requestEvents.length = 0;
+  state.mediaLinks.length = 0;
   state.failMovement = false;
   let tail = Promise.resolve();
   mocks.transaction.mockImplementation(async (callback) => {
@@ -120,6 +129,7 @@ beforeEach(() => {
     const eventLength = state.events.length;
     const movementLength = state.movements.length;
     const timelineLength = state.requestEvents.length;
+    const mediaLinkLength = state.mediaLinks.length;
     const requestBefore = { ...state.request };
     try {
       return await callback(transactionClient());
@@ -127,6 +137,7 @@ beforeEach(() => {
       state.events.length = eventLength;
       state.movements.length = movementLength;
       state.requestEvents.length = timelineLength;
+      state.mediaLinks.length = mediaLinkLength;
       state.request = requestBefore;
       throw error;
     } finally {
@@ -205,5 +216,72 @@ describe('Ceres Phase 3 fulfillment', () => {
     expect(state.events).toHaveLength(2);
     expect(state.events[0]).toMatchObject({ kind: 'payment', transferSlipUploadId: 'slip-1' });
     expect(state.events[1]).toMatchObject({ kind: 'reversal', reversesEventId: initial.id, transferSlipUploadId: null });
+  });
+
+  it('fulfills a transfer with multiple slips: singular = element 0 + a link row per slip', async () => {
+    const event = await fulfillRequest({
+      requestId: 'request-1', lane: 'transfer',
+      transferSlipUploadIds: ['slip-1', 'slip-2', 'slip-3'],
+    });
+    expect(event).toMatchObject({
+      transferSlipUploadId: 'slip-1',
+      transferSlipUploadIds: ['slip-1', 'slip-2', 'slip-3'],
+      purchaseReceiptUploadIds: [],
+    });
+    expect(state.events[0]).toMatchObject({ transferSlipUploadId: 'slip-1' });
+    expect(state.mediaLinks).toEqual([
+      { targetType: 'money_event', targetId: event.id, mediaId: 'slip-1', purpose: 'transfer_slip', sortOrder: 0 },
+      { targetType: 'money_event', targetId: event.id, mediaId: 'slip-2', purpose: 'transfer_slip', sortOrder: 1 },
+      { targetType: 'money_event', targetId: event.id, mediaId: 'slip-3', purpose: 'transfer_slip', sortOrder: 2 },
+    ]);
+  });
+
+  it('lets the transfer slip array win over a stray singular field on fulfillment', async () => {
+    const event = await fulfillRequest({
+      requestId: 'request-1', lane: 'transfer',
+      transferSlipUploadId: 'ignored-slip',
+      transferSlipUploadIds: ['slip-1', 'slip-2'],
+    });
+    expect(event.transferSlipUploadId).toBe('slip-1');
+    expect(event.transferSlipUploadIds).toEqual(['slip-1', 'slip-2']);
+    expect(state.mediaLinks.map((l) => l.mediaId)).toEqual(['slip-1', 'slip-2']);
+  });
+
+  it('fulfills a purchase with multiple receipts and writes a purchase_receipt link per element', async () => {
+    state.request.requestType = 'purchase';
+    const event = await fulfillRequest({
+      requestId: 'request-1', lane: 'cash',
+      purchaseReceiptUploadIds: ['photo-1', 'photo-2'],
+    });
+    expect(event).toMatchObject({
+      purchaseReceiptUploadId: 'photo-1',
+      purchaseReceiptUploadIds: ['photo-1', 'photo-2'],
+    });
+    expect(state.mediaLinks).toEqual([
+      { targetType: 'money_event', targetId: event.id, mediaId: 'photo-1', purpose: 'purchase_receipt', sortOrder: 0 },
+      { targetType: 'money_event', targetId: event.id, mediaId: 'photo-2', purpose: 'purchase_receipt', sortOrder: 1 },
+    ]);
+  });
+
+  it('still requires transfer evidence when the array is present but empty', async () => {
+    await expect(fulfillRequest({ requestId: 'request-1', lane: 'transfer', transferSlipUploadIds: [] }))
+      .rejects.toMatchObject({ code: 'invalid_evidence' });
+    expect(state.events).toHaveLength(0);
+    expect(state.mediaLinks).toHaveLength(0);
+  });
+
+  it('refunds with multiple transfer slips and writes one link row per slip', async () => {
+    await recordRequestMoneyEvent({ requestId: 'request-1', kind: 'payment', lane: 'cash', amount: '100.00' });
+    const refund = await refundAdvance({
+      requestId: 'request-1', lane: 'transfer', amount: '40.00',
+      transferSlipUploadIds: ['refund-slip-1', 'refund-slip-2'],
+    });
+    expect(refund.transferSlipUploadIds).toEqual(['refund-slip-1', 'refund-slip-2']);
+    expect(state.mediaLinks).toEqual(
+      expect.arrayContaining([
+        { targetType: 'money_event', targetId: refund.id, mediaId: 'refund-slip-1', purpose: 'transfer_slip', sortOrder: 0 },
+        { targetType: 'money_event', targetId: refund.id, mediaId: 'refund-slip-2', purpose: 'transfer_slip', sortOrder: 1 },
+      ]),
+    );
   });
 });

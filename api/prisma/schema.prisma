@@ -1127,6 +1127,28 @@ model CeresMedia {
   @@index([sha256])
 }
 
+// Additive "many images per target" support (2026-07-22). Every existing singular
+// upload-id column (CeresExpense.receiptUploadId, CeresPaymentRequest.requestPhotoUploadId,
+// CeresRequestMoneyEvent.transferSlipUploadId / purchaseReceiptUploadId) stays exactly as
+// today's "primary image" (element 0) for backward compatibility with old PWA bundles that
+// still send only the singular field. This table additionally records every image attached
+// to a target, ordered by sortOrder. Plain string columns, no @relation — matches CeresMedia's
+// existing flat-metadata style. No data backfill: a target with no CeresMediaLink rows falls
+// back to its singular column at read time (see ceres/mediaLinks.ts).
+model CeresMediaLink {
+  id         String   @id @default(cuid())
+  targetType String // request | expense | money_event
+  targetId   String
+  mediaId    String
+  purpose    String // scoped role within the target, e.g. receipt | request_photo | transfer_slip | purchase_receipt
+  sortOrder  Int      @default(0)
+  createdAt  DateTime @default(now())
+
+  @@unique([targetType, targetId, mediaId])
+  @@index([targetType, targetId])
+  @@index([mediaId])
+}
+
 model CeresRequestEvent {
   id             String   @id @default(cuid())
   requestId      String

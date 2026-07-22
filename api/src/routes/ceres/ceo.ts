@@ -6,6 +6,7 @@ import { ageStuckAIReviews } from '../../ceres/requestService.js';
 import { computeBoard, thaiDayKey, thaiDayRange, toExpenseRow, toStaffRequestRow, transferReconciliationStats } from './common.js';
 import { computeTemplateDue } from './requests.js';
 import { dailyOutflowSummary } from '../../ceres/nightlyDigest.js';
+import { loadLinkMap, idsWithFallback } from '../../ceres/mediaLinks.js';
 
 function reqBase(req: { headers: Record<string, unknown> }): string {
   const proto = (req.headers['x-forwarded-proto'] as string) || 'http';
@@ -53,9 +54,10 @@ export function ceoRoutes(app: FastifyInstance) {
       ? new Map((await prisma.ceresAIReview.findMany({ where: { id: { in: escReviewIds } } })).map((r) => [r.id, r]))
       : new Map<string, { verdict: string; reasoning: string; createdAt: Date }>();
 
+    const escalationLinkMap = await loadLinkMap('request', escalatedRows.map((r) => r.id), 'request_photo');
     const escalations = escalatedRows.map((r) => {
       const review = r.aiReviewId ? escReviews.get(r.aiReviewId) : undefined;
-      return toStaffRequestRow(r, review);
+      return toStaffRequestRow(r, review, idsWithFallback(escalationLinkMap, r.id, r.requestPhotoUploadId));
     });
 
     // Batch-load subject summaries for the day's AI reviews (expense → partyName/amount/
@@ -98,7 +100,9 @@ export function ceoRoutes(app: FastifyInstance) {
     }));
 
     const base = reqBase(req);
-    const flaggedExpenses = flaggedExpenseRows.map((e) => toExpenseRow(e, base));
+    const flaggedLinkMap = await loadLinkMap('expense', flaggedExpenseRows.map((e) => e.id), 'receipt');
+    const flaggedExpenses = flaggedExpenseRows.map((e) =>
+      toExpenseRow(e, base, false, idsWithFallback(flaggedLinkMap, e.id, e.receiptUploadId)));
 
     const outstandingTotal = board.parties.reduce((s, p) => s + p.expectedChange, 0);
     const missedBills = templateDue.filter((d) => d.state === 'overdue');

@@ -10,12 +10,14 @@ const mocks = vi.hoisted(() => ({
   transaction: vi.fn(),
   updateExpense: vi.fn(),
   createRevision: vi.fn(),
+  findMediaLink: vi.fn(async () => []),
 }));
 
 vi.mock('../src/db/prisma.js', () => ({
   prisma: {
     $transaction: mocks.transaction,
     ceresExpense: { findUnique: mocks.findExpense },
+    ceresMediaLink: { findMany: mocks.findMediaLink },
   },
 }));
 vi.mock('../src/llm/readReceipt.js', () => ({ readReceiptImage: vi.fn() }));

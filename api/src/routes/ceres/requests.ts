@@ -25,8 +25,9 @@ import {
 } from '../../ceres/requestService.js';
 import { RequestVoidError, voidStaffRequest } from '../../ceres/requestVoid.js';
 import { notifyRequesterForMoneyEvent } from '../../ceres/notifyRequester.js';
-import { isValidAmount, parseRequestCategoryGroups, thaiDayKey, toStaffRequestRow } from './common.js';
+import { isValidAmount, parseRequestCategoryGroups, thaiDayKey, toStaffRequestRow, toMoneyEventRow } from './common.js';
 import { GROUP_COMPANY_CODES } from '../../jupiter/companies.js';
+import { loadLinkMap, idsWithFallback, resolveIdsWithFallback, resolveMediaIdList } from '../../ceres/mediaLinks.js';
 
 const ENTITIES = GROUP_COMPANY_CODES; // 5 group companies (SSOT: jupiter/companies.ts)
 
@@ -180,6 +181,7 @@ export function requestsRoutes(app: FastifyInstance) {
       amount: z.string().refine(isValidAmount, 'invalid_amount'),
       reason: z.string().max(600).optional(),
       requestPhotoUploadId: z.string().min(1).nullable().optional(),
+      requestPhotoUploadIds: z.array(z.string().min(1)).max(10).optional(),
     }).strict(),
     z.object({
       requestType: z.literal('reimbursement'),
@@ -189,6 +191,7 @@ export function requestsRoutes(app: FastifyInstance) {
       amount: z.string().refine(isValidAmount, 'invalid_amount'),
       reason: z.string().min(1).max(600),
       requestPhotoUploadId: z.string().min(1).nullable().optional(),
+      requestPhotoUploadIds: z.array(z.string().min(1)).max(10).optional(),
     }).strict(),
     z.object({
       requestType: z.literal('purchase'),
@@ -198,6 +201,7 @@ export function requestsRoutes(app: FastifyInstance) {
       amount: z.string().refine(isValidAmount, 'invalid_amount'),
       reason: z.string().min(1).max(600),
       requestPhotoUploadId: z.string().min(1).nullable().optional(),
+      requestPhotoUploadIds: z.array(z.string().min(1)).max(10).optional(),
     }).strict(),
   ]);
 
@@ -213,7 +217,8 @@ export function requestsRoutes(app: FastifyInstance) {
       const review = request.aiReviewId
         ? await prisma.ceresAIReview.findUnique({ where: { id: request.aiReviewId } })
         : null;
-      return { request: toStaffRequestRow(request, review) };
+      const requestPhotoUploadIds = await resolveIdsWithFallback('request', request.id, 'request_photo', request.requestPhotoUploadId);
+      return { request: toStaffRequestRow(request, review, requestPhotoUploadIds) };
     } catch (err) {
       return requestError(reply, err);
     }
@@ -233,8 +238,14 @@ export function requestsRoutes(app: FastifyInstance) {
     try {
       const rows = await listStaffRequests(req.agent!, q.scope ?? 'mine', q.limit ?? 200);
       const reviewMap = await loadReviewsByIds(rows.map((r) => r.aiReviewId));
+      // Batched multi-image lookup (no N+1): one findMany across every row's id.
+      const linkMap = await loadLinkMap('request', rows.map((r) => r.id), 'request_photo');
       return {
-        requests: rows.map((r) => toStaffRequestRow(r, r.aiReviewId ? reviewMap.get(r.aiReviewId) ?? null : null)),
+        requests: rows.map((r) => toStaffRequestRow(
+          r,
+          r.aiReviewId ? reviewMap.get(r.aiReviewId) ?? null : null,
+          idsWithFallback(linkMap, r.id, r.requestPhotoUploadId),
+        )),
       };
     } catch (err) {
       return requestError(reply, err);
@@ -253,15 +264,33 @@ export function requestsRoutes(app: FastifyInstance) {
         const review = request.aiReviewId
           ? await prisma.ceresAIReview.findUnique({ where: { id: request.aiReviewId } })
           : null;
-        const [events, revisions, moneyEvents] = await Promise.all([
+        const [events, revisions, moneyEvents, requestPhotoUploadIds] = await Promise.all([
           prisma.ceresRequestEvent.findMany({ where: { requestId: request.id }, orderBy: { createdAt: 'asc' } }),
           prisma.ceresRevision.findMany({
             where: { subjectType: 'paymentRequest', subjectId: request.id },
             orderBy: { createdAt: 'asc' },
           }),
           prisma.ceresRequestMoneyEvent.findMany({ where: { requestId: request.id }, orderBy: { createdAt: 'asc' } }),
+          resolveIdsWithFallback('request', request.id, 'request_photo', request.requestPhotoUploadId),
         ]);
-        return { request: toStaffRequestRow(request, review), events, revisions, moneyEvents };
+        // Batched multi-image lookup for the money events on this one request (no N+1
+        // across the two evidence purposes).
+        const eventIds = moneyEvents.map((e) => e.id);
+        const [transferMap, purchaseMap] = await Promise.all([
+          loadLinkMap('money_event', eventIds, 'transfer_slip'),
+          loadLinkMap('money_event', eventIds, 'purchase_receipt'),
+        ]);
+        const moneyEventRows = moneyEvents.map((e) => toMoneyEventRow(
+          e,
+          idsWithFallback(transferMap, e.id, e.transferSlipUploadId),
+          idsWithFallback(purchaseMap, e.id, e.purchaseReceiptUploadId),
+        ));
+        return {
+          request: toStaffRequestRow(request, review, requestPhotoUploadIds),
+          events,
+          revisions,
+          moneyEvents: moneyEventRows,
+        };
       } catch (err) {
         return requestError(reply, err);
       }
@@ -276,6 +305,7 @@ export function requestsRoutes(app: FastifyInstance) {
     amount: z.string().refine(isValidAmount, 'invalid_amount').optional(),
     reason: z.string().max(600).optional(),
     requestPhotoUploadId: z.string().min(1).nullable().optional(),
+    requestPhotoUploadIds: z.array(z.string().min(1)).max(10).optional(),
   }).strict().refine((value) => Object.keys(value).length > 0);
   app.patch<{ Params: { id: string } }>(
     '/api/ceres/requests/:id',
@@ -306,7 +336,8 @@ export function requestsRoutes(app: FastifyInstance) {
         const review = request.aiReviewId
           ? await prisma.ceresAIReview.findUnique({ where: { id: request.aiReviewId } })
           : null;
-        return { request: toStaffRequestRow(request, review) };
+        const requestPhotoUploadIds = await resolveIdsWithFallback('request', request.id, 'request_photo', request.requestPhotoUploadId);
+        return { request: toStaffRequestRow(request, review, requestPhotoUploadIds) };
       } catch (err) {
         return requestError(reply, err);
       }
@@ -325,7 +356,8 @@ export function requestsRoutes(app: FastifyInstance) {
         const review = request.aiReviewId
           ? await prisma.ceresAIReview.findUnique({ where: { id: request.aiReviewId } })
           : null;
-        return { request: toStaffRequestRow(request, review) };
+        const requestPhotoUploadIds = await resolveIdsWithFallback('request', request.id, 'request_photo', request.requestPhotoUploadId);
+        return { request: toStaffRequestRow(request, review, requestPhotoUploadIds) };
       } catch (err) {
         return requestError(reply, err);
       }
@@ -343,7 +375,8 @@ export function requestsRoutes(app: FastifyInstance) {
         const review = request.aiReviewId
           ? await prisma.ceresAIReview.findUnique({ where: { id: request.aiReviewId } })
           : null;
-        return { request: toStaffRequestRow(request, review) };
+        const requestPhotoUploadIds = await resolveIdsWithFallback('request', request.id, 'request_photo', request.requestPhotoUploadId);
+        return { request: toStaffRequestRow(request, review, requestPhotoUploadIds) };
       } catch (err) {
         return requestError(reply, err);
       }
@@ -353,7 +386,9 @@ export function requestsRoutes(app: FastifyInstance) {
   const fulfillmentBody = z.object({
     lane: requestMoneyLaneSchema,
     transferSlipUploadId: z.string().min(1).optional(),
+    transferSlipUploadIds: z.array(z.string().min(1)).max(10).optional(),
     purchaseReceiptUploadId: z.string().min(1).optional(),
+    purchaseReceiptUploadIds: z.array(z.string().min(1)).max(10).optional(),
     note: z.string().max(600).optional(),
     idempotencyKey: z.string().min(1).max(160).optional(),
   }).strict();
@@ -364,12 +399,16 @@ export function requestsRoutes(app: FastifyInstance) {
       const parsed = fulfillmentBody.safeParse(req.body);
       if (!parsed.success) return reply.code(400).send({ error: 'invalid_body' });
       const body = parsed.data;
-      if (body.transferSlipUploadId) {
-        const media = await mediaCanBeAttachedBy(body.transferSlipUploadId, req.agent!, ['transfer_slip']);
+      // Array wins over singular when both are sent — validate ownership+purpose of EVERY
+      // element before any write (matches the existing singular-field check below).
+      const transferSlipIds = resolveMediaIdList(body.transferSlipUploadId, body.transferSlipUploadIds);
+      const purchaseReceiptIds = resolveMediaIdList(body.purchaseReceiptUploadId, body.purchaseReceiptUploadIds);
+      for (const id of transferSlipIds) {
+        const media = await mediaCanBeAttachedBy(id, req.agent!, ['transfer_slip']);
         if (!media) return reply.code(403).send({ error: 'media_not_owned' });
       }
-      if (body.purchaseReceiptUploadId) {
-        const media = await mediaCanBeAttachedBy(body.purchaseReceiptUploadId, req.agent!, ['purchase_receipt']);
+      for (const id of purchaseReceiptIds) {
+        const media = await mediaCanBeAttachedBy(id, req.agent!, ['purchase_receipt']);
         if (!media) return reply.code(403).send({ error: 'media_not_owned' });
       }
       try {
@@ -381,7 +420,8 @@ export function requestsRoutes(app: FastifyInstance) {
         });
         await notifyRequesterForMoneyEvent(moneyEvent.id);
         const request = await prisma.ceresPaymentRequest.findUniqueOrThrow({ where: { id: req.params.id } });
-        return { request: toStaffRequestRow(request), moneyEvent };
+        const requestPhotoUploadIds = await resolveIdsWithFallback('request', request.id, 'request_photo', request.requestPhotoUploadId);
+        return { request: toStaffRequestRow(request, null, requestPhotoUploadIds), moneyEvent };
       } catch (err) {
         return moneyError(reply, err);
       }
@@ -392,6 +432,7 @@ export function requestsRoutes(app: FastifyInstance) {
     lane: requestMoneyLaneSchema,
     amount: z.string().refine(isValidAmount, 'invalid_amount'),
     transferSlipUploadId: z.string().min(1).optional(),
+    transferSlipUploadIds: z.array(z.string().min(1)).max(10).optional(),
     note: z.string().max(600).optional(),
     idempotencyKey: z.string().min(1).max(160).optional(),
   }).strict();
@@ -405,8 +446,9 @@ export function requestsRoutes(app: FastifyInstance) {
         return reply.code(400).send({ error: amountIssue ? 'invalid_amount' : 'invalid_body' });
       }
       const body = parsed.data;
-      if (body.transferSlipUploadId) {
-        const media = await mediaCanBeAttachedBy(body.transferSlipUploadId, req.agent!, ['refund_slip']);
+      const transferSlipIds = resolveMediaIdList(body.transferSlipUploadId, body.transferSlipUploadIds);
+      for (const id of transferSlipIds) {
+        const media = await mediaCanBeAttachedBy(id, req.agent!, ['refund_slip']);
         if (!media) return reply.code(403).send({ error: 'media_not_owned' });
       }
       try {
@@ -480,7 +522,8 @@ export function requestsRoutes(app: FastifyInstance) {
         const review = request.aiReviewId
           ? await prisma.ceresAIReview.findUnique({ where: { id: request.aiReviewId } })
           : null;
-        return { request: toStaffRequestRow(request, review) };
+        const requestPhotoUploadIds = await resolveIdsWithFallback('request', request.id, 'request_photo', request.requestPhotoUploadId);
+        return { request: toStaffRequestRow(request, review, requestPhotoUploadIds) };
       } catch (err) {
         return requestError(reply, err);
       }
@@ -504,7 +547,8 @@ export function requestsRoutes(app: FastifyInstance) {
         const review = request.aiReviewId
           ? await prisma.ceresAIReview.findUnique({ where: { id: request.aiReviewId } })
           : null;
-        return { request: toStaffRequestRow(request, review) };
+        const requestPhotoUploadIds = await resolveIdsWithFallback('request', request.id, 'request_photo', request.requestPhotoUploadId);
+        return { request: toStaffRequestRow(request, review, requestPhotoUploadIds) };
       } catch (err) {
         return voidError(reply, err);
       }

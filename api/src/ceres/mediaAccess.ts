@@ -68,10 +68,53 @@ export async function mediaVisibleToAgent(mediaId: string, agent: AuthedAgent): 
     },
     select: { requestId: true },
   });
-  if (!moneyEvent) return null;
-  const owningRequest = await prisma.ceresPaymentRequest.findFirst({
-    where: { id: moneyEvent.requestId, requestedById: agent.id },
-    select: { id: true },
+  if (moneyEvent) {
+    const owningRequest = await prisma.ceresPaymentRequest.findFirst({
+      where: { id: moneyEvent.requestId, requestedById: agent.id },
+      select: { id: true },
+    });
+    if (owningRequest) return media;
+  }
+
+  // A media id attached ONLY via CeresMediaLink (any array element beyond the primary —
+  // the singular-column joins above only ever catch element 0) re-uses the SAME four
+  // target-visibility rules, keyed off the link's targetType/targetId instead.
+  const links = await prisma.ceresMediaLink.findMany({
+    where: { mediaId },
+    select: { targetType: true, targetId: true },
   });
-  return owningRequest ? media : null;
+  for (const link of links) {
+    if (link.targetType === 'expense') {
+      const linkedExpense = await prisma.ceresExpense.findFirst({
+        where: {
+          id: link.targetId,
+          OR: [
+            { enteredById: agent.id },
+            ...(ownParty ? [{ partyId: ownParty.id }] : []),
+          ],
+        },
+        select: { id: true },
+      });
+      if (linkedExpense) return media;
+    } else if (link.targetType === 'request') {
+      const linkedRequest = await prisma.ceresPaymentRequest.findFirst({
+        where: { id: link.targetId, requestedById: agent.id },
+        select: { id: true },
+      });
+      if (linkedRequest) return media;
+    } else if (link.targetType === 'money_event') {
+      const linkedEvent = await prisma.ceresRequestMoneyEvent.findFirst({
+        where: { id: link.targetId },
+        select: { requestId: true },
+      });
+      if (linkedEvent) {
+        const linkedOwningRequest = await prisma.ceresPaymentRequest.findFirst({
+          where: { id: linkedEvent.requestId, requestedById: agent.id },
+          select: { id: true },
+        });
+        if (linkedOwningRequest) return media;
+      }
+    }
+  }
+  return null;
 }

@@ -8,6 +8,9 @@ const mocks = vi.hoisted(() => ({
   findRequest: vi.fn(), findCategory: vi.fn(), findGroups: vi.fn(), transaction: vi.fn(), updateMany: vi.fn(), txFindRequest: vi.fn(),
   createRevision: vi.fn(), createEvent: vi.fn(), reviewStaffRequest: vi.fn(), findReview: vi.fn(),
   notifyRequester: vi.fn(),
+  // Multi-image links: no test in this file exercises a real link row, so default to "none"
+  // (the fallback-to-singular path) everywhere it's read.
+  findMediaLink: vi.fn(async () => []),
 }));
 
 vi.mock('../src/env.js', () => ({ env: { CERES_CEO_THRESHOLD: 5000, CERES_FLOOR: 3000 } }));
@@ -27,6 +30,7 @@ vi.mock('../src/db/prisma.js', () => ({
     ceresPaymentRequest: { findUnique: mocks.findRequest },
     ceresCategory: { findUnique: mocks.findCategory, findMany: mocks.findGroups },
     ceresAIReview: { findUnique: mocks.findReview },
+    ceresMediaLink: { findMany: mocks.findMediaLink },
   },
 }));
 

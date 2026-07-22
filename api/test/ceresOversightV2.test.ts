@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   findSettlement: vi.fn(),
   findMoneyEvents: vi.fn(),
   ageReviews: vi.fn(),
+  findMediaLink: vi.fn(async () => []),
 }));
 
 vi.mock('../src/env.js', () => ({ env: { CERES_DIGEST_HOUR: 21 } }));
@@ -51,6 +52,7 @@ vi.mock('../src/db/prisma.js', () => ({
     ceresExpense: { findMany: mocks.findFlaggedExpenses, count: mocks.countExpenses },
     ceresSettlement: { findUnique: mocks.findSettlement },
     ceresRequestMoneyEvent: { findMany: mocks.findMoneyEvents },
+    ceresMediaLink: { findMany: mocks.findMediaLink },
   },
 }));
 
