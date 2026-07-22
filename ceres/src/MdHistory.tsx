@@ -116,9 +116,15 @@ function LaneChip({ kind }: { kind: 'expense' | 'request' }) {
 // spentAt (transaction date, already precise); finished requests use updatedAt — the terminal
 // state (paid/settling/settled/rejected/void) is exactly what bumped it last, so it doubles as
 // "when this became history-worthy" without an extra per-row fetch of money events.
+// Advance-liquidation nesting (2026-07-22 follow-up, same day as the merge above): a
+// liquidation expense (CeresExpense.advanceRequestId set) renders UNDER the advance request
+// it closes rather than as an independent top-level row. 'request' items therefore carry
+// their nested liquidation children (already-fetched/filtered Expense rows); 'expense' items
+// carry whether they're a liquidation whose parent ISN'T being shown here (fallback chip —
+// see the `rows` useMemo below for exactly when that happens).
 type MergedItem =
-  | { kind: 'expense'; date: string; key: string; data: Expense }
-  | { kind: 'request'; date: string; key: string; data: StaffRequest };
+  | { kind: 'expense'; date: string; key: string; data: Expense; fromAdvance: boolean }
+  | { kind: 'request'; date: string; key: string; data: StaffRequest; liquidations: Expense[] };
 
 // Shared confirmation UX for every ลบถาวร button — window.prompt asking the user
 // to type the exact Thai confirm phrase; wrong/cancelled input aborts without calling the
@@ -263,10 +269,51 @@ export default function MdHistory() {
       if (to && day > to) return false;
       return true;
     });
-    const items: MergedItem[] = [
-      ...expenses.map((e): MergedItem => ({ kind: 'expense', date: e.spentAt, key: `expense:${e.id}`, data: e })),
-      ...filteredRequests.map((r): MergedItem => ({ kind: 'request', date: r.updatedAt, key: `request:${r.id}`, data: r })),
-    ];
+
+    // `requests` (NOT filteredRequests) is the lookup universe for "does this liquidation's
+    // parent advance exist in this view at all" — it's every FINISHED request this agent can
+    // see (isFinishedRequest already applied in load()), unfiltered by the status/person/date
+    // controls. A parent misses this map only when it's still in-flight (not finished yet) or
+    // beyond the 500-row request fetch cap — exactly the two "fallback" cases in the spec.
+    const finishedById = new Map(requests.map((r) => [r.id, r]));
+
+    // Group already-fetched expenses (server-side filtered by the same status/party/date
+    // controls as everything else in this view) by the advance they liquidate.
+    const childrenByAdvance = new Map<string, Expense[]>();
+    for (const e of expenses) {
+      if (!e.advanceRequestId) continue;
+      const list = childrenByAdvance.get(e.advanceRequestId) ?? [];
+      list.push(e);
+      childrenByAdvance.set(e.advanceRequestId, list);
+    }
+    for (const list of childrenByAdvance.values()) {
+      list.sort((a, b) => (a.spentAt < b.spentAt ? 1 : a.spentAt > b.spentAt ? -1 : 0));
+    }
+
+    // A parent advance shows here if it passes the normal request filters OR it has at least
+    // one liquidation in the (already current-filtered) expenses set — the latter is what
+    // makes filtering by the CHILD's person/date still surface the pair, per owner spec,
+    // even when the parent's own fields wouldn't independently pass that same filter.
+    const shownRequestIds = new Set(filteredRequests.map((r) => r.id));
+    for (const advanceId of childrenByAdvance.keys()) {
+      if (finishedById.has(advanceId)) shownRequestIds.add(advanceId);
+    }
+
+    const requestItems: MergedItem[] = [...shownRequestIds].map((id) => {
+      const r = finishedById.get(id)!;
+      return { kind: 'request', date: r.updatedAt, key: `request:${r.id}`, data: r, liquidations: childrenByAdvance.get(r.id) ?? [] };
+    });
+
+    // Top-level expenses: everything EXCEPT a liquidation whose parent is being rendered
+    // above (it nests there instead, see RequestHistoryCard). A liquidation whose parent
+    // ISN'T shown (filtered out, still in-flight, or beyond the fetch cap) stays top-level
+    // exactly as before — nothing may become invisible — flagged with a small chip so it's
+    // still clear it belongs to an advance.
+    const expenseItems: MergedItem[] = expenses
+      .filter((e) => !e.advanceRequestId || !shownRequestIds.has(e.advanceRequestId))
+      .map((e): MergedItem => ({ kind: 'expense', date: e.spentAt, key: `expense:${e.id}`, data: e, fromAdvance: !!e.advanceRequestId }));
+
+    const items: MergedItem[] = [...expenseItems, ...requestItems];
     items.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
     return items;
   }, [expenses, requests, status, partyId, from, to]);
@@ -324,6 +371,7 @@ export default function MdHistory() {
                 onDelete={onDelete}
                 onVoid={onVoid}
                 onPurge={onPurgeExpense}
+                fromAdvance={row.fromAdvance}
               />
             ) : (
               <RequestHistoryCard
@@ -334,6 +382,13 @@ export default function MdHistory() {
                 purgeEnabled={purgeEnabled}
                 onFlagged={load}
                 onPurge={onPurgeRequest}
+                liquidations={row.liquidations}
+                busyId={busyId}
+                flagCounts={flagCounts}
+                isCeo={isCeo}
+                onDeleteExpense={onDelete}
+                onVoidExpense={onVoid}
+                onPurgeExpense={onPurgeExpense}
               />
             ),
           )}
@@ -353,6 +408,15 @@ function ExpenseHistoryCard({
   onDelete,
   onVoid,
   onPurge,
+  // `compact` = rendered nested under a parent RequestHistoryCard ("รายการปิดยอด"): tighter
+  // wrapper, smaller thumbnail, no own LaneChip (the section heading + parent card already
+  // say "this is an expense under an advance") — same markup/actions otherwise, just sized
+  // down, so this stays ONE component instead of a forked nested copy.
+  // `fromAdvance` = top-level rendering (compact=false) of a liquidation whose parent advance
+  // isn't shown in this view right now (filtered out / still in-flight / beyond fetch cap) —
+  // renders the "จากเบิกล่วงหน้า" fallback chip so the link to its advance stays visible.
+  compact,
+  fromAdvance,
 }: {
   e: Expense;
   busy: boolean;
@@ -363,18 +427,26 @@ function ExpenseHistoryCard({
   onDelete: (r: Expense) => void;
   onVoid: (r: Expense) => void;
   onPurge: (r: Expense) => void;
+  compact?: boolean;
+  fromAdvance?: boolean;
 }) {
   const voided = r.status === 'void';
   return (
-    <div className={`bg-white rounded-xl border border-slate-200 p-3 ${voided ? 'opacity-60' : ''}`}>
+    <div className={compact
+      ? `rounded-lg border border-slate-100 bg-slate-50/70 p-2 ${voided ? 'opacity-60' : ''}`
+      : `bg-white rounded-xl border border-slate-200 p-3 ${voided ? 'opacity-60' : ''}`}
+    >
       <div className="flex items-center gap-2 text-[11px] text-slate-400 mb-1.5">
-        <LaneChip kind="expense" />
+        {!compact && <LaneChip kind="expense" />}
         <span>{fmtDate(r.spentAt)}</span>
+        {fromAdvance && !compact && (
+          <span className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-500 text-[10px] font-semibold shrink-0">จากเบิกล่วงหน้า</span>
+        )}
       </div>
       <div className="flex items-start gap-3">
         {r.receiptUrl && (
           <a href={r.receiptUrl} target="_blank" rel="noreferrer" className="shrink-0">
-            <img src={r.receiptUrl} alt="ใบเสร็จ" className="w-14 h-14 object-cover rounded-lg border border-slate-200" />
+            <img src={r.receiptUrl} alt="ใบเสร็จ" className={compact ? 'w-10 h-10 object-cover rounded-lg border border-slate-200' : 'w-14 h-14 object-cover rounded-lg border border-slate-200'} />
           </a>
         )}
         <div className="flex-1 min-w-0">
@@ -453,6 +525,18 @@ function RequestHistoryCard({
   purgeEnabled,
   onFlagged,
   onPurge,
+  // Liquidation expenses nested under this advance (2026-07-22 follow-up) — passed down from
+  // MdHistory's `rows` grouping rather than recomputed here. The handful of extra props below
+  // (busyId/flagCounts/isCeo + the three expense action callbacks) are exactly what
+  // ExpenseHistoryCard needs; threading them through here lets the nested rows reuse that
+  // component (same actions: flag, delete/void/purge per role) instead of duplicating markup.
+  liquidations,
+  busyId,
+  flagCounts,
+  isCeo,
+  onDeleteExpense,
+  onVoidExpense,
+  onPurgeExpense,
 }: {
   request: StaffRequest;
   busy: boolean;
@@ -460,6 +544,13 @@ function RequestHistoryCard({
   purgeEnabled: boolean;
   onFlagged: () => void;
   onPurge: (r: StaffRequest) => void;
+  liquidations?: Expense[];
+  busyId: string;
+  flagCounts: Record<string, number>;
+  isCeo: boolean;
+  onDeleteExpense: (r: Expense) => void;
+  onVoidExpense: (r: Expense) => void;
+  onPurgeExpense: (r: Expense) => void;
 }) {
   const voided = r.approvalStatus === 'void';
   const chip = requestStatusChip(r);
@@ -503,6 +594,33 @@ function RequestHistoryCard({
           </div>
         </div>
       </div>
+
+      {/* รายการปิดยอด — liquidation expenses for this advance (advanceRequestId points here).
+          Compact/nested ExpenseHistoryCard, indented, date-desc within the group. Rendered
+          only when non-empty so a plain finished request with no liquidations yet looks
+          exactly as it did before this feature. */}
+      {liquidations && liquidations.length > 0 && (
+        <div className="mt-3 pt-2 border-t border-slate-100">
+          <div className="text-[11px] font-semibold text-slate-400 mb-1.5">รายการปิดยอด</div>
+          <div className="pl-3 border-l-2 border-slate-100 space-y-1.5">
+            {liquidations.map((le) => (
+              <ExpenseHistoryCard
+                key={`expense:${le.id}`}
+                e={le}
+                compact
+                busy={busyId === le.id}
+                flagCount={flagCounts[`expense:${le.id}`]}
+                isCeo={isCeo}
+                purgeEnabled={purgeEnabled}
+                onFlagged={onFlagged}
+                onDelete={onDeleteExpense}
+                onVoid={onVoidExpense}
+                onPurge={onPurgeExpense}
+              />
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
