@@ -46,7 +46,8 @@ export function HomePage() {
         <div className="wrap">
           <div>
             <span className="eyebrow">{pick('วัสดุ–อุปกรณ์ทันตกรรม สำหรับมืออาชีพ', 'Dental equipment & materials for professionals')}</span>
-            <h1 className="serif" style={{ marginTop: 14 }}>{pick('วัสดุและอุปกรณ์ทันตกรรม ', 'Quality dental supplies, ')}<em>{pick('ครบ จบ ในที่เดียว', 'all in one place')}</em></h1>
+            <h1 className="serif" style={{ marginTop: 14 }}>{/* U+2060 WORD JOINER inside the Thai string: Thai dictionary line-breaking splits ทันตกรรม mid-word (ทันต|กรรม) in the hero; glue it so the line wraps before the word instead. */}
+            {pick('วัสดุและอุปกรณ์ทันต⁠กรรม ', 'Quality dental supplies, ')}<em>{pick('ครบ จบ ในที่เดียว', 'all in one place')}</em></h1>
             <p className="lead">{pick(COMPANY.introTh, COMPANY.introEn)}</p>
             <div className="hero-search">
               <Search size={20} />
