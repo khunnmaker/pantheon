@@ -50,6 +50,32 @@ const MORPH_CLOSE_KERNEL = 7; // bridges gaps in the edge map (e.g. a finger occ
 const MAX_CONTOURS_PER_MAP = 10; // top-N by area considered per strategy, keeps this bounded
 const APPROX_EPSILONS = [0.02, 0.03, 0.04]; // fractions of arc length tried for approxPolyDP
 
+// --- Corner refinement (subpixel-ish tightening of the coarse approxPolyDP quad) ---
+const REFINE_MOVE_LIMIT_FRAC = 0.03; // a refined corner moving > 3% of the frame diagonal
+// from its coarse position is treated as unstable and reverted to the coarse corner.
+const REFINE_CORRIDOR_MIN_PX = 6; // minimum edge-pixel search corridor half-width
+const REFINE_CORRIDOR_FRAC_OF_DIAG = 0.01; // corridor half-width as a fraction of the diagonal
+const REFINE_SEGMENT_EXTEND_FRAC = 0.1; // allow edge points slightly beyond the coarse segment
+// ends (near the corner) to still count toward that side's line fit
+const REFINE_MIN_FIT_POINTS = 12; // below this many corridor points, fitLine is too noisy —
+// fall back to the coarse (unfit) side line for that side
+const REFINE_PARALLEL_SIN_EPS = 0.05; // |cross of two unit directions| below this ~= parallel
+// (adjacent quad sides are normally near-perpendicular, so this only trips on genuine failure)
+const REFINE_AREA_MIN_RATIO = 0.6; // refined quad area vs coarse quad area guard rails — outside
+const REFINE_AREA_MAX_RATIO = 1.3; // this range (or non-convex), discard refinement entirely
+
+// --- "Scanned paper" enhancement (illumination flattening + gentle stretch + unsharp) ---
+const ENHANCE_MAX_EDGE = 1600; // never run enhancement above the upload-cap resolution
+const ILLUM_SAMPLE_MAX_EDGE = 200; // per-channel illumination is estimated on a small proxy
+// (downscale → blur → upscale) — much cheaper than a literal huge-kernel blur at full size
+// and just as smooth, since illumination is by nature a very low-frequency signal.
+const PAPER_TARGET = 245; // background gray level the flattened paper should land near
+const CONTRAST_STRETCH_LO_PCT = 0.005; // percentile clip points for the global contrast stretch
+const CONTRAST_STRETCH_HI_PCT = 0.995;
+const CONTRAST_STRETCH_GENTLENESS = 0.6; // 0 = no stretch, 1 = full stretch to the clip points
+const SHARPEN_SIGMA = 1.0; // unsharp mask Gaussian sigma
+const SHARPEN_AMOUNT = 0.5; // mild — text crisper without visible halos
+
 let cvPromise: Promise<CvNamespace | null> | null = null;
 
 // Minimal shape of the bits of the OpenCV.js API used below — the real module has no
@@ -174,6 +200,7 @@ function locateDocumentCorners(cv: CvNamespace, canvas: HTMLCanvasElement): [Cor
   const src = cv.imread(canvas);
   const gray = new cv.Mat();
   const blurred = new cv.Mat();
+  let refineEdges: any;
   try {
     cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
     // Edge-preserving smoothing before any of the strategies below — cuts down on the
@@ -192,14 +219,207 @@ function locateDocumentCorners(cv: CvNamespace, canvas: HTMLCanvasElement): [Cor
     } finally {
       for (const m of maps) m.delete();
     }
-    if (best) return best.corners;
+    const coarse = best ? best.corners : fallbackLargestContour(cv, blurred, imgArea);
+    if (!coarse) return null;
 
-    return fallbackLargestContour(cv, blurred, imgArea);
+    // Corner refinement: approxPolyDP corners are coarse (integer contour vertices on a
+    // ≤1000px work image), which is enough to visibly offset the warp from the paper's true
+    // edge. Fit a line to the real edge pixels along each side and intersect adjacent sides
+    // for a tighter corner. Guarded and fail-open — see refineQuadCorners.
+    try {
+      refineEdges = buildRefineEdgeMap(cv, blurred);
+      if (refineEdges) {
+        const frameDiag = Math.hypot(src.cols, src.rows);
+        return refineQuadCorners(cv, refineEdges, coarse, frameDiag);
+      }
+    } catch {
+      // fall through — refinement is a pure enhancement of `coarse`, never a requirement
+    }
+    return coarse;
   } finally {
     src.delete();
     gray.delete();
     blurred.delete();
+    refineEdges?.delete();
   }
+}
+
+// Builds the edge map that corner refinement searches for real document-border pixels.
+// Reuses the same auto-Canny (median-derived thresholds) approach as detection strategy (a)
+// so refinement sees the same edges that (most likely) produced the coarse quad. Returns
+// null (never throws) on failure — caller treats that as "skip refinement".
+function buildRefineEdgeMap(cv: CvNamespace, blurred: any): any {
+  try {
+    const median = medianGray(blurred);
+    const lower = Math.max(0, Math.round(0.66 * median));
+    const upper = Math.min(255, Math.round(1.33 * median));
+    const edges = new cv.Mat();
+    cv.Canny(blurred, edges, lower, upper);
+    return edges;
+  } catch {
+    return null;
+  }
+}
+
+// A fitted (or coarse-fallback) line for one side of the quad, expressed as a point plus a
+// unit direction vector — the representation both cv.fitLine and a plain two-point line
+// share, so intersection math doesn't need to branch on which one produced it.
+interface SideLine {
+  point: Corner;
+  dir: Corner;
+}
+
+// Refines all four corners of `coarse` using real edge pixels near each side, then applies
+// the guard rails: any single corner that would move more than ~3% of the frame diagonal, or
+// whose two adjacent side-lines are near-parallel (unstable intersection), reverts to its
+// coarse position individually. After that, the whole refined quad is checked for convexity
+// and a sane area (60–130% of the coarse quad's area); if either check fails, refinement is
+// discarded wholesale and the original coarse quad is returned. Never throws.
+function refineQuadCorners(
+  cv: CvNamespace,
+  edgeMap: any,
+  coarse: [Corner, Corner, Corner, Corner],
+  frameDiag: number,
+): [Corner, Corner, Corner, Corner] {
+  try {
+    const [tl, tr, bl, br] = coarse;
+    // Perimeter order tl → tr → br → bl → tl, so each side pairs with its true neighbors.
+    const corridor = Math.max(REFINE_CORRIDOR_MIN_PX, frameDiag * REFINE_CORRIDOR_FRAC_OF_DIAG);
+    const top = fitSideLine(cv, edgeMap, tl, tr, corridor) ?? coarseLine(tl, tr);
+    const right = fitSideLine(cv, edgeMap, tr, br, corridor) ?? coarseLine(tr, br);
+    const bottom = fitSideLine(cv, edgeMap, br, bl, corridor) ?? coarseLine(br, bl);
+    const left = fitSideLine(cv, edgeMap, bl, tl, corridor) ?? coarseLine(bl, tl);
+
+    const moveLimit = frameDiag * REFINE_MOVE_LIMIT_FRAC;
+    const newTl = safeIntersect(left, top, tl, moveLimit);
+    const newTr = safeIntersect(top, right, tr, moveLimit);
+    const newBr = safeIntersect(right, bottom, br, moveLimit);
+    const newBl = safeIntersect(bottom, left, bl, moveLimit);
+    const refined: [Corner, Corner, Corner, Corner] = [newTl, newTr, newBl, newBr];
+
+    if (!isRefinementSane(refined, coarse)) return coarse;
+    return refined;
+  } catch {
+    return coarse;
+  }
+}
+
+// Fits a line to edge-map pixels found within `corridor` px of the infinite line through
+// (a, b), restricted to a bounding box around the segment (slightly extended past its ends
+// so real corners — which sit a little outside the coarse segment when the coarse corner
+// undershoots — still contribute). Returns null (caller falls back to the coarse two-point
+// line for that side) when too few points survive to trust a fit.
+function fitSideLine(cv: CvNamespace, edgeMap: any, a: Corner, b: Corner, corridor: number): SideLine | null {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const segLen = Math.hypot(dx, dy);
+  if (segLen < 1) return null;
+  const ux = dx / segLen;
+  const uy = dy / segLen;
+  const nx = -uy;
+  const ny = ux;
+  const ext = Math.max(corridor, segLen * REFINE_SEGMENT_EXTEND_FRAC);
+
+  const cols = edgeMap.cols;
+  const rows = edgeMap.rows;
+  const minX = Math.max(0, Math.floor(Math.min(a.x, b.x) - ext));
+  const maxX = Math.min(cols - 1, Math.ceil(Math.max(a.x, b.x) + ext));
+  const minY = Math.max(0, Math.floor(Math.min(a.y, b.y) - ext));
+  const maxY = Math.min(rows - 1, Math.ceil(Math.max(a.y, b.y) + ext));
+  if (maxX < minX || maxY < minY) return null;
+
+  const data: Uint8Array = edgeMap.data;
+  const pts: number[] = [];
+  for (let y = minY; y <= maxY; y++) {
+    const rowOff = y * cols;
+    for (let x = minX; x <= maxX; x++) {
+      if (data[rowOff + x] === 0) continue;
+      const relX = x - a.x;
+      const relY = y - a.y;
+      const t = (relX * ux + relY * uy) / segLen;
+      if (t < -REFINE_SEGMENT_EXTEND_FRAC || t > 1 + REFINE_SEGMENT_EXTEND_FRAC) continue;
+      const perp = Math.abs(relX * nx + relY * ny);
+      if (perp > corridor) continue;
+      pts.push(x, y);
+    }
+  }
+  if (pts.length / 2 < REFINE_MIN_FIT_POINTS) return null;
+
+  let ptsMat: any;
+  let lineOut: any;
+  try {
+    ptsMat = cv.matFromArray(pts.length / 2, 1, cv.CV_32SC2, pts);
+    lineOut = new cv.Mat();
+    cv.fitLine(ptsMat, lineOut, cv.DIST_L2, 0, 0.01, 0.01);
+    const d: Float32Array = lineOut.data32F;
+    const dirLen = Math.hypot(d[0], d[1]) || 1;
+    return { dir: { x: d[0] / dirLen, y: d[1] / dirLen }, point: { x: d[2], y: d[3] } };
+  } catch {
+    return null;
+  } finally {
+    ptsMat?.delete();
+    lineOut?.delete();
+  }
+}
+
+function coarseLine(a: Corner, b: Corner): SideLine {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const len = Math.hypot(dx, dy) || 1;
+  return { point: a, dir: { x: dx / len, y: dy / len } };
+}
+
+// Intersects two side lines and returns the intersection — unless the lines are near-parallel
+// (unstable) or the intersection lands further than `moveLimit` from `coarseCorner`, in which
+// case `coarseCorner` itself is returned unchanged.
+function safeIntersect(l1: SideLine, l2: SideLine, coarseCorner: Corner, moveLimit: number): Corner {
+  const denom = l1.dir.x * l2.dir.y - l1.dir.y * l2.dir.x;
+  if (Math.abs(denom) < REFINE_PARALLEL_SIN_EPS) return coarseCorner;
+  const t = ((l2.point.x - l1.point.x) * l2.dir.y - (l2.point.y - l1.point.y) * l2.dir.x) / denom;
+  const ix = l1.point.x + t * l1.dir.x;
+  const iy = l1.point.y + t * l1.dir.y;
+  if (!Number.isFinite(ix) || !Number.isFinite(iy)) return coarseCorner;
+  if (dist({ x: ix, y: iy }, coarseCorner) > moveLimit) return coarseCorner;
+  return { x: ix, y: iy };
+}
+
+function polygonArea(poly: Corner[]): number {
+  let sum = 0;
+  for (let i = 0; i < poly.length; i++) {
+    const a = poly[i];
+    const b = poly[(i + 1) % poly.length];
+    sum += a.x * b.y - b.x * a.y;
+  }
+  return Math.abs(sum) / 2;
+}
+
+function isConvexPoly(poly: Corner[]): boolean {
+  let sign = 0;
+  for (let i = 0; i < poly.length; i++) {
+    const a = poly[i];
+    const b = poly[(i + 1) % poly.length];
+    const c = poly[(i + 2) % poly.length];
+    const cross = (b.x - a.x) * (c.y - b.y) - (b.y - a.y) * (c.x - b.x);
+    if (Math.abs(cross) < 1e-6) continue; // collinear — inconclusive, doesn't break convexity
+    const s = cross > 0 ? 1 : -1;
+    if (sign === 0) sign = s;
+    else if (s !== sign) return false;
+  }
+  return true;
+}
+
+// Corners are stored as [tl, tr, bl, br]; the actual perimeter walk is tl → tr → br → bl.
+function isRefinementSane(
+  refined: [Corner, Corner, Corner, Corner],
+  coarse: [Corner, Corner, Corner, Corner],
+): boolean {
+  const refinedPoly = [refined[0], refined[1], refined[3], refined[2]];
+  const coarsePoly = [coarse[0], coarse[1], coarse[3], coarse[2]];
+  if (!isConvexPoly(refinedPoly)) return false;
+  const coarseArea = polygonArea(coarsePoly);
+  if (coarseArea <= 0) return false;
+  const ratio = polygonArea(refinedPoly) / coarseArea;
+  return ratio >= REFINE_AREA_MIN_RATIO && ratio <= REFINE_AREA_MAX_RATIO;
 }
 
 // Approximates the median of a single-channel 8-bit Mat via a 256-bin histogram (no need
@@ -425,7 +645,11 @@ function dist(a: Corner, b: Corner): number {
 }
 
 // Warps `canvas` (full resolution) so the quad [topLeft, topRight, bottomLeft, bottomRight]
-// becomes an upright rectangle, then applies a mild, color-preserving contrast boost.
+// becomes an upright rectangle, then applies the "scanned paper" enhancement. The perspective
+// warp itself always runs at full resolution (crop quality shouldn't be capped), but the
+// enhancement step is bounded to ENHANCE_MAX_EDGE — see enhanceScan. Enhancement failure is
+// contained right here: it falls back to the plain warped crop rather than losing the crop
+// entirely, matching scan.ts's overall fail-open contract.
 function warpAndEnhance(
   cv: CvNamespace,
   canvas: HTMLCanvasElement,
@@ -448,9 +672,13 @@ function warpAndEnhance(
     warped = new cv.Mat();
     cv.warpPerspective(src, warped, M, new cv.Size(outW, outH), cv.INTER_LINEAR, cv.BORDER_CONSTANT, new cv.Scalar());
 
-    enhanced = enhanceContrast(cv, warped);
+    try {
+      enhanced = enhanceScan(cv, warped);
+    } catch {
+      enhanced = null;
+    }
     const outCanvas = document.createElement('canvas');
-    cv.imshow(outCanvas, enhanced);
+    cv.imshow(outCanvas, enhanced ?? warped);
     return outCanvas;
   } finally {
     src.delete();
@@ -462,42 +690,219 @@ function warpAndEnhance(
   }
 }
 
-// Mild, color-preserving contrast enhancement: CLAHE (adaptive histogram equalization) on
-// the L channel of Lab color space only, so receipts get more legible contrast without the
-// color-cast/oversaturation that per-RGB-channel equalization would cause.
-function enhanceContrast(cv: CvNamespace, rgba: any): any {
+// "Scanned paper" enhancement — illumination-flattening ("paper whitening") rather than
+// CLAHE: estimates per-channel background illumination with a cheap large-scale blur, divides
+// it out so paper backgrounds land near-white regardless of shadows/uneven lighting, then
+// applies a gentle global contrast stretch and a light unsharp mask so text stays crisp
+// without halos. Runs per-RGB-channel (each with its own illumination estimate) so color
+// content — stamps, colored slip paper, logos — survives even though shadows/gray cast don't.
+// Bounded to ENHANCE_MAX_EDGE regardless of the input's resolution (warps can be 4000px+ on a
+// modern phone camera; this step must never run at that size). Always returns a new Mat the
+// caller must delete; throws are the caller's problem to catch (see warpAndEnhance).
+function enhanceScan(cv: CvNamespace, rgba: any): any {
+  let working = rgba;
+  let resized: any;
+  try {
+    const longEdge = Math.max(rgba.cols, rgba.rows);
+    if (longEdge > ENHANCE_MAX_EDGE) {
+      const scale = ENHANCE_MAX_EDGE / longEdge;
+      resized = new cv.Mat();
+      cv.resize(
+        rgba,
+        resized,
+        new cv.Size(Math.max(1, Math.round(rgba.cols * scale)), Math.max(1, Math.round(rgba.rows * scale))),
+        0,
+        0,
+        cv.INTER_AREA,
+      );
+      working = resized;
+    }
+    return flattenAndSharpen(cv, working);
+  } finally {
+    resized?.delete();
+  }
+}
+
+function flattenAndSharpen(cv: CvNamespace, rgba: any): any {
   const rgb = new cv.Mat();
-  const lab = new cv.Mat();
   const channels = new cv.MatVector();
-  let clahe: any;
-  let lEq: any;
+  let r: any, g: any, b: any;
+  let flatR: any, flatG: any, flatB: any;
+  let mergedVec: any;
   let merged: any;
-  let rgbOut: any;
+  let stretched: any;
+  let sharpened: any;
   try {
     cv.cvtColor(rgba, rgb, cv.COLOR_RGBA2RGB);
-    cv.cvtColor(rgb, lab, cv.COLOR_RGB2Lab);
-    cv.split(lab, channels);
-    const l = channels.get(0);
-    clahe = new cv.CLAHE(2.0, new cv.Size(8, 8));
-    lEq = new cv.Mat();
-    clahe.apply(l, lEq);
-    lEq.copyTo(l);
-    l.delete();
+    cv.split(rgb, channels);
+    r = channels.get(0);
+    g = channels.get(1);
+    b = channels.get(2);
+    flatR = flattenIlluminationChannel(cv, r);
+    flatG = flattenIlluminationChannel(cv, g);
+    flatB = flattenIlluminationChannel(cv, b);
 
+    mergedVec = new cv.MatVector();
+    mergedVec.push_back(flatR);
+    mergedVec.push_back(flatG);
+    mergedVec.push_back(flatB);
     merged = new cv.Mat();
-    cv.merge(channels, merged);
-    rgbOut = new cv.Mat();
-    cv.cvtColor(merged, rgbOut, cv.COLOR_Lab2RGB);
+    cv.merge(mergedVec, merged);
+
+    stretched = globalContrastStretch(cv, merged);
+    sharpened = unsharpMask(cv, stretched);
+
     const rgbaOut = new cv.Mat();
-    cv.cvtColor(rgbOut, rgbaOut, cv.COLOR_RGB2RGBA);
+    cv.cvtColor(sharpened, rgbaOut, cv.COLOR_RGB2RGBA);
     return rgbaOut;
   } finally {
     rgb.delete();
-    lab.delete();
     channels.delete();
-    clahe?.delete();
-    lEq?.delete();
+    r?.delete();
+    g?.delete();
+    b?.delete();
+    flatR?.delete();
+    flatG?.delete();
+    flatB?.delete();
+    mergedVec?.delete();
     merged?.delete();
-    rgbOut?.delete();
+    stretched?.delete();
+    sharpened?.delete();
+  }
+}
+
+// Flattens one 8-bit channel's illumination: estimates a smooth background via a small proxy
+// (downscale → blur → upscale — cheap and, since illumination is inherently low-frequency, as
+// good as a literal huge-kernel blur at full size) then divides it out, rescaling so the
+// background lands near PAPER_TARGET. `cv.divide`'s `scale` parameter does the divide-and-
+// rescale in one call; `convertTo` back to CV_8U saturates, which is the "clip highlights"
+// step. Caller owns and must delete the returned Mat.
+function flattenIlluminationChannel(cv: CvNamespace, channel: any): any {
+  const cols = channel.cols;
+  const rows = channel.rows;
+  const longEdge = Math.max(cols, rows);
+  let small: any;
+  let illumSmall: any;
+  let illum: any;
+  let channelF: any;
+  let illumF: any;
+  let ratio: any;
+  try {
+    let illumSource = channel;
+    if (longEdge > ILLUM_SAMPLE_MAX_EDGE) {
+      const scale = ILLUM_SAMPLE_MAX_EDGE / longEdge;
+      small = new cv.Mat();
+      cv.resize(
+        channel,
+        small,
+        new cv.Size(Math.max(1, Math.round(cols * scale)), Math.max(1, Math.round(rows * scale))),
+        0,
+        0,
+        cv.INTER_AREA,
+      );
+      illumSource = small;
+    }
+    const k = oddAtLeast3(Math.round(Math.max(illumSource.cols, illumSource.rows) / 6));
+    illumSmall = new cv.Mat();
+    cv.GaussianBlur(illumSource, illumSmall, new cv.Size(k, k), 0, 0, cv.BORDER_REPLICATE);
+
+    if (small) {
+      illum = new cv.Mat();
+      cv.resize(illumSmall, illum, new cv.Size(cols, rows), 0, 0, cv.INTER_LINEAR);
+    } else {
+      illum = illumSmall;
+      illumSmall = null; // ownership moved to `illum`, don't double-delete in finally
+    }
+
+    channelF = new cv.Mat();
+    illumF = new cv.Mat();
+    channel.convertTo(channelF, cv.CV_32F);
+    // Tiny additive epsilon guards the (rare) fully-black-illumination-patch divide-by-zero.
+    illum.convertTo(illumF, cv.CV_32F, 1, 1e-3);
+    ratio = new cv.Mat();
+    cv.divide(channelF, illumF, ratio, PAPER_TARGET);
+
+    const out = new cv.Mat();
+    ratio.convertTo(out, cv.CV_8U); // saturating cast = the clip-highlights step
+    return out;
+  } finally {
+    small?.delete();
+    illumSmall?.delete();
+    illum?.delete();
+    channelF?.delete();
+    illumF?.delete();
+    ratio?.delete();
+  }
+}
+
+function oddAtLeast3(n: number): number {
+  const v = Math.max(3, n);
+  return v % 2 === 0 ? v + 1 : v;
+}
+
+// Gentle global contrast stretch: finds the (0.5th, 99.5th) percentile levels of the image's
+// luminance and maps them toward black/white, but only partway (CONTRAST_STRETCH_GENTLENESS)
+// so text gets crisper without blowing out midtones. Deliberately computed from a single
+// luminance histogram and applied as ONE affine transform across all three channels — a
+// per-channel stretch here would reintroduce the color cast the illumination flattening just
+// removed. Always returns a new Mat; falls back to a plain clone if the histogram is
+// degenerate (e.g. a flat/blank image) rather than dividing by zero.
+function globalContrastStretch(cv: CvNamespace, rgb: any): any {
+  const gray = new cv.Mat();
+  try {
+    cv.cvtColor(rgb, gray, cv.COLOR_RGB2GRAY);
+    const data: Uint8Array = gray.data;
+    const hist = new Array(256).fill(0);
+    for (let i = 0; i < data.length; i++) hist[data[i]]++;
+    const total = data.length;
+
+    const loTarget = total * CONTRAST_STRETCH_LO_PCT;
+    let lo = 0;
+    let cum = 0;
+    for (let v = 0; v < 256; v++) {
+      cum += hist[v];
+      if (cum >= loTarget) {
+        lo = v;
+        break;
+      }
+    }
+    const hiTarget = total * CONTRAST_STRETCH_HI_PCT;
+    let hi = 255;
+    cum = 0;
+    for (let v = 0; v < 256; v++) {
+      cum += hist[v];
+      if (cum >= hiTarget) {
+        hi = v;
+        break;
+      }
+    }
+
+    const out = new cv.Mat();
+    if (hi <= lo) {
+      rgb.copyTo(out);
+      return out;
+    }
+    const fullAlpha = 255 / (hi - lo);
+    const fullBeta = -lo * fullAlpha;
+    const alpha = 1 + (fullAlpha - 1) * CONTRAST_STRETCH_GENTLENESS;
+    const beta = fullBeta * CONTRAST_STRETCH_GENTLENESS;
+    rgb.convertTo(out, -1, alpha, beta);
+    return out;
+  } finally {
+    gray.delete();
+  }
+}
+
+// Mild unsharp mask: out = rgb*(1+amount) - blur(rgb)*amount. Low amount + modest sigma keeps
+// text edges crisp without the visible halo a stronger sharpen would leave around them.
+function unsharpMask(cv: CvNamespace, rgb: any): any {
+  const blurred = new cv.Mat();
+  try {
+    cv.GaussianBlur(rgb, blurred, new cv.Size(0, 0), SHARPEN_SIGMA, SHARPEN_SIGMA, cv.BORDER_DEFAULT);
+    const out = new cv.Mat();
+    cv.addWeighted(rgb, 1 + SHARPEN_AMOUNT, blurred, -SHARPEN_AMOUNT, 0, out);
+    return out;
+  } finally {
+    blurred.delete();
   }
 }

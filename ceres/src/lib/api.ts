@@ -696,6 +696,26 @@ export const baht = (n: number): string =>
   `฿${n.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 // ---------------------------------------------------------------------------
+// สรุปรายหมวด (category spend rollup) — gm/ceo only, see
+// api/src/routes/ceres/reports.ts. Amounts come back as integer satang
+// (÷100 for baht — see that file's header note on why satang, not baht string,
+// here) so the frontend never re-parses a decimal-string amount to sum it.
+// ---------------------------------------------------------------------------
+
+export interface CategorySummaryRow {
+  category: string;
+  group: string;
+  totalSatang: number;
+  count: number;
+}
+export interface CategorySummary {
+  rows: CategorySummaryRow[];
+  grandTotal: { totalSatang: number; count: number };
+}
+export const getCategorySummary = (from: string, to: string) =>
+  authed<CategorySummary>(`/api/ceres/reports/category-summary${queryString({ from, to })}`);
+
+// ---------------------------------------------------------------------------
 // P2 v2 — staff request front door (advance / reimbursement / purchase) +
 // unified Nee/CEO approval queue. See api/src/ceres/requestService.ts and
 // api/src/routes/ceres/requests.ts for the server-side contract.

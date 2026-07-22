@@ -801,7 +801,7 @@ function TxnDetail({ txn, onChanged }: { txn: BankTxn; onChanged: (updated?: Ban
           <input
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="ค้นหา RE / ชื่อ / จำนวน"
+            placeholder="ค้นหา RE / MB / XS / ชื่อ / จำนวน"
             className="w-full pl-7 pr-8 py-1.5 rounded-lg border border-slate-300 bg-white text-xs focus:outline-none focus:ring-2 focus:ring-emerald-400"
           />
           {loadingSearch && <Loader2 size={13} className="absolute right-2.5 top-2 animate-spin text-slate-400" />}

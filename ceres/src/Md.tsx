@@ -13,6 +13,7 @@ import {
   ListChecks,
   LogOut,
   MoreHorizontal,
+  PieChart,
   PiggyBank,
   Repeat,
   Scale,
@@ -37,6 +38,7 @@ import MdMoney from './MdMoney';
 import MdClose from './MdClose';
 import MdExpenses from './MdExpenses';
 import MdHistory from './MdHistory';
+import MdCategorySummary from './MdCategorySummary';
 import MdTemplates from './MdTemplates';
 import MdRecon from './MdRecon';
 import CeoOverview, { WeeklyPackSection } from './CeoOverview';
@@ -170,6 +172,7 @@ export function CeoApp() {
 // primes the right segment.
 type CashboxTab = 'board' | 'money' | 'close';
 type OtherTab = 'templates' | 'exports' | 'settings';
+type HistoryTab = 'list' | 'summary';
 
 function ManagementApp({ isCeo }: { isCeo: boolean }) {
   const { agent, onLogout } = useCeres();
@@ -303,6 +306,11 @@ function ManagementApp({ isCeo }: { isCeo: boolean }) {
   useEffect(() => {
     if (view === 'templates' || view === 'exports' || view === 'settings') setOtherTab(view);
   }, [view]);
+
+  // ประวัติ (History): รายการ · สรุป — always defaults to รายการ (2026-07-23 สรุปรายหมวด
+  // addition; see HistoryComposedView below). No old individual key maps onto 'summary', so
+  // there's nothing to re-prime from unlike cashboxTab/otherTab above.
+  const [historyTab, setHistoryTab] = useState<HistoryTab>('list');
 
   // ── One-shot "open the compose sheet immediately" flag for the ของฉัน tab. NeeHome/CeoHome's
   // big amber "ส่งคำขอเงิน" button (mobile-only front-door shortcut) still wants StaffHome's
@@ -550,7 +558,7 @@ function ManagementApp({ isCeo }: { isCeo: boolean }) {
         {activeView === 'cashbox' && (
           <CashboxComposedView sub={cashboxTab} onSubChange={setCashboxTab} onViewPendingParty={goToApprovalWithPrefill} />
         )}
-        {activeView === 'history' && <HistoryComposedView />}
+        {activeView === 'history' && <HistoryComposedView sub={historyTab} onSubChange={setHistoryTab} />}
         {activeView === 'other' && (
           <OtherComposedView sub={otherTab} onSubChange={setOtherTab} onCreateRequest={openTemplateRequest} />
         )}
@@ -689,13 +697,32 @@ function CashboxComposedView({
   );
 }
 
-// ประวัติ: merged expense + finished-request history (2026-07-22 fix — a paid/rejected/voided
-// v2 money request used to appear NOWHERE once it left the approval/fulfillment queues; see
-// MdHistory.tsx for the merge + finished-state filter). No SegmentBar since there's still only
-// one destination; keeps the composed-tab wrapper so desktopHistoryRedirect has somewhere to
-// land (see the 2026-07-19 v1 purge note in MdHistory.tsx's own header comment for history).
-function HistoryComposedView() {
-  return <MdHistory />;
+// ประวัติ: รายการ · สรุป — รายการ is the existing merged expense + finished-request history
+// (2026-07-22 fix — a paid/rejected/voided v2 money request used to appear NOWHERE once it
+// left the approval/fulfillment queues; see MdHistory.tsx for the merge + finished-state
+// filter). สรุป is the new category spend rollup (2026-07-23, see MdCategorySummary.tsx +
+// api/src/routes/ceres/reports.ts) — same gm/ceo gate as every other tab reachable from here.
+function HistoryComposedView({
+  sub,
+  onSubChange,
+}: {
+  sub: HistoryTab;
+  onSubChange: (t: HistoryTab) => void;
+}) {
+  return (
+    <div>
+      <SegmentBar
+        value={sub}
+        onChange={onSubChange}
+        options={[
+          { key: 'list', label: 'รายการ', icon: <History size={15} /> },
+          { key: 'summary', label: 'สรุป', icon: <PieChart size={15} /> },
+        ]}
+      />
+      {sub === 'list' && <MdHistory />}
+      {sub === 'summary' && <MdCategorySummary />}
+    </div>
+  );
 }
 
 // อื่นๆ: ประจำ · ส่งออก · ตั้งค่า.

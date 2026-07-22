@@ -1,8 +1,16 @@
+import { normalizeBillReference } from './receiptReferences.js';
+
 // Normalization shared by the bank-first RE/payment search route and its tests.
 // Stored RE numbers are bare seven-digit cores; FIN commonly types RE-, spaces, or dashes.
 export function reSearchCore(value: string): string | null {
   const core = value.trim().replace(/^re[\s-]*/i, '').replace(/[\s-]/g, '');
   return /^\d{2,7}$/.test(core) ? core : null;
+}
+
+// Stored billNos use the shared receipt-reference canonical form. This accepts the same
+// spaces/dashes and optional MB prefix as the verify dialog, including XS references.
+export function billSearchReference(value: string): string | null {
+  return normalizeBillReference(value)?.value ?? null;
 }
 
 export function searchedAmount(value: string): number | null {

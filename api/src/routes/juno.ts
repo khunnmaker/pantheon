@@ -29,6 +29,7 @@ import { buildReReconIndex, computeReRow } from '../finance/reRecon.js';
 import { normalizeSlipDate } from '../finance/normalize.js';
 import {
   bankTxnSearchTier,
+  billSearchReference,
   chequeSearchDigits,
   nearAmountTolerance,
   reSearchCore,
@@ -445,6 +446,7 @@ function buildListWhere(q: z.infer<typeof listFilterSchema>): Record<string, unk
   if (term) {
     // typing "RE6900123" should find the bare-digit reNumber "6900123" too
     const reTerm = /^re\d+/i.test(term) ? term.replace(/^re/i, '') : term;
+    const billTerm = normalizeBillReference(term)?.value;
     where.OR = [
       { customerName: { contains: term, mode: 'insensitive' } },
       { customerCode: { contains: term, mode: 'insensitive' } },
@@ -454,6 +456,7 @@ function buildListWhere(q: z.infer<typeof listFilterSchema>): Record<string, unk
       { salesName: { contains: term, mode: 'insensitive' } },
       { amount: { contains: term } },
       { reNumber: { contains: reTerm } },
+      ...(billTerm ? [{ billNos: { has: billTerm } }] : []),
     ];
   }
   return where;
@@ -598,7 +601,10 @@ function normChq(s: string): string {
 // /bank/automatch). createdById is left null on every link this function creates — a
 // deliberate marker distinguishing "the system auto-matched this" from a FIN-driven manual
 // match (POST /match, which stamps req.agent.id). Returns all link counts.
-async function runAutoMatcher(txnIds?: string[]): Promise<{ matched: number; chequeMatched: number; timeMatched: number }> {
+async function runAutoMatcher(
+  txnIds?: string[],
+  paymentIds?: string[],
+): Promise<{ matched: number; chequeMatched: number; timeMatched: number }> {
   // Ambiguity is judged against ALL unmatched in-lines, not just the ones this run may link:
   // an import-scoped run would otherwise miss that an OLDER unmatched line is an equally
   // plausible home for the payment, and link the new line with false confidence.
@@ -630,6 +636,7 @@ async function runAutoMatcher(txnIds?: string[]): Promise<{ matched: number; che
   ]);
   const linkTargets = txnIds ? new Set(txnIds) : null;
   const linkable = linkTargets ? allTxns.filter((t) => linkTargets.has(t.id)) : allTxns;
+  const paymentTargets = paymentIds ? new Set(paymentIds) : null;
   if (!linkable.length) return { matched: 0, chequeMatched: 0, timeMatched: 0 };
 
   // ── Pass 1: cheques ──────────────────────────────────────────────────────
@@ -662,6 +669,7 @@ async function runAutoMatcher(txnIds?: string[]): Promise<{ matched: number; che
       const matches = chequeTxnCandidates.get(t.id) ?? [];
       if (matches.length !== 1) continue; // ambiguous or no candidate on the txn side
       const pid = matches[0];
+      if (paymentTargets && !paymentTargets.has(pid)) continue;
       if ((chequePaymentCandidates.get(pid) ?? []).length !== 1) continue; // ambiguous on the payment side too
       await prisma.$transaction([
         prisma.paymentBankMatch.create({ data: { paymentId: pid, bankTxnId: t.id, createdById: null } }),
@@ -712,6 +720,7 @@ async function runAutoMatcher(txnIds?: string[]): Promise<{ matched: number; che
       const matches = timeTxnCandidates.get(t.id) ?? [];
       if (matches.length !== 1) continue;
       const pid = matches[0];
+      if (paymentTargets && !paymentTargets.has(pid)) continue;
       const reverseMatches = timePaymentCandidates.get(pid) ?? [];
       if (reverseMatches.length !== 1 || reverseMatches[0] !== t.id) continue;
       await prisma.$transaction([
@@ -763,6 +772,7 @@ async function runAutoMatcher(txnIds?: string[]): Promise<{ matched: number; che
       const effTxn = narrowByAgreement(txnCandidates.get(t.id) ?? []);
       if (effTxn.length !== 1) continue; // ambiguous or no effective candidate on the txn side
       const pid = effTxn[0];
+      if (paymentTargets && !paymentTargets.has(pid)) continue;
       const effPay = narrowByAgreement(paymentCandidates.get(pid) ?? []);
       if (effPay.length !== 1 || effPay[0] !== t.id) continue; // symmetric ambiguity guard
       await prisma.$transaction([
@@ -2005,6 +2015,18 @@ export async function junoRoutes(app: FastifyInstance) {
     if (syncRecordedCorrection) {
       void syncPaymentToJupiter(p.id).catch((err) => req.log.error({ err }, 'jupiter sync failed'));
     }
+    // A bank line may predate FIN verification. Judge ambiguity against the full unmatched
+    // backlog, but create links only for this payment so batch verification remains cheap.
+    // Matching is best-effort: verification is FIN's hot path and must survive matcher errors.
+    let matchedAfterVerify = false;
+    if (p.status === 'verified' && !p.wrongTransferAt) {
+      try {
+        const result = await runAutoMatcher(undefined, [p.id]);
+        matchedAfterVerify = result.matched + result.chequeMatched + result.timeMatched > 0;
+      } catch (err) {
+        req.log.error({ err, paymentId: p.id }, 'bank auto-match after verify failed');
+      }
+    }
     // Late typing: FIN may verify against REs that are ALREADY clean in the last import (and
     // money already grounded) — the auto stage-4 sweep advances immediately; return fresh.
     const autoAfterVerify = await autoRecordEligible(req.log);
@@ -2012,7 +2034,7 @@ export async function junoRoutes(app: FastifyInstance) {
     // credit immediately too (owner ruling 2026-07-21). Count not surfaced here, but if either
     // sweep touched THIS payment the response must carry the fresh stamps.
     const discAutoAfterVerify = await autoConfirmOverpayCredits(req.log);
-    const finalRow = autoAfterVerify.paymentIds.includes(p.id) || discAutoAfterVerify.paymentIds.includes(p.id)
+    const finalRow = matchedAfterVerify || autoAfterVerify.paymentIds.includes(p.id) || discAutoAfterVerify.paymentIds.includes(p.id)
       ? (await prisma.payment.findUnique({ where: { id: p.id } })) ?? p
       : p;
     return { ok: true, payment: toRow(finalRow) };
@@ -2740,6 +2762,7 @@ export async function junoRoutes(app: FastifyInstance) {
 
     const term = parsed.data.q;
     const reCore = reSearchCore(term);
+    const billReference = billSearchReference(term);
     const amount = searchedAmount(term);
 
     // REs are stored bare today, but normalize the column too so legacy RE-/dash formatting
@@ -2768,6 +2791,7 @@ export async function junoRoutes(app: FastifyInstance) {
       { receiptName: { contains: term, mode: 'insensitive' as const } },
       { customerName: { contains: term, mode: 'insensitive' as const } },
       { senderName: { contains: term, mode: 'insensitive' as const } },
+      ...(billReference ? [{ billNos: { has: billReference } }] : []),
     ];
     const candidates = await prisma.payment.findMany({
       where: {
@@ -2791,10 +2815,11 @@ export async function junoRoutes(app: FastifyInstance) {
       const normalizedPaymentRe = payment.reNumber.replace(/[^0-9/]/g, '');
       const exactRe = !!reCore && normalizedPaymentRe.split('/').includes(reCore);
       const partialRe = !!reCore && normalizedPaymentRe.includes(reCore);
+      const exactBill = !!billReference && payment.billNos.includes(billReference);
       const nameMatch = [payment.receiptName, payment.customerName, payment.senderName]
         .some((name) => name.toLocaleLowerCase('th-TH').includes(termLower));
       const exactSearchAmount = amount !== null && amountDistance < 0.005;
-      const tier = exactRe ? 5 : partialRe ? 4 : nameMatch ? 3 : exactSearchAmount ? 2 : 1;
+      const tier = exactRe || exactBill ? 5 : partialRe ? 4 : nameMatch ? 3 : exactSearchAmount ? 2 : 1;
       const days = dayDistance(txn.txnAt, paymentTimestamp(payment.transferAt, payment.createdAt));
       return { payment, tier, amountDistance, days };
     });
