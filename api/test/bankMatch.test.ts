@@ -5,6 +5,7 @@ import {
   paymentTimestamp,
   strictPaymentTimestamp,
 } from '../src/bank/match.js';
+import { billSearchReference } from '../src/finance/rePaymentSearch.js';
 
 describe('paymentTimestamp', () => {
   const createdAt = new Date('2026-07-09T10:00:00+07:00');
@@ -70,5 +71,16 @@ describe('suggestion name scoring', () => {
     ]);
 
     expect(score).toBe(1);
+  });
+});
+
+describe('bank-first bill search normalization', () => {
+  it.each([
+    ['MB 9690001', '9690001'],
+    ['9690001', '9690001'],
+    ['XS6900342', 'XS6900342'],
+    ['xs 6900342', 'XS6900342'],
+  ])('resolves %s to the stored billNos value', (input, expected) => {
+    expect(billSearchReference(input)).toBe(expected);
   });
 });

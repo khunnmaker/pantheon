@@ -645,7 +645,7 @@ function PaymentsView({ view, onChanged, canDelete, isCeo }: { view: Exclude<Vie
             <input
               value={q}
               onChange={(e) => setQ(e.target.value)}
-              placeholder="ค้นหา ชื่อ / รหัส / อ้างอิง / ธนาคาร"
+              placeholder="ค้นหา ชื่อ / รหัส / RE / บิล / อ้างอิง"
               className="w-full pl-8 pr-3 py-2 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400"
             />
           </div>
@@ -1812,8 +1812,8 @@ function Detail({ payment, onClose, onUpdate, onDelete, onPrint, canDelete, isCe
               {field('อ้างอิง', p.ref)}
               {field('พนักงานขาย', p.salesName)}
               {field('วันที่ส่งเข้า', fmtDateTime(p.createdAt))}
-              {p.reNumbers.length > 0 && field('ชื่อบนใบเสร็จ', p.receiptName)}
-              {p.reNumbers.length > 0 && field('ประเภทลูกค้า', p.customerType)}
+              {p.reNumbers.length + p.billNos.length > 0 && field('ชื่อบนใบเสร็จ', p.receiptName)}
+              {p.reNumbers.length + p.billNos.length > 0 && field('ประเภทลูกค้า', p.customerType)}
               {p.billNos.length > 0 && field('MB', p.billNos.map(billLabel).join(' / '))}
             </div>
 
