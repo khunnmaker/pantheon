@@ -16,11 +16,15 @@ mobile changed.
 ## Final strip
 
 **GM (Nee)** — lands on อนุมัติ (no big-button home on desktop):
-`อนุมัติ(●queue+legacy) · รอจ่าย(●fulfillment) · โอน/สลิป(●recon) · กล่องเงินสด · ประวัติ · ของฉัน · อื่นๆ`
+`อนุมัติ(●queue+legacy) · เบิกล่วงหน้า(●fulfillment) · โอน/สลิป(●recon) · กล่องเงินสด · ประวัติ · ของฉัน · อื่นๆ`
 
 **CEO (supervisor)** — lands on ภาพรวม (oversight — now leads with the escalations queue, no
 separate รอ CEO tab):
-`ภาพรวม(●escalations) · รอจ่าย(●fulfillment) · โอน/สลิป(●recon) · กล่องเงินสด · ประวัติ · ของฉัน · อื่นๆ`
+`ภาพรวม(●escalations) · เบิกล่วงหน้า(●fulfillment) · โอน/สลิป(●recon) · กล่องเงินสด · ประวัติ · ของฉัน · อื่นๆ`
+
+Tab renamed รอจ่าย → **เบิกล่วงหน้า** for both roles (Ceres approve-is-pay one-flow,
+2026-07-22 — see that section below); the `View` keys (`fulfillment` / `legacy-fulfillment`)
+and hashes are unchanged, only the label + page content re-centered.
 
 ## CEO one-flow (2026-07-21)
 
@@ -57,12 +61,68 @@ Three changes landed together on the CEO side of this strip:
    mobile destination either and mobile's `CeoHome` also renders `EscalationsSection` near its
    top, so `home` is a reasonable landing there too.
 
+## Ceres approve-is-pay one-flow (2026-07-22)
+
+Owner directive: "อนุมัติ = จ่าย" — GM/CEO approval of an advance or reimbursement no longer
+has a separate combined-action button; อนุมัติ itself now asks the lane and approves + pays in
+ONE server transaction (`POST /api/ceres/requests/:id/decide-and-pay`, see
+`api/src/ceres/requestDecideAndPay.ts`). Four changes:
+
+1. **The 2026-07-21 "อนุมัติและจ่ายเลย" combined-action button is GONE** from both
+   `NeeApprovalQueue.tsx`'s GM card and `CeoOverview.tsx`'s `EscalationCard` — there is no
+   longer a plain decide-only path shown alongside a separate pay-fold button. Instead, the
+   plain **"อนุมัติ"** tap itself (for a card whose predicate would have approved directly —
+   the same `!forward`/no-amount-gate logic as before) makes NO API call: it just expands the
+   shared `PayPanel` in place (new `mode="decideAndPay"` prop — see `PayPanel.tsx`), which asks
+   จ่ายเงินสด (one tap) / โอนเงิน (slip + confirm) / ยกเลิก (true no-op, no call made yet). The
+   lane tap is what actually calls the composite endpoint. Cards whose predicate escalates
+   (GM: `willForward`; CEO: none, every card is final) keep a plain decide-only button — no
+   lane question, since there's nothing to pay yet on the GM side, and the CEO side gets its
+   own three-way choice below instead.
+2. **CEO's lane question gets a third choice — "ให้ GM จ่ายทีหลัง".** `PayPanel` gained an
+   `extraAction` prop (label + onClick + busy), rendered as an extra full-width button on the
+   un-expanded lane-choice screen only (never on the transfer-expanded or purchase screens).
+   `EscalationCard` is the only caller that passes it: `onClick` runs the PLAIN `ceoDecisionV2`
+   approve (no payment) for a CEO approving remotely with no cash/slip in hand — the request
+   then lands in the residual pay-queue for the GM to record the hand-over.
+3. **PayPanel is prop-switched, not forked.** `mode?: 'fulfill' | 'decideAndPay'` (default
+   `'fulfill'`) picks which endpoint the lane tap drives — `fulfillStaffRequest` (existing,
+   request already approved) vs the new `decideAndPayStaffRequest` (request still
+   pending_nee/pending_ceo). Same component, same error mapping, same evidence rules — it
+   can't drift between the รอจ่าย queue's plain fulfillment and the one-flow's approve+pay.
+   `decideAndPayStaffRequest`'s `outcome: 'escalated'` result (GM's prediction turned out
+   wrong — AI verdict flipped between load and tap) still resolves `onDone` with no error, just
+   different wording ("ส่งต่อ CEO แล้ว รออนุมัติก่อนจ่าย" instead of "อนุมัติและจ่ายเงินแล้ว").
+4. **รอจ่าย tab renamed เบิกล่วงหน้า and re-centered** (`NeeFulfillmentQueue.tsx`, `Md.tsx`'s
+   tab labels + MoreMenu entry). Primary/headline section is now
+   "เงินเบิกล่วงหน้าที่ยังไม่ปิดยอด" (outstanding advances awaiting liquidation — unchanged
+   component, `LiquidationCard`, just moved to the top with its count in the section header).
+   The old รอจ่ายเงิน pay-queue section (`FulfillCard`, `toFulfill` filter — unchanged) moved
+   BELOW it, retitled "รอจ่าย/รอใบเสร็จ", and now renders ONLY when non-empty — normally
+   invisible, since approve+pay for advance/reimbursement no longer leaves anything sitting in
+   it. Purchases (still receipt-mandatory two-step) and CEO's "ให้ GM จ่ายทีหลัง" hand-overs
+   are what can still populate it. View keys/hashes (`fulfillment`, `legacy-fulfillment`)
+   untouched; the tab badge (`gmCounts.fulfillment` / `ceoBadges.fulfillment`) already sourced
+   from the SAME `approvalStatus==='approved' && fulfillmentStatus==='unfulfilled'` filter as
+   the residual section, so no badge-wiring change was needed — see "Badge sourcing" below.
+
+Backend shape: `POST /api/ceres/requests/:id/decide-and-pay { decision:'approve', lane,
+transferSlipUploadId?, note?, idempotencyKey? }`. Advance/reimbursement only (purchase → 400
+`invalid_request_type`, keeping its mandatory-receipt two-step via the existing
+`nee/ceo-decision` → `fulfill` routes, both untouched). Runs the decision write and the
+`recordRequestMoneyEventInTx` payment inside ONE `prisma.$transaction` — a GM escalation
+commits the decision alone (no money moves); any money-side failure (`insufficient_cash`,
+missing transfer slip) rolls back the decision too, so the request lands back exactly at
+pending_nee/pending_ceo. Idempotent replay (same `idempotencyKey`) short-circuits before the
+decision write, returning the first call's result unchanged. See
+`api/src/ceres/requestDecideAndPay.ts` and its test file `api/test/ceresDecideAndPay.test.ts`.
+
 ## Destination map (Tab → View key → component(s))
 
 | Tab label | View key | Component | GM | CEO |
 |---|---|---|---|---|
 | อนุมัติ | `approvals` (desktop) | **Composed**: `NeeApprovalQueue` (v2 queue) + section header + `MdApproval` (legacy expense check) below | ✓ | — |
-| รอจ่าย | `fulfillment` / `legacy-fulfillment` | NeeFulfillmentQueue (same component, two role-gated View keys, pre-existing) — CEO's tab was labeled "จ่าย/ซื้อ" until the 2026-07-21 rename unified it with GM's | ✓ | ✓ |
+| เบิกล่วงหน้า | `fulfillment` / `legacy-fulfillment` | NeeFulfillmentQueue (same component, two role-gated View keys, pre-existing) — labeled "จ่าย/ซื้อ" (CEO) until the 2026-07-21 unify-with-GM rename, then "รอจ่าย" (both) until the 2026-07-22 approve-is-pay tab refocus renamed it again and re-centered its content (see that section below) | ✓ | ✓ |
 | โอน/สลิป | `recon` | MdRecon (incl. TransferReconciliationPanel) | ✓ | ✓ |
 | กล่องเงินสด | `cashbox` | **Composed**: internal segmented control, ritual order — บอร์ด (MdBoard, default) · ฝากเงิน (MdMoney) · ปิดวัน (MdClose) | ✓ | ✓ |
 | ประวัติ | `history` | **Composed**: internal segmented control — ค่าใช้จ่าย (MdExpenses, default) · คำขอเดิม (MdRequests) | ✓ | ✓ |
@@ -104,7 +164,7 @@ right internal segment:
   makes) **+** `listExpenses({ scope: 'all', status: 'pending' }).expenses.length` (same
   default call MdApproval itself makes) — v2 queue count plus legacy pending-expense count,
   summed into one badge.
-- รอจ่าย: `listStaffRequests('all', 300)` filtered `approvalStatus==='approved' && fulfillmentStatus==='unfulfilled'` — same filter NeeHome/NeeFulfillmentQueue already use.
+- เบิกล่วงหน้า: `listStaffRequests('all', 300)` filtered `approvalStatus==='approved' && fulfillmentStatus==='unfulfilled'` — same filter NeeHome/NeeFulfillmentQueue already use. Since the 2026-07-22 approve-is-pay one-flow this filter is now the RESIDUAL pay-queue only (purchases awaiting receipt, CEO-approved-remotely hand-overs) — outstanding advances awaiting liquidation are NOT counted here (they're the tab's headline content, not its badge). The badge is normally 0/absent.
 - โอน/สลิป (GM): `getTransferReconciliation()` unmatched count — same call NeeHome already makes.
 - โอน/สลิป (CEO): `getCeoOverview(today).transferReconciliation.unmatched` — already part of the CeoHome/CeoOverview fetch, no extra call.
 - ภาพรวม (CEO): `getCeoOverview(today).escalations.length` — same call CeoHome already makes; moved here from the old รอ CEO tab (2026-07-21) with no new call.
@@ -182,3 +242,23 @@ Md.tsx) so mobile never pays for the extra requests, and re-fetch on every tab s
   rendered `EscalationsSection` near its top, so it inherits the pay-fold behavior for free
   with no changes of its own, matching the brief's "mobile CeoHome untouched" rule for the
   nav-merge itself.
+
+## Verification — 2026-07-22 approve-is-pay one-flow
+- Backend: `cd api && npm run build` (`tsc -p tsconfig.json`) → exit 0, clean.
+- Backend: `cd api && npx vitest run` → 681 passed (663 pre-existing + 18 new in
+  `test/ceresDecideAndPay.test.ts`), 0 failed. `api/.env` copied from `.env.example` (dummy
+  values) to satisfy the env schema — matches the repo's existing test convention.
+- Frontend: `cd ceres && npm run typecheck` (`tsc -b`) → clean.
+- Frontend: `cd ceres && npm run build` (`tsc -b && vite build`) → exit 0, clean, only the
+  same pre-existing >500kB chunk-size warning as before.
+- No ceres/juno frontend test framework exists — nothing to run there.
+- Source files changed: `api/src/ceres/requestDecideAndPay.ts` (new), `api/src/ceres/requestService.ts`
+  (additive `invalid_request_type` error code), `api/src/routes/ceres/requests.ts` (new
+  `/decide-and-pay` route), `api/test/ceresDecideAndPay.test.ts` (new); `ceres/src/lib/api.ts`
+  (`decideAndPayStaffRequest` client + `DecideAndPayResult` type), `ceres/src/PayPanel.tsx`
+  (`mode`/`extraAction` props), `ceres/src/NeeApprovalQueue.tsx` (amber button removed, อนุมัติ
+  opens the inline lane question), `ceres/src/CeoOverview.tsx` (`EscalationCard` same
+  replacement + third "ให้ GM จ่ายทีหลัง" choice, `paying`-map plumbing removed),
+  `ceres/src/NeeFulfillmentQueue.tsx` (section order/visibility flip, header rename), `ceres/src/Md.tsx`
+  (tab label rename to "เบิกล่วงหน้า" for GM/CEO + MoreMenu + mobile bottom-nav "Advance"),
+  `docs/CERES_USER_GUIDE_TH.md`, `docs/CERES_DESKTOP_NAV.md`.

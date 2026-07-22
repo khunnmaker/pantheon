@@ -361,7 +361,7 @@ function ManagementApp({ isCeo }: { isCeo: boolean }) {
         { key: 'money', label: 'ฝากเงิน', icon: <ArrowLeftRight size={17} />, onClick: () => setView('money') },
         { key: 'close', label: 'ปิดยอดประจำวัน', icon: <FileCheck2 size={17} />, onClick: () => setView('close') },
         ...(isCeo
-          ? [{ key: 'legacy-fulfillment', label: 'รอจ่าย', icon: <CircleDollarSign size={17} />, onClick: () => setView('legacy-fulfillment') }]
+          ? [{ key: 'legacy-fulfillment', label: 'เบิกล่วงหน้า', icon: <CircleDollarSign size={17} />, onClick: () => setView('legacy-fulfillment') }]
           : []),
       ],
     },
@@ -388,7 +388,7 @@ function ManagementApp({ isCeo }: { isCeo: boolean }) {
   type Tab = { key: View; label: string; icon: React.ReactNode; count?: number };
   const gmTabs: Tab[] = [
     { key: 'approvals', label: 'อนุมัติ', icon: <ClipboardCheck size={16} />, count: (gmCounts.approvals ?? 0) + (gmCounts.legacyApprovals ?? 0) + (gmCounts.flags ?? 0) },
-    { key: 'fulfillment', label: 'รอจ่าย', icon: <CircleDollarSign size={16} />, count: gmCounts.fulfillment },
+    { key: 'fulfillment', label: 'เบิกล่วงหน้า', icon: <CircleDollarSign size={16} />, count: gmCounts.fulfillment },
     { key: 'recon', label: 'โอน/สลิป', icon: <Scale size={16} />, count: gmCounts.recon },
     { key: 'cashbox', label: 'กล่องเงินสด', icon: <PiggyBank size={16} /> },
     { key: 'history', label: 'ประวัติ', icon: <History size={16} /> },
@@ -397,11 +397,15 @@ function ManagementApp({ isCeo }: { isCeo: boolean }) {
   ];
   // รอ CEO folded into ภาพรวม (CEO one-flow, 2026-07-21): the escalations queue now renders at
   // the top of CeoOverview itself, so its old leading tab is gone (8 → 7) and its red pill
-  // count (ceoBadges.queue) moves onto ภาพรวม. "รอจ่าย" also unifies with GM's label — the old
-  // CEO-only "จ่าย/ซื้อ" name for the same NeeFulfillmentQueue destination.
+  // count (ceoBadges.queue) moves onto ภาพรวม. This tab's own label unifies with GM's — the
+  // old CEO-only "จ่าย/ซื้อ" name for the same NeeFulfillmentQueue destination, renamed again
+  // to "เบิกล่วงหน้า" for the approve-is-pay one-flow (2026-07-22, see Md tab-refocus docs) —
+  // the count still sources from `fulfillmentStatus==='unfulfilled'`, which is now the
+  // RESIDUAL queue only (purchases awaiting receipt, CEO-approved-remotely hand-overs) since
+  // อนุมัติ records payment for advance/reimbursement in the same step.
   const ceoTabs: Tab[] = [
     { key: 'home', label: 'ภาพรวม', icon: <LayoutDashboard size={16} />, count: (ceoBadges.queue ?? 0) + (ceoBadges.flags ?? 0) },
-    { key: 'legacy-fulfillment', label: 'รอจ่าย', icon: <CircleDollarSign size={16} />, count: ceoBadges.fulfillment },
+    { key: 'legacy-fulfillment', label: 'เบิกล่วงหน้า', icon: <CircleDollarSign size={16} />, count: ceoBadges.fulfillment },
     { key: 'recon', label: 'โอน/สลิป', icon: <Scale size={16} />, count: ceoBadges.recon },
     { key: 'cashbox', label: 'กล่องเงินสด', icon: <PiggyBank size={16} /> },
     { key: 'history', label: 'ประวัติ', icon: <History size={16} /> },
@@ -555,7 +559,11 @@ function ManagementApp({ isCeo }: { isCeo: boolean }) {
         <div className={`max-w-5xl mx-auto grid ${isCeo ? 'grid-cols-2' : 'grid-cols-4'}`}>
           <NavButton active={activeView === 'home'} label="Home" icon={<Home size={20} />} onClick={() => setView('home')} />
           {!isCeo && <NavButton active={activeView === 'approvals'} label="Approvals" icon={<ClipboardCheck size={20} />} onClick={() => setView('approvals')} />}
-          {!isCeo && <NavButton active={activeView === 'fulfillment'} label="Fulfillment" icon={<CircleDollarSign size={20} />} onClick={() => setView('fulfillment')} />}
+          {/* Label kept in the same English-word style as this bar's Home/Approvals/More
+              siblings (2026-07-22 tab refocus renamed the desktop/MoreMenu Thai label
+              "รอจ่าย" → "เบิกล่วงหน้า" — this bar predates Thai labels entirely, so it
+              follows its own existing convention instead). */}
+          {!isCeo && <NavButton active={activeView === 'fulfillment'} label="Advance" icon={<CircleDollarSign size={20} />} onClick={() => setView('fulfillment')} />}
           <NavButton active={activeView === 'more' || SECONDARY_VIEWS.has(activeView)} label="More" icon={<MoreHorizontal size={20} />} onClick={() => setView('more')} />
         </div>
       </nav>

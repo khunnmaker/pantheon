@@ -82,8 +82,8 @@ export default function NeeFulfillmentQueue() {
     <div>
       <div className="flex items-center justify-between gap-2 mb-3">
         <div>
-          <h2 className="text-lg font-bold">จ่ายเงิน / ซื้อของ</h2>
-          <p className="text-xs text-slate-400">คำขอที่อนุมัติแล้ว รอจ่ายสดหรือโอนเงิน</p>
+          <h2 className="text-lg font-bold">เบิกล่วงหน้า</h2>
+          <p className="text-xs text-slate-400">เงินเบิกล่วงหน้าที่ยังไม่ปิดยอด</p>
         </div>
         <button
           onClick={load}
@@ -112,22 +112,11 @@ export default function NeeFulfillmentQueue() {
         </div>
       ) : (
         <>
+          {/* Primary content (tab refocus, owner directive 2026-07-22: อนุมัติ = จ่าย means
+              the old pay-QUEUE below is normally empty — GM/CEO record payment right at the
+              approve step now). This section is the headline: outstanding advances awaiting
+              liquidation, count in the header itself. */}
           <section className="mb-6">
-            <h3 className="text-sm font-semibold text-slate-500 mb-2">รอจ่ายเงิน ({toFulfill.length})</h3>
-            {toFulfill.length === 0 ? (
-              <div className="text-center text-slate-400 text-sm py-8 bg-white rounded-xl border border-slate-200">
-                ไม่มีรายการรอจ่าย
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {toFulfill.map((r) => (
-                  <FulfillCard key={r.id} request={r} onDone={onChanged} onViewDetail={() => setDetailId(r.id)} />
-                ))}
-              </div>
-            )}
-          </section>
-
-          <section>
             <h3 className="text-sm font-semibold text-slate-500 mb-2">
               เงินเบิกล่วงหน้าที่ยังไม่ปิดยอด ({inLiquidation.length})
             </h3>
@@ -143,6 +132,21 @@ export default function NeeFulfillmentQueue() {
               </div>
             )}
           </section>
+
+          {/* Residual pay-queue — purchases awaiting receipt, CEO-approved-remotely
+              advances/reimbursements ("ให้ GM จ่ายทีหลัง"), and any legacy leftover.
+              Normally invisible now that อนุมัติ records payment in the same step; renders
+              ONLY when it actually has something in it. */}
+          {toFulfill.length > 0 && (
+            <section>
+              <h3 className="text-sm font-semibold text-slate-500 mb-2">รอจ่าย/รอใบเสร็จ ({toFulfill.length})</h3>
+              <div className="space-y-3">
+                {toFulfill.map((r) => (
+                  <FulfillCard key={r.id} request={r} onDone={onChanged} onViewDetail={() => setDetailId(r.id)} />
+                ))}
+              </div>
+            </section>
+          )}
         </>
       )}
 

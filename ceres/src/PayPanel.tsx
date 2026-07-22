@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
 import { AlertTriangle, Banknote, Camera, CheckCircle2, Image as ImageIcon, Landmark, Loader2 } from 'lucide-react';
 import {
+  decideAndPayStaffRequest,
   describeMoneyError,
   fulfillStaffRequest,
   newIdempotencyKey,
@@ -10,18 +11,23 @@ import {
 } from './lib/api';
 import { downscaleImage } from './lib/image';
 
-// Shared pay-out panel (Ceres approve-and-pay collapse, 2026-07-21). Used both by the GM
-// approval queue's combined "อนุมัติและจ่ายเลย" action (NeeApprovalQueue.tsx) and by the
-// รอจ่าย fulfillment queue's "บันทึกจ่ายเงิน"/"บันทึกว่าซื้อแล้ว" expand
-// (NeeFulfillmentQueue.tsx) — one component, two call sites, so the pay flow (and its error
-// mapping) can never drift between them.
+// Shared pay-out panel. Two call sites, one component, so the pay flow (and its error
+// mapping) can never drift between them:
+//  - NeeFulfillmentQueue.tsx's รอจ่าย queue ("บันทึกจ่ายเงิน"/"บันทึกว่าซื้อแล้ว" expand on
+//    an ALREADY-approved request) — mode="fulfill" (the default).
+//  - NeeApprovalQueue.tsx / CeoOverview.tsx's EscalationCard "อนุมัติ = จ่าย" one-flow
+//    (owner directive, 2026-07-22) — the inline lane question that opens straight off the
+//    GM/CEO "อนุมัติ" tap, BEFORE the request is approved — mode="decideAndPay".
 //
 // Two shapes:
 //  - advance/reimbursement: cash is a genuine ONE TAP — the lane tap itself submits the
-//    fulfill call, no separate confirm step. Transfer always expands to a mandatory slip
-//    upload + its own confirm (transfer can never be one-tap; evidence is required).
+//    fulfill/decide-and-pay call, no separate confirm step. Transfer always expands to a
+//    mandatory slip upload + its own confirm (transfer can never be one-tap; evidence is
+//    required).
 //  - purchase: unchanged two-step shape (lane choice + mandatory receipt + confirm) — never
-//    one-tapped, per owner rule (a receipt has to be attached regardless of lane).
+//    one-tapped, per owner rule (a receipt has to be attached regardless of lane). Purchase
+//    never reaches mode="decideAndPay" — the composite endpoint 400s on it server-side, and
+//    every mode="decideAndPay" call site only ever offers this panel for advance/reimbursement.
 //
 // NO lazy lane default (owner rule, 2026-07-18, carried over from the old FulfillForm this
 // replaces) — nothing is preselected; the explicit tap on a lane/action IS the choice.
@@ -87,15 +93,30 @@ function EvidenceUpload({
 
 export function PayPanel({
   request,
+  mode = 'fulfill',
+  extraAction,
   onDone,
   onCancel,
 }: {
   request: StaffRequest;
+  // 'fulfill' (default): request is ALREADY approved — drives the plain fulfill endpoint.
+  // 'decideAndPay': request is STILL pending (pending_nee for GM, pending_ceo for CEO) —
+  // the lane tap drives the composite decide-and-pay endpoint instead, approving AND
+  // paying in one server transaction (Ceres approve-is-pay one-flow, 2026-07-22).
+  mode?: 'fulfill' | 'decideAndPay';
+  // Third choice alongside the lane buttons — only the CEO's EscalationCard passes this
+  // ("ให้ GM จ่ายทีหลัง": a plain ceoDecision approve with NO payment, for a CEO approving
+  // remotely who isn't the one physically handing over cash/making the transfer). Every
+  // other call site omits it. Only ever shown on the un-expanded lane-choice screen — once
+  // transfer expands to its slip upload, or for a purchase, this option makes no sense and
+  // never renders.
+  extraAction?: { label: string; onClick: () => void; busy?: boolean };
   onDone: (msg: string) => void;
-  // Collapses/dismisses the panel without having paid — the fulfillment queue folds the
-  // card back to its closed state; the approval queue refreshes the queue (the request is
-  // already approved by the time this panel can show, so a refresh just makes it disappear
-  // from the pending-approval list cleanly — see NeeApprovalQueue.tsx's decideAndPay()).
+  // Collapses/dismisses the panel without having paid.
+  // mode="fulfill": the request is already approved, so the fulfillment queue just folds
+  // the card back to its closed state (nothing to undo).
+  // mode="decideAndPay": NO API call has been made yet at this point — cancelling here is
+  // a true no-op, the request is untouched (still pending_nee/pending_ceo).
   onCancel: () => void;
 }) {
   const isPurchase = request.requestType === 'purchase';
@@ -140,13 +161,26 @@ export function PayPanel({
     setError('');
     setBusyLane(l);
     try {
-      await fulfillStaffRequest(request.id, {
-        lane: l,
-        transferSlipUploadId: evidence?.slipUploadId,
-        purchaseReceiptUploadId: evidence?.receiptUploadId,
-        idempotencyKey: idempotencyKey.current,
-      });
-      onDone(isPurchase ? 'บันทึกว่าซื้อแล้ว' : 'บันทึกจ่ายเงินแล้ว');
+      if (mode === 'decideAndPay') {
+        const result = await decideAndPayStaffRequest(request.id, {
+          lane: l,
+          transferSlipUploadId: evidence?.slipUploadId,
+          idempotencyKey: idempotencyKey.current,
+        });
+        // 'escalated' — the prediction that offered this panel was wrong by the time the
+        // server ran (AI verdict flipped, etc.): the decision alone committed, nothing was
+        // paid. Still a successful call from this panel's point of view (no error), so it
+        // folds the same way, just with the "sent to CEO" wording instead of "paid".
+        onDone(result.outcome === 'escalated' ? 'ส่งต่อ CEO แล้ว รออนุมัติก่อนจ่าย' : 'อนุมัติและจ่ายเงินแล้ว');
+      } else {
+        await fulfillStaffRequest(request.id, {
+          lane: l,
+          transferSlipUploadId: evidence?.slipUploadId,
+          purchaseReceiptUploadId: evidence?.receiptUploadId,
+          idempotencyKey: idempotencyKey.current,
+        });
+        onDone(isPurchase ? 'บันทึกว่าซื้อแล้ว' : 'บันทึกจ่ายเงินแล้ว');
+      }
     } catch (err) {
       setError(describeMoneyError(err));
     } finally {
@@ -248,6 +282,16 @@ export function PayPanel({
               <Landmark size={15} /> โอนเงิน · แนบสลิป
             </button>
           </div>
+
+          {extraAction && (
+            <button
+              onClick={extraAction.onClick}
+              disabled={busy || !!extraAction.busy}
+              className="w-full min-h-[40px] rounded-lg border border-violet-300 bg-violet-50 hover:bg-violet-100 text-violet-700 text-sm font-semibold flex items-center justify-center gap-1.5 disabled:opacity-40"
+            >
+              {extraAction.busy ? <Loader2 size={14} className="animate-spin" /> : null} {extraAction.label}
+            </button>
+          )}
 
           {error && (
             <div className="flex items-center gap-1 text-rose-600 text-xs">
