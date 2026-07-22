@@ -1,18 +1,6 @@
 import { APPS, type AppDef } from './apps';
 
-// Venus is confidential and deliberately has no portal tile, but its login still uses the
-// portal, so it belongs in the redirect allowlist.
-export const REDIRECT_TARGETS: AppDef[] = [
-  ...APPS,
-  {
-    key: 'venus',
-    name: 'Venus',
-    job: 'ลูกค้าสัมพันธ์ / CRM',
-    url: import.meta.env.VITE_VENUS_URL || 'https://venus.prominentdental.com',
-    accent: 'text-rose-600',
-    badge: () => null,
-  },
-];
+export const REDIRECT_TARGETS: AppDef[] = APPS;
 
 export interface RedirectTarget {
   app: AppDef;

@@ -7,9 +7,9 @@ import type { AppDef } from './lib/apps';
 import { resolveRedirect } from './lib/redirect';
 
 export default function App() {
-  const [agent, setAgent] = useState<Agent | null>(() => getToken() ? getStoredAgent() : null);
-  const [booting, setBooting] = useState(() => !getToken());
   const [target] = useState(() => resolveRedirect(location.search));
+  const [agent, setAgent] = useState<Agent | null>(() => getToken() ? getStoredAgent() : null);
+  const [booting, setBooting] = useState(() => !getToken() || !!target);
   const [denied, setDenied] = useState<AppDef | null>(null);
 
   function finishLogin(a: Agent): boolean {
@@ -38,6 +38,7 @@ export default function App() {
       .then((a) => {
         if (!alive) return;
         if (a && finishLogin(a)) return;
+        if (!a && target) setAgent(null);
         setBooting(false);
       })
       .catch(() => { if (alive) setBooting(false); });
