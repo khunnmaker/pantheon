@@ -36,6 +36,7 @@ import MdApproval, { type ApprovalPrefill } from './MdApproval';
 import MdMoney from './MdMoney';
 import MdClose from './MdClose';
 import MdExpenses from './MdExpenses';
+import MdHistory from './MdHistory';
 import MdTemplates from './MdTemplates';
 import MdRecon from './MdRecon';
 import CeoOverview, { WeeklyPackSection } from './CeoOverview';
@@ -688,12 +689,13 @@ function CashboxComposedView({
   );
 }
 
-// ประวัติ: ค่าใช้จ่ายเท่านั้น (คำขอเดิม segment ถูกถอดออกพร้อมกับ MdRequests.tsx — v1 purge
-// 2026-07-19, docs/CERES_V1_PURGE_PLAN.md Phase B item 1). No SegmentBar left since there's
-// only one destination now; keeps the composed-tab wrapper so desktopHistoryRedirect still
-// has somewhere to land.
+// ประวัติ: merged expense + finished-request history (2026-07-22 fix — a paid/rejected/voided
+// v2 money request used to appear NOWHERE once it left the approval/fulfillment queues; see
+// MdHistory.tsx for the merge + finished-state filter). No SegmentBar since there's still only
+// one destination; keeps the composed-tab wrapper so desktopHistoryRedirect has somewhere to
+// land (see the 2026-07-19 v1 purge note in MdHistory.tsx's own header comment for history).
 function HistoryComposedView() {
-  return <MdExpenses />;
+  return <MdHistory />;
 }
 
 // อื่นๆ: ประจำ · ส่งออก · ตั้งค่า.
