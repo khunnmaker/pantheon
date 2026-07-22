@@ -7,10 +7,11 @@ export const COMPANY = {
   legalName: 'Prominent Co., Ltd.',
   // Optional trust-footer fields — the owner fills these with real values later.
   // Empty/undefined = the footer omits that line entirely (never renders a placeholder).
-  legalNameTh: '', // Thai registered company name, e.g. "บริษัท พรอมิเน้นท์ จำกัด"
+  legalNameTh: 'บริษัท พรอมมิเน้นท์ จำกัด', // per DBD record (double ม)
   registrationNo: '0135551010260', // 13-digit เลขทะเบียนนิติบุคคล
   taxId: '0135551010260', // เลขประจำตัวผู้เสียภาษี
-  foundedYear: '', // string (Buddhist or Christian year), e.g. "2538"
+  foundedYear: '2551', // พ.ศ., registered 15 ต.ค. 2551 per DBD
+  foundedYearEn: '2008', // same year, Christian calendar, for the EN footer line
   mapUrl: undefined as string | undefined, // Google Maps link
   domain: 'prominentdental.com',
   taglineTh: 'วัสดุ อุปกรณ์ และโซลูชันดิจิทัลทันตกรรม สำหรับคลินิกและแล็บ',

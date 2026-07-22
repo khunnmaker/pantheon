@@ -193,7 +193,7 @@ function SiteFooter() {
       <div className="wrap fbot">
         <span>
           © {pick(legalTh, legalEn)} · {COMPANY.domain}
-          {COMPANY.foundedYear && <> · {pick(`จำหน่ายอุปกรณ์ทันตกรรมตั้งแต่ปี ${COMPANY.foundedYear}`, `Serving dental clinics since ${COMPANY.foundedYear}`)}</>}
+          {COMPANY.foundedYear && <> · {pick(`จำหน่ายอุปกรณ์ทันตกรรมตั้งแต่ปี ${COMPANY.foundedYear}`, `Serving dental clinics since ${COMPANY.foundedYearEn || COMPANY.foundedYear}`)}</>}
         </span>
         <span style={{ color: '#7e90a6' }}>ISO 9001:2015 · ISO 13485:2016 · Thai FDA</span>
       </div>
