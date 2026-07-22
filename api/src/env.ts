@@ -25,6 +25,11 @@ const schema = z.object({
   // deployment without the OA configured boots normally and ignores its webhook.
   MALI_LINE_CHANNEL_ACCESS_TOKEN: z.string().default(''),
   MALI_LINE_CHANNEL_SECRET: z.string().default(''),
+  // Venus visit-report ingestion from the sales team's Mali LINE group.
+  // An unset group id leaves the listener in discovery-only mode.
+  VENUS_VISITS_GROUP_ID: z.string().default(''),
+  VENUS_VISITS_DEBOUNCE_MS: z.coerce.number().int().min(0).default(120000),
+  VENUS_VISITS_MODEL: z.string().default('claude-fable-5'),
   // Set to "1"/"true" to never actually push to LINE (testing/staging safety).
   LINE_DRY_RUN: z.string().default(''),
 

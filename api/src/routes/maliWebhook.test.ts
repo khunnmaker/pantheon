@@ -7,10 +7,12 @@ const mocks = vi.hoisted(() => ({
   parseBind: vi.fn(),
   handleBind: vi.fn(),
   answer: vi.fn(),
+  ingestVisit: vi.fn(),
   verifySignature: vi.fn(),
   env: {
     MALI_LINE_CHANNEL_ACCESS_TOKEN: 'configured',
     MALI_LINE_CHANNEL_SECRET: 'configured',
+    VENUS_VISITS_GROUP_ID: 'C-sales',
   },
 }));
 
@@ -23,6 +25,9 @@ vi.mock('../line/staffBind.js', () => ({
 }));
 vi.mock('../line/signature.js', () => ({ verifyLineSignature: mocks.verifySignature }));
 vi.mock('../mali/answer.js', () => ({ answerMaliQuestion: mocks.answer }));
+vi.mock('../venus/visits.js', () => ({
+  ingestVenusGroupMessage: mocks.ingestVisit,
+}));
 
 import { handleMaliLineEvent, maliWebhookRoutes } from './maliWebhook.js';
 
@@ -49,6 +54,8 @@ describe('Mali webhook event gate', () => {
     mocks.verifySignature.mockReturnValue(true);
     mocks.parseBind.mockReturnValue(null);
     mocks.sendMali.mockResolvedValue({ sent: true, dryRun: false });
+    mocks.ingestVisit.mockResolvedValue(true);
+    mocks.env.VENUS_VISITS_GROUP_ID = 'C-sales';
   });
 
   it('gives an unbound user only the bind prompt and never enters knowledge retrieval', async () => {
@@ -85,6 +92,64 @@ describe('Mali webhook event gate', () => {
     });
     expect(mocks.agentFindUnique).not.toHaveBeenCalled();
   });
+
+  it('routes the configured group to Venus before the 1:1 KB lane', async () => {
+    await handleMaliLineEvent({
+      type: 'message',
+      timestamp: 123456,
+      source: { type: 'group', groupId: 'C-sales', userId: 'U-rep' },
+      message: { type: 'text', id: 'M-report', text: 'รายงานเข้าพบ Sunshine' },
+    });
+
+    expect(mocks.ingestVisit).toHaveBeenCalledWith({
+      groupId: 'C-sales',
+      lineUserId: 'U-rep',
+      lineMessageId: 'M-report',
+      type: 'text',
+      text: 'รายงานเข้าพบ Sunshine',
+      timestamp: 123456,
+    });
+    expect(mocks.agentFindUnique).not.toHaveBeenCalled();
+    expect(mocks.answer).not.toHaveBeenCalled();
+  });
+
+  it('sends a possible pending-match reply through the persist-first Venus boundary only', async () => {
+    await handleMaliLineEvent({
+      type: 'message',
+      source: { type: 'group', groupId: 'C-sales', userId: 'U-rep' },
+      message: { type: 'text', id: 'M-answer', text: '2' },
+    });
+
+    expect(mocks.ingestVisit).toHaveBeenCalledWith({
+      groupId: 'C-sales', lineUserId: 'U-rep', lineMessageId: 'M-answer', type: 'text', text: '2',
+    });
+    expect(mocks.answer).not.toHaveBeenCalled();
+  });
+
+  it('ignores other configured groups silently', async () => {
+    const info = vi.fn();
+    await handleMaliLineEvent({
+      type: 'message',
+      source: { type: 'group', groupId: 'C-other', userId: 'U-rep' },
+      message: { type: 'text', id: 'M-other', text: 'hello' },
+    }, { info, error: vi.fn() } as never);
+
+    expect(info).not.toHaveBeenCalled();
+    expect(mocks.ingestVisit).not.toHaveBeenCalled();
+  });
+
+  it('logs the exact discovery line when the visits group is unconfigured', async () => {
+    mocks.env.VENUS_VISITS_GROUP_ID = '';
+    const info = vi.fn();
+    await handleMaliLineEvent({
+      type: 'message',
+      source: { type: 'group', groupId: 'C-discovery', userId: 'U-rep' },
+      message: { type: 'text', id: 'M-discovery', text: 'hello' },
+    }, { info, error: vi.fn() } as never);
+
+    expect(info).toHaveBeenCalledWith('VENUS_VISITS: message from unconfigured group C-discovery');
+    expect(mocks.ingestVisit).not.toHaveBeenCalled();
+  });
 });
 
 describe('Mali webhook route security boundary', () => {
@@ -95,6 +160,8 @@ describe('Mali webhook route security boundary', () => {
     mocks.verifySignature.mockReturnValue(true);
     mocks.parseBind.mockReturnValue(null);
     mocks.sendMali.mockResolvedValue({ sent: true, dryRun: false });
+    mocks.ingestVisit.mockResolvedValue(true);
+    mocks.env.VENUS_VISITS_GROUP_ID = 'C-sales';
   });
 
   it('rejects an invalid signature without handling events', async () => {

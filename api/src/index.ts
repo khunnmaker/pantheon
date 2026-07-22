@@ -41,6 +41,7 @@ import { staffLineRoutes } from './routes/staffLine.js';
 import { autosendRoutes } from './routes/autosend.js';
 import { maliRoutes } from './routes/mali.js';
 import { maliWebhookRoutes } from './routes/maliWebhook.js';
+import { sweepUnprocessedVisitMessages } from './venus/visits.js';
 
 // Raw body is needed to verify the LINE webhook signature.
 declare module 'fastify' {
@@ -136,6 +137,7 @@ async function main() {
   await ensureQuickReplies().catch((err) => app.log.error({ err }, 'ensureQuickReplies failed'));
   // Seed Ceres's cash accounts / parties / categories on first boot.
   await ensureCeres().catch((err) => app.log.error({ err }, 'ensureCeres failed'));
+  await sweepUnprocessedVisitMessages().catch((err) => app.log.error({ err }, 'Venus visit boot sweep failed'));
 
   // Attach the Socket.IO server for live console push.
   initIo(app.server);

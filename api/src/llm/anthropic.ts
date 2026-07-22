@@ -149,8 +149,9 @@ export async function callClaudeWithImage(
   image: { base64: string; mediaType: string },
   maxTokens = MAX_TOKENS,
   meta: LlmCallMeta = {},
+  model: string = MODEL,
 ): Promise<string> {
-  return callClaudeWithImages(userText, system, [image], maxTokens, meta);
+  return callClaudeWithImages(userText, system, [image], maxTokens, meta, model);
 }
 
 // Vision completion with multiple images. Images stay in caller-provided order
@@ -161,12 +162,13 @@ export async function callClaudeWithImages(
   images: { base64: string; mediaType: string }[],
   maxTokens = MAX_TOKENS,
   meta: LlmCallMeta = {},
+  model: string = MODEL,
 ): Promise<string> {
   const c = getClient();
   if (!c) throw new Error('ANTHROPIC_API_KEY not configured');
 
   const res = await c.messages.create({
-    model: MODEL,
+    model,
     max_tokens: maxTokens,
     system: buildSystemBlocks(system),
     messages: [
@@ -206,6 +208,6 @@ export async function callClaudeWithImages(
   });
 
   recordUsage(res.usage);
-  persistUsage(MODEL, res.usage, meta);
+  persistUsage(model, res.usage, meta);
   return res.content.map((b) => (b.type === 'text' ? b.text : '')).join('');
 }

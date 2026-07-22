@@ -8,6 +8,7 @@ import { decodeExpressBytes, parseArmast, type ParsedVenusCustomer } from '../ve
 import { parseOesoc, type ParsedOesocDoc } from '../venus/parseOesoc.js';
 import { recomputeStats, type ReorderDueItem } from '../venus/stats.js';
 import { generateAllCards } from '../venus/cards.js';
+import { askNextPendingVisit, linkVisitToCustomer } from '../venus/visits.js';
 
 // Venus — 360° customer CRM. Stage A+B: backend foundation only (Express customer-master
 // import). See docs/VENUS_BRIEF.md. Track-and-tell only; this file has no sales data / no
@@ -490,6 +491,74 @@ export async function venusRoutes(app: FastifyInstance) {
         m: statsByCode.get(c.code)?.m ?? null,
       })),
     };
+  });
+
+  // Visit reports and follow-up queue. These inherit the suite-wide Venus hooks above;
+  // no supervisor-only surface is introduced.
+  app.get('/api/venus/visits', async (req) => {
+    const query = z.object({
+      customerCode: z.string().optional(),
+      status: z.enum(['matched', 'awaiting_match', 'skipped']).optional(),
+      recent: z.enum(['0', '1']).optional(),
+    }).safeParse(req.query ?? {});
+    const filters = query.success ? query.data : {};
+    return prisma.venusVisit.findMany({
+      where: {
+        ...(filters.customerCode ? { customerCode: filters.customerCode } : {}),
+        ...(filters.status ? { status: filters.status } : {}),
+      },
+      orderBy: [{ visitAt: 'desc' }, { createdAt: 'desc' }],
+      take: filters.recent === '1' ? 20 : 200,
+      include: { actionItems: { orderBy: { createdAt: 'asc' } } },
+    });
+  });
+
+  app.post('/api/venus/visits/:id/link', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const body = z.object({ customerCode: z.string().min(1).max(80) }).safeParse(req.body);
+    if (!body.success) return reply.code(400).send({ error: 'bad_request' });
+    const customer = await prisma.venusCustomer.findUnique({
+      where: { code: body.data.customerCode },
+      select: { code: true },
+    });
+    if (!customer) return reply.code(404).send({ error: 'customer_not_found' });
+    try {
+      const linked = await linkVisitToCustomer(id, customer.code, 'manual');
+      if (linked.wasPendingHead) await askNextPendingVisit(linked.groupId);
+      return { ok: true };
+    } catch (err) {
+      if (err instanceof Error && err.message === 'visit_not_found') {
+        return reply.code(404).send({ error: 'not_found' });
+      }
+      throw err;
+    }
+  });
+
+  app.get('/api/venus/action-items', async (req) => {
+    const { open } = req.query as { open?: string };
+    return prisma.venusActionItem.findMany({
+      where: open === '1' ? { done: false } : {},
+      orderBy: [{ needsOwner: 'desc' }, { createdAt: 'desc' }],
+      take: 500,
+      include: { visit: { select: { visitAt: true, repName: true, summary: true } } },
+    });
+  });
+
+  app.post('/api/venus/action-items/:id/done', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const body = z.object({ done: z.boolean().optional() }).safeParse(req.body ?? {});
+    if (!body.success) return reply.code(400).send({ error: 'bad_request' });
+    const done = body.data.done ?? true;
+    const result = await prisma.venusActionItem.updateMany({
+      where: { id },
+      data: {
+        done,
+        doneAt: done ? new Date() : null,
+        doneBy: done ? (req.agent?.name ?? null) : null,
+      },
+    });
+    if (!result.count) return reply.code(404).send({ error: 'not_found' });
+    return { ok: true, done };
   });
 
   // GET /api/venus/dashboard — management lens (VENUS_BRIEF.md §8): data-coverage banner,

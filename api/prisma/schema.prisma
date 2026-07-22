@@ -1495,6 +1495,63 @@ model VenusCard {
   createdAt    DateTime @default(now())
 }
 
+// Persist-first inbox for visit-report messages received by Mali's sales LINE group.
+model VenusVisitMessage {
+  id            String      @id @default(cuid())
+  groupId       String
+  lineUserId    String
+  lineMessageId String      @unique
+  type          String
+  text          String?
+  visitId       String?
+  visit         VenusVisit? @relation(fields: [visitId], references: [id], onDelete: SetNull)
+  processedAt   DateTime?
+  createdAt     DateTime    @default(now())
+
+  @@index([groupId, lineUserId, processedAt])
+}
+
+model VenusVisit {
+  id           String             @id @default(cuid())
+  groupId      String
+  repName      String
+  repAgentId   String?
+  customerCode String?
+  status       String
+  visitAt      DateTime
+  summary      String
+  extractJson  Json
+  model        String
+  createdAt    DateTime           @default(now())
+  messages     VenusVisitMessage[]
+  actionItems  VenusActionItem[]
+
+  @@index([customerCode])
+  @@index([status])
+}
+
+model VenusCustomerAlias {
+  aliasKey     String   @unique
+  customerCode String
+  source       String
+  createdAt    DateTime @default(now())
+}
+
+model VenusActionItem {
+  id           String     @id @default(cuid())
+  visitId      String
+  visit        VenusVisit @relation(fields: [visitId], references: [id], onDelete: Cascade)
+  customerCode String?
+  text         String
+  needsOwner   Boolean
+  done         Boolean    @default(false)
+  doneBy       String?
+  doneAt       DateTime?
+  createdAt    DateTime   @default(now())
+
+  @@index([done])
+}
+
 // ─── Jupiter (accounting / consolidation — "the king") ───────────────────
 // Jupiter is the GROUP-WIDE accounting layer over every company. Phase 1 is a
 // consolidated owner's cockpit + a monthly close pack — NOT yet a double-entry

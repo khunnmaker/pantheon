@@ -100,3 +100,33 @@ export async function fetchMessageContent(
     return null;
   }
 }
+
+// Download content delivered to Mali's separate OA. Keep this distinct from
+// fetchMessageContent above: LINE content is authorized by the receiving channel.
+export async function fetchMaliMessageContent(
+  lineMessageId: string,
+): Promise<{ buffer: Buffer; contentType: string } | null> {
+  if (!env.MALI_LINE_CHANNEL_ACCESS_TOKEN) return null;
+  try {
+    const res = await fetch(`https://api-data.line.me/v2/bot/message/${lineMessageId}/content`, {
+      headers: { Authorization: `Bearer ${env.MALI_LINE_CHANNEL_ACCESS_TOKEN}` },
+    });
+    if (!res.ok) return null;
+    const buffer = Buffer.from(await res.arrayBuffer());
+    return { buffer, contentType: res.headers.get('content-type') || 'application/octet-stream' };
+  } catch {
+    return null;
+  }
+}
+
+// Best-effort group-member profile lookup on Mali's OA.
+export async function fetchMaliGroupMemberDisplayName(groupId: string, lineUserId: string): Promise<string | null> {
+  const c = getMaliLineClient();
+  if (!c) return null;
+  try {
+    const profile = await c.getGroupMemberProfile(groupId, lineUserId);
+    return profile.displayName ?? null;
+  } catch {
+    return null;
+  }
+}
