@@ -61,6 +61,9 @@ export async function decideAndPayStaffRequest(input: DecideAndPayInput): Promis
     if (input.idempotencyKey) {
       const replay = await tx.ceresRequestMoneyEvent.findUnique({ where: { idempotencyKey: input.idempotencyKey } });
       if (replay) {
+        // A key can only replay the request it originally paid — a cross-request key would
+        // otherwise return ANOTHER request's row as a success while this one goes unpaid.
+        if (replay.requestId !== input.requestId) throw new CeresRequestError('conflict');
         const request = await tx.ceresPaymentRequest.findUniqueOrThrow({ where: { id: replay.requestId } });
         return { outcome: 'paid', request, moneyEvent: replay, decisionEventId: null };
       }

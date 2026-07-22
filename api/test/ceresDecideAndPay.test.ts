@@ -92,8 +92,10 @@ function transactionClient() {
     },
     ceresRequestEvent: {
       create: vi.fn(async ({ data }: any) => {
-        state.requestEvents.push(data);
-        return data;
+        // Real Prisma returns the generated id — the route gates notifications on it.
+        const event = { id: `revent-${state.requestEvents.length + 1}`, ...data };
+        state.requestEvents.push(event);
+        return event;
       }),
     },
   };
@@ -273,6 +275,18 @@ describe('decideAndPayStaffRequest — GM cash/transfer one-flow', () => {
     expect(state.movements).toHaveLength(2);
     expect(state.events).toHaveLength(1);
     expect(state.requestEvents).toHaveLength(2);
+  });
+
+  it('rejects a replayed idempotencyKey aimed at a DIFFERENT request', async () => {
+    const idempotencyKey = 'gm-idem-cross';
+    const first = await decideAndPayStaffRequest({ requestId: 'request-1', lane: 'cash', idempotencyKey, agent: gmAgent });
+    expect(first.outcome).toBe('paid');
+
+    // Reusing request-1's key against another request must NOT hand back request-1's row
+    // as a success (wrong-request "paid" / information leak) — it conflicts instead.
+    await expect(decideAndPayStaffRequest({ requestId: 'request-2', lane: 'cash', idempotencyKey, agent: gmAgent }))
+      .rejects.toMatchObject({ code: 'conflict' });
+    expect(state.movements).toHaveLength(2); // nothing new moved
   });
 });
 

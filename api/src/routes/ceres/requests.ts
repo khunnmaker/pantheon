@@ -437,7 +437,9 @@ export function requestsRoutes(app: FastifyInstance) {
           );
           return { outcome: 'escalated' as const, request: toStaffRequestRow(result.request, review) };
         }
-        await notifyRequesterForMoneyEvent(result.moneyEvent.id);
+        // decisionEventId is null only on the idempotent-replay short-circuit — the first
+        // attempt already sent this push; don't re-send it on a retried tap.
+        if (result.decisionEventId) await notifyRequesterForMoneyEvent(result.moneyEvent.id);
         return { outcome: 'paid' as const, request: toStaffRequestRow(result.request), moneyEvent: result.moneyEvent };
       } catch (err) {
         if (err instanceof CeresRequestError) return requestError(reply, err);
