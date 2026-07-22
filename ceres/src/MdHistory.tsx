@@ -35,7 +35,11 @@ import { APPROVAL_LABEL, FULFILLMENT_LABEL } from './RequestDetail';
 // (approvalStatus 'void' is checked independently of fulfillmentStatus — CEO's any-state void
 // can land on a request whose fulfillment was unfulfilled/paid/reversed/settled; all of those
 // still show up here as a voided row per this OR.)
-const FINISHED_FULFILLMENT = new Set(['paid', 'settling', 'settled']);
+// 'reversed' is included even though it's transient (CEO reversed the money event but hasn't
+// voided the request yet): no queue shows that state — toFulfill needs 'unfulfilled', advance
+// liquidation needs paid/settling — so without it here the request would be invisible everywhere
+// until the void lands, the exact bug class this view exists to close.
+const FINISHED_FULFILLMENT = new Set(['paid', 'settling', 'settled', 'reversed']);
 function isFinishedRequest(r: StaffRequest): boolean {
   return r.approvalStatus === 'rejected' || r.approvalStatus === 'void' || FINISHED_FULFILLMENT.has(r.fulfillmentStatus);
 }
@@ -50,7 +54,9 @@ function requestMatchesStatusFilter(r: StaffRequest, status: ExpenseStatus | '')
     case 'pending':
       return false;
     case 'approved':
-      return r.fulfillmentStatus === 'paid' || r.fulfillmentStatus === 'settling';
+      // 'reversed' rides this bucket too — money moved, request not yet voided; the row's own
+      // chip still reads ย้อนกลับแล้ว so the state stays visible.
+      return r.fulfillmentStatus === 'paid' || r.fulfillmentStatus === 'settling' || r.fulfillmentStatus === 'reversed';
     case 'settled':
       return r.fulfillmentStatus === 'settled';
     case 'rejected':
