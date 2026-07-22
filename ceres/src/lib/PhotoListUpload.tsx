@@ -76,28 +76,30 @@ export default function PhotoListUpload({
 
     // Sequential, on purpose — mirrors the old single-file flow per upload (downscale then
     // await the server round trip) and keeps OCR/duplicate results attributable per file.
-    let working = [...itemsRef.current];
+    // Every mutation derives from itemsRef.current (NOT a loop-local snapshot): the user can
+    // ✕-remove an already-uploaded thumb while a later file is still uploading, and a stale
+    // snapshot would resurrect the removed item when the in-flight upload lands.
     for (const file of toProcess) {
       const tempId = `__busy_${Date.now()}_${busySeq.current++}`;
-      working = [...working, { uploadId: tempId, busy: true }];
-      itemsRef.current = working;
-      onChange(working);
+      const withBusy = [...itemsRef.current, { uploadId: tempId, busy: true }];
+      itemsRef.current = withBusy;
+      onChange(withBusy);
       try {
         const { dataB64, contentType } = await downscaleImage(file);
         const result = await upload(dataB64, contentType);
         const preview = `data:${contentType};base64,${dataB64}`;
-        working = working.map((it) =>
+        const resolved = itemsRef.current.map((it) =>
           it.uploadId === tempId
             ? { uploadId: result.uploadId, preview, duplicate: result.duplicate, busy: false }
             : it,
         );
-        itemsRef.current = working;
-        onChange(working);
+        itemsRef.current = resolved;
+        onChange(resolved);
         if (onOcr && result.ocr) onOcr(result.ocr);
       } catch {
-        working = working.filter((it) => it.uploadId !== tempId);
-        itemsRef.current = working;
-        onChange(working);
+        const cleaned = itemsRef.current.filter((it) => it.uploadId !== tempId);
+        itemsRef.current = cleaned;
+        onChange(cleaned);
         setError('อัปโหลดรูปไม่สำเร็จ ลองใหม่อีกครั้ง');
       }
     }
@@ -112,7 +114,11 @@ export default function PhotoListUpload({
     e.target.value = '';
   }
   function removeAt(uploadId: string) {
-    onChange(items.filter((it) => it.uploadId !== uploadId));
+    // Route through itemsRef (same as handleFiles) so a ✕ tap fired from a not-yet-re-rendered
+    // list can't drop a busy placeholder that was appended in the same tick.
+    const next = itemsRef.current.filter((it) => it.uploadId !== uploadId);
+    itemsRef.current = next;
+    onChange(next);
   }
 
   const emptyH = compact ? 80 : 96;
