@@ -722,6 +722,10 @@ export const uploadMedia = (dataB64: string, contentType: string, purpose: Media
 export const getMediaUrl = (id: string) => authed<{ url: string; expiresAt: string }>(`/api/ceres/media/${id}/url`);
 
 export type V2RequestType = 'advance' | 'reimbursement' | 'purchase';
+// 4-button request chooser (owner-confirmed design, 2026-07-23) — only meaningful when
+// requestType === 'advance'. null = plain float advance (เบิกล่วงหน้า); 'purchase' =
+// เบิกเงินไปซื้อ. See lib/requestLabels.ts for the four display labels this derives.
+export type AdvanceVariant = 'purchase';
 export type ApprovalStatus =
   | 'legacy'
   | 'pending_nee'
@@ -737,6 +741,7 @@ export interface StaffRequest {
   id: string;
   workflowVersion: 2;
   requestType: V2RequestType;
+  advanceVariant: AdvanceVariant | null;
   requestedById: string | null;
   requestedByName: string;
   requesterPartyId: string | null;
@@ -787,10 +792,13 @@ export interface RequestEvent {
 
 export const createStaffRequest = (body: {
   requestType: V2RequestType;
+  // Only meaningful when requestType === 'advance' — see AdvanceVariant above.
+  advanceVariant?: AdvanceVariant | null;
   entity: string;
-  // advance: omit/empty (categoryGroups carries the selection instead).
-  // reimbursement/purchase: required, categoryGroups stays absent — see
-  // api/src/routes/ceres/requests.ts's v2CreateBody discriminated union.
+  // advance (float, advanceVariant null): omit/empty (categoryGroups carries the selection
+  // instead). advance (advanceVariant 'purchase'), reimbursement, purchase: required,
+  // categoryGroups stays absent — see api/src/routes/ceres/requests.ts's v2CreateBody
+  // discriminated union.
   category?: string;
   categoryGroups?: string[];
   amount: string;
@@ -814,6 +822,7 @@ export const editStaffRequest = (
   id: string,
   patch: Partial<{
     requestType: V2RequestType;
+    advanceVariant: AdvanceVariant | null;
     entity: string;
     category: string;
     categoryGroups: string[];

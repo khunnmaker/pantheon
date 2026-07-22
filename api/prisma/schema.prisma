@@ -1090,6 +1090,12 @@ model CeresPaymentRequest {
   createdAt            DateTime  @default(now())
   workflowVersion      Int       @default(1)
   requestType          String    @default("legacy_payment")
+  // 4-button request chooser (owner-confirmed design, 2026-07-23) — additive nullable
+  // discriminator, only meaningful when requestType = 'advance'. null = plain float advance
+  // (เบิกล่วงหน้า, unchanged); 'purchase' = เบิกเงินไปซื้อ (rides every advance mechanic, but
+  // carries a single required category + required reason like reimbursement/purchase). Old
+  // advances stay null. See ceres/src/lib/requestLabels.ts for the display-label derivation.
+  advanceVariant       String?
   approvalStatus       String    @default("legacy")
   fulfillmentStatus    String    @default("legacy")
   requesterPartyId     String?

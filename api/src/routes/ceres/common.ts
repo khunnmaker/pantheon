@@ -59,7 +59,7 @@ export function toStaffRequestRow(
   r: {
     id: string; requestedById: string | null; requestedByName: string; requesterPartyId: string | null;
     entity: string; payee: string; category: string; categoryGroups: string; amount: string; detail: string;
-    requestType: string; approvalStatus: string; fulfillmentStatus: string;
+    requestType: string; advanceVariant: string | null; approvalStatus: string; fulfillmentStatus: string;
     requestPhotoUploadId: string | null; ocrAmount: string; ocrVendor: string; ocrDate: string;
     aiScreenStatus: string; aiReviewId: string | null; neeDecidedById: string | null;
     neeDecidedByName: string; neeDecidedAt: Date | null; neeDecisionNote: string;
@@ -79,6 +79,7 @@ export function toStaffRequestRow(
     id: r.id,
     workflowVersion: 2,
     requestType: r.requestType,
+    advanceVariant: r.advanceVariant,
     requestedById: r.requestedById,
     requestedByName: r.requestedByName,
     requesterPartyId: r.requesterPartyId,

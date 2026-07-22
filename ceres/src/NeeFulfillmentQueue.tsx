@@ -23,7 +23,7 @@ import {
   type RequestMoneyLane,
   type StaffRequest,
 } from './lib/api';
-import { REQUEST_TYPE_LABEL as TYPE_LABEL } from './lib/requestLabels';
+import { requestKindLabel } from './lib/requestLabels';
 import { MediaThumbStrip } from './lib/media';
 import { PayPanel } from './PayPanel';
 import PhotoListUpload, { type PhotoItem } from './lib/PhotoListUpload';
@@ -175,7 +175,7 @@ function FulfillCard({
           <div className="flex items-start justify-between gap-2">
             <div>
               <div className="font-semibold text-sm">{request.requestedByName}</div>
-              <div className="text-xs text-slate-500">{TYPE_LABEL[request.requestType]}</div>
+              <div className="text-xs text-slate-500">{requestKindLabel(request.requestType, request.advanceVariant)}</div>
             </div>
             <div className="font-bold text-lg text-amber-700 shrink-0">{baht(request.amountNum)}</div>
           </div>

@@ -30,7 +30,7 @@ import {
   type RequestMoneyEvent,
   type StaffRequest,
 } from './lib/api';
-import { REQUEST_TYPE_LABEL as TYPE_LABEL } from './lib/requestLabels';
+import { requestKindLabel } from './lib/requestLabels';
 import { useCeres } from './lib/bootstrapContext';
 import { MediaThumb, MediaThumbStrip } from './lib/media';
 import ExpenseSheet from './ExpenseSheet';
@@ -258,7 +258,7 @@ export default function RequestDetail({
                 <div>
                   <div className="font-bold text-xl">{baht(request.amountNum)}</div>
                   <div className="text-sm text-slate-500">
-                    {TYPE_LABEL[request.requestType]} · {request.requestedByName}
+                    {requestKindLabel(request.requestType, request.advanceVariant)} · {request.requestedByName}
                   </div>
                 </div>
                 <div className="flex flex-col items-end gap-1">

@@ -26,6 +26,28 @@ export type V2RequestType = (typeof V2_REQUEST_TYPES)[number];
 export type V2RequestScope = 'mine' | 'queue' | 'all';
 export const STUCK_AI_REVIEW_MS = 5 * 60 * 1000;
 
+// 4-button request chooser (owner-confirmed design, 2026-07-23) — advanceVariant only ever
+// applies when requestType === 'advance'. null = plain float advance (เบิกล่วงหน้า, every
+// behavior below unchanged); 'purchase' = เบิกเงินไปซื้อ (rides every advance mechanic — no
+// AI screen, liquidation cycle — but carries a single required category + required reason
+// like reimbursement/purchase, instead of the float advance's optional-reason/multi-group
+// shape). See ceres/src/lib/requestLabels.ts for the four display labels this derives.
+export const ADVANCE_VARIANTS = ['purchase'] as const;
+export type AdvanceVariant = (typeof ADVANCE_VARIANTS)[number];
+
+// True for the ONE variant that changes an advance's category/reason requirements —
+// เบิกเงินไปซื้อ. False for a plain float advance and for the other two request types
+// (their own requirement shape is handled by the existing requestType branches below).
+function isVariantPurchase(input: { requestType: V2RequestType; advanceVariant: AdvanceVariant | null }): boolean {
+  return input.requestType === 'advance' && input.advanceVariant === 'purchase';
+}
+
+// True for a plain float advance only — เบิกล่วงหน้า, the ONLY kind that uses the
+// multi-group categoryGroups selection and an optional reason.
+function isFloatAdvance(input: { requestType: V2RequestType; advanceVariant: AdvanceVariant | null }): boolean {
+  return input.requestType === 'advance' && input.advanceVariant !== 'purchase';
+}
+
 // Owner policy: below this amount (baht, `amount` is already stored/parsed in baht — see
 // `num()` in routes/ceres/common.ts) the AI pre-screen is skipped regardless of request type,
 // same as the advance fast lane. Strictly-less-than: exactly ฿500.00 still gets screened.
@@ -50,6 +72,10 @@ export class CeresRequestError extends Error {
       | 'invalid_group'
       | 'invalid_reason'
       | 'no_party'
+      // Reimbursement's missing-photo gate — spec calls this "photo_required" but this reuses
+      // the pre-existing code name (already load-bearing across p1.ts's own liquidation-receipt
+      // gate and its own test coverage) rather than forking two codes for the same shape of
+      // error; judgment call, see report.
       | 'receipt_required'
       | 'media_not_owned'
       | 'not_editable'
@@ -69,6 +95,9 @@ export class CeresRequestError extends Error {
 
 export interface V2RequestInput {
   requestType: V2RequestType;
+  // Only meaningful when requestType === 'advance' — see ADVANCE_VARIANTS above. Ignored
+  // (normalized away) for reimbursement/purchase.
+  advanceVariant?: AdvanceVariant | null;
   entity: string;
   category?: string;
   categoryGroups?: string[];
@@ -80,6 +109,7 @@ export interface V2RequestInput {
 
 interface NormalizedV2RequestInput {
   requestType: V2RequestType;
+  advanceVariant: AdvanceVariant | null;
   entity: string;
   category: string;
   categoryGroups: string[];
@@ -97,9 +127,19 @@ function evidencePurposes(type: V2RequestType): readonly CeresMediaPurpose[] {
 
 function normalizeRequestInput(input: V2RequestInput): NormalizedV2RequestInput {
   const advance = input.requestType === 'advance';
+  // advanceVariant only ever survives on an actual advance — any stray value sent alongside
+  // reimbursement/purchase is silently dropped rather than validated (those types never had
+  // a variant dimension in the first place).
+  const advanceVariant: AdvanceVariant | null = advance && input.advanceVariant === 'purchase' ? 'purchase' : null;
   return {
     ...input,
+    advanceVariant,
     category: advance ? (input.category ?? '').trim() : (input.category ?? ''),
+    // Groups are NOT force-cleared here for เบิกเงินไปซื้อ — validateReferences's
+    // isFloatAdvance branch below is the single place that decides groups are allowed
+    // (float advance only) vs must be empty (reimbursement/purchase/เบิกเงินไปซื้อ all
+    // reject a non-empty selection with invalid_group), same symmetric rule that already
+    // covered reimbursement/purchase before this feature existed.
     categoryGroups: [...new Set((input.categoryGroups ?? []).map((group) => group.trim()))],
     reason: advance ? (input.reason ?? '').trim() : (input.reason ?? ''),
   };
@@ -119,7 +159,11 @@ async function validateReferences(
   if (!(GROUP_COMPANY_CODES as readonly string[]).includes(input.entity)) {
     throw new CeresRequestError('invalid_entity');
   }
-  if (input.requestType === 'advance') {
+  // Only a plain float advance (เบิกล่วงหน้า) uses the multi-group/optional-reason shape —
+  // เบิกเงินไปซื้อ (advance + advanceVariant 'purchase') requires a single real category and
+  // a reason, exactly like reimbursement/purchase, even though its requestType is still
+  // 'advance' underneath.
+  if (isFloatAdvance(input)) {
     if (input.categoryGroups.length < 1 || input.categoryGroups.length > 7 || input.categoryGroups.some((group) => !group)) {
       throw new CeresRequestError('invalid_group');
     }
@@ -138,7 +182,7 @@ async function validateReferences(
     if (input.categoryGroups.length > 0) throw new CeresRequestError('invalid_group');
     if (!input.reason) throw new CeresRequestError('invalid_reason');
   }
-  if (input.requestType !== 'advance' && validateCategory) {
+  if (!isFloatAdvance(input) && validateCategory) {
     const category = await prisma.ceresCategory.findUnique({ where: { name: input.category } });
     if (!category?.active) throw new CeresRequestError('invalid_category');
   }
@@ -162,6 +206,7 @@ async function validateReferences(
 function snapshot(row: RequestRow): Prisma.InputJsonObject {
   return {
     requestType: row.requestType,
+    advanceVariant: row.advanceVariant,
     entity: row.entity,
     category: row.category,
     categoryGroups: parseRequestCategoryGroups(row.categoryGroups),
@@ -225,12 +270,15 @@ export async function createStaffRequest(input: V2RequestInput, agent: AuthedAge
         requesterPartyId: party?.id ?? null,
         entity: normalized.entity,
         payee: agent.name,
-        category: normalized.requestType === 'advance' ? '' : normalized.category,
-        categoryGroups: normalized.requestType === 'advance' ? JSON.stringify(normalized.categoryGroups) : '',
+        // Only a plain float advance stores '' — เบิกเงินไปซื้อ (advance + variant 'purchase')
+        // stores a single real category name, same convention as reimbursement/purchase.
+        category: isFloatAdvance(normalized) ? '' : normalized.category,
+        categoryGroups: isFloatAdvance(normalized) ? JSON.stringify(normalized.categoryGroups) : '',
         amount: normalized.amount,
         detail: normalized.reason,
         workflowVersion: 2,
         requestType: normalized.requestType,
+        advanceVariant: normalized.advanceVariant,
         approvalStatus: 'pending_nee',
         fulfillmentStatus: 'unfulfilled',
         requestPhotoUploadId: mediaIds[0] ?? null,
@@ -281,18 +329,39 @@ export async function editStaffRequest(
       const existingLinkIds = await singleTargetLinkIds('request', existing.id, 'request_photo');
       return existingLinkIds.length > 0 ? existingLinkIds : resolveMediaIdList(existing.requestPhotoUploadId, undefined);
     })();
+  const finalType = (patch.requestType ?? existing.requestType) as V2RequestType;
+  const typeUnchanged = finalType === existing.requestType;
+  const existingVariant = (existing.advanceVariant as AdvanceVariant | null) ?? null;
+  // Neither sent = untouched ONLY if the type didn't change — converting into/out of advance
+  // (or between the two other request types entirely) never inherits the old variant.
+  const finalVariant: AdvanceVariant | null = patch.advanceVariant !== undefined
+    ? patch.advanceVariant
+    : (typeUnchanged ? existingVariant : null);
+  // "Same kind" — type AND variant both unchanged. A variant flip (float ↔ เบิกเงินไปซื้อ)
+  // must NOT inherit the old groups even though requestType itself stays 'advance' — this is
+  // the KNOWN TRAP from 5eda088 (converting away from advance used to drop inherited groups
+  // and 400) recurring one layer down: without gating on the VARIANT too, flipping
+  // float→เบิกเงินไปซื้อ would silently inherit the float side's groups instead of requiring
+  // a fresh category.
+  const kindUnchanged = typeUnchanged && finalVariant === existingVariant;
   const merged = normalizeRequestInput({
-    requestType: (patch.requestType ?? existing.requestType) as V2RequestType,
+    requestType: finalType,
+    advanceVariant: finalVariant,
     entity: patch.entity ?? existing.entity,
     category: patch.category ?? existing.category,
     categoryGroups: patch.categoryGroups
-      ?? ((patch.requestType ?? existing.requestType) === existing.requestType ? existingGroups : []),
+      ?? (kindUnchanged ? existingGroups : []),
     amount: patch.amount ?? existing.amount,
     reason: patch.reason ?? existing.detail,
     requestPhotoUploadId: mediaIds[0] ?? null,
   });
-  const categoryChanged = merged.requestType !== existing.requestType || merged.category !== existing.category;
-  const groupsChanged = merged.requestType !== existing.requestType || !sameGroups(merged.categoryGroups, existingGroups);
+  // A variant flip (float ↔ เบิกเงินไปซื้อ) changes category/group requirements exactly like a
+  // requestType change does, even though requestType itself stays 'advance' — force the
+  // re-validation flags on regardless of whether the raw category/group VALUES happen to
+  // coincide (they normally won't, since normalizeRequestInput shapes them differently per
+  // variant, but this stays correct even in a coincidental tie).
+  const categoryChanged = !kindUnchanged || merged.category !== existing.category;
+  const groupsChanged = !kindUnchanged || !sameGroups(merged.categoryGroups, existingGroups);
   const { media, receiptMeta } = await validateReferences(merged, mediaIds, agent, categoryChanged, groupsChanged);
   const skipReason = aiSkipReason(merged.requestType, merged.amount);
 
@@ -301,9 +370,10 @@ export async function editStaffRequest(
       where: { id: existing.id, workflowVersion: 2, approvalStatus: 'pending_nee', rowVersion: existing.rowVersion },
       data: {
         requestType: merged.requestType,
+        advanceVariant: merged.advanceVariant,
         entity: merged.entity,
-        category: merged.category,
-        categoryGroups: merged.requestType === 'advance' ? JSON.stringify(merged.categoryGroups) : '',
+        category: isFloatAdvance(merged) ? '' : merged.category,
+        categoryGroups: isFloatAdvance(merged) ? JSON.stringify(merged.categoryGroups) : '',
         amount: merged.amount,
         detail: merged.reason,
         payee: agent.name,

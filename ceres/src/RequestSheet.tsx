@@ -7,6 +7,8 @@ import {
   ChevronLeft,
   Wallet,
   Receipt,
+  ShoppingBag,
+  Building2,
   ImageOff,
 } from 'lucide-react';
 import {
@@ -18,32 +20,42 @@ import {
   type MediaPurpose,
   type OcrResult,
 } from './lib/api';
-import { REQUEST_TYPE_LABEL, PAYER_CHOICE_LABEL, type PayerChoice } from './lib/requestLabels';
+import {
+  advanceVariantOfKind,
+  REQUEST_KIND_HINT,
+  REQUEST_KIND_LABEL,
+  REQUEST_KIND_ORDER,
+  requestKindOf,
+  requestTypeOfKind,
+  type RequestKind,
+} from './lib/requestLabels';
 import { useCeres } from './lib/bootstrapContext';
 import CategoryPicker, { groupByCategoryGroup } from './components/CategoryPicker';
 import PhotoListUpload, { type PhotoItem } from './lib/PhotoListUpload';
 
 const AMOUNT_RE = /^\d+(\.\d{1,2})?$/;
 
-// Front-door merge (owner decision, 2026-07-21): the type chooser only offers two doors —
-// เบิกล่วงหน้า (advance, unchanged) and ขอเบิก (which then asks the REQUIRED payer toggle
-// below to resolve to the actual backend type: reimbursement or purchase). 'khobik' is a
-// front-end-only concept — it never reaches the wire; see resolvedType below.
-type FrontDoorType = 'advance' | 'khobik';
-
-const FRONT_DOOR_META: Record<FrontDoorType, { label: string; sub: string; icon: React.ReactNode }> = {
-  advance: { label: 'เบิกล่วงหน้า', sub: 'รับเงินไปใช้ล่วงหน้า', icon: <Wallet size={26} /> },
-  khobik: { label: 'ขอเบิก', sub: 'จ่ายเองแล้วขอคืน หรือให้บริษัทจ่ายให้ก่อน', icon: <Receipt size={26} /> },
+// 4-button request chooser (owner-confirmed design, 2026-07-23) — replaces the old 2-button
+// front door + payer toggle (2026-07-21). Every kind is a real, separately-named button now;
+// เบิกเงินไปซื้อ rides the advance machinery (advanceVariant 'purchase') but is presented and
+// validated as its own kind throughout this sheet. See lib/requestLabels.ts for the
+// (requestType, advanceVariant) ↔ RequestKind mapping shared with every other screen.
+const KIND_ICON: Record<RequestKind, React.ReactNode> = {
+  advance: <Wallet size={24} />,
+  reimbursement: <Receipt size={24} />,
+  advance_purchase: <ShoppingBag size={24} />,
+  purchase: <Building2 size={24} />,
 };
 
-function purposeFor(type: V2RequestType | null): MediaPurpose {
-  return type === 'reimbursement' ? 'reimbursement_receipt' : 'request_photo';
+function purposeFor(kind: RequestKind | null): MediaPurpose {
+  return kind === 'reimbursement' ? 'reimbursement_receipt' : 'request_photo';
 }
 
 // Minimal prefill payload for MdTemplates's "สร้างคำขอจ่าย" button (v1 purge, 2026-07-19 —
 // see docs/CERES_V1_PURGE_PLAN.md Phase B item 5). Only amount/category/reason carry over
-// from the recurring template; requestType is forced to 'purchase' by the caller passing
-// this prop. `category` is the category NAME (matches Category.name, like editing.category).
+// from the recurring template; the kind is forced to 'purchase' (ขอให้บริษัทซื้อ) by the
+// caller passing this prop. `category` is the category NAME (matches Category.name, like
+// editing.category).
 export interface RequestSheetPrefill {
   amount: string;
   category: string;
@@ -68,29 +80,21 @@ export default function RequestSheet({
   const entities = bootstrap.entities.length ? bootstrap.entities : ['PROM', 'TONR', 'DENC', 'DENL', 'KPKF'];
   const categories = [...bootstrap.categories].filter((c) => c.active).sort((a, b) => a.sortOrder - b.sortOrder);
   // Distinct group labels in sortOrder (first-appearance), same order the two-stage
-  // CategoryPicker shows its group chips in — advance's multi-select row reuses it.
+  // CategoryPicker shows its group chips in — the float advance's multi-select row reuses it.
   const groupOptions = groupByCategoryGroup(categories).map((g) => g.group);
 
   const [step, setStep] = useState<'type' | 'form'>(editing || prefill ? 'form' : 'type');
-  // Front-door merge (2026-07-21) — frontDoor picks which door was tapped; payerChoice only
-  // matters when frontDoor is 'khobik' and resolves the actual backend type. Contextual
-  // inherits (owner-approved exception to "no lazy defaults"): editing an existing
-  // reimbursement/purchase pre-sets payerChoice from the stored type; a template prefill
-  // pre-sets the purchase side — both land straight on 'form' with the toggle already
-  // resolved (but still changeable). A brand-new ขอเบิก request starts with NO payerChoice —
-  // the toggle is a required explicit tap.
-  const [frontDoor, setFrontDoor] = useState<FrontDoorType>(
-    editing ? (editing.requestType === 'advance' ? 'advance' : 'khobik') : prefill ? 'khobik' : 'advance',
-  );
-  const [payerChoice, setPayerChoice] = useState<PayerChoice | null>(() => {
-    if (editing && editing.requestType !== 'advance') return editing.requestType;
+  // `kind` is the ONE source of truth for which of the 4 buttons is active — every wire-level
+  // (requestType, advanceVariant) pair derives from it via lib/requestLabels.ts's helpers.
+  // Editing an existing request derives its starting kind straight from the stored row; a
+  // template prefill always forces 'purchase' (ขอให้บริษัทซื้อ, unchanged from before this
+  // redesign); a brand-new request starts with NO kind chosen — tapping one of the 4 buttons
+  // is a required explicit tap (owner "no lazy defaults" rule), same as the old front door.
+  const [kind, setKind] = useState<RequestKind | null>(() => {
+    if (editing) return requestKindOf(editing.requestType, editing.advanceVariant);
     if (prefill) return 'purchase';
     return null;
   });
-  const [payerError, setPayerError] = useState('');
-  // The actual backend type once resolved — null while ขอเบิก is chosen but the payer
-  // toggle hasn't been tapped yet (blocks submit via validate()'s invalid_payer check).
-  const requestType: V2RequestType | null = frontDoor === 'advance' ? 'advance' : payerChoice;
 
   // NO lazy defaults (owner rule, 2026-07-18) — entity/category start empty for a NEW
   // request; only an edit of an existing request pre-fills its own prior values. A
@@ -107,12 +111,12 @@ export default function RequestSheet({
     }
     return '';
   });
-  // Advance-only multi-group selection. NO lazy default on a NEW advance (starts empty).
-  // Editing an OLD advance (has a real category, empty categoryGroups) prefills the
-  // group that category belongs to — the one CategoryPicker-style exception for a
-  // pre-filled value (see components/CategoryPicker.tsx's own comment on this rule).
+  // Float-advance-only multi-group selection. NO lazy default on a NEW advance (starts
+  // empty). Editing an OLD float advance (has a real category, empty categoryGroups)
+  // prefills the group that category belongs to — the one CategoryPicker-style exception
+  // for a pre-filled value (see components/CategoryPicker.tsx's own comment on this rule).
   const [categoryGroups, setCategoryGroups] = useState<string[]>(() => {
-    if (editing?.requestType === 'advance') {
+    if (editing?.requestType === 'advance' && !editing.advanceVariant) {
       if (editing.categoryGroups.length > 0) return editing.categoryGroups;
       const match = categories.find((c) => c.name === editing.category);
       if (match) return [match.group];
@@ -142,16 +146,15 @@ export default function RequestSheet({
   const [submitError, setSubmitError] = useState('');
 
   const selectedCategory = categories.find((c) => c.id === categoryId) || null;
-  // Header/title label — generic "ขอเบิก" until the payer toggle resolves it, then the
-  // specific ขอเบิก · จ่ายเองแล้ว / ขอเบิก · ให้บริษัทจ่าย wording (shared helper, same text
-  // every other screen uses for this request's type).
-  const headerLabel = requestType ? REQUEST_TYPE_LABEL[requestType] : 'ขอเบิก';
+  // Header/title label — the picked kind's real name (no more generic placeholder while a
+  // toggle resolves it, since every kind is now its own button).
+  const headerLabel = kind ? REQUEST_KIND_LABEL[kind] : 'ส่งคำขอเงิน';
 
   const mountedRef = useRef(false);
   useEffect(() => {
-    // Switching the resolved type after photos were already staged for the OLD purpose
-    // clears them — the server validates purpose against requestType, so stale uploads would
-    // fail. Skip the very first run (mount) so an editing request's existing photos survive.
+    // Switching kind after photos were already staged for the OLD purpose clears them — the
+    // server validates purpose against requestType, so stale uploads would fail. Skip the
+    // very first run (mount) so an editing request's existing photos survive.
     if (mountedRef.current) {
       setPhotos([]);
       setOcr(null);
@@ -159,9 +162,9 @@ export default function RequestSheet({
     }
     mountedRef.current = true;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [requestType]);
+  }, [kind]);
 
-  const uploadPhoto = (dataB64: string, contentType: string) => uploadMedia(dataB64, contentType, purposeFor(requestType));
+  const uploadPhoto = (dataB64: string, contentType: string) => uploadMedia(dataB64, contentType, purposeFor(kind));
 
   function handleOcr(o: OcrResult) {
     if (ocrPrefillDone.current || !o.amount) return;
@@ -177,18 +180,17 @@ export default function RequestSheet({
 
   function validate(): string {
     if (!AMOUNT_RE.test(amount.trim()) || Number(amount) <= 0) return 'invalid_amount';
-    // ขอเบิก's payer toggle is required before anything else about the resolved type can be
-    // validated — mirrors the old up-front type step, just moved into the form.
-    if (frontDoor === 'khobik' && !payerChoice) return 'invalid_payer';
-    // Reason is optional for advance only — the precise detail comes at liquidation.
-    if (requestType !== 'advance' && !reason.trim()) return 'missing_reason';
+    if (!kind) return 'invalid_kind';
+    // Reason is optional for the plain float advance only — the precise detail comes at
+    // liquidation. Every other kind (reimbursement, purchase, and เบิกเงินไปซื้อ) requires it.
+    if (kind !== 'advance' && !reason.trim()) return 'missing_reason';
     if (!entity) return 'invalid_entity';
-    if (requestType === 'advance') {
+    if (kind === 'advance') {
       if (categoryGroups.length === 0) return 'invalid_group';
     } else if (!selectedCategory) {
       return 'invalid_category';
     }
-    if (requestType === 'reimbursement' && photos.length === 0) return 'missing_receipt';
+    if (kind === 'reimbursement' && photos.length === 0) return 'missing_receipt';
     return '';
   }
 
@@ -199,8 +201,8 @@ export default function RequestSheet({
       setSubmitError(
         problem === 'invalid_amount'
           ? 'กรอกจำนวนเงินให้ถูกต้อง (มากกว่า 0)'
-          : problem === 'invalid_payer'
-            ? 'กรุณาเลือกวิธีจ่ายเงิน'
+          : problem === 'invalid_kind'
+            ? 'กรุณาเลือกประเภทคำขอ'
             : problem === 'missing_reason'
               ? 'กรุณากรอกเหตุผล'
               : problem === 'invalid_entity'
@@ -212,22 +214,23 @@ export default function RequestSheet({
                     : 'กรุณาถ่ายรูปใบเสร็จก่อนส่งคำขอ',
       );
       if (problem === 'invalid_amount') setAmountError('กรอกจำนวนเงินให้ถูกต้อง');
-      if (problem === 'invalid_payer') setPayerError('กรุณาเลือกวิธีจ่ายเงิน');
       if (problem === 'invalid_group') setGroupsError('เลือกกลุ่มอย่างน้อย 1 กลุ่ม');
       return;
     }
-    if (requestType !== 'advance' && !selectedCategory) return;
-    // Guaranteed non-null past validate() — either 'advance', or payerChoice (checked above).
-    const finalType = requestType!;
+    if (kind !== 'advance' && !selectedCategory) return;
+    // Guaranteed non-null past validate() above.
+    const finalKind = kind!;
+    const finalType: V2RequestType = requestTypeOfKind(finalKind);
 
     setSubmitBusy(true);
     try {
       const readyPhotos = photos.filter((p) => !p.busy);
       const requestPhotoUploadIds = readyPhotos.map((p) => p.uploadId);
       const requestPhotoUploadId = requestPhotoUploadIds[0] ?? null;
-      const body = finalType === 'advance'
+      const body = finalKind === 'advance'
         ? {
             requestType: finalType,
+            advanceVariant: null,
             entity,
             categoryGroups,
             amount: amount.trim(),
@@ -235,15 +238,26 @@ export default function RequestSheet({
             requestPhotoUploadId,
             requestPhotoUploadIds,
           }
-        : {
-            requestType: finalType,
-            entity,
-            category: selectedCategory!.name,
-            amount: amount.trim(),
-            reason: reason.trim(),
-            requestPhotoUploadId,
-            requestPhotoUploadIds,
-          };
+        : finalKind === 'advance_purchase'
+          ? {
+              requestType: finalType,
+              advanceVariant: advanceVariantOfKind(finalKind),
+              entity,
+              category: selectedCategory!.name,
+              amount: amount.trim(),
+              reason: reason.trim(),
+              requestPhotoUploadId,
+              requestPhotoUploadIds,
+            }
+          : {
+              requestType: finalType,
+              entity,
+              category: selectedCategory!.name,
+              amount: amount.trim(),
+              reason: reason.trim(),
+              requestPhotoUploadId,
+              requestPhotoUploadIds,
+            };
       const result = editing
         ? await editStaffRequest(editing.id, body)
         : await createStaffRequest(body);
@@ -284,74 +298,36 @@ export default function RequestSheet({
         </div>
 
         {step === 'type' ? (
-          <div className="p-4 space-y-2.5">
-            {(Object.keys(FRONT_DOOR_META) as FrontDoorType[]).map((t) => (
+          <div className="p-4 grid grid-cols-2 gap-2.5">
+            {REQUEST_KIND_ORDER.map((k) => (
               <button
-                key={t}
+                key={k}
                 onClick={() => {
-                  setFrontDoor(t);
-                  // Fresh required tap every time a door is (re)picked — no carrying over a
-                  // previous session's payer choice (owner "no lazy defaults" rule).
-                  setPayerChoice(null);
-                  setPayerError('');
+                  setKind(k);
                   setStep('form');
                 }}
-                className="w-full min-h-[76px] rounded-2xl border-2 border-slate-200 hover:border-amber-400 hover:bg-amber-50 flex items-center gap-3 px-4 py-3 text-left transition-colors"
+                className="min-h-[124px] rounded-2xl border-2 border-slate-200 hover:border-amber-400 hover:bg-amber-50 flex flex-col items-center justify-center gap-1.5 px-3 py-3 text-center transition-colors"
               >
                 <div className="shrink-0 w-11 h-11 rounded-full bg-amber-100 text-amber-700 flex items-center justify-center">
-                  {FRONT_DOOR_META[t].icon}
+                  {KIND_ICON[k]}
                 </div>
-                <div className="min-w-0">
-                  <div className="font-bold text-base">{FRONT_DOOR_META[t].label}</div>
-                  <div className="text-xs text-slate-500">{FRONT_DOOR_META[t].sub}</div>
-                </div>
+                <div className="font-bold text-sm">{REQUEST_KIND_LABEL[k]}</div>
+                <div className="text-xs text-slate-500 leading-snug">{REQUEST_KIND_HINT[k]}</div>
               </button>
             ))}
           </div>
         ) : (
           <>
             <div className="p-4 space-y-4">
-              {/* Payer toggle — only for ขอเบิก, REQUIRED, NO pre-selection on a brand-new
-                  request (contextual inherits only: editing pre-sets from the stored type,
-                  a template prefill pre-sets the purchase side — both still changeable). */}
-              {frontDoor === 'khobik' && (
-                <div>
-                  <div className="text-xs font-semibold text-slate-500 mb-1.5">ใครจ่ายเงิน</div>
-                  <div className="space-y-2">
-                    {(Object.keys(PAYER_CHOICE_LABEL) as PayerChoice[]).map((choice) => (
-                      <button
-                        key={choice}
-                        type="button"
-                        onClick={() => {
-                          setPayerChoice(choice);
-                          setPayerError('');
-                        }}
-                        className={`w-full min-h-[52px] rounded-xl border-2 text-left px-4 py-3 text-sm font-semibold transition-colors ${
-                          payerChoice === choice
-                            ? 'bg-amber-600 border-amber-600 text-white'
-                            : 'border-slate-300 text-slate-700 hover:bg-slate-50'
-                        }`}
-                      >
-                        {PAYER_CHOICE_LABEL[choice]}
-                      </button>
-                    ))}
-                  </div>
-                  <div className="text-xs text-slate-400 mt-1.5">เลือกให้ตรงก่อนกรอกรายละเอียดอื่น</div>
-                  {payerError && (
-                    <div className="flex items-center gap-1 text-rose-600 text-xs mt-1">
-                      <AlertTriangle size={12} /> {payerError}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* Photo — primary input #1 (required for reimbursement, optional otherwise) */}
+              {/* Photo — primary input #1 (required for reimbursement, optional otherwise —
+                  including เบิกเงินไปซื้อ, which is optional at submit even though its reason
+                  and category are required) */}
               <div>
                 <div className="text-xs font-semibold text-slate-500 mb-1.5">
-                  {requestType === 'reimbursement' ? 'ใบเสร็จ (จำเป็น)' : 'รูปประกอบ (ถ้ามี)'}
+                  {kind === 'reimbursement' ? 'ใบเสร็จ (จำเป็น)' : 'รูปประกอบ (ถ้ามี)'}
                 </div>
                 <PhotoListUpload items={photos} onChange={setPhotos} upload={uploadPhoto} onOcr={handleOcr} />
-                {photos.length === 0 && requestType !== 'reimbursement' && (
+                {photos.length === 0 && kind !== 'reimbursement' && (
                   <div className="flex items-center gap-1 text-xs text-slate-400 mt-1.5">
                     <ImageOff size={12} /> ไม่แนบรูปก็ส่งคำขอได้
                   </div>
@@ -379,11 +355,11 @@ export default function RequestSheet({
                 {ocrDiffers && <div className="text-xs text-amber-700 mt-1">AI อ่านได้ ฿{ocr?.amount}</div>}
               </div>
 
-              {/* Reason — primary input #3 (optional for advance; the precise detail is
-                  captured per-expense at liquidation instead) */}
+              {/* Reason — primary input #3 (optional for the plain float advance only; the
+                  precise detail is captured per-expense at liquidation instead) */}
               <div>
                 <div className="text-xs font-semibold text-slate-500 mb-1.5">
-                  {requestType === 'advance' ? 'เหตุผล (ไม่บังคับ)' : 'เหตุผล / รายละเอียด'}
+                  {kind === 'advance' ? 'เหตุผล (ไม่บังคับ)' : 'เหตุผล / รายละเอียด'}
                 </div>
                 <textarea
                   value={reason}
@@ -412,11 +388,14 @@ export default function RequestSheet({
                 </div>
               </div>
 
-              {/* Category — no default; explicit tap required. Advance replaces the
-                  single-category picker with a multi-select GROUP chip row (Ceres
-                  advance simplify, 2026-07-19): the requester only narrows down to
-                  group(s); the exact category is picked per expense at liquidation. */}
-              {requestType === 'advance' ? (
+              {/* Category — no default; explicit tap required. Only the plain float advance
+                  replaces the single-category picker with a multi-select GROUP chip row
+                  (Ceres advance simplify, 2026-07-19): the requester only narrows down to
+                  group(s); the exact category is picked per expense at liquidation.
+                  เบิกเงินไปซื้อ (advance + variant 'purchase') uses the normal single-category
+                  picker instead, like reimbursement/purchase — it prefills the liquidation
+                  expense's category, unlike a float advance's group-only selection. */}
+              {kind === 'advance' ? (
                 <div>
                   <div className="text-xs font-semibold text-slate-500 mb-1.5">กลุ่มหมวดหมู่</div>
                   <div className="flex flex-wrap gap-2">

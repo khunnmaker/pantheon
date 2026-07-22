@@ -19,14 +19,14 @@ import {
   type FulfillmentStatus,
   type StaffRequest,
 } from './lib/api';
-import { REQUEST_TYPE_LABEL as TYPE_LABEL } from './lib/requestLabels';
+import { requestKindLabel } from './lib/requestLabels';
 import { MediaThumbStrip } from './lib/media';
 import FlagButton, { FlagBadge } from './FlagButton';
 
 // Re-exported (from the shared helper) so StaffHome's home-screen sections (open-advance
 // cards + the "รอดำเนินการ" compact list — see docs/CERES_STAFF_HOME_PLAN.md "1") can reuse
-// the exact same type label + status-pill logic instead of re-deriving it.
-export { TYPE_LABEL };
+// the exact same kind label + status-pill logic instead of re-deriving it.
+export { requestKindLabel };
 
 // Once a request is approved, its fulfillment status (paid/bought/settling/settled) is
 // more useful to the requester than the flat "อนุมัติแล้ว" — Phase 3 (cash/transfer
@@ -126,7 +126,7 @@ export default function MyRequests({
     const q = filterText?.trim().toLowerCase();
     const filtered = q
       ? rows.filter((r) =>
-          [r.reason, r.category, r.entity, TYPE_LABEL[r.requestType], String(r.amountNum)].some((field) =>
+          [r.reason, r.category, r.entity, requestKindLabel(r.requestType, r.advanceVariant), String(r.amountNum)].some((field) =>
             field.toLowerCase().includes(q),
           ),
         )
@@ -211,7 +211,7 @@ export default function MyRequests({
                       </span>
                     </div>
                     <div className="text-sm text-slate-600 truncate">
-                      {TYPE_LABEL[request.requestType]}
+                      {requestKindLabel(request.requestType, request.advanceVariant)}
                       {request.reason ? ` · ${request.reason}` : ''}
                     </div>
                     {rejectReason && <div className="text-xs text-rose-600 mt-0.5 truncate">เหตุผล: {rejectReason}</div>}
@@ -222,7 +222,7 @@ export default function MyRequests({
                 {expanded && (
                   <div className="px-3 pb-3 border-t border-slate-100">
                     <dl className="grid grid-cols-[76px_1fr] gap-x-2 gap-y-1 pt-3 text-sm">
-                      <dt className="text-slate-400">ประเภท</dt><dd>{TYPE_LABEL[request.requestType]}</dd>
+                      <dt className="text-slate-400">ประเภท</dt><dd>{requestKindLabel(request.requestType, request.advanceVariant)}</dd>
                       <dt className="text-slate-400">บริษัท</dt><dd>{request.entity}</dd>
                       <dt className="text-slate-400">หมวดหมู่</dt><dd>{request.category}</dd>
                       <dt className="text-slate-400">เหตุผล</dt><dd className="break-words">{request.reason}</dd>

@@ -18,7 +18,7 @@ import {
 import { useCeres } from './lib/bootstrapContext';
 import FlagButton, { FlagBadge } from './FlagButton';
 import { MediaThumb } from './lib/media';
-import { REQUEST_TYPE_LABEL } from './lib/requestLabels';
+import { requestKindLabel } from './lib/requestLabels';
 import { APPROVAL_LABEL, FULFILLMENT_LABEL } from './RequestDetail';
 
 // ประวัติ merged history (2026-07-22 fix) — before this, ประวัติ rendered MdExpenses ALONE, so a
@@ -571,7 +571,7 @@ function RequestHistoryCard({
             <span className={`px-2 py-0.5 rounded-full text-xs font-semibold shrink-0 ${chip.cls}`}>{chip.label}</span>
           </div>
           <div className="flex items-center justify-between gap-2 mt-0.5">
-            <span className={`text-sm text-slate-500 ${voided ? 'line-through' : ''}`}>{REQUEST_TYPE_LABEL[r.requestType]}</span>
+            <span className={`text-sm text-slate-500 ${voided ? 'line-through' : ''}`}>{requestKindLabel(r.requestType, r.advanceVariant)}</span>
             <span className={`font-bold ${voided ? 'line-through text-slate-400' : ''}`}>{baht(r.amountNum)}</span>
           </div>
           {r.category && <div className="text-xs text-slate-400">{r.category}</div>}

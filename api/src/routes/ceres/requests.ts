@@ -14,6 +14,7 @@ import {
   reverseRequestMoneyEvent,
 } from '../../ceres/requestMoney.js';
 import {
+  ADVANCE_VARIANTS,
   cancelStaffRequest,
   CeresRequestError,
   createStaffRequest,
@@ -23,6 +24,7 @@ import {
   getStaffRequest,
   listStaffRequests,
   V2_REQUEST_TYPES,
+  type AdvanceVariant,
 } from '../../ceres/requestService.js';
 import { decideAndPayStaffRequest } from '../../ceres/requestDecideAndPay.js';
 import { RequestVoidError, voidStaffRequest } from '../../ceres/requestVoid.js';
@@ -180,8 +182,13 @@ export function requestsRoutes(app: FastifyInstance) {
     z.object({
       requestType: z.literal('advance'),
       entity: z.enum(ENTITIES),
+      // null/omitted = plain float advance (เบิกล่วงหน้า); 'purchase' = เบิกเงินไปซื้อ. The
+      // exact per-variant shape (float needs >=1 group; เบิกเงินไปซื้อ needs a real category +
+      // reason, no groups) is enforced server-side in requestService.ts's validateReferences —
+      // this schema only checks the rough shape so both variants can share one zod branch.
+      advanceVariant: z.enum(ADVANCE_VARIANTS).nullable().optional(),
       category: z.string().max(200).optional(),
-      categoryGroups: z.array(z.string().trim().min(1).max(200)).min(1).max(7),
+      categoryGroups: z.array(z.string().trim().min(1).max(200)).max(7).optional(),
       amount: z.string().refine(isValidAmount, 'invalid_amount'),
       reason: z.string().max(600).optional(),
       requestPhotoUploadId: z.string().min(1).nullable().optional(),
@@ -303,6 +310,7 @@ export function requestsRoutes(app: FastifyInstance) {
 
   const v2PatchBody = z.object({
     requestType: z.enum(V2_REQUEST_TYPES).optional(),
+    advanceVariant: z.enum(ADVANCE_VARIANTS).nullable().optional(),
     entity: z.enum(ENTITIES).optional(),
     category: z.string().max(200).optional(),
     categoryGroups: z.array(z.string().trim().min(1).max(200)).max(7).optional(),
@@ -323,13 +331,30 @@ export function requestsRoutes(app: FastifyInstance) {
       const existing = await prisma.ceresPaymentRequest.findUnique({ where: { id: req.params.id } });
       if (existing) {
         const finalType = parsed.data.requestType ?? existing.requestType;
-        if (finalType !== 'advance') {
+        const typeUnchanged = finalType === existing.requestType;
+        // null/omitted = plain float advance; 'purchase' = เบิกเงินไปซื้อ. Same "don't silently
+        // inherit a shape that doesn't apply to the target" rule as the categoryGroups fallback
+        // below — a type change never carries the old variant across.
+        const existingVariant = (existing.advanceVariant as AdvanceVariant | null) ?? null;
+        const finalVariant: AdvanceVariant | null = finalType === 'advance'
+          ? (parsed.data.advanceVariant !== undefined
+              ? parsed.data.advanceVariant
+              : (typeUnchanged ? existingVariant : null))
+          : null;
+        // Float advance (เบิกล่วงหน้า) is the ONLY kind allowed to skip category+reason and
+        // carry groups instead — reimbursement, purchase, AND เบิกเงินไปซื้อ (advance +
+        // variant 'purchase') all need a real category + a required reason, and never carry
+        // group selections.
+        const isFinalFloatAdvance = finalType === 'advance' && !finalVariant;
+        if (!isFinalFloatAdvance) {
           const finalCategory = parsed.data.category ?? existing.category;
           const finalReason = parsed.data.reason ?? existing.detail;
-          // Type change away from advance: stored groups are dropped, not inherited —
-          // otherwise converting a group-based advance to purchase/reimbursement can never pass.
+          // Type/variant change away from float advance: stored groups are dropped, not
+          // inherited — otherwise converting a group-based advance to purchase/reimbursement/
+          // เบิกเงินไปซื้อ can never pass.
+          const variantUnchanged = typeUnchanged && finalVariant === existingVariant;
           const finalGroups = parsed.data.categoryGroups
-            ?? (finalType === existing.requestType ? parseRequestCategoryGroups(existing.categoryGroups) : []);
+            ?? (variantUnchanged ? parseRequestCategoryGroups(existing.categoryGroups) : []);
           if (!finalCategory || !finalReason || finalGroups.length > 0) {
             return reply.code(400).send({ error: 'invalid_body' });
           }

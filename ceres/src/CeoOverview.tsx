@@ -23,7 +23,7 @@ import {
   type CeoOverview as CeoOverviewData,
   type StaffRequest,
 } from './lib/api';
-import { REQUEST_TYPE_LABEL } from './lib/requestLabels';
+import { REQUEST_TYPE_LABEL, requestKindLabel } from './lib/requestLabels';
 import { MediaThumbStrip } from './lib/media';
 import { PayPanel } from './PayPanel';
 import FlagsReviewSection from './FlagsReviewSection';
@@ -209,7 +209,7 @@ function EscalationCard({ r, onDecided }: { r: StaffRequest; onDecided: () => vo
             <span className="font-semibold text-sm">{r.requestedByName}</span>
             <span className="font-bold">{baht(r.amountNum)}</span>
           </div>
-          <div className="text-xs text-slate-500">{REQUEST_TYPE_LABEL[r.requestType]} · GM อนุมัติแล้ว</div>
+          <div className="text-xs text-slate-500">{requestKindLabel(r.requestType, r.advanceVariant)} · GM อนุมัติแล้ว</div>
           <div className="flex flex-wrap gap-1.5 mt-1">
             <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 text-xs">{r.entity}</span>
             <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 text-xs">{r.category}</span>

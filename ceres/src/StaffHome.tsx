@@ -26,7 +26,7 @@ import {
 import { useCeres } from './lib/bootstrapContext';
 import { MediaThumbStrip } from './lib/media';
 import AppSwitcher from './AppSwitcher';
-import MyRequests, { statusMeta, TYPE_LABEL } from './MyRequests';
+import MyRequests, { statusMeta, requestKindLabel } from './MyRequests';
 import RequestSheet from './RequestSheet';
 import RequestDetail from './RequestDetail';
 import ExpenseSheet from './ExpenseSheet';
@@ -413,7 +413,7 @@ function OpenAdvanceCard({
             </span>
           </div>
           <div className="text-sm text-slate-600 truncate">
-            {TYPE_LABEL[request.requestType]}
+            {requestKindLabel(request.requestType, request.advanceVariant)}
             {request.reason ? ` · ${request.reason}` : ''}
           </div>
         </div>
@@ -482,7 +482,7 @@ function PendingRequestRow({ request, onOpen }: { request: StaffRequest; onOpen:
           </span>
         </div>
         <div className="text-sm text-slate-600 truncate">
-          {TYPE_LABEL[request.requestType]}
+          {requestKindLabel(request.requestType, request.advanceVariant)}
           {request.reason ? ` · ${request.reason}` : ''}
         </div>
       </div>

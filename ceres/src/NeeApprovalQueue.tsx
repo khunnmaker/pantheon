@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { AlertTriangle, CheckCircle2, Loader2, RefreshCw, ThumbsUp, X } from 'lucide-react';
 import { ApiError, baht, listStaffRequests, neeDecision, type StaffRequest } from './lib/api';
-import { REQUEST_TYPE_LABEL as TYPE_LABEL } from './lib/requestLabels';
+import { requestKindLabel } from './lib/requestLabels';
 import { useCeres } from './lib/bootstrapContext';
 import { MediaThumbStrip } from './lib/media';
 import { PayPanel } from './PayPanel';
@@ -143,7 +143,7 @@ export default function NeeApprovalQueue({
                     <div className="flex items-start justify-between gap-2">
                       <div>
                         <div className="font-semibold text-sm">{request.requestedByName}</div>
-                        <div className="text-xs text-slate-500">{TYPE_LABEL[request.requestType]}</div>
+                        <div className="text-xs text-slate-500">{requestKindLabel(request.requestType, request.advanceVariant)}</div>
                       </div>
                       <div className="font-bold text-lg text-amber-700 shrink-0">{baht(request.amountNum)}</div>
                     </div>
