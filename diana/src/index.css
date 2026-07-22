@@ -144,6 +144,8 @@ header.site{position:sticky;top:0;z-index:60;background:rgba(251,247,241,.85);ba
 .pcard .pname{font-weight:700;font-size:1rem;margin:5px 0 6px;line-height:1.3}
 .pcard .psku{font-size:.72rem;color:var(--muted);font-weight:600}
 .pcard .pdesc{font-size:.83rem;color:var(--muted);flex:1}
+/* WCAG AA on amber-50: #78350f on #fffbeb ≈ 10.7:1 contrast. */
+.pcard .pwarn{display:flex;align-items:center;gap:6px;margin-top:8px;padding:5px 9px;border-radius:7px;background:#fffbeb;color:#78350f;border-left:3px solid #fbbf24;font-size:.74rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .pcard .pfoot{margin-top:14px;display:flex;align-items:center;justify-content:space-between;gap:10px}
 .pcard .pprice{font-size:1.15rem;font-weight:800;color:var(--ink);letter-spacing:-.02em}
 .pcard .pprice small{display:block;font-weight:600;color:var(--muted);font-size:.72rem;letter-spacing:0}
@@ -237,6 +239,12 @@ footer.site{background:var(--ink);color:#c2cfdb;margin-top:20px}
 .fsoc a{width:38px;height:38px;border-radius:10px;background:rgba(255,255,255,.08);display:grid;place-items:center}
 .fsoc a:hover{background:var(--teal)}
 .fsoc svg{width:17px;height:17px}
+.flegal{font-size:.86rem;color:#9fb0c2;margin:-6px 0 18px;font-weight:600}
+.fmap{display:inline-flex;align-items:center;gap:6px;color:#c2cfdb}
+.fmap:hover{color:#fff}
+.ftrust{border-top:1px solid rgba(255,255,255,.12);padding:18px 0;display:flex;flex-wrap:wrap;gap:8px 28px;font-size:.82rem;color:#8199ad}
+.ftrust a{color:#8199ad}
+.ftrust a:hover{color:#fff}
 .fbot{border-top:1px solid rgba(255,255,255,.12);padding:20px 0;display:flex;justify-content:space-between;gap:14px;flex-wrap:wrap;font-size:.84rem}
 
 .fab{position:fixed;right:22px;bottom:22px;z-index:70;display:flex;flex-direction:column;gap:12px}

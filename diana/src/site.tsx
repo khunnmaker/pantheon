@@ -141,6 +141,11 @@ function SiteHeader() {
 
 function SiteFooter() {
   const { pick } = useStore();
+  // Legal name falls back to the plain brand name (COMPANY.name) — never a blank line.
+  // The owner fills legalNameTh in company.ts once the registered Thai name is confirmed.
+  const legalTh = COMPANY.legalNameTh || COMPANY.name;
+  const legalEn = COMPANY.legalName || COMPANY.name;
+  const hasTrustLine = Boolean(COMPANY.registrationNo || COMPANY.taxId || COMPANY.mapUrl);
   return (
     <footer className="site">
       <div className="wrap fmain">
@@ -169,14 +174,27 @@ function SiteFooter() {
         </div>
         <div className="fcol">
           <h4>{pick('ติดต่อเรา', 'Get in touch')}</h4>
+          <p className="flegal">{pick(legalTh, legalEn)}</p>
           <a href={`tel:${COMPANY.phone}`}>{COMPANY.phone}</a>
           <a href={`mailto:${COMPANY.email}`}>{COMPANY.email}</a>
           <a href={COMPANY.line.url} target="_blank" rel="noreferrer">LINE {COMPANY.line.id}</a>
           <p style={{ marginTop: 12, fontSize: '.9rem' }}>{pick(COMPANY.address.line, COMPANY.address.lineEn)}</p>
         </div>
       </div>
+      {hasTrustLine && (
+        <div className="wrap ftrust">
+          {COMPANY.registrationNo && <span>{pick(`ทะเบียนนิติบุคคลเลขที่ ${COMPANY.registrationNo}`, `Company registration no. ${COMPANY.registrationNo}`)}</span>}
+          {COMPANY.taxId && <span>{pick(`เลขประจำตัวผู้เสียภาษี ${COMPANY.taxId}`, `Tax ID ${COMPANY.taxId}`)}</span>}
+          {COMPANY.mapUrl && (
+            <a className="fmap" href={COMPANY.mapUrl} target="_blank" rel="noreferrer"><MapPin size={13} /> {pick('แผนที่ Google Map', 'Google Map')}</a>
+          )}
+        </div>
+      )}
       <div className="wrap fbot">
-        <span>© {COMPANY.legalName} · {COMPANY.domain}</span>
+        <span>
+          © {pick(legalTh, legalEn)} · {COMPANY.domain}
+          {COMPANY.foundedYear && <> · {pick(`จำหน่ายอุปกรณ์ทันตกรรมตั้งแต่ปี ${COMPANY.foundedYear}`, `Serving dental clinics since ${COMPANY.foundedYear}`)}</>}
+        </span>
         <span style={{ color: '#7e90a6' }}>ISO 9001:2015 · ISO 13485:2016 · Thai FDA</span>
       </div>
     </footer>

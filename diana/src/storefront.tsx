@@ -174,6 +174,11 @@ function ProductCard({ product: p }: { product: PublicProduct | PricedProduct })
         <div className="pname">{pick(p.nameTh || p.nameEn, p.nameEn || p.nameTh)}</div>
         <div className="psku">{p.sku}</div>
         <div className="pdesc">{p.nameEn && p.nameTh ? pick(p.nameEn, p.nameTh) : p.note}</div>
+        {(p.warningTh || p.warningEn) && (
+          <div className="pwarn" title={pick(p.warningTh || p.warningEn, p.warningEn || p.warningTh)}>
+            <span aria-hidden="true">⚠</span> {pick(p.warningTh || p.warningEn, p.warningEn || p.warningTh)}
+          </div>
+        )}
         <div className="pfoot">
           {priced ? (
             <div className="pprice">{formatBaht(p.price)}<small>{availLabel(pick, p.availability)}</small></div>

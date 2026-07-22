@@ -46,6 +46,8 @@ function publicDto(p: Product, e?: ProductEnrichment) {
     descriptionTh: e?.descriptionTh ?? '',
     descriptionEn: e?.descriptionEn ?? '',
     specs: e?.specs ?? [],
+    warningTh: e?.warningTh ?? '',
+    warningEn: e?.warningEn ?? '',
   };
 }
 
@@ -257,15 +259,28 @@ export async function dianaRoutes(app: FastifyInstance) {
     return { product: publicDto(p, e ?? undefined) };
   });
 
-  // Brand + category facets (with counts) for the public filter UI.
+  // Brand + category facets (with counts) for the public filter UI. Counts are ACTIVE
+  // products only (same visibility as the catalog list) — ProductEnrichment has no FK
+  // into Product, so a plain groupBy would also count enrichment left behind on
+  // archived/deleted products; join through Product.status in raw SQL instead.
   app.get('/api/diana/facets', { config: { rateLimit: { max: 120, timeWindow: '1 minute' } } }, async () => {
     const [brands, categories] = await Promise.all([
-      prisma.productEnrichment.groupBy({ by: ['brand'], where: { brand: { not: '' } }, _count: { sku: true } }),
-      prisma.productEnrichment.groupBy({ by: ['category'], where: { category: { not: '' } }, _count: { sku: true } }),
+      prisma.$queryRaw<{ name: string; count: bigint }[]>`
+        SELECT e.brand AS name, count(*) AS count
+        FROM "ProductEnrichment" e
+        JOIN "Product" p ON p.sku = e.sku
+        WHERE p.status = 'active' AND e.brand <> ''
+        GROUP BY e.brand`,
+      prisma.$queryRaw<{ name: string; count: bigint }[]>`
+        SELECT e.category AS name, count(*) AS count
+        FROM "ProductEnrichment" e
+        JOIN "Product" p ON p.sku = e.sku
+        WHERE p.status = 'active' AND e.category <> ''
+        GROUP BY e.category`,
     ]);
     return {
-      brands: brands.map((b) => ({ name: b.brand, count: b._count.sku })).sort((a, b) => b.count - a.count),
-      categories: categories.map((c) => ({ name: c.category, count: c._count.sku })).sort((a, b) => b.count - a.count),
+      brands: brands.map((b) => ({ name: b.name, count: Number(b.count) })).sort((a, b) => b.count - a.count),
+      categories: categories.map((c) => ({ name: c.name, count: Number(c.count) })).sort((a, b) => b.count - a.count),
     };
   });
 
@@ -545,7 +560,8 @@ export async function dianaRoutes(app: FastifyInstance) {
         sku: p.sku, nameEn: p.nameEn, nameTh: p.nameTh, price: p.price, photo: photoPath(p),
         brand: e?.brand ?? '', category: e?.category ?? '', categoryEn: e?.categoryEn ?? '',
         descriptionTh: e?.descriptionTh ?? '', descriptionEn: e?.descriptionEn ?? '',
-        specs: e?.specs ?? [], source: e?.source ?? null,
+        specs: e?.specs ?? [], warningTh: e?.warningTh ?? '', warningEn: e?.warningEn ?? '',
+        source: e?.source ?? null,
       };
     });
     return { page, pageSize, total, items };
@@ -558,6 +574,9 @@ export async function dianaRoutes(app: FastifyInstance) {
     descriptionTh: z.string().trim().max(4000).default(''),
     descriptionEn: z.string().trim().max(4000).default(''),
     specs: z.array(z.string().trim().max(200)).max(40).default([]),
+    // "สิ่งที่ควรรู้" — optional; blank clears the field back to no-warning (null).
+    warningTh: z.string().trim().max(500).default(''),
+    warningEn: z.string().trim().max(500).default(''),
   });
   app.put<{ Params: { sku: string } }>(
     '/api/diana/admin/enrichment/:sku',
@@ -568,7 +587,14 @@ export async function dianaRoutes(app: FastifyInstance) {
       const product = await prisma.product.findUnique({ where: { sku: req.params.sku } });
       if (!product) return reply.code(404).send({ error: 'not_found' });
       // A staff edit is authoritative — mark it 'manual' so a future bulk re-derive skips it.
-      const data = { ...parsed.data, source: 'manual', updatedBy: req.agent!.id };
+      const { warningTh, warningEn, ...rest } = parsed.data;
+      const data = {
+        ...rest,
+        warningTh: warningTh || null,
+        warningEn: warningEn || null,
+        source: 'manual',
+        updatedBy: req.agent!.id,
+      };
       const e = await prisma.productEnrichment.upsert({
         where: { sku: req.params.sku },
         update: data,

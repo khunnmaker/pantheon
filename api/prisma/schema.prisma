@@ -930,6 +930,10 @@ model ProductEnrichment {
   descriptionTh String   @default("")
   descriptionEn String   @default("")
   specs         String[] // bullet-point specs
+  // "สิ่งที่ควรรู้" — an optional staff-authored warning/caution shown as an amber callout
+  // on the storefront (e.g. shade-matching caveats, cold-chain handling). null = none.
+  warningTh     String?
+  warningEn     String?
   source        String   @default("derived") // derived | manual
   updatedBy     String? // agent id who last edited (manual)
   updatedAt     DateTime @updatedAt

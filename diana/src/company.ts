@@ -5,6 +5,13 @@
 export const COMPANY = {
   name: 'Prominent',
   legalName: 'Prominent Co., Ltd.',
+  // Optional trust-footer fields — the owner fills these with real values later.
+  // Empty/undefined = the footer omits that line entirely (never renders a placeholder).
+  legalNameTh: '', // Thai registered company name, e.g. "บริษัท พรอมิเน้นท์ จำกัด"
+  registrationNo: '', // 13-digit เลขทะเบียนนิติบุคคล
+  taxId: '', // เลขประจำตัวผู้เสียภาษี
+  foundedYear: '', // string (Buddhist or Christian year), e.g. "2538"
+  mapUrl: undefined as string | undefined, // Google Maps link
   domain: 'prominentdental.com',
   taglineTh: 'วัสดุ อุปกรณ์ และโซลูชันดิจิทัลทันตกรรม สำหรับคลินิกและแล็บ',
   taglineEn: 'Dental materials, equipment & digital solutions for clinics and labs',

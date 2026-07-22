@@ -37,6 +37,9 @@ export interface PublicProduct {
   descriptionTh: string;
   descriptionEn: string;
   specs: string[];
+  // "สิ่งที่ควรรู้" — optional staff warning/caution. Empty string = none.
+  warningTh: string;
+  warningEn: string;
 }
 
 export interface Facet { name: string; count: number }
@@ -306,6 +309,8 @@ export interface EnrichRow {
   descriptionTh: string;
   descriptionEn: string;
   specs: string[];
+  warningTh: string;
+  warningEn: string;
   source: string | null; // 'derived' | 'manual' | null (not enriched)
 }
 export interface EnrichInput {
@@ -315,6 +320,8 @@ export interface EnrichInput {
   descriptionTh: string;
   descriptionEn: string;
   specs: string[];
+  warningTh: string;
+  warningEn: string;
 }
 export const adminListEnrichment = (p: CatalogParams) =>
   staffCall<CatalogPage<EnrichRow>>(`/api/diana/admin/enrichment?${catalogQs(p)}`);

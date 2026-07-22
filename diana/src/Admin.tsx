@@ -252,6 +252,8 @@ function EnrichRowCard({ row, onSaved }: { row: EnrichRow; onSaved: () => void }
   const [descTh, setDescTh] = useState(row.descriptionTh);
   const [descEn, setDescEn] = useState(row.descriptionEn);
   const [specs, setSpecs] = useState(row.specs.join('\n'));
+  const [warningTh, setWarningTh] = useState(row.warningTh);
+  const [warningEn, setWarningEn] = useState(row.warningEn);
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
 
@@ -261,6 +263,7 @@ function EnrichRowCard({ row, onSaved }: { row: EnrichRow; onSaved: () => void }
       brand: brand.trim(), category: category.trim(), categoryEn: categoryEn.trim(),
       descriptionTh: descTh.trim(), descriptionEn: descEn.trim(),
       specs: specs.split('\n').map((s) => s.trim()).filter(Boolean),
+      warningTh: warningTh.trim(), warningEn: warningEn.trim(),
     };
     try { await adminSaveEnrichment(row.sku, input); setSaved(true); onSaved(); } catch { /* surfaced by list reload */ } finally { setBusy(false); }
   }
@@ -276,6 +279,7 @@ function EnrichRowCard({ row, onSaved }: { row: EnrichRow; onSaved: () => void }
             {row.brand && <span className="text-[10px] px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700">{row.brand}</span>}
             {row.category ? <span className="text-[10px] text-slate-500">{row.category}</span> : <span className="text-[10px] text-amber-600">ยังไม่จัดหมวด</span>}
             {row.source === 'manual' && <span className="text-[10px] text-emerald-600">· แก้ด้วยมือ</span>}
+            {row.warningTh && <span className="text-[10px] text-amber-700">· ⚠ มีคำเตือน</span>}
           </div>
         </div>
         <span className="text-xs text-slate-400 shrink-0">{open ? 'ปิด' : 'แก้ไข'}</span>
@@ -290,6 +294,8 @@ function EnrichRowCard({ row, onSaved }: { row: EnrichRow; onSaved: () => void }
           <EField label="คำอธิบาย (ไทย)" full><textarea value={descTh} onChange={(e) => setDescTh(e.target.value)} rows={2} className={efCls} /></EField>
           <EField label="คำอธิบาย (อังกฤษ)" full><textarea value={descEn} onChange={(e) => setDescEn(e.target.value)} rows={2} className={efCls} /></EField>
           <EField label="สเปก (บรรทัดละ 1 ข้อ)" full><textarea value={specs} onChange={(e) => setSpecs(e.target.value)} rows={3} className={efCls} /></EField>
+          <EField label="สิ่งที่ควรรู้ (TH)" full><textarea value={warningTh} onChange={(e) => setWarningTh(e.target.value)} rows={2} placeholder="แสดงเป็นข้อความเตือนสีเหลืองอำพันบนหน้าร้านค้า — เว้นว่างถ้าไม่มี" className={efCls} /></EField>
+          <EField label="สิ่งที่ควรรู้ (EN)" full><textarea value={warningEn} onChange={(e) => setWarningEn(e.target.value)} rows={2} placeholder="Shown as an amber warning callout on the storefront — leave blank if none" className={efCls} /></EField>
           <div className="col-span-2 flex items-center gap-2">
             <button onClick={save} disabled={busy} className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-sm flex items-center gap-1 disabled:opacity-50">
               {busy ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />} บันทึก
