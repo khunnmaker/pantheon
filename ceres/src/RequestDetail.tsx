@@ -199,7 +199,7 @@ export default function RequestDetail({
   // still writes an audit trail). The request no longer exists after this succeeds, so we
   // close the sheet and let the caller's list refresh itself instead of re-fetching it.
   async function onPurgeRequest() {
-    const typed = window.prompt(`ลบถาวร (ทดสอบ) — คำขอนี้ทั้งหมด\nพิมพ์ "${CERES_PURGE_CONFIRM_PHRASE}" เพื่อยืนยัน (ลบแบบถาวร กู้คืนไม่ได้ ไม่มีประวัติ)`);
+    const typed = window.prompt(`ลบถาวร — คำขอนี้ทั้งหมด\nพิมพ์ "${CERES_PURGE_CONFIRM_PHRASE}" เพื่อยืนยัน (ลบแบบถาวร กู้คืนไม่ได้ ไม่มีประวัติ)`);
     if (typed == null) return;
     if (typed.trim() !== CERES_PURGE_CONFIRM_PHRASE) { window.alert('พิมพ์ข้อความยืนยันไม่ตรง — ลบไม่สำเร็จ'); return; }
     setPurgeBusy(true);
@@ -303,7 +303,7 @@ export default function RequestDetail({
                       {voidBusy ? <Loader2 size={13} className="animate-spin" /> : <Ban size={13} />} ยกเลิกรายการ
                     </button>
                   )}
-                  {/* ลบถาวร (ทดสอบ) — CEO-only alpha hard-purge, ANY state incl. already-voided
+                  {/* ลบถาวร — CEO-only alpha hard-purge, ANY state incl. already-voided
                       (owner directive, 2026-07-22), only rendered when the alpha flag is on. */}
                   {purgeEnabled && (
                     <button
@@ -311,7 +311,7 @@ export default function RequestDetail({
                       disabled={purgeBusy}
                       className="inline-flex items-center gap-1 text-xs font-semibold text-rose-700 hover:text-rose-800 disabled:opacity-50"
                     >
-                      {purgeBusy ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />} ลบถาวร (ทดสอบ)
+                      {purgeBusy ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />} ลบถาวร
                     </button>
                   )}
                 </div>

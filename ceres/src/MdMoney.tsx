@@ -54,7 +54,7 @@ export default function MdMoney() {
   // api/src/ceres/purge.ts's purgeCashMovement — the button is only ever shown on 'deposit'
   // rows in the first place, see the render below).
   async function onPurgeMovement(m: Movement) {
-    const typed = window.prompt(`ลบถาวร (ทดสอบ) — ${baht(Number(m.amount))}\nพิมพ์ "${CERES_PURGE_CONFIRM_PHRASE}" เพื่อยืนยัน (ลบแบบถาวร กู้คืนไม่ได้ ไม่มีประวัติ)`);
+    const typed = window.prompt(`ลบถาวร — ${baht(Number(m.amount))}\nพิมพ์ "${CERES_PURGE_CONFIRM_PHRASE}" เพื่อยืนยัน (ลบแบบถาวร กู้คืนไม่ได้ ไม่มีประวัติ)`);
     if (typed == null) return;
     if (typed.trim() !== CERES_PURGE_CONFIRM_PHRASE) { window.alert('พิมพ์ข้อความยืนยันไม่ตรง — ลบไม่สำเร็จ'); return; }
     setBusyId(m.id);
@@ -107,7 +107,7 @@ export default function MdMoney() {
                         onClick={() => onPurgeMovement(m)}
                         disabled={busyId === m.id}
                         className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-1 rounded-lg border border-rose-300 text-rose-700 hover:bg-rose-50 disabled:opacity-50"
-                        title="ลบถาวร (ทดสอบ)"
+                        title="ลบถาวร"
                       >
                         {busyId === m.id ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
                       </button>
