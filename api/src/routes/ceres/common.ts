@@ -264,13 +264,16 @@ export async function computeBoard(opts?: { tx?: Db; cutoff?: Date }): Promise<{
     since || cutoff ? { createdAt: { ...(since ? { gt: since } : {}), ...(cutoff ? { lte: cutoff } : {}) } } : {};
   const allTimeWindow = cutoff ? { createdAt: { lte: cutoff } } : {};
 
-  // ALL parties — including deactivated ones: a party switched off while still owing
-  // money must keep appearing on the board and in settlement lines until its balance
-  // clears, or its outstanding would be silently written off. The inclusion filter
-  // below drops only inactive parties with no balance and no activity.
+  // Person parties ONLY — carriers (kind='carrier') are courier buckets, never staff who
+  // take a cash advance, and must never appear on this board (belt-and-braces alongside
+  // ensureCeres's boot-time carrier deactivation). Includes deactivated PEOPLE, though: a
+  // person switched off while still owing money must keep appearing on the board and in
+  // settlement lines until their balance clears, or the outstanding would be silently
+  // written off. The inclusion filter below drops only inactive people with no balance
+  // and no activity.
   const [parties, lines, advances, refunds, approved, pending, allMovements] =
     await Promise.all([
-      db.ceresParty.findMany({ orderBy: { sortOrder: 'asc' } }),
+      db.ceresParty.findMany({ where: { kind: 'person' }, orderBy: { sortOrder: 'asc' } }),
       settlement
         ? db.ceresSettlementLine.findMany({ where: { settlementId: settlement.id } })
         : Promise.resolve([] as Awaited<ReturnType<typeof prisma.ceresSettlementLine.findMany>>),

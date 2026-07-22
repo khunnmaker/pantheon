@@ -25,16 +25,16 @@ sheet mirror this time).
 **P1 — Petty cash (messengers, daily):**
 1. Every morning each messenger (คนส่งของ: ต้า, อาร์ม, แมน, บุญสอน, แก้ว, ลุงโก๊ะ, วง, แป๋ง, นุ่น, นี,
    พิณ, เล็กแม่บ้าน, ด้า + carrier categories J&T / LALAMOVE Prom / LALAMOVE Dentalport / ทั่วไป)
-   comes to the MD (**Nee**), who gives them an estimated cash advance.
+   comes to the MD (**นี**), who gives them an estimated cash advance.
 2. Each messenger spends (delivery fees, fuel, tolls, misc), keeps change + receipts, and
    **enters their own expenses into Ceres from their phone** (photo of each receipt).
-3. End of day: messenger returns change + receipts to Nee. Ceres shows Nee the **expected
+3. End of day: messenger returns change + receipts to นี. Ceres shows นี the **expected
    change per messenger** (advance − approved expenses) so she counts cash against the number.
    She approves each entry / the person's day.
-4. Nee **closes the day manually** (settlement). Outstanding advances roll forward per person;
+4. นี **closes the day manually** (settlement). Outstanding advances roll forward per person;
    remaining cash becomes the new float base. In Postgres this is an APPEND-ONLY snapshot —
    never move/delete rows like the GAS version did.
-5. After Nee's approval, the **AI reviews** (post-hoc second pair of eyes) and the **CEO
+5. After นี's approval, the **AI reviews** (post-hoc second pair of eyes) and the **CEO
    reviews nightly** (P4).
 
 **P2 — MD's company-account small payments (PRE-approval — corrected):**
@@ -56,10 +56,10 @@ sheet mirror this time).
    **just above the floor** (Ceres computes/suggests the shortfall amount).
 
 **P5 — Bank statement + reconciliation (daily/weekly):**
-1. Nee exports the bank statement **every day** and uploads it into Ceres (it is thereby "sent
+1. นี exports the bank statement **every day** and uploads it into Ceres (it is thereby "sent
    to the CEO" — it appears in his nightly view, archived immutably).
 2. Ceres auto-matches statement lines ↔ recorded transactions (P2/P3 payments, P4 top-ups) and
-   flags unmatched lines BOTH ways. Petty cash (P1) reconciles physically at Nee's daily close.
+   flags unmatched lines BOTH ways. Petty cash (P1) reconciles physically at นี's daily close.
 3. **Integrity model (owner's explicit concern: "even she can modify the record"):** records
    are append-only with a visible revision trail (an edit after approval creates a new revision,
    never a silent overwrite); every uploaded statement file is archived with a SHA-256 hash.
@@ -68,16 +68,16 @@ sheet mirror this time).
 
 ## 3. Decisions locked (do not re-litigate)
 
-1. Messengers **self-enter** on their phones; **Nee approves**; **AI + CEO review**.
+1. Messengers **self-enter** on their phones; **นี approves**; **AI + CEO review**.
 2. **Replace** the GAS app entirely (no sheet mirror).
 3. Receipts are **uploaded photos** (phone camera, document-scan feel: capture + crop) stored
    in the app — NOT Google Drive links.
-4. Daily settlement stays **manual** (Nee presses close).
+4. Daily settlement stays **manual** (นี presses close).
 5. **Every expense is tagged by entity: PROM or DENL** (Dentalport) — the categories already
    half-encode this (LALAMOVE Prom vs LALAMOVE Dentalport).
 6. P2 = **pre-approval** (AI gate BEFORE payment); **> 5,000 THB = CEO pre-approval, always**.
 7. Top-up target = **just above the 40,000 floor** (suggest the shortfall, round up).
-8. Daily statement upload by Nee; **weekly physical cross-check by the CEO**.
+8. Daily statement upload by นี; **weekly physical cross-check by the CEO**.
 9. AI reviewer is **fail-closed**: ambiguous or AI-unavailable → escalate to CEO, never
    auto-approve. Every verdict logged with reasoning.
 
@@ -97,11 +97,11 @@ sheet mirror this time).
   (`api/src/llm/readSlip.ts` + `callClaudeWithImage` in `api/src/llm/anthropic.ts` — note the
   `SystemPrompt` cached-blocks type). Same approach for receipts: vision reads amount / date /
   vendor → PREFILLS the messenger's form (editable — receipts are messier than bank slips);
-  a mismatch between OCR and the entered amount is flagged to Nee and the AI reviewer.
+  a mismatch between OCR and the entered amount is flagged to นี and the AI reviewer.
 - **Bank import — COORDINATE WITH JUNO:** the Juno workstream is building KBIZ (Kasikorn) CSV
   statement import + reconciliation for the INCOME side (see `docs/JUNO_PROCESS_BRIEF.md`,
   branch `juno-re-check`, Phase B). **Reuse the same KBIZ parser** for Ceres's P5 — do not
-  write a second one. Ask the owner which account Nee's statement comes from (see §10).
+  write a second one. Ask the owner which account นี's statement comes from (see §10).
 - **The old GAS system** (for reference + possible history import): sheets `Data_Log`
   (timestamp, date, name, expenseType, amount, status, receiptLink, adminApproval),
   `Budget_Log` (timestamp, amount, Withdrawal|Refund|Deposit, name, expenseType),
@@ -114,7 +114,7 @@ sheet mirror this time).
 | Role | Who | Can |
 |---|---|---|
 | `messenger` | each messenger (per-person login, phone-friendly) | create/edit OWN pending expenses only; see own history/outstanding |
-| `md` | Nee | give advances, approve P1 entries, record P2/P3 (submit for approval), daily close, upload statements, reconcile |
+| `md` | นี | give advances, approve P1 entries, record P2/P3 (submit for approval), daily close, upload statements, reconcile |
 | `ceo` | the owner | everything read; approve escalations + >5k; nightly review; top-ups; weekly pack |
 
 Reuse the Agent table with new role values (Minerva console routes are already gated to
@@ -131,7 +131,7 @@ PINs). Ceres frontend must be genuinely mobile-first — messengers use phones.
   agentId, entity, amount, note, createdBy, createdAt. Append-only.
 - `CeresExpense` — who (messenger agentId or MD), entity `PROM|DENL`, category (keep the GAS
   category set incl. per-carrier shipping + customer-name note), amount, receipt image ref,
-  OCR-extracted fields, status lifecycle `pending → approved (Nee) → ai_reviewed
+  OCR-extracted fields, status lifecycle `pending → approved (นี) → ai_reviewed
   (ok|flagged) → settled`, revision trail (edits after approval = new revision rows or an
   `ExpenseRevision` table).
 - `PaymentRequest` — P2/P3 pre-approval objects: requester, entity, payee, amount, category,
@@ -154,7 +154,7 @@ PINs). Ceres frontend must be genuinely mobile-first — messengers use phones.
   tolerance. **Anything outside policy or ambiguous → escalate. AI down → escalate. Fail
   closed, always.** Log verdict + reasoning to `AIReview` for the CEO's nightly read.
 - P2/P3: the AI is a **pre-payment GATE** (MD cannot mark paid without approval).
-- P1: the AI reviews **after Nee's approval** (post-hoc second pair of eyes; flags go to the
+- P1: the AI reviews **after นี's approval** (post-hoc second pair of eyes; flags go to the
   CEO's nightly view, they don't block the messenger).
 - Use the existing `callClaude`/`callClaudeWithImage` client (it already supports prompt-cache
   blocks — put the static policy in a cached block).
@@ -172,7 +172,7 @@ PINs). Ceres frontend must be genuinely mobile-first — messengers use phones.
    `api/src/llm/readSlip.ts` + `api/src/llm/anthropic.ts` (vision OCR + SystemPrompt),
    `docs/JUNO_PROCESS_BRIEF.md` (bank import overlap).
 2. Confirm the open questions (§10) with the owner BEFORE building.
-3. Build in this order: **P1** (messenger mobile entry + receipt capture/OCR + Nee approval +
+3. Build in this order: **P1** (messenger mobile entry + receipt capture/OCR + นี approval +
    expected-change board + manual close) → **P2/P3** (PaymentRequest + AI gate + recurring
    templates) → **P4** (CEO nightly view + escalation queue + top-up suggestion) → **P5**
    (statement import — reuse Juno's KBIZ parser — matching + weekly pack).
@@ -181,7 +181,7 @@ PINs). Ceres frontend must be genuinely mobile-first — messengers use phones.
 
 ## 10. Open questions to confirm with the owner early
 
-1. **Which bank account** does Nee export daily — the same Kasikorn/KBIZ account Juno imports
+1. **Which bank account** does นี export daily — the same Kasikorn/KBIZ account Juno imports
    (income), or a separate expense account? (Determines parser reuse + whether income and
    expense reconcile against one statement.)
 2. **Messenger logins:** per-person passwords synced from env (like Minerva staff), a shared

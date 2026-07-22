@@ -20,9 +20,9 @@ import { backfillProductEmbeddings } from '../catalog/productEmbeddings.js';
 // `group` + `gender` are DISPLAY metadata for the suite login screens (role-grouped tiles +
 // cute avatars) — they mirror Pantheon's portal grouping and have nothing to do with auth.
 export const TIER_ACCOUNTS = [
-  { email: 'drm@prominent.local', name: 'Dr. M', role: 'supervisor', pwEnvs: ['SEED_PASSWORD'], group: 'ceo', gender: 'male' },
+  { email: 'drm@prominent.local', name: 'หมอไม้', role: 'supervisor', pwEnvs: ['SEED_PASSWORD'], group: 'ceo', gender: 'male' },
   // KEEP this legacy email: Nee's Agent row id is referenced by bills/audit history; changing it would orphan it.
-  { email: 'md@prominent.local', name: 'Nee', role: 'gm', pwEnvs: ['GM_PASSWORD', 'MD_PASSWORD'], group: 'gm', gender: 'female' },
+  { email: 'md@prominent.local', name: 'นี', role: 'gm', pwEnvs: ['GM_PASSWORD', 'MD_PASSWORD'], group: 'gm', gender: 'female' },
   // KEEP this email: Noon's Agent row id is referenced by bills/audit history; changing it would orphan it.
   { email: 'nun@prominent.local', name: 'นุ่น', role: 'gm', pwEnvs: ['GM_PASSWORD', 'MD_PASSWORD'], group: 'gm', gender: 'female' },
 ] as const;
@@ -42,12 +42,12 @@ type StaffSeed = {
 };
 
 export const STAFF: readonly StaffSeed[] = [
-  { slug: 'nadeer', name: 'NaDeer', apps: ['minerva', 'ceres', 'apollo'], group: 'sales', gender: 'female' },
-  { slug: 'anny', name: 'Anny', apps: ['minerva', 'ceres', 'apollo'], group: 'sales', gender: 'female' },
-  { slug: 'noey', name: 'Noey', apps: ['minerva', 'ceres', 'apollo'], group: 'sales', gender: 'female' },
-  { slug: 'bow', name: 'Bow', apps: ['minerva', 'ceres', 'apollo'], group: 'sales', gender: 'female' },
-  { slug: 'tham', name: 'Tham', apps: ['minerva', 'ceres', 'apollo'], group: 'sales', gender: 'male' },
-  { slug: 'rak', name: 'Rak', apps: ['minerva', 'ceres', 'apollo'], group: 'sales', gender: 'female' },
+  { slug: 'nadeer', name: 'นาเดียร์', apps: ['minerva', 'ceres', 'apollo'], group: 'sales', gender: 'female' },
+  { slug: 'anny', name: 'แอนนี่', apps: ['minerva', 'ceres', 'apollo'], group: 'sales', gender: 'female' },
+  { slug: 'noey', name: 'เนย', apps: ['minerva', 'ceres', 'apollo'], group: 'sales', gender: 'female' },
+  { slug: 'bow', name: 'โบว์', apps: ['minerva', 'ceres', 'apollo'], group: 'sales', gender: 'female' },
+  { slug: 'tham', name: 'ธรรม', apps: ['minerva', 'ceres', 'apollo'], group: 'sales', gender: 'male' },
+  { slug: 'rak', name: 'รักษ์', apps: ['minerva', 'ceres', 'apollo'], group: 'sales', gender: 'female' },
   { slug: 'ta', name: 'ต้า', apps: ['ceres', 'apollo'], group: 'messengers', gender: 'male' },
   { slug: 'arm', name: 'อาร์ม', apps: ['ceres', 'apollo'], group: 'messengers', gender: 'male' },
   { slug: 'man', name: 'แมน', apps: ['ceres', 'apollo'], group: 'messengers', gender: 'male' },
@@ -67,8 +67,8 @@ export const STAFF: readonly StaffSeed[] = [
   { slug: 'da', name: 'ด้า', apps: ['ceres', 'apollo'], group: 'messengers', gender: 'male' },
   // Finance team (การเงิน) — owner-granted Minerva + Juno + Ceres (2026-07-05). Juno's route
   // gate was widened from supervisor-only to requireApp('juno') so the juno grant admits them.
-  { slug: 'benz', name: 'Benz', apps: ['minerva', 'juno', 'ceres', 'apollo'], group: 'finance', gender: 'female' },
-  { slug: 'meow', name: 'Meow', apps: ['minerva', 'juno', 'ceres', 'apollo'], group: 'finance', gender: 'female' },
+  { slug: 'benz', name: 'เบนซ์', apps: ['minerva', 'juno', 'ceres', 'apollo'], group: 'finance', gender: 'female' },
+  { slug: 'meow', name: 'เหมียว', apps: ['minerva', 'juno', 'ceres', 'apollo'], group: 'finance', gender: 'female' },
 ];
 
 export const staffEmail = (slug: string): string => `${slug}@prominent.local`;

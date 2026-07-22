@@ -3,6 +3,9 @@ import { STAFF, staffEmail } from './ensureSeeded.js';
 
 // Carrier-bucket parties (kind "carrier") — expenses booked against a courier
 // rather than a person. sortOrder 100+ so they always list after the messengers.
+// Deactivated on every boot (see the fixup below) — couriers don't take cash advances
+// and must never appear on the staff advance board; seeded inactive here too, so a
+// fresh database never shows them active even for the one boot before the fixup runs.
 const CARRIERS = [
   { name: 'J&T', sortOrder: 100 },
   { name: 'LALAMOVE Prom', sortOrder: 101 },
@@ -62,34 +65,54 @@ export async function ensureCeres(): Promise<void> {
         kind: 'carrier',
         agentEmail: null,
         sortOrder: c.sortOrder,
+        active: false,
       }));
       await prisma.ceresParty.createMany({ data: [...persons, ...carriers] });
       // eslint-disable-next-line no-console
       console.log(`[seed] created ${persons.length + carriers.length} Ceres parties`);
     }
 
-    // Idempotent roster fixups (run every boot; cheap). Production was seeded from the
-    // pre-unification roster (13 "messenger" parties on m-<slug>@ emails, incl. นี), so:
-    //  (a) every STAFF entry gets a person party linked to the CURRENT <slug>@ email —
-    //      relinks the old m-<slug>@ rows and creates missing parties (e.g. the three
-    //      sales, who also enter expenses under the unified model);
-    //  (b) the party named "นี" is Nee the GM, not staff (owner correction) —
-    //      unlink + deactivate it, but NEVER delete (append-only history).
+    // Idempotent roster fixups (run every boot; cheap).
+    //  (a) every STAFF entry gets a person party keyed by its STABLE agentEmail (the
+    //      slug never changes even when a display name does) — creates any missing
+    //      party, and heals its `name` if the roster's display name has since changed.
+    //      Looking this up BY NAME (the old approach) is what orphaned a row on every
+    //      code rename and spawned a stray duplicate party (the inactive "Bow Tham Rak"
+    //      artifact is that exact failure mode) — email is the durable key, name is not.
+    //      A rename only ever touches this ONE row's `name` column; nothing else moves.
     for (const [i, e] of STAFF.entries()) {
       const email = staffEmail(e.slug);
-      const party = await prisma.ceresParty.findUnique({ where: { name: e.name } });
+      const party = await prisma.ceresParty.findFirst({ where: { agentEmail: email, kind: 'person' } });
       if (!party) {
         await prisma.ceresParty.create({
           data: { name: e.name, kind: 'person', agentEmail: email, sortOrder: i },
         });
         // eslint-disable-next-line no-console
         console.log(`[seed] created Ceres party for ${e.slug}`);
-      } else if (party.agentEmail !== email) {
-        await prisma.ceresParty.update({ where: { id: party.id }, data: { agentEmail: email } });
-        // eslint-disable-next-line no-console
-        console.log(`[seed] relinked Ceres party ${e.slug} to ${email}`);
+        continue;
+      }
+      if (party.name !== e.name) {
+        // `name` is UNIQUE — if some OTHER party already holds the roster's target name,
+        // renaming would crash the boot. Warn and skip rather than throw; the mismatch
+        // stays visible in logs every boot until a human resolves the collision.
+        const collision = await prisma.ceresParty.findUnique({ where: { name: e.name } });
+        if (collision && collision.id !== party.id) {
+          // eslint-disable-next-line no-console
+          console.warn(
+            `[seed] cannot rename Ceres party "${party.name}" (${e.slug}) to "${e.name}" — ` +
+              `that name already belongs to party ${collision.id}; skipping`,
+          );
+        } else {
+          await prisma.ceresParty.update({ where: { id: party.id }, data: { name: e.name } });
+          // eslint-disable-next-line no-console
+          console.log(`[seed] renamed Ceres party "${party.name}" → "${e.name}" for ${e.slug}`);
+        }
       }
     }
+    // (b) the party named "นี" is Nee the GM, not staff (owner correction) — unlink +
+    //     deactivate it, but NEVER delete (append-only history). Unlike the STAFF loop
+    //     above, Nee/Noon are TIER_ACCOUNTS, not STAFF, so this stays a targeted lookup
+    //     by name — there is no stable agentEmail key to generalize it onto here.
     const neeParty = await prisma.ceresParty.findUnique({ where: { name: 'นี' } });
     if (neeParty && (neeParty.agentEmail !== null || neeParty.active)) {
       await prisma.ceresParty.update({
@@ -98,6 +121,19 @@ export async function ensureCeres(): Promise<void> {
       });
       // eslint-disable-next-line no-console
       console.log('[seed] unlinked/deactivated party "นี" (she is the GM, not staff)');
+    }
+
+    // (c) carriers never take cash advances and must not appear on the staff advance
+    //     board — deactivate the four CARRIERS rows every boot (belt-and-braces on top
+    //     of computeBoard's kind='person' filter and the now-inactive fresh-DB seed).
+    //     Carriers have no agentEmail, so name is their only (and stable) lookup key.
+    for (const c of CARRIERS) {
+      const party = await prisma.ceresParty.findUnique({ where: { name: c.name } });
+      if (party && party.active) {
+        await prisma.ceresParty.update({ where: { id: party.id }, data: { active: false } });
+        // eslint-disable-next-line no-console
+        console.log(`[seed] deactivated carrier party "${c.name}" (off the staff advance board)`);
+      }
     }
 
     await prisma.ceresCategory.createMany({

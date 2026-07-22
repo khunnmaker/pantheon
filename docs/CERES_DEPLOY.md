@@ -27,11 +27,11 @@ list — each only when its table is empty.
 | `CERES_CEO_THRESHOLD` | optional, default `5000` (mandatory CEO pre-approval above this) |
 | `CERES_LOCAL_LOGIN_ENABLED` | compatibility-window flag, default `true`. While enabled, `GET /api/ceres/logins` supports the explicit Ceres `?local=1` break-glass login. Set to `false` after one observed portal-only release; disabled returns 404. This does not affect `/api/auth/login`, bearer tokens, or shared cookies. |
 
-Slug → person: nadeer NaDeer · anny Anny · noey Noey (sales — Minerva + Ceres) · ta ต้า ·
+Slug → person: nadeer นาเดียร์ · anny แอนนี่ · noey เนย (sales — Minerva + Ceres) · ta ต้า ·
 arm อาร์ม · man แมน · boonson บุญสอน · kaew แก้ว · lungko ลุงโก๊ะ · wong วง · paeng แป๋ง ·
 nun นุ่น · pin พิณ · da ด้า (couriers — Ceres) · lekmaeban เล็กแม่บ้าน (housekeeper — Ceres).
-**นี is Nee the GM — she logs in with `GM_PASSWORD` (`MD_PASSWORD` fallback), not a PIN.** The CEO logs in with the
-existing Dr. M supervisor account — no new login. What each staff member can open is a per-person
+**นี is the GM — she logs in with `GM_PASSWORD` (`MD_PASSWORD` fallback), not a PIN.** The CEO logs in with the
+existing หมอไม้ supervisor account — no new login. What each staff member can open is a per-person
 grant list (`Agent.apps`), edited later in Jupiter's admin screen — position changes never
 touch env vars again.
 
@@ -105,13 +105,13 @@ Rollback is configuration/frontend-only:
 ## 4. Smoke test (in order)
 
 1. MD login (`md@prominent.local`) → กระดาน shows the (empty) board.
-2. **Opening balance** (fresh-start decision): Nee counts the physical box, enters it via
+2. **Opening balance** (fresh-start decision): นี counts the physical box, enters it via
    เบิก/คืน → ฝากเข้ากล่อง. The box balance now reflects reality.
 3. Messenger phone: pick name → PIN → บันทึกค่าใช้จ่าย → photo → OCR prefills → submit.
 4. MD: รอตรวจ shows it (OCR mismatch badge if amounts differ) → อนุมัติ → board's
    เงินทอนที่ควรได้คืน updates → ปิดยอด works (blocked while anything is รอตรวจ).
 5. MD: จ่ายเงิน → small request ≤5,000 to a normal payee → expect instant AI verdict;
-   a >5,000 request → escalates; CEO tab (Dr. M login) → อนุมัติ; only then จ่ายแล้ว unlocks.
+   a >5,000 request → escalates; CEO tab (หมอไม้ login) → อนุมัติ; only then จ่ายแล้ว unlocks.
    If `CEO_LINE_USER_ID` is set, the escalation also pings LINE.
 6. กระทบยอด: upload a fresh KBIZ export of the **expense** account → preview counts look
    right → นำเข้า → paid requests auto-match.
