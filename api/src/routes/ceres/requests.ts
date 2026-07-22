@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { prisma } from '../../db/prisma.js';
+import { env } from '../../env.js';
 import { ceresRole, requireCeresRole } from '../../ceres/auth.js';
 import { mediaCanBeAttachedBy } from '../../ceres/mediaAccess.js';
 import {
@@ -23,8 +24,10 @@ import {
   listStaffRequests,
   V2_REQUEST_TYPES,
 } from '../../ceres/requestService.js';
+import { decideAndPayStaffRequest } from '../../ceres/requestDecideAndPay.js';
 import { RequestVoidError, voidStaffRequest } from '../../ceres/requestVoid.js';
-import { notifyRequesterForMoneyEvent } from '../../ceres/notifyRequester.js';
+import { notifyCeoEscalation } from '../../ceres/notifyCeo.js';
+import { notifyRequesterForEvent, notifyRequesterForMoneyEvent } from '../../ceres/notifyRequester.js';
 import { isValidAmount, parseRequestCategoryGroups, thaiDayKey, toStaffRequestRow, toMoneyEventRow } from './common.js';
 import { GROUP_COMPANY_CODES } from '../../jupiter/companies.js';
 import { loadLinkMap, idsWithFallback, resolveIdsWithFallback, resolveMediaIdList } from '../../ceres/mediaLinks.js';
@@ -423,6 +426,67 @@ export function requestsRoutes(app: FastifyInstance) {
         const requestPhotoUploadIds = await resolveIdsWithFallback('request', request.id, 'request_photo', request.requestPhotoUploadId);
         return { request: toStaffRequestRow(request, null, requestPhotoUploadIds), moneyEvent };
       } catch (err) {
+        return moneyError(reply, err);
+      }
+    },
+  );
+
+  // POST /api/ceres/requests/:id/decide-and-pay — "อนุมัติ = จ่าย" one-flow (owner
+  // directive, 2026-07-22). Advance/reimbursement only (purchase keeps its
+  // receipt-mandatory decide → fulfill two-step, unchanged below). Decision + payment run
+  // in ONE transaction (see requestDecideAndPay.ts): an escalating GM decision commits with
+  // no payment; any money-side failure (insufficient_cash, missing slip) rolls back the
+  // decision too, so the request stays exactly where it was.
+  const decideAndPayBody = z.object({
+    decision: z.literal('approve'),
+    lane: requestMoneyLaneSchema,
+    transferSlipUploadId: z.string().min(1).optional(),
+    transferSlipUploadIds: z.array(z.string().min(1)).max(10).optional(),
+    note: z.string().max(600).optional(),
+    idempotencyKey: z.string().min(1).max(160).optional(),
+  }).strict();
+  app.post<{ Params: { id: string } }>(
+    '/api/ceres/requests/:id/decide-and-pay',
+    { preHandler: requireCeresRole('gm', 'ceo') },
+    async (req, reply) => {
+      const parsed = decideAndPayBody.safeParse(req.body);
+      if (!parsed.success) return reply.code(400).send({ error: 'invalid_body' });
+      const body = parsed.data;
+      for (const id of resolveMediaIdList(body.transferSlipUploadId, body.transferSlipUploadIds)) {
+        const media = await mediaCanBeAttachedBy(id, req.agent!, ['transfer_slip']);
+        if (!media) return reply.code(403).send({ error: 'media_not_owned' });
+      }
+      try {
+        const result = await decideAndPayStaffRequest({
+          requestId: req.params.id,
+          lane: body.lane,
+          transferSlipUploadId: body.transferSlipUploadId,
+          transferSlipUploadIds: body.transferSlipUploadIds,
+          note: body.note,
+          idempotencyKey: body.idempotencyKey,
+          agent: req.agent!,
+        });
+        if (result.decisionEventId) await notifyRequesterForEvent(result.decisionEventId);
+        if (result.outcome === 'escalated') {
+          const review = result.request.aiReviewId
+            ? await prisma.ceresAIReview.findUnique({ where: { id: result.request.aiReviewId } })
+            : null;
+          // Notifications are deliberately after commit and best-effort, same as the plain
+          // nee-decision endpoint's own escalation notify (decideStaffRequestByNee).
+          void notifyCeoEscalation(
+            { payee: result.request.payee, amount: result.request.amount, entity: result.request.entity, requestedByName: result.request.requestedByName },
+            review?.reasoning || `ยอดเกินเกณฑ์ ${env.CERES_CEO_THRESHOLD} บาท`,
+          );
+          const escPhotoIds = await resolveIdsWithFallback('request', result.request.id, 'request_photo', result.request.requestPhotoUploadId);
+          return { outcome: 'escalated' as const, request: toStaffRequestRow(result.request, review, escPhotoIds) };
+        }
+        // decisionEventId is null only on the idempotent-replay short-circuit — the first
+        // attempt already sent this push; don't re-send it on a retried tap.
+        if (result.decisionEventId) await notifyRequesterForMoneyEvent(result.moneyEvent.id);
+        const paidPhotoIds = await resolveIdsWithFallback('request', result.request.id, 'request_photo', result.request.requestPhotoUploadId);
+        return { outcome: 'paid' as const, request: toStaffRequestRow(result.request, null, paidPhotoIds), moneyEvent: result.moneyEvent };
+      } catch (err) {
+        if (err instanceof CeresRequestError) return requestError(reply, err);
         return moneyError(reply, err);
       }
     },

@@ -358,4 +358,29 @@ describe('Ceres v2 request submission and AI pre-screen', () => {
       data: expect.objectContaining({ verdict: 'clear' }),
     });
   });
+
+  // Buddhist Era date bug (fixed 2026-07-22): a receipt dated in พ.ศ. (e.g. "22 กรกฎาคม พ.ศ.
+  // 2569" for 2026-07-22, today) was being escalated as a future date because the pre-screen
+  // prompt/payload never told the model what "today" is or that Thai receipts print พ.ศ. years.
+  // See aiReview.ts's todayThailandLabel() + the STAFF_REQUEST_POLICY_TEXT BE hint.
+  it("injects today's date (both calendars) and a Buddhist Era hint into the pre-screen payload", async () => {
+    mocks.llmAvailable.mockReturnValue(true);
+    mocks.callClaude.mockResolvedValue('{"verdict":"clear","reasoning":"ผ่านการตรวจเบื้องต้น"}');
+    await expect(reviewStaffRequest('request-1')).resolves.toMatchObject({ verdict: 'clear' });
+
+    expect(mocks.callClaude).toHaveBeenCalledTimes(1);
+    const [userPayload, system] = mocks.callClaude.mock.calls[0]!;
+    const parsed = JSON.parse(userPayload as string);
+    expect(parsed.today).toMatch(/^Today is \d{4}-\d{2}-\d{2} \(ค\.ศ\.\) = พ\.ศ\. \d{4}\.$/);
+
+    // The BE-conversion rule lives in the cached policy block, not per-call payload.
+    const cachedText = (system as { cached: string[] }).cached.join('\n');
+    expect(cachedText).toContain('พ.ศ.');
+    expect(cachedText).toContain('543');
+
+    // Policy version bumped alongside the fix so old reviews stay distinguishable.
+    expect(mocks.createReview).toHaveBeenLastCalledWith({
+      data: expect.objectContaining({ verdict: 'clear', policyVersion: 'ceres-policy-v3' }),
+    });
+  });
 });

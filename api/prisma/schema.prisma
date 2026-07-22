@@ -1144,7 +1144,7 @@ model CeresMediaLink {
   sortOrder  Int      @default(0)
   createdAt  DateTime @default(now())
 
-  @@unique([targetType, targetId, mediaId])
+  @@unique([targetType, targetId, purpose, mediaId])
   @@index([targetType, targetId])
   @@index([mediaId])
 }

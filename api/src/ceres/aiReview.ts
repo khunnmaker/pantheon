@@ -2,7 +2,7 @@ import { prisma } from '../db/prisma.js';
 import { callClaude, llmAvailable } from '../llm/anthropic.js';
 import { num, thaiDayKey } from '../routes/ceres/common.js';
 
-export const POLICY_VERSION = 'ceres-policy-v2'; // v2: general staff categories (not messenger-only)
+export const POLICY_VERSION = 'ceres-policy-v3'; // v3: staff-request pre-screen gets a Thai-BE-aware today's-date anchor (see todayThailandLabel below)
 export const AI_MODEL = 'claude-sonnet-4-6'; // informational; anthropic.ts owns the real constant
 
 // Cached-block policy text for the P1 post-hoc expense sanity call — petty-cash context
@@ -27,12 +27,35 @@ const EXPENSE_POLICY_TEXT = `คุณคือ AI ผู้ตรวจสอ�
 
 // V2 is a pre-screen, not an approver. `approve` is deliberately absent from this
 // contract and is treated as malformed output if a model returns it.
+//
+// Buddhist Era bug (fixed 2026-07-22): Thai receipts print their year in the Buddhist Era
+// (พ.ศ. = ค.ศ. + 543) and readReceipt.ts's OCR deliberately does NOT convert it ("ตามรูปแบบเดิม
+// ไม่ต้องแปลง") — evidence.ocrDate below is that raw, unconverted string. Without an explicit
+// BE/CE hint and a current-date anchor, the model has no way to tell a same-day receipt
+// (e.g. "22 กรกฎาคม พ.ศ. 2569" = 2026-07-22) from an actual future date, and escalated it as
+// one. The `today` field on the payload (see todayThailandLabel below) gives the model a
+// concrete reference point in both calendars for every call.
 const STAFF_REQUEST_POLICY_TEXT = `You pre-screen an internal company money request before a human manager reviews it.
 Return JSON only in exactly one of these forms:
 {"verdict":"clear","reasoning":"brief Thai reasoning"}
 {"verdict":"escalate","reasoning":"brief Thai reasoning"}
 Escalate anything ambiguous, personal, inconsistent, implausible, or insufficiently evidenced.
-You never approve requests. A human manager must decide every request.`;
+You never approve requests. A human manager must decide every request.
+
+Thai receipts commonly print their year in the Buddhist Era (พ.ศ. = ค.ศ. + 543), e.g. a receipt
+dated "22 กรกฎาคม พ.ศ. 2569" is 22 July 2026 (ค.ศ.) — convert a พ.ศ.-looking year before judging
+whether evidence.ocrDate is in the future or stale. The payload's "today" field gives the current
+date in both calendars — use it as your reference point. Never escalate a request solely because
+its OCR date's year number looks large; check whether it converts to a sensible ค.ศ. date first.`;
+
+// Today's date in Bangkok time (UTC+7, no DST), given in both calendars — injected into every
+// pre-screen call so the model always has a concrete "now" to judge evidence.ocrDate against
+// instead of guessing from training-data recency. Thai year = Gregorian year + 543.
+export function todayThailandLabel(): string {
+  const ce = thaiDayKey(new Date()); // "YYYY-MM-DD", Bangkok-local
+  const beYear = Number(ce.slice(0, 4)) + 543;
+  return `Today is ${ce} (ค.ศ.) = พ.ศ. ${beYear}.`;
+}
 
 async function writeReview(subjectType: 'paymentRequest' | 'expense', subjectId: string, verdict: string, reasoning: string) {
   return prisma.ceresAIReview.create({
@@ -118,6 +141,7 @@ export async function reviewStaffRequest(
 
   try {
     const raw = await callClaude(JSON.stringify({
+      today: todayThailandLabel(),
       requestType: request.requestType,
       amount: request.amount,
       entity: request.entity,

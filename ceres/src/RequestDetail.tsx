@@ -36,7 +36,10 @@ import FlagButton from './FlagButton';
 // requester (MyRequests) and management (NeeFulfillmentQueue, MdRecon). See
 // docs/CERES_REVAMP_PLAN.md "Phase 3" item 2.
 
-const APPROVAL_LABEL: Record<ApprovalStatus, { label: string; cls: string }> = {
+// Exported (2026-07-22, ประวัติ merge) — MdHistory.tsx reuses these two maps verbatim for its
+// finished-request status chips so the wording/colors can never drift from this detail view's
+// own timeline badges. SSOT, same rationale as requestLabels.ts's REQUEST_TYPE_LABEL.
+export const APPROVAL_LABEL: Record<ApprovalStatus, { label: string; cls: string }> = {
   legacy: { label: 'รอตรวจ', cls: 'bg-slate-100 text-slate-600' },
   pending_nee: { label: 'รอ GM', cls: 'bg-amber-100 text-amber-700' },
   pending_ceo: { label: 'รอ CEO', cls: 'bg-violet-100 text-violet-700' },
@@ -46,7 +49,7 @@ const APPROVAL_LABEL: Record<ApprovalStatus, { label: string; cls: string }> = {
   void: { label: 'ยกเลิก', cls: 'bg-slate-100 text-slate-500' },
 };
 
-const FULFILLMENT_LABEL: Record<FulfillmentStatus, { label: string; cls: string } | null> = {
+export const FULFILLMENT_LABEL: Record<FulfillmentStatus, { label: string; cls: string } | null> = {
   legacy: null,
   unfulfilled: { label: 'รอจ่ายเงิน', cls: 'bg-slate-100 text-slate-600' },
   paid: { label: 'จ่ายแล้ว', cls: 'bg-sky-100 text-sky-700' },

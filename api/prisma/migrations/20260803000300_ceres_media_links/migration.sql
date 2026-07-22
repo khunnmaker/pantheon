@@ -20,6 +20,9 @@ CREATE TABLE "CeresMediaLink" (
 );
 
 -- CreateIndex
-CREATE UNIQUE INDEX "CeresMediaLink_targetType_targetId_mediaId_key" ON "CeresMediaLink"("targetType", "targetId", "mediaId");
+-- purpose is part of the key: a purchase paid by transfer legitimately carries BOTH a
+-- transfer_slip and a purchase_receipt link set on the SAME money_event target, and the
+-- same media id appearing in both must not P2002.
+CREATE UNIQUE INDEX "CeresMediaLink_targetType_targetId_purpose_mediaId_key" ON "CeresMediaLink"("targetType", "targetId", "purpose", "mediaId");
 CREATE INDEX "CeresMediaLink_targetType_targetId_idx" ON "CeresMediaLink"("targetType", "targetId");
 CREATE INDEX "CeresMediaLink_mediaId_idx" ON "CeresMediaLink"("mediaId");

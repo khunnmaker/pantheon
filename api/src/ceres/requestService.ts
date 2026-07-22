@@ -57,7 +57,11 @@ export class CeresRequestError extends Error {
       | 'ai_review_pending'
       | 'not_pending_nee'
       | 'not_pending_ceo'
-      | 'conflict',
+      | 'conflict'
+      // Ceres approve-is-pay one-flow (2026-07-22): the composite decide-and-pay endpoint
+      // only ever handles advance/reimbursement — a purchase still needs its mandatory
+      // receipt via the existing two-step decide → fulfill path. See requestDecideAndPay.ts.
+      | 'invalid_request_type',
   ) {
     super(code);
   }

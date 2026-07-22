@@ -925,6 +925,25 @@ export const fulfillStaffRequest = (
     body: JSON.stringify(body),
   });
 
+// "อนุมัติ = จ่าย" one-flow (owner directive, 2026-07-22) — GM/CEO approve of an advance or
+// reimbursement asks the lane question and APPROVES + PAYS in one server transaction. See
+// api/src/ceres/requestDecideAndPay.ts. Never used for purchase (still the plain
+// nee/ceo-decision → fulfill two-step, receipt mandatory). `outcome: 'escalated'` only ever
+// comes back from the GM path — the request landed at pending_ceo (over threshold or an
+// AI flag that changed since load) instead of paying; no money moved for that call.
+export type DecideAndPayResult =
+  | { outcome: 'paid'; request: StaffRequest; moneyEvent: RequestMoneyEvent }
+  | { outcome: 'escalated'; request: StaffRequest };
+
+export const decideAndPayStaffRequest = (
+  id: string,
+  body: { lane: RequestMoneyLane; transferSlipUploadId?: string; transferSlipUploadIds?: string[]; note?: string; idempotencyKey?: string },
+) =>
+  authed<DecideAndPayResult>(`/api/ceres/requests/${id}/decide-and-pay`, {
+    method: 'POST',
+    body: JSON.stringify({ decision: 'approve', ...body }),
+  });
+
 export interface LiquidationExpense {
   id: string;
   partyId: string | null;
