@@ -24,7 +24,7 @@ import {
   type StaffRequest,
 } from './lib/api';
 import { useCeres } from './lib/bootstrapContext';
-import { MediaThumb } from './lib/media';
+import { MediaThumbStrip } from './lib/media';
 import AppSwitcher from './AppSwitcher';
 import MyRequests, { statusMeta, TYPE_LABEL } from './MyRequests';
 import RequestSheet from './RequestSheet';
@@ -473,7 +473,7 @@ function PendingRequestRow({ request, onOpen }: { request: StaffRequest; onOpen:
       onClick={onOpen}
       className="w-full bg-white rounded-xl border border-slate-200 p-3 flex items-center gap-3 text-left"
     >
-      <MediaThumb id={request.requestPhotoUploadId} size={48} alt="รูปแนบคำขอ" />
+      <MediaThumbStrip ids={request.requestPhotoUploadIds} size={48} alt="รูปแนบคำขอ" />
       <div className="flex-1 min-w-0">
         <div className="flex items-center justify-between gap-2">
           <span className="font-bold text-base">{baht(request.amountNum)}</span>

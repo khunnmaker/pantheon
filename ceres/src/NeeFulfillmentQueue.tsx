@@ -2,12 +2,10 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   AlertTriangle,
   Banknote,
-  Camera,
   CheckCircle2,
   ChevronDown,
   ChevronUp,
   Eye,
-  Image as ImageIcon,
   Loader2,
   RefreshCw,
   ShoppingCart,
@@ -26,9 +24,9 @@ import {
   type StaffRequest,
 } from './lib/api';
 import { REQUEST_TYPE_LABEL as TYPE_LABEL } from './lib/requestLabels';
-import { downscaleImage } from './lib/image';
-import { MediaThumb } from './lib/media';
+import { MediaThumbStrip } from './lib/media';
 import { PayPanel } from './PayPanel';
+import PhotoListUpload, { type PhotoItem } from './lib/PhotoListUpload';
 import RequestDetail from './RequestDetail';
 
 // Nee's approved-and-awaiting-fulfillment queue (Ceres revamp Phase 3). Two lanes:
@@ -153,67 +151,6 @@ export default function NeeFulfillmentQueue() {
   );
 }
 
-// A tap-to-upload evidence box (transfer slip / purchase receipt / refund slip). Self
-// contained (no ref plumbing) — a <label> wraps the hidden file input.
-function EvidenceUpload({
-  label,
-  preview,
-  busy,
-  onPick,
-}: {
-  label: string;
-  preview: string | null;
-  busy: boolean;
-  onPick: (file: File) => void;
-}) {
-  function onChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (file) onPick(file);
-    e.target.value = '';
-  }
-  return (
-    <div>
-      <div className="text-xs font-semibold text-slate-500 mb-1.5">{label}</div>
-      {preview ? (
-        <div className="relative">
-          <img src={preview} alt={label} className="w-full max-h-48 object-contain rounded-xl border border-slate-200 bg-slate-50" />
-          <div className="flex gap-2 mt-2">
-            <label
-              className={`flex-1 min-h-[40px] rounded-lg border border-slate-300 text-xs font-medium hover:bg-slate-50 flex items-center justify-center cursor-pointer ${busy ? 'opacity-50' : ''}`}
-            >
-              {busy ? 'กำลังอัปโหลด…' : 'ถ่ายรูปใหม่'}
-              <input type="file" accept="image/*" capture="environment" className="hidden" disabled={busy} onChange={onChange} />
-            </label>
-            <label
-              className={`flex-1 min-h-[40px] rounded-lg border border-slate-300 text-xs font-medium hover:bg-slate-50 flex items-center justify-center cursor-pointer ${busy ? 'opacity-50' : ''}`}
-            >
-              เลือกรูป
-              <input type="file" accept="image/*" className="hidden" disabled={busy} onChange={onChange} />
-            </label>
-          </div>
-        </div>
-      ) : (
-        <div className="flex gap-2">
-          <label
-            className={`flex-1 min-h-[80px] rounded-xl border-2 border-dashed border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-800 font-semibold flex flex-col items-center justify-center gap-1.5 cursor-pointer ${busy ? 'opacity-60' : ''}`}
-          >
-            {busy ? <Loader2 className="animate-spin" size={20} /> : <Camera size={20} />}
-            <span className="text-xs">{busy ? 'กำลังอัปโหลด…' : 'ถ่ายรูป / แนบรูป'}</span>
-            <input type="file" accept="image/*" capture="environment" className="hidden" disabled={busy} onChange={onChange} />
-          </label>
-          <label
-            className={`flex-1 min-h-[80px] rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-slate-600 font-medium flex flex-col items-center justify-center gap-1.5 cursor-pointer ${busy ? 'opacity-50' : ''}`}
-          >
-            <ImageIcon size={20} />
-            <span className="text-xs">เลือกรูป</span>
-            <input type="file" accept="image/*" className="hidden" disabled={busy} onChange={onChange} />
-          </label>
-        </div>
-      )}
-    </div>
-  );
-}
-
 function FulfillCard({
   request,
   onDone,
@@ -229,7 +166,7 @@ function FulfillCard({
   return (
     <article className="bg-white rounded-xl border border-slate-200 p-3">
       <div className="flex items-start gap-3">
-        <MediaThumb id={request.requestPhotoUploadId} size={56} alt="หลักฐานคำขอ" rounded="rounded-xl" />
+        <MediaThumbStrip ids={request.requestPhotoUploadIds} size={56} alt="หลักฐานคำขอ" rounded="rounded-xl" />
         <div className="flex-1 min-w-0">
           <div className="flex items-start justify-between gap-2">
             <div>
@@ -408,39 +345,27 @@ function RefundInlineForm({
 }) {
   const [lane, setLane] = useState<RequestMoneyLane>(fundingLane);
   const [amount, setAmount] = useState(remaining);
-  const [slipId, setSlipId] = useState<string | null>(null);
-  const [slipPreview, setSlipPreview] = useState<string | null>(null);
-  const [uploadBusy, setUploadBusy] = useState(false);
+  const [slipPhotos, setSlipPhotos] = useState<PhotoItem[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const idempotencyKey = useRef(newIdempotencyKey());
+  const uploadSlip = (dataB64: string, contentType: string) => uploadMedia(dataB64, contentType, 'refund_slip');
 
-  async function handleSlip(file: File) {
-    setError('');
-    setUploadBusy(true);
-    try {
-      const { dataB64, contentType } = await downscaleImage(file);
-      const result = await uploadMedia(dataB64, contentType, 'refund_slip');
-      setSlipId(result.uploadId);
-      setSlipPreview(`data:${contentType};base64,${dataB64}`);
-    } catch {
-      setError('อัปโหลดรูปไม่สำเร็จ ลองใหม่อีกครั้ง');
-    } finally {
-      setUploadBusy(false);
-    }
-  }
+  const readySlipIds = slipPhotos.filter((p) => !p.busy).map((p) => p.uploadId);
+  const uploadBusy = slipPhotos.some((p) => p.busy);
 
   async function submit() {
     setError('');
     const amt = amount.trim();
     if (!AMOUNT_RE.test(amt) || Number(amt) <= 0) return setError('กรอกจำนวนเงินให้ถูกต้อง');
-    if (lane === 'transfer' && !slipId) return setError('ต้องแนบสลิปก่อนบันทึก');
+    if (lane === 'transfer' && readySlipIds.length === 0) return setError('ต้องแนบสลิปก่อนบันทึก');
     setBusy(true);
     try {
       await refundAdvance(requestId, {
         lane,
         amount: amt,
-        transferSlipUploadId: slipId ?? undefined,
+        transferSlipUploadId: readySlipIds[0],
+        transferSlipUploadIds: readySlipIds,
         idempotencyKey: idempotencyKey.current,
       });
       onDone('บันทึกคืนเงินแล้ว');
@@ -475,7 +400,10 @@ function RefundInlineForm({
         className="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm"
       />
       {lane === 'transfer' && (
-        <EvidenceUpload label="สลิปรับเงินคืน (จำเป็น)" preview={slipPreview} busy={uploadBusy} onPick={handleSlip} />
+        <div>
+          <div className="text-xs font-semibold text-slate-500 mb-1.5">สลิปรับเงินคืน (จำเป็น)</div>
+          <PhotoListUpload items={slipPhotos} onChange={setSlipPhotos} upload={uploadSlip} compact />
+        </div>
       )}
       {error && (
         <div className="flex items-center gap-1 text-rose-600 text-xs">

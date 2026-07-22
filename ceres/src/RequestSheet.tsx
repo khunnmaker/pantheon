@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
 import {
-  Camera,
   Loader2,
   AlertTriangle,
   X,
@@ -9,7 +8,6 @@ import {
   Wallet,
   Receipt,
   ImageOff,
-  Image as ImageIcon,
 } from 'lucide-react';
 import {
   createStaffRequest,
@@ -19,13 +17,11 @@ import {
   type V2RequestType,
   type MediaPurpose,
   type OcrResult,
-  type DuplicateReceipt,
 } from './lib/api';
 import { REQUEST_TYPE_LABEL, PAYER_CHOICE_LABEL, type PayerChoice } from './lib/requestLabels';
-import { useMediaUrl } from './lib/media';
-import { downscaleImage } from './lib/image';
 import { useCeres } from './lib/bootstrapContext';
 import CategoryPicker, { groupByCategoryGroup } from './components/CategoryPicker';
+import PhotoListUpload, { type PhotoItem } from './lib/PhotoListUpload';
 
 const AMOUNT_RE = /^\d+(\.\d{1,2})?$/;
 
@@ -128,19 +124,22 @@ export default function RequestSheet({
   const [amountError, setAmountError] = useState('');
   const [reason, setReason] = useState(editing?.reason || prefill?.reason || '');
 
-  const [photoUploadId, setPhotoUploadId] = useState<string | null>(editing?.requestPhotoUploadId ?? null);
-  const [localPreview, setLocalPreview] = useState<string | null>(null);
-  const existingPreview = useMediaUrl(!localPreview && editing ? editing.requestPhotoUploadId : null);
-  const photoPreview = localPreview ?? existingPreview;
+  // Seeded from the row's array field on edit (fallback to the singular id for legacy rows —
+  // see api.ts's StaffRequest.requestPhotoUploadIds doc). No `preview` on seeded items — they
+  // render via MediaThumb-by-id inside PhotoListUpload, same as any other already-saved image.
+  const [photos, setPhotos] = useState<PhotoItem[]>(() => {
+    if (!editing) return [];
+    const ids = editing.requestPhotoUploadIds?.length ? editing.requestPhotoUploadIds : editing.requestPhotoUploadId ? [editing.requestPhotoUploadId] : [];
+    return ids.map((uploadId) => ({ uploadId }));
+  });
   const [ocr, setOcr] = useState<OcrResult | null>(null);
-  const [duplicate, setDuplicate] = useState<DuplicateReceipt | null>(null);
-  const [uploadBusy, setUploadBusy] = useState(false);
-  const [uploadError, setUploadError] = useState('');
+  // Only the FIRST photo that yields an OCR amount is ever considered for the amount-prefill
+  // decision (and only prefills if the field is still empty at that moment) — later photos'
+  // OCR results are ignored for prefill purposes even if the field is still empty.
+  const ocrPrefillDone = useRef(false);
 
   const [submitBusy, setSubmitBusy] = useState(false);
   const [submitError, setSubmitError] = useState('');
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const galleryInputRef = useRef<HTMLInputElement>(null);
 
   const selectedCategory = categories.find((c) => c.id === categoryId) || null;
   // Header/title label — generic "ขอเบิก" until the payer toggle resolves it, then the
@@ -150,43 +149,25 @@ export default function RequestSheet({
 
   const mountedRef = useRef(false);
   useEffect(() => {
-    // Switching the resolved type after a photo was already staged for the OLD purpose
-    // clears it — the server validates purpose against requestType, so a stale upload would
-    // fail. Skip the very first run (mount) so an editing request's existing photo survives.
+    // Switching the resolved type after photos were already staged for the OLD purpose
+    // clears them — the server validates purpose against requestType, so stale uploads would
+    // fail. Skip the very first run (mount) so an editing request's existing photos survive.
     if (mountedRef.current) {
-      setPhotoUploadId(null);
-      setLocalPreview(null);
+      setPhotos([]);
       setOcr(null);
-      setDuplicate(null);
-      setUploadError('');
+      ocrPrefillDone.current = false;
     }
     mountedRef.current = true;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [requestType]);
 
-  async function handleFile(file: File) {
-    setUploadError('');
-    setUploadBusy(true);
-    setDuplicate(null);
-    try {
-      const { dataB64, contentType } = await downscaleImage(file);
-      const result = await uploadMedia(dataB64, contentType, purposeFor(requestType));
-      setLocalPreview(`data:${contentType};base64,${dataB64}`);
-      setPhotoUploadId(result.uploadId);
-      setOcr(result.ocr);
-      setDuplicate(result.duplicate);
-      if (result.ocr.amount && amount.trim() === '') setAmount(result.ocr.amount);
-    } catch {
-      setUploadError('อัปโหลดรูปไม่สำเร็จ ลองใหม่อีกครั้ง');
-    } finally {
-      setUploadBusy(false);
-    }
-  }
+  const uploadPhoto = (dataB64: string, contentType: string) => uploadMedia(dataB64, contentType, purposeFor(requestType));
 
-  function onFilePicked(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (file) handleFile(file);
-    e.target.value = '';
+  function handleOcr(o: OcrResult) {
+    if (ocrPrefillDone.current || !o.amount) return;
+    ocrPrefillDone.current = true;
+    setOcr(o);
+    setAmount((current) => (current.trim() === '' ? o.amount : current));
   }
 
   function toggleGroup(group: string) {
@@ -207,7 +188,7 @@ export default function RequestSheet({
     } else if (!selectedCategory) {
       return 'invalid_category';
     }
-    if (requestType === 'reimbursement' && !photoUploadId) return 'missing_receipt';
+    if (requestType === 'reimbursement' && photos.length === 0) return 'missing_receipt';
     return '';
   }
 
@@ -241,6 +222,9 @@ export default function RequestSheet({
 
     setSubmitBusy(true);
     try {
+      const readyPhotos = photos.filter((p) => !p.busy);
+      const requestPhotoUploadIds = readyPhotos.map((p) => p.uploadId);
+      const requestPhotoUploadId = requestPhotoUploadIds[0] ?? null;
       const body = finalType === 'advance'
         ? {
             requestType: finalType,
@@ -248,7 +232,8 @@ export default function RequestSheet({
             categoryGroups,
             amount: amount.trim(),
             reason: reason.trim(),
-            requestPhotoUploadId: photoUploadId,
+            requestPhotoUploadId,
+            requestPhotoUploadIds,
           }
         : {
             requestType: finalType,
@@ -256,7 +241,8 @@ export default function RequestSheet({
             category: selectedCategory!.name,
             amount: amount.trim(),
             reason: reason.trim(),
-            requestPhotoUploadId: photoUploadId,
+            requestPhotoUploadId,
+            requestPhotoUploadIds,
           };
       const result = editing
         ? await editStaffRequest(editing.id, body)
@@ -271,6 +257,7 @@ export default function RequestSheet({
   }
 
   const ocrDiffers = !!ocr?.amount && Number(ocr.amount) !== Number(amount);
+  const photosBusy = photos.some((p) => p.busy);
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/40 flex items-end sm:items-center justify-center">
@@ -280,7 +267,7 @@ export default function RequestSheet({
             {step === 'form' && (
               <button
                 onClick={() => setStep('type')}
-                disabled={uploadBusy}
+                disabled={photosBusy}
                 aria-label="กลับไปเลือกประเภทคำขอ"
                 className="text-slate-400 hover:text-slate-600 p-1 -ml-1 disabled:opacity-40"
               >
@@ -363,92 +350,8 @@ export default function RequestSheet({
                 <div className="text-xs font-semibold text-slate-500 mb-1.5">
                   {requestType === 'reimbursement' ? 'ใบเสร็จ (จำเป็น)' : 'รูปประกอบ (ถ้ามี)'}
                 </div>
-                {photoPreview ? (
-                  <div className="relative">
-                    <img
-                      src={photoPreview}
-                      alt="รูปแนบ"
-                      className="w-full max-h-56 object-contain rounded-xl border border-slate-200 bg-slate-50"
-                    />
-                    <div className="flex gap-2 mt-2">
-                      <button
-                        onClick={() => fileInputRef.current?.click()}
-                        disabled={uploadBusy}
-                        className="flex-1 min-h-[48px] rounded-xl border border-slate-300 text-sm font-medium hover:bg-slate-50 disabled:opacity-50"
-                      >
-                        {uploadBusy ? 'กำลังอัปโหลด…' : 'ถ่ายรูปใหม่'}
-                      </button>
-                      <button
-                        onClick={() => galleryInputRef.current?.click()}
-                        disabled={uploadBusy}
-                        className="flex-1 min-h-[48px] rounded-xl border border-slate-300 text-sm font-medium hover:bg-slate-50 disabled:opacity-50"
-                      >
-                        เลือกรูป
-                      </button>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => fileInputRef.current?.click()}
-                      disabled={uploadBusy}
-                      className={`flex-1 min-h-[96px] rounded-xl border-2 border-dashed flex flex-col items-center justify-center gap-1.5 font-semibold disabled:opacity-60 ${
-                        requestType === 'reimbursement'
-                          ? 'border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-800'
-                          : 'border-slate-300 bg-slate-50 hover:bg-slate-100 text-slate-500'
-                      }`}
-                    >
-                      {uploadBusy ? (
-                        <>
-                          <Loader2 className="animate-spin" size={22} />
-                          <span className="text-sm">กำลังอัปโหลด…</span>
-                        </>
-                      ) : (
-                        <>
-                          <Camera size={24} />
-                          <span>{requestType === 'reimbursement' ? 'ถ่ายรูปใบเสร็จ' : 'ถ่ายรูป / แนบรูป'}</span>
-                        </>
-                      )}
-                    </button>
-                    <button
-                      onClick={() => galleryInputRef.current?.click()}
-                      disabled={uploadBusy}
-                      className="flex-1 min-h-[96px] rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-slate-600 font-medium flex flex-col items-center justify-center gap-1.5 disabled:opacity-60"
-                    >
-                      <ImageIcon size={24} />
-                      <span>เลือกรูป</span>
-                    </button>
-                  </div>
-                )}
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept="image/*"
-                  capture="environment"
-                  className="hidden"
-                  onChange={onFilePicked}
-                />
-                <input
-                  ref={galleryInputRef}
-                  type="file"
-                  accept="image/*"
-                  className="hidden"
-                  onChange={onFilePicked}
-                />
-                {uploadError && (
-                  <div className="flex items-center gap-1 text-rose-600 text-xs mt-1.5">
-                    <AlertTriangle size={12} /> {uploadError}
-                  </div>
-                )}
-                {duplicate && (
-                  <div className="mt-2 px-3 py-2.5 rounded-xl border border-rose-300 bg-rose-50 text-rose-700">
-                    <div className="flex items-start gap-1.5 text-sm font-semibold">
-                      <AlertTriangle size={15} className="mt-0.5 shrink-0" />
-                      <span>รูปนี้ถูกใช้บันทึกไปแล้ว (ของ {duplicate.partyName} ฿{duplicate.amount})</span>
-                    </div>
-                  </div>
-                )}
-                {!photoPreview && requestType !== 'reimbursement' && (
+                <PhotoListUpload items={photos} onChange={setPhotos} upload={uploadPhoto} onOcr={handleOcr} />
+                {photos.length === 0 && requestType !== 'reimbursement' && (
                   <div className="flex items-center gap-1 text-xs text-slate-400 mt-1.5">
                     <ImageOff size={12} /> ไม่แนบรูปก็ส่งคำขอได้
                   </div>
@@ -556,7 +459,7 @@ export default function RequestSheet({
             <div className="sticky bottom-0 bg-white border-t border-slate-100 p-4">
               <button
                 onClick={submit}
-                disabled={submitBusy || uploadBusy}
+                disabled={submitBusy || photosBusy}
                 className="w-full min-h-[52px] rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-base font-semibold flex items-center justify-center gap-2 disabled:opacity-50"
               >
                 {submitBusy ? (

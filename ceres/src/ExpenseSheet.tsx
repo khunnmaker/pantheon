@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
-import { Camera, Loader2, AlertTriangle, X, Check, ImageOff, Image as ImageIcon } from 'lucide-react';
-import { ApiError, createExpense, updateExpense, uploadReceipt, type Expense, type OcrResult, type DuplicateReceipt } from './lib/api';
-import { downscaleImage } from './lib/image';
+import { Loader2, AlertTriangle, X, Check, ImageOff } from 'lucide-react';
+import { ApiError, createExpense, updateExpense, uploadReceipt, type Expense, type OcrResult } from './lib/api';
 import { useCeres } from './lib/bootstrapContext';
 import CategoryPicker from './components/CategoryPicker';
+import PhotoListUpload, { type PhotoItem } from './lib/PhotoListUpload';
 
 const AMOUNT_RE = /^\d+(\.\d{1,2})?$/;
 
@@ -47,20 +47,23 @@ export default function ExpenseSheet({
   const [amount, setAmount] = useState(editing?.amount || '');
   const [amountError, setAmountError] = useState('');
 
-  const [receiptUploadId, setReceiptUploadId] = useState<string | null>(editing?.receiptUploadId ?? null);
-  const [receiptPreview, setReceiptPreview] = useState<string | null>(editing?.receiptUrl ?? null);
+  const [photos, setPhotos] = useState<PhotoItem[]>(() => {
+    if (!editing) return [];
+    const ids = editing.receiptUploadIds?.length ? editing.receiptUploadIds : editing.receiptUploadId ? [editing.receiptUploadId] : [];
+    return ids.map((uploadId) => ({ uploadId }));
+  });
   const [ocr, setOcr] = useState<OcrResult | null>(null);
-  const [duplicate, setDuplicate] = useState<DuplicateReceipt | null>(null);
+  // Only the FIRST photo that yields an OCR amount is ever considered for the amount-prefill
+  // decision (and only prefills if the field is still empty at that moment).
+  const ocrPrefillDone = useRef(false);
   const [noReceiptConfirming, setNoReceiptConfirming] = useState(false);
-  const [noReceipt, setNoReceipt] = useState(!isLiquidation && !!editing && !editing.receiptUploadId);
-  const [uploadBusy, setUploadBusy] = useState(false);
-  const [uploadError, setUploadError] = useState('');
+  const [noReceipt, setNoReceipt] = useState(
+    !isLiquidation && !!editing && !(editing.receiptUploadIds?.length || editing.receiptUploadId),
+  );
 
   const [submitBusy, setSubmitBusy] = useState(false);
   const [submitError, setSubmitError] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const galleryInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!successMsg) return;
@@ -70,33 +73,13 @@ export default function ExpenseSheet({
 
   const selectedCategory = categories.find((c) => c.id === categoryId) || null;
 
-  async function handleFile(file: File) {
-    setUploadError('');
-    setUploadBusy(true);
-    setDuplicate(null);
-    try {
-      const { dataB64, contentType } = await downscaleImage(file);
-      setReceiptPreview(`data:${contentType};base64,${dataB64}`);
-      const result = await uploadReceipt(dataB64, contentType);
-      setReceiptUploadId(result.uploadId);
-      setOcr(result.ocr);
-      setDuplicate(result.duplicate);
-      setNoReceipt(false);
-      // prefill amount from OCR ONLY if the field is currently empty
-      if (result.ocr.amount && amount.trim() === '') {
-        setAmount(result.ocr.amount);
-      }
-    } catch {
-      setUploadError('อัปโหลดรูปไม่สำเร็จ ลองใหม่อีกครั้ง');
-    } finally {
-      setUploadBusy(false);
-    }
-  }
+  const uploadPhoto = (dataB64: string, contentType: string) => uploadReceipt(dataB64, contentType);
 
-  function onFilePicked(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (file) handleFile(file);
-    e.target.value = '';
+  function handleOcr(o: OcrResult) {
+    if (ocrPrefillDone.current || !o.amount) return;
+    ocrPrefillDone.current = true;
+    setOcr(o);
+    setAmount((current) => (current.trim() === '' ? o.amount : current));
   }
 
   function validate(): string {
@@ -104,7 +87,7 @@ export default function ExpenseSheet({
     if (!entity) return 'invalid_entity';
     if (!selectedCategory) return 'invalid_category';
     if (selectedCategory.needsCustomerNote && !customerNote.trim()) return 'missing_customer_note';
-    if (!receiptUploadId && (isLiquidation || !noReceipt)) return 'missing_receipt';
+    if (photos.length === 0 && (isLiquidation || !noReceipt)) return 'missing_receipt';
     return '';
   }
 
@@ -137,12 +120,15 @@ export default function ExpenseSheet({
 
     setSubmitBusy(true);
     try {
+      const readyPhotos = photos.filter((p) => !p.busy);
+      const receiptUploadIds = readyPhotos.map((p) => p.uploadId);
       const body = {
         entity,
         category: selectedCategory.name,
         customerNote: customerNote.trim() || undefined,
         amount: amt,
-        receiptUploadId: receiptUploadId ?? undefined,
+        receiptUploadId: receiptUploadIds[0] ?? undefined,
+        receiptUploadIds,
         note: note.trim() || undefined,
         ...(partyId ? { partyId } : {}),
         ...(advanceRequestId ? { advanceRequestId } : {}),
@@ -176,6 +162,7 @@ export default function ExpenseSheet({
 
   // Numeric compare so "12" vs "12.00" doesn't flag a spurious mismatch.
   const ocrDiffers = !!ocr?.amount && Number(ocr.amount) !== Number(amount);
+  const photosBusy = photos.some((p) => p.busy);
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/40 flex items-end sm:items-center justify-center">
@@ -198,25 +185,7 @@ export default function ExpenseSheet({
           {/* Photo step */}
           <div>
             <div className="text-xs font-semibold text-slate-500 mb-1.5">ใบเสร็จ</div>
-            {receiptPreview && !noReceipt ? (
-              <div className="relative">
-                <img src={receiptPreview} alt="ใบเสร็จ" className="w-full max-h-56 object-contain rounded-xl border border-slate-200 bg-slate-50" />
-                <div className="flex gap-2 mt-2">
-                  <button
-                    onClick={() => fileInputRef.current?.click()}
-                    className="flex-1 min-h-[48px] rounded-xl border border-slate-300 text-sm font-medium hover:bg-slate-50"
-                  >
-                    ถ่ายรูปใหม่
-                  </button>
-                  <button
-                    onClick={() => galleryInputRef.current?.click()}
-                    className="flex-1 min-h-[48px] rounded-xl border border-slate-300 text-sm font-medium hover:bg-slate-50"
-                  >
-                    เลือกรูป
-                  </button>
-                </div>
-              </div>
-            ) : noReceipt ? (
+            {noReceipt ? (
               <div className="flex items-center justify-between px-3 py-3 rounded-xl border border-dashed border-slate-300 bg-slate-50 text-sm text-slate-500">
                 <span className="flex items-center gap-1.5"><ImageOff size={16} /> ไม่มีใบเสร็จ</span>
                 <button
@@ -230,67 +199,10 @@ export default function ExpenseSheet({
                 </button>
               </div>
             ) : (
-              <div className="flex gap-2">
-                <button
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={uploadBusy}
-                  className="flex-1 min-h-[96px] rounded-xl border-2 border-dashed border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-800 font-semibold flex flex-col items-center justify-center gap-1.5 disabled:opacity-60"
-                >
-                  {uploadBusy ? (
-                    <>
-                      <Loader2 className="animate-spin" size={22} />
-                      <span className="text-sm">AI กำลังอ่านใบเสร็จ…</span>
-                    </>
-                  ) : (
-                    <>
-                      <Camera size={24} />
-                      <span>ถ่ายรูปใบเสร็จ</span>
-                    </>
-                  )}
-                </button>
-                <button
-                  onClick={() => galleryInputRef.current?.click()}
-                  disabled={uploadBusy}
-                  className="flex-1 min-h-[96px] rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-slate-600 font-medium flex flex-col items-center justify-center gap-1.5 disabled:opacity-60"
-                >
-                  <ImageIcon size={24} />
-                  <span>เลือกรูป</span>
-                </button>
-              </div>
-            )}
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/*"
-              capture="environment"
-              className="hidden"
-              onChange={onFilePicked}
-            />
-            <input
-              ref={galleryInputRef}
-              type="file"
-              accept="image/*"
-              className="hidden"
-              onChange={onFilePicked}
-            />
-            {uploadError && (
-              <div className="flex items-center gap-1 text-rose-600 text-xs mt-1.5">
-                <AlertTriangle size={12} /> {uploadError}
-              </div>
-            )}
-            {duplicate && !noReceipt && (
-              <div className="mt-2 px-3 py-2.5 rounded-xl border border-rose-300 bg-rose-50 text-rose-700">
-                <div className="flex items-start gap-1.5 text-sm font-semibold">
-                  <AlertTriangle size={15} className="mt-0.5 shrink-0" />
-                  <span>⚠️ ใบเสร็จรูปนี้ถูกใช้บันทึกไปแล้ว (ของ {duplicate.partyName} ฿{duplicate.amount})</span>
-                </div>
-                <div className="text-xs text-rose-600 mt-1 pl-[22px]">
-                  ตรวจสอบก่อนบันทึก — ถ้าถ่ายใหม่จากบิลใบเดิมของคนอื่น อย่าส่งซ้ำ
-                </div>
-              </div>
+              <PhotoListUpload items={photos} onChange={setPhotos} upload={uploadPhoto} onOcr={handleOcr} />
             )}
 
-            {!receiptPreview && !noReceipt && !isLiquidation && (
+            {photos.length === 0 && !noReceipt && !isLiquidation && (
               noReceiptConfirming ? (
                 <button
                   onClick={() => setNoReceipt(true)}
@@ -388,7 +300,7 @@ export default function ExpenseSheet({
         <div className="sticky bottom-0 bg-white border-t border-slate-100 p-4">
           <button
             onClick={submit}
-            disabled={submitBusy}
+            disabled={submitBusy || photosBusy}
             className="w-full min-h-[52px] rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-base font-semibold flex items-center justify-center gap-2 disabled:opacity-50"
           >
             {submitBusy ? <Loader2 className="animate-spin" size={18} /> : <Check size={18} />} บันทึก

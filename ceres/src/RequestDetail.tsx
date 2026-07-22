@@ -28,7 +28,7 @@ import {
 } from './lib/api';
 import { REQUEST_TYPE_LABEL as TYPE_LABEL } from './lib/requestLabels';
 import { useCeres } from './lib/bootstrapContext';
-import { MediaThumb } from './lib/media';
+import { MediaThumb, MediaThumbStrip } from './lib/media';
 import ExpenseSheet from './ExpenseSheet';
 import FlagButton from './FlagButton';
 
@@ -248,9 +248,9 @@ export default function RequestDetail({
                 <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 text-xs">{request.category}</span>
               </div>
               <div className="mt-2 text-sm text-slate-700 break-words">{request.reason}</div>
-              {request.requestPhotoUploadId && (
+              {request.requestPhotoUploadIds.length > 0 && (
                 <div className="mt-2">
-                  <MediaThumb id={request.requestPhotoUploadId} size={72} alt="รูปแนบคำขอ" rounded="rounded-xl" />
+                  <MediaThumbStrip ids={request.requestPhotoUploadIds} size={72} alt="รูปแนบคำขอ" rounded="rounded-xl" />
                 </div>
               )}
               {request.approvalStatus === 'void' && request.voidReason && (
@@ -452,12 +452,12 @@ function MoneyEventRow({
     }
   }
 
-  const evidenceId = event.lane === 'transfer' ? event.transferSlipUploadId : event.purchaseReceiptUploadId;
+  const evidenceIds = event.lane === 'transfer' ? event.transferSlipUploadIds : event.purchaseReceiptUploadIds;
 
   return (
     <div className={`rounded-lg border p-2.5 ${reversed ? 'border-slate-200 bg-slate-50 opacity-60' : 'border-slate-200 bg-white'}`}>
       <div className="flex items-center gap-2">
-        {evidenceId && <MediaThumb id={evidenceId} size={36} alt="หลักฐาน" />}
+        <MediaThumbStrip ids={evidenceIds} size={36} alt="หลักฐาน" />
         <div className="flex-1 min-w-0 text-sm">
           <div className="flex items-center gap-1.5">
             {event.lane === 'transfer' ? <Landmark size={13} className="text-slate-400" /> : <Banknote size={13} className="text-slate-400" />}

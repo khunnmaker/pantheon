@@ -3,7 +3,7 @@ import { AlertTriangle, CheckCircle2, Loader2, RefreshCw, ThumbsUp, Wallet, X } 
 import { ApiError, baht, listStaffRequests, neeDecision, type StaffRequest } from './lib/api';
 import { REQUEST_TYPE_LABEL as TYPE_LABEL } from './lib/requestLabels';
 import { useCeres } from './lib/bootstrapContext';
-import { MediaThumb } from './lib/media';
+import { MediaThumbStrip } from './lib/media';
 import { PayPanel } from './PayPanel';
 
 function willForward(request: StaffRequest, threshold: number): boolean {
@@ -173,7 +173,7 @@ export default function NeeApprovalQueue({
                   </div>
                 )}
                 <div className="flex items-start gap-3">
-                  <MediaThumb id={request.requestPhotoUploadId} size={72} alt="หลักฐานคำขอ" rounded="rounded-xl" />
+                  <MediaThumbStrip ids={request.requestPhotoUploadIds} size={72} alt="หลักฐานคำขอ" rounded="rounded-xl" />
                   <div className="flex-1 min-w-0">
                     <div className="flex items-start justify-between gap-2">
                       <div>

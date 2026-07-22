@@ -20,7 +20,7 @@ import {
   type StaffRequest,
 } from './lib/api';
 import { REQUEST_TYPE_LABEL as TYPE_LABEL } from './lib/requestLabels';
-import { MediaThumb } from './lib/media';
+import { MediaThumbStrip } from './lib/media';
 import FlagButton, { FlagBadge } from './FlagButton';
 
 // Re-exported (from the shared helper) so StaffHome's home-screen sections (open-advance
@@ -200,7 +200,7 @@ export default function MyRequests({
                   aria-expanded={expanded}
                   className="w-full p-3 flex items-center gap-3 text-left"
                 >
-                  <MediaThumb id={request.requestPhotoUploadId} size={48} alt="รูปแนบคำขอ" />
+                  <MediaThumbStrip ids={request.requestPhotoUploadIds} size={48} alt="รูปแนบคำขอ" />
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center justify-between gap-2">
                       <span className="font-bold text-base flex items-center gap-1.5">

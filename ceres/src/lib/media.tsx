@@ -78,3 +78,30 @@ export function MediaThumb({
     </a>
   );
 }
+
+// Multi-image widening of MediaThumb (Ceres multi-photo, 2026-07-22) — every read surface
+// that used to render exactly one MediaThumb from a singular `xUploadId` field now renders
+// this instead, fed the array field (server falls back to [singular] for legacy rows with no
+// link rows yet, so callers can pass either shape straight through). Renders nothing for an
+// empty/all-null id list, same as MediaThumb does for a single null id.
+export function MediaThumbStrip({
+  ids,
+  size = 56,
+  alt = 'รูปแนบ',
+  rounded = 'rounded-lg',
+}: {
+  ids: (string | null | undefined)[] | null | undefined;
+  size?: number;
+  alt?: string;
+  rounded?: string;
+}) {
+  const clean = (ids ?? []).filter((id): id is string => !!id);
+  if (clean.length === 0) return null;
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {clean.map((id, i) => (
+        <MediaThumb key={`${id}-${i}`} id={id} size={size} alt={alt} rounded={rounded} />
+      ))}
+    </div>
+  );
+}

@@ -25,7 +25,7 @@ import {
   type StaffRequest,
 } from './lib/api';
 import { REQUEST_TYPE_LABEL } from './lib/requestLabels';
-import { MediaThumb } from './lib/media';
+import { MediaThumbStrip } from './lib/media';
 import { PayPanel } from './PayPanel';
 import FlagsReviewSection from './FlagsReviewSection';
 
@@ -252,7 +252,7 @@ function EscalationCard({
   return (
     <div className="bg-white rounded-xl border border-amber-200 p-3">
       <div className="flex items-start gap-3">
-        <MediaThumb id={r.requestPhotoUploadId} size={64} alt="หลักฐานคำขอ" rounded="rounded-xl" />
+        <MediaThumbStrip ids={r.requestPhotoUploadIds} size={64} alt="หลักฐานคำขอ" rounded="rounded-xl" />
         <div className="flex-1 min-w-0">
           <div className="flex items-center justify-between gap-2">
             <span className="font-semibold text-sm">{r.requestedByName}</span>

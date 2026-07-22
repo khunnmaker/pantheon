@@ -288,6 +288,10 @@ export interface Expense {
   amountNum: number;
   spentAt: string;
   receiptUploadId: string | null;
+  // Array form (Ceres multi-photo, 2026-07-22) — ALWAYS prefer this over the singular field
+  // above; the server fills it from the real link rows, falling back to [receiptUploadId]
+  // (or []) for legacy rows with no link rows yet.
+  receiptUploadIds: string[];
   receiptUrl: string | null;
   ocrAmount: string;
   ocrVendor: string;
@@ -314,6 +318,9 @@ export const createExpense = (body: {
   customerNote?: string;
   amount: string;
   receiptUploadId?: string;
+  // Array wins over the singular field when both are sent (max 10) — see
+  // api/src/ceres/mediaLinks.ts's resolveMediaIdList.
+  receiptUploadIds?: string[];
   note?: string;
   partyId?: string;
   advanceRequestId?: string;
@@ -335,6 +342,7 @@ export const updateExpense = (
     customerNote: string;
     amount: string;
     receiptUploadId: string;
+    receiptUploadIds: string[];
     note: string;
     reason: string;
   }>,
@@ -744,6 +752,9 @@ export interface StaffRequest {
   amountNum: number;
   reason: string;
   requestPhotoUploadId: string | null;
+  // Array form (Ceres multi-photo, 2026-07-22) — ALWAYS prefer this over the singular field
+  // above; falls back to [requestPhotoUploadId] (or []) for legacy rows.
+  requestPhotoUploadIds: string[];
   ocr: { amount: string; vendor: string; date: string };
   aiScreenStatus: AiScreenStatus;
   aiReviewId: string | null;
@@ -782,6 +793,8 @@ export const createStaffRequest = (body: {
   amount: string;
   reason?: string;
   requestPhotoUploadId?: string | null;
+  // Array wins over the singular field when both are sent (max 10).
+  requestPhotoUploadIds?: string[];
 }) => authed<{ request: StaffRequest }>('/api/ceres/requests', { method: 'POST', body: JSON.stringify(body) });
 
 export type StaffRequestScope = 'mine' | 'queue' | 'all';
@@ -804,6 +817,7 @@ export const editStaffRequest = (
     amount: string;
     reason: string;
     requestPhotoUploadId: string | null;
+    requestPhotoUploadIds: string[];
   }>,
 ) => authed<{ request: StaffRequest }>(`/api/ceres/requests/${id}`, { method: 'PATCH', body: JSON.stringify(patch) });
 
@@ -876,7 +890,9 @@ export interface RequestMoneyEvent {
   lane: RequestMoneyLane;
   amount: string;
   transferSlipUploadId: string | null;
+  transferSlipUploadIds: string[];
   purchaseReceiptUploadId: string | null;
+  purchaseReceiptUploadIds: string[];
   cashMovementId: string | null;
   reversesEventId: string | null;
   createdById: string | null;
@@ -897,7 +913,9 @@ export const fulfillStaffRequest = (
   body: {
     lane: RequestMoneyLane;
     transferSlipUploadId?: string;
+    transferSlipUploadIds?: string[];
     purchaseReceiptUploadId?: string;
+    purchaseReceiptUploadIds?: string[];
     note?: string;
     idempotencyKey?: string;
   },
@@ -956,7 +974,14 @@ export interface AdvanceLiquidation {
 
 export const refundAdvance = (
   id: string,
-  body: { lane: RequestMoneyLane; amount: string; transferSlipUploadId?: string; note?: string; idempotencyKey?: string },
+  body: {
+    lane: RequestMoneyLane;
+    amount: string;
+    transferSlipUploadId?: string;
+    transferSlipUploadIds?: string[];
+    note?: string;
+    idempotencyKey?: string;
+  },
 ) =>
   authed<{ moneyEvent: RequestMoneyEvent; liquidation: AdvanceLiquidation }>(`/api/ceres/requests/${id}/refund`, {
     method: 'POST',

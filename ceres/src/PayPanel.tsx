@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { AlertTriangle, Banknote, Camera, CheckCircle2, Image as ImageIcon, Landmark, Loader2 } from 'lucide-react';
+import { AlertTriangle, Banknote, CheckCircle2, Landmark, Loader2 } from 'lucide-react';
 import {
   describeMoneyError,
   fulfillStaffRequest,
@@ -8,7 +8,7 @@ import {
   type RequestMoneyLane,
   type StaffRequest,
 } from './lib/api';
-import { downscaleImage } from './lib/image';
+import PhotoListUpload, { type PhotoItem } from './lib/PhotoListUpload';
 
 // Shared pay-out panel (Ceres approve-and-pay collapse, 2026-07-21). Used both by the GM
 // approval queue's combined "อนุมัติและจ่ายเลย" action (NeeApprovalQueue.tsx) and by the
@@ -26,65 +26,6 @@ import { downscaleImage } from './lib/image';
 // NO lazy lane default (owner rule, 2026-07-18, carried over from the old FulfillForm this
 // replaces) — nothing is preselected; the explicit tap on a lane/action IS the choice.
 
-function EvidenceUpload({
-  label,
-  preview,
-  busy,
-  onPick,
-}: {
-  label: string;
-  preview: string | null;
-  busy: boolean;
-  onPick: (file: File) => void;
-}) {
-  function onChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (file) onPick(file);
-    e.target.value = '';
-  }
-  return (
-    <div>
-      <div className="text-xs font-semibold text-slate-500 mb-1.5">{label}</div>
-      {preview ? (
-        <div className="relative">
-          <img src={preview} alt={label} className="w-full max-h-48 object-contain rounded-xl border border-slate-200 bg-slate-50" />
-          <div className="flex gap-2 mt-2">
-            <label
-              className={`flex-1 min-h-[40px] rounded-lg border border-slate-300 text-xs font-medium hover:bg-slate-50 flex items-center justify-center cursor-pointer ${busy ? 'opacity-50' : ''}`}
-            >
-              {busy ? 'กำลังอัปโหลด…' : 'ถ่ายรูปใหม่'}
-              <input type="file" accept="image/*" capture="environment" className="hidden" disabled={busy} onChange={onChange} />
-            </label>
-            <label
-              className={`flex-1 min-h-[40px] rounded-lg border border-slate-300 text-xs font-medium hover:bg-slate-50 flex items-center justify-center cursor-pointer ${busy ? 'opacity-50' : ''}`}
-            >
-              เลือกรูป
-              <input type="file" accept="image/*" className="hidden" disabled={busy} onChange={onChange} />
-            </label>
-          </div>
-        </div>
-      ) : (
-        <div className="flex gap-2">
-          <label
-            className={`flex-1 min-h-[80px] rounded-xl border-2 border-dashed border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-800 font-semibold flex flex-col items-center justify-center gap-1.5 cursor-pointer ${busy ? 'opacity-60' : ''}`}
-          >
-            {busy ? <Loader2 className="animate-spin" size={20} /> : <Camera size={20} />}
-            <span className="text-xs">{busy ? 'กำลังอัปโหลด…' : 'ถ่ายรูป / แนบรูป'}</span>
-            <input type="file" accept="image/*" capture="environment" className="hidden" disabled={busy} onChange={onChange} />
-          </label>
-          <label
-            className={`flex-1 min-h-[80px] rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-slate-600 font-medium flex flex-col items-center justify-center gap-1.5 cursor-pointer ${busy ? 'opacity-50' : ''}`}
-          >
-            <ImageIcon size={20} />
-            <span className="text-xs">เลือกรูป</span>
-            <input type="file" accept="image/*" className="hidden" disabled={busy} onChange={onChange} />
-          </label>
-        </div>
-      )}
-    </div>
-  );
-}
-
 export function PayPanel({
   request,
   onDone,
@@ -100,11 +41,8 @@ export function PayPanel({
 }) {
   const isPurchase = request.requestType === 'purchase';
   const [lane, setLane] = useState<RequestMoneyLane | null>(null);
-  const [slipId, setSlipId] = useState<string | null>(null);
-  const [slipPreview, setSlipPreview] = useState<string | null>(null);
-  const [receiptId, setReceiptId] = useState<string | null>(null);
-  const [receiptPreview, setReceiptPreview] = useState<string | null>(null);
-  const [uploadBusy, setUploadBusy] = useState<'slip' | 'receipt' | null>(null);
+  const [slipPhotos, setSlipPhotos] = useState<PhotoItem[]>([]);
+  const [receiptPhotos, setReceiptPhotos] = useState<PhotoItem[]>([]);
   // Which lane is currently mid-submit — also drives the one-tap cash button's own spinner.
   const [busyLane, setBusyLane] = useState<RequestMoneyLane | null>(null);
   const [error, setError] = useState('');
@@ -114,36 +52,19 @@ export function PayPanel({
   const idempotencyKey = useRef(newIdempotencyKey());
 
   const busy = busyLane !== null;
+  const uploadSlip = (dataB64: string, contentType: string) => uploadMedia(dataB64, contentType, 'transfer_slip');
+  const uploadReceiptPhoto = (dataB64: string, contentType: string) => uploadMedia(dataB64, contentType, 'purchase_receipt');
 
-  async function handleUpload(kind: 'slip' | 'receipt', file: File) {
-    setError('');
-    setUploadBusy(kind);
-    try {
-      const { dataB64, contentType } = await downscaleImage(file);
-      const result = await uploadMedia(dataB64, contentType, kind === 'slip' ? 'transfer_slip' : 'purchase_receipt');
-      const preview = `data:${contentType};base64,${dataB64}`;
-      if (kind === 'slip') {
-        setSlipId(result.uploadId);
-        setSlipPreview(preview);
-      } else {
-        setReceiptId(result.uploadId);
-        setReceiptPreview(preview);
-      }
-    } catch {
-      setError('อัปโหลดรูปไม่สำเร็จ ลองใหม่อีกครั้ง');
-    } finally {
-      setUploadBusy(null);
-    }
-  }
-
-  async function doFulfill(l: RequestMoneyLane, evidence?: { slipUploadId?: string; receiptUploadId?: string }) {
+  async function doFulfill(l: RequestMoneyLane, evidence?: { slipUploadIds?: string[]; receiptUploadIds?: string[] }) {
     setError('');
     setBusyLane(l);
     try {
       await fulfillStaffRequest(request.id, {
         lane: l,
-        transferSlipUploadId: evidence?.slipUploadId,
-        purchaseReceiptUploadId: evidence?.receiptUploadId,
+        transferSlipUploadId: evidence?.slipUploadIds?.[0],
+        transferSlipUploadIds: evidence?.slipUploadIds,
+        purchaseReceiptUploadId: evidence?.receiptUploadIds?.[0],
+        purchaseReceiptUploadIds: evidence?.receiptUploadIds,
         idempotencyKey: idempotencyKey.current,
       });
       onDone(isPurchase ? 'บันทึกว่าซื้อแล้ว' : 'บันทึกจ่ายเงินแล้ว');
@@ -154,15 +75,18 @@ export function PayPanel({
     }
   }
 
-  const missingSlip = lane === 'transfer' && !slipId;
-  const missingReceipt = isPurchase && !receiptId;
+  const readySlipIds = slipPhotos.filter((p) => !p.busy).map((p) => p.uploadId);
+  const readyReceiptIds = receiptPhotos.filter((p) => !p.busy).map((p) => p.uploadId);
+  const uploadBusy = slipPhotos.some((p) => p.busy) || receiptPhotos.some((p) => p.busy);
+  const missingSlip = lane === 'transfer' && readySlipIds.length === 0;
+  const missingReceipt = isPurchase && readyReceiptIds.length === 0;
 
   async function submit() {
     setError('');
     if (!lane) return setError('กรุณาเลือกช่องทางจ่ายเงิน');
     if (missingSlip) return setError('ต้องแนบสลิปโอนก่อนบันทึก');
     if (missingReceipt) return setError('ต้องแนบใบเสร็จซื้อของก่อนบันทึก');
-    await doFulfill(lane, { slipUploadId: slipId ?? undefined, receiptUploadId: receiptId ?? undefined });
+    await doFulfill(lane, { slipUploadIds: readySlipIds, receiptUploadIds: readyReceiptIds });
   }
 
   // ---- purchase: unchanged two-step shape (lane choice + mandatory receipt + confirm) ----
@@ -192,14 +116,15 @@ export function PayPanel({
         </div>
 
         {lane === 'transfer' && (
-          <EvidenceUpload label="สลิปโอนเงิน (จำเป็น)" preview={slipPreview} busy={uploadBusy === 'slip'} onPick={(f) => handleUpload('slip', f)} />
+          <div>
+            <div className="text-xs font-semibold text-slate-500 mb-1.5">สลิปโอนเงิน (จำเป็น)</div>
+            <PhotoListUpload items={slipPhotos} onChange={setSlipPhotos} upload={uploadSlip} compact />
+          </div>
         )}
-        <EvidenceUpload
-          label="ใบเสร็จซื้อของ (จำเป็น)"
-          preview={receiptPreview}
-          busy={uploadBusy === 'receipt'}
-          onPick={(f) => handleUpload('receipt', f)}
-        />
+        <div>
+          <div className="text-xs font-semibold text-slate-500 mb-1.5">ใบเสร็จซื้อของ (จำเป็น)</div>
+          <PhotoListUpload items={receiptPhotos} onChange={setReceiptPhotos} upload={uploadReceiptPhoto} compact />
+        </div>
 
         {error && (
           <div className="flex items-center gap-1 text-rose-600 text-xs">
@@ -210,7 +135,7 @@ export function PayPanel({
         <div className="flex gap-2">
           <button
             onClick={submit}
-            disabled={busy || uploadBusy !== null}
+            disabled={busy || uploadBusy}
             className="flex-1 min-h-[44px] rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold flex items-center justify-center gap-1 disabled:opacity-40"
           >
             {busy ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />} ยืนยันซื้อแล้ว
@@ -265,7 +190,10 @@ export function PayPanel({
         </>
       ) : (
         <>
-          <EvidenceUpload label="สลิปโอนเงิน (จำเป็น)" preview={slipPreview} busy={uploadBusy === 'slip'} onPick={(f) => handleUpload('slip', f)} />
+          <div>
+            <div className="text-xs font-semibold text-slate-500 mb-1.5">สลิปโอนเงิน (จำเป็น)</div>
+            <PhotoListUpload items={slipPhotos} onChange={setSlipPhotos} upload={uploadSlip} compact />
+          </div>
 
           {error && (
             <div className="flex items-center gap-1 text-rose-600 text-xs">
@@ -276,7 +204,7 @@ export function PayPanel({
           <div className="flex gap-2">
             <button
               onClick={submit}
-              disabled={busy || uploadBusy !== null}
+              disabled={busy || uploadBusy}
               className="flex-1 min-h-[44px] rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold flex items-center justify-center gap-1 disabled:opacity-40"
             >
               {busy ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />} ยืนยันจ่ายแล้ว
