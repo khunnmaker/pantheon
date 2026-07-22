@@ -11,9 +11,10 @@
     "typecheck": "tsc -b"
   },
   "dependencies": {
-    "@pantheon/ui": "*",
     "@dicebear/collection": "^9.4.2",
     "@dicebear/core": "^9.4.3",
+    "@pantheon/ui": "*",
+    "@techstark/opencv-js": "^5.0.0-release.1",
     "lucide-react": "^0.454.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"

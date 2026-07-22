@@ -9,10 +9,19 @@
 // PayPanel/Nee each already have their own uploadMedia(...)/uploadReceipt(...) call with the
 // purpose baked in, so this component stays agnostic to purpose entirely.
 import { useEffect, useRef, useState } from 'react';
-import { AlertTriangle, Camera, Image as ImageIcon, Loader2, X } from 'lucide-react';
-import { downscaleImage } from './image';
+import { AlertTriangle, Camera, Image as ImageIcon, Loader2, ScanLine, X } from 'lucide-react';
+import { downscaleCanvas, downscaleImage } from './image';
+import { scanDocument, warmScanLibrary } from './scan';
 import { MediaThumb } from './media';
 import type { DuplicateReceipt, OcrResult } from './api';
+
+type UploadPayload = { dataB64: string; contentType: string };
+type PreviewChoice = 'scanned' | 'original' | 'retake';
+type PickSource = 'camera' | 'gallery';
+
+function payloadToDataUrl(payload: UploadPayload): string {
+  return `data:${payload.contentType};base64,${payload.dataB64}`;
+}
 
 export interface PhotoItem {
   // Real uploaded media id once done; a synthetic `__busy_*` placeholder id while the file
@@ -65,7 +74,31 @@ export default function PhotoListUpload({
     itemsRef.current = items;
   }, [items]);
 
-  async function handleFiles(fileList: FileList | null) {
+  // Scan-preview overlay (Ceres in-page "scan mode", 2026-07-22). Warms the ~8MB OpenCV.js
+  // chunk as soon as a sheet with a photo step mounts, so it's usually already resolved by
+  // the time a photo is actually picked — see scan.ts for the fail-open contract.
+  useEffect(() => {
+    void warmScanLibrary();
+  }, []);
+  const [preview, setPreview] = useState<{ scannedUrl: string; originalUrl: string } | null>(null);
+  const [showOriginal, setShowOriginal] = useState(false);
+  const previewResolveRef = useRef<((choice: PreviewChoice) => void) | null>(null);
+
+  function askUserToChoose(scannedUrl: string, originalUrl: string): Promise<PreviewChoice> {
+    return new Promise((resolve) => {
+      previewResolveRef.current = resolve;
+      setShowOriginal(false);
+      setPreview({ scannedUrl, originalUrl });
+    });
+  }
+  function choosePreview(choice: PreviewChoice) {
+    setPreview(null);
+    const resolve = previewResolveRef.current;
+    previewResolveRef.current = null;
+    resolve?.(choice);
+  }
+
+  async function handleFiles(fileList: FileList | null, source: PickSource) {
     if (!fileList || fileList.length === 0) return;
     setError('');
     setCapNote('');
@@ -85,12 +118,23 @@ export default function PhotoListUpload({
       itemsRef.current = withBusy;
       onChange(withBusy);
       try {
-        const { dataB64, contentType } = await downscaleImage(file);
+        const payload = await resolveUploadPayload(file);
+        if (!payload) {
+          // "ถ่ายใหม่" — drop this file's busy placeholder and re-open the same input the
+          // user picked from; the rest of this batch (if any) is abandoned on purpose so a
+          // retake never races with still-queued files from the same pick.
+          const cleaned = itemsRef.current.filter((it) => it.uploadId !== tempId);
+          itemsRef.current = cleaned;
+          onChange(cleaned);
+          (source === 'camera' ? cameraRef : galleryRef).current?.click();
+          return;
+        }
+        const { dataB64, contentType } = payload;
         const result = await upload(dataB64, contentType);
-        const preview = `data:${contentType};base64,${dataB64}`;
+        const previewUrl = `data:${contentType};base64,${dataB64}`;
         const resolved = itemsRef.current.map((it) =>
           it.uploadId === tempId
-            ? { uploadId: result.uploadId, preview, duplicate: result.duplicate, busy: false }
+            ? { uploadId: result.uploadId, preview: previewUrl, duplicate: result.duplicate, busy: false }
             : it,
         );
         itemsRef.current = resolved;
@@ -105,12 +149,36 @@ export default function PhotoListUpload({
     }
   }
 
+  // Runs the scan attempt for one picked file and returns the payload to upload, or null if
+  // the user chose to retake. Fails open at every stage per scan.ts's contract: any scan
+  // failure/timeout/no-document-found falls straight through to the plain (EXIF-corrected)
+  // downscaled photo with no preview shown at all — only a successful scan candidate ever
+  // pops the preview overlay.
+  async function resolveUploadPayload(file: File): Promise<UploadPayload | null> {
+    const outcome = await scanDocument(file).catch(() => null);
+    if (!outcome) {
+      // Scanning couldn't even decode the file for processing — total fallback, identical
+      // to the pre-scan-feature path.
+      return downscaleImage(file);
+    }
+    if (!outcome.scanned) {
+      // No plausible document found (or OpenCV unavailable) — still benefits from the
+      // EXIF-upright decode already done inside scanDocument.
+      return downscaleCanvas(outcome.original);
+    }
+    const scannedPayload = downscaleCanvas(outcome.scanned);
+    const originalPayload = downscaleCanvas(outcome.original);
+    const choice = await askUserToChoose(payloadToDataUrl(scannedPayload), payloadToDataUrl(originalPayload));
+    if (choice === 'retake') return null;
+    return choice === 'original' ? originalPayload : scannedPayload;
+  }
+
   function onCameraChange(e: React.ChangeEvent<HTMLInputElement>) {
-    void handleFiles(e.target.files);
+    void handleFiles(e.target.files, 'camera');
     e.target.value = '';
   }
   function onGalleryChange(e: React.ChangeEvent<HTMLInputElement>) {
-    void handleFiles(e.target.files);
+    void handleFiles(e.target.files, 'gallery');
     e.target.value = '';
   }
   function removeAt(uploadId: string) {
@@ -223,6 +291,59 @@ export default function PhotoListUpload({
       {error && (
         <div className="flex items-center gap-1 text-rose-600 text-xs mt-1.5">
           <AlertTriangle size={12} /> {error}
+        </div>
+      )}
+
+      {/* Scan preview overlay — only ever shown when a scan candidate was actually found
+          (see resolveUploadPayload); above the sheet's own z-50 so it reads as a step on
+          top of the open sheet, not a competing layer. */}
+      {preview && (
+        <div className="fixed inset-0 z-[60] bg-slate-900/60 flex items-end sm:items-center justify-center p-3">
+          <div className="w-full sm:max-w-sm bg-white rounded-2xl overflow-hidden shadow-xl">
+            <div className="px-4 pt-3.5 pb-1 flex items-center gap-1.5 text-sm font-semibold text-slate-700">
+              <ScanLine size={16} className="text-amber-600" />
+              ตรวจสอบรูปที่สแกน
+            </div>
+            <div className="px-4 pt-1.5 pb-2">
+              <img
+                src={showOriginal ? preview.originalUrl : preview.scannedUrl}
+                alt="ตัวอย่างรูปที่สแกน"
+                className="w-full max-h-[52vh] object-contain rounded-xl border border-slate-200 bg-slate-50"
+              />
+              <button
+                type="button"
+                onClick={() => setShowOriginal((v) => !v)}
+                className="mt-2 w-full text-center text-xs text-amber-700 underline underline-offset-2"
+              >
+                {showOriginal ? 'ดูรูปที่ปรับแล้ว' : 'เทียบกับรูปเดิม'}
+              </button>
+            </div>
+            <div className="p-3.5 pt-1 flex flex-col gap-2">
+              <button
+                type="button"
+                onClick={() => choosePreview('scanned')}
+                className="min-h-[48px] rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-semibold text-sm"
+              >
+                ใช้รูปนี้
+              </button>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => choosePreview('original')}
+                  className="min-h-[44px] rounded-xl border border-slate-300 text-slate-700 text-sm font-medium hover:bg-slate-50"
+                >
+                  ใช้รูปเดิม
+                </button>
+                <button
+                  type="button"
+                  onClick={() => choosePreview('retake')}
+                  className="min-h-[44px] rounded-xl border border-rose-300 text-rose-700 text-sm font-medium hover:bg-rose-50"
+                >
+                  ถ่ายใหม่
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </div>
