@@ -163,6 +163,35 @@ function seedRequestWithCashPayment(id: string, overrides: Row = {}) {
   store.ceresFlag.push({ id: `${id}-flag-1`, targetType: 'request', targetId: id, status: 'open' });
 }
 
+// Mirrors requestMoney.ts's recordRequestMoneyEventInTx / reverseRequestMoneyEventInTx
+// stamping: an advance paid out, PARTIALLY refunded, and that refund then reversed — every
+// movement carries requestId + requestMoneyEventId, and the reversal movement additionally
+// carries reversesMovementId pointing at the movement it reverses (exactly as
+// recordRequestMoneyEventInTx writes `reversesMovementId: reversed.cashMovementId` and
+// `type: 'reversal'`, direction flipped from the event it reverses — reversing a refund
+// pushes cash back OUT). This is the exact path the "full graph + box balance" test above
+// never exercised (adversarial review, 2026-07-22): a request whose money events include a
+// refund AND a reversal, not just a single bare payment.
+function seedAdvanceWithRefundAndReversal(id: string) {
+  store.ceresPaymentRequest.set(id, {
+    id, workflowVersion: 2, requestType: 'advance', approvalStatus: 'approved',
+    fulfillmentStatus: 'settling', amount: '1000.00', requesterPartyId: null,
+    requestedByName: 'Staff', entity: 'PROM', rowVersion: 1,
+  });
+  store.ceresRequestMoneyEvent.push(
+    { id: `${id}-event-pay`, requestId: id, kind: 'payment', lane: 'cash', amount: '1000.00', cashMovementId: `${id}-movement-pay`, reversesEventId: null, createdAt: new Date() },
+    { id: `${id}-event-refund`, requestId: id, kind: 'refund', lane: 'cash', amount: '300.00', cashMovementId: `${id}-movement-refund`, reversesEventId: null, createdAt: new Date() },
+    { id: `${id}-event-reversal`, requestId: id, kind: 'reversal', lane: 'cash', amount: '300.00', cashMovementId: `${id}-movement-reversal`, reversesEventId: `${id}-event-refund`, createdAt: new Date() },
+  );
+  store.cashMovement.push(
+    { id: `${id}-movement-pay`, accountId: 'pettyCash', type: 'advance', direction: 'out', amount: '1000.00', requestId: id, requestMoneyEventId: `${id}-event-pay`, reversesMovementId: null, createdAt: new Date() },
+    { id: `${id}-movement-refund`, accountId: 'pettyCash', type: 'request_refund', direction: 'in', amount: '300.00', requestId: id, requestMoneyEventId: `${id}-event-refund`, reversesMovementId: null, createdAt: new Date() },
+    // Reversing a refund pushes cash back OUT (see requestMoney.ts: `direction = reversed.kind === 'refund' ? 'out' : 'in'`).
+    { id: `${id}-movement-reversal`, accountId: 'pettyCash', type: 'reversal', direction: 'out', amount: '300.00', requestId: id, requestMoneyEventId: `${id}-event-reversal`, reversesMovementId: `${id}-movement-refund`, createdAt: new Date() },
+  );
+  store.ceresRequestEvent.push({ id: `${id}-revent-1`, requestId: id, kind: 'paid', createdAt: new Date() });
+}
+
 function seedExpense(id: string, overrides: Row = {}) {
   store.ceresExpense.set(id, {
     id, partyId: 'party-1', partyName: 'Staff', amount: '100.00', status: 'approved',
@@ -210,6 +239,8 @@ describe('purgeStaffRequest — full graph + box balance', () => {
     seedExpense('child-1', { advanceRequestId: 'adv-1', status: 'approved' });
     seedExpense('child-2', { advanceRequestId: 'adv-1', status: 'settled' });
     seedExpense('unrelated-3', { advanceRequestId: null, status: 'approved' });
+    const balanceBefore = cashBalanceFromMovements(store.cashMovement as never);
+    expect(balanceBefore).toBe(700); // 1000 baseline - 300 outgoing payment (children carry no cash of their own)
 
     const result = await purgeStaffRequest('adv-1', ceo);
 
@@ -221,6 +252,28 @@ describe('purgeStaffRequest — full graph + box balance', () => {
     // Each child's own dependents (media link / revision / AI review / flag) went with it.
     expect(store.ceresMediaLink.some((r) => r.targetId === 'child-1' || r.targetId === 'child-2')).toBe(false);
     expect(store.ceresRevision.some((r) => r.subjectId === 'child-1' || r.subjectId === 'child-2')).toBe(false);
+    // Box balance restored to its exact pre-request value (baseline only) — the cascade
+    // deletes the advance's own payment movement too, not just the children's rows.
+    expect(cashBalanceFromMovements(store.cashMovement as never)).toBe(1000);
+  });
+
+  it('purges an advance with a refund AND a reversal of that refund — every movement the request produced is swept, box balance restored exactly', async () => {
+    seedAdvanceWithRefundAndReversal('adv-refund-1');
+    // 1000 baseline + (-1000 payment) + (+300 refund) + (-300 reversal-of-refund) = 0.
+    const balanceBefore = cashBalanceFromMovements(store.cashMovement as never);
+    expect(balanceBefore).toBe(0);
+
+    await purgeStaffRequest('adv-refund-1', ceo);
+
+    // (a) zero CashMovement rows remain for this requestId.
+    expect(store.cashMovement.filter((r) => r.requestId === 'adv-refund-1')).toHaveLength(0);
+    expect(store.cashMovement).toEqual([expect.objectContaining({ id: 'baseline-deposit' })]);
+    // (b) the box balance over whatever remains equals the EXACT pre-request value — the
+    // request's payment, its refund, AND the reversal of that refund are all gone, not just
+    // the single payment (the case seedRequestWithCashPayment alone could never exercise).
+    expect(cashBalanceFromMovements(store.cashMovement as never)).toBe(1000);
+    expect(store.ceresRequestMoneyEvent).toHaveLength(0);
+    expect(store.ceresPaymentRequest.has('adv-refund-1')).toBe(false);
   });
 
   it.each(['void', 'rejected'] as const)('purges a request in approvalStatus %s (any-state, alpha stance)', async (approvalStatus) => {
