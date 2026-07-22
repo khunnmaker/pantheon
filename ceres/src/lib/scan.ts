@@ -34,11 +34,21 @@ interface Corner {
   y: number;
 }
 
+// A surviving 4-vertex candidate from any one detection strategy, plus the score used to
+// pick the best candidate across all strategies (see `findBestQuadInMap`).
+interface QuadCandidate {
+  corners: [Corner, Corner, Corner, Corner];
+  score: number;
+}
+
 const LOAD_TIMEOUT_MS = 8000;
 const WORK_MAX_EDGE = 1000; // detection runs on a shrunk copy for speed; the warp itself
 // always uses the full-resolution original so output quality isn't capped by this.
 const MIN_AREA_RATIO = 0.08; // reject contours covering too little of the frame (no document)
 const MAX_AREA_RATIO = 0.98; // reject "the whole photo is the contour" (no border found)
+const MORPH_CLOSE_KERNEL = 7; // bridges gaps in the edge map (e.g. a finger occluding the border)
+const MAX_CONTOURS_PER_MAP = 10; // top-N by area considered per strategy, keeps this bounded
+const APPROX_EPSILONS = [0.02, 0.03, 0.04]; // fractions of arc length tried for approxPolyDP
 
 let cvPromise: Promise<CvNamespace | null> | null = null;
 
@@ -152,20 +162,184 @@ function shrinkCopy(canvas: HTMLCanvasElement, scale: number): HTMLCanvasElement
   return out;
 }
 
-// Finds the four corners (in `canvas` pixel coordinates) of the largest plausible
-// document-shaped contour, or null if nothing plausible is found.
+// Finds the four corners (in `canvas` pixel coordinates) of the best plausible document
+// quad, or null if nothing plausible is found anywhere. Runs several independent
+// binarization strategies (auto-Canny, fixed Canny, Otsu, adaptive threshold) since no
+// single one is reliable across lighting/contrast conditions in the field (low-contrast
+// paper-on-tile, finger occlusion, busy backgrounds); scores every surviving 4-vertex
+// candidate across all of them and keeps the best. Falls back to the original
+// largest-contour + quadrant-extreme heuristic if no strategy yields a clean quad, so a
+// rough crop offer beats no offer at all (the user can always keep the original photo).
 function locateDocumentCorners(cv: CvNamespace, canvas: HTMLCanvasElement): [Corner, Corner, Corner, Corner] | null {
   const src = cv.imread(canvas);
   const gray = new cv.Mat();
   const blurred = new cv.Mat();
+  try {
+    cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+    // Edge-preserving smoothing before any of the strategies below — cuts down on the
+    // texture noise a busy background (tile grout, wood grain, a grid-paper backdrop)
+    // would otherwise contribute as spurious contours.
+    cv.GaussianBlur(gray, blurred, new cv.Size(5, 5), 0, 0, cv.BORDER_DEFAULT);
+
+    const imgArea = src.rows * src.cols;
+    const maps = buildCandidateMaps(cv, blurred);
+    let best: QuadCandidate | null = null;
+    try {
+      for (const map of maps) {
+        const found = findBestQuadInMap(cv, map, imgArea);
+        if (found && (!best || found.score > best.score)) best = found;
+      }
+    } finally {
+      for (const m of maps) m.delete();
+    }
+    if (best) return best.corners;
+
+    return fallbackLargestContour(cv, blurred, imgArea);
+  } finally {
+    src.delete();
+    gray.delete();
+    blurred.delete();
+  }
+}
+
+// Approximates the median of a single-channel 8-bit Mat via a 256-bin histogram (no need
+// to sort hundreds of thousands of pixels) — feeds the classic auto-Canny threshold
+// formula (lower = 0.66*median, upper = 1.33*median).
+function medianGray(mat: any): number {
+  const data: Uint8Array = mat.data;
+  const hist = new Array(256).fill(0);
+  for (let i = 0; i < data.length; i++) hist[data[i]]++;
+  const half = data.length / 2;
+  let cumulative = 0;
+  for (let v = 0; v < 256; v++) {
+    cumulative += hist[v];
+    if (cumulative >= half) return v;
+  }
+  return 128;
+}
+
+// Builds the set of binary edge/region maps to search for a document quad in, each a
+// different bet on what will separate the paper from its background. Caller owns and must
+// delete every returned Mat. Never throws: on any failure partway through, whatever Mats
+// were already built are deleted and an empty array is returned (locateDocumentCorners
+// then just falls through to the fixed-heuristic fallback).
+function buildCandidateMaps(cv: CvNamespace, blurred: any): any[] {
+  const maps: any[] = [];
+  let closeKernel: any;
+  try {
+    closeKernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(MORPH_CLOSE_KERNEL, MORPH_CLOSE_KERNEL));
+
+    // (a) Auto-Canny (median-derived thresholds) + morphological close. The close (not
+    // just dilate) bridges gaps left where a finger occludes part of the document border.
+    const median = medianGray(blurred);
+    const lower = Math.max(0, Math.round(0.66 * median));
+    const upper = Math.min(255, Math.round(1.33 * median));
+    let edges = new cv.Mat();
+    cv.Canny(blurred, edges, lower, upper);
+    let closed = new cv.Mat();
+    cv.morphologyEx(edges, closed, cv.MORPH_CLOSE, closeKernel);
+    edges.delete();
+    maps.push(closed);
+
+    // (b) Fixed Canny 50/150 (the original thresholds) + the same close, as a second,
+    // independent bet — cheap insurance for scenes the auto thresholds misjudge.
+    edges = new cv.Mat();
+    cv.Canny(blurred, edges, 50, 150);
+    closed = new cv.Mat();
+    cv.morphologyEx(edges, closed, cv.MORPH_CLOSE, closeKernel);
+    edges.delete();
+    maps.push(closed);
+
+    // (c) Otsu threshold on the blurred gray — segments by brightness (bright paper vs a
+    // darker background) rather than by edge gradients, which helps on low-contrast paper
+    // edges Canny tends to miss.
+    const otsu = new cv.Mat();
+    cv.threshold(blurred, otsu, 0, 255, cv.THRESH_BINARY + cv.THRESH_OTSU);
+    maps.push(otsu);
+
+    // (d) Adaptive threshold — a local/regional variant of (c), cheap to add and catches
+    // cases with uneven lighting across the frame that a single global Otsu level misses.
+    const adaptive = new cv.Mat();
+    cv.adaptiveThreshold(blurred, adaptive, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, 35, 10);
+    maps.push(adaptive);
+
+    return maps;
+  } catch {
+    for (const m of maps) m.delete();
+    return [];
+  } finally {
+    closeKernel?.delete();
+  }
+}
+
+// Searches one binary map for the best document-shaped quad: takes the top-N contours by
+// area, tries a few approxPolyDP epsilons on each, keeps only convex 4-vertex results in
+// the plausible area range, and scores each by area * rectangularity (how close its area
+// is to its own minAreaRect's area — a true rectangle scores ~1.0, a skinny/irregular
+// quad scores much lower). Returns the best candidate found in this map, or null.
+function findBestQuadInMap(cv: CvNamespace, map: any, imgArea: number): QuadCandidate | null {
+  const contours = new cv.MatVector();
+  const hierarchy = new cv.Mat();
+  let best: QuadCandidate | null = null;
+  try {
+    cv.findContours(map, contours, hierarchy, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
+
+    const n = contours.size();
+    const byArea: { idx: number; area: number }[] = [];
+    for (let i = 0; i < n; i++) {
+      const c = contours.get(i);
+      byArea.push({ idx: i, area: cv.contourArea(c) });
+      c.delete();
+    }
+    byArea.sort((a, b) => b.area - a.area);
+    const top = byArea.slice(0, MAX_CONTOURS_PER_MAP);
+
+    for (const { idx, area } of top) {
+      if (area < imgArea * MIN_AREA_RATIO || area > imgArea * MAX_AREA_RATIO) continue;
+      const c = contours.get(idx);
+      try {
+        const peri = cv.arcLength(c, true);
+        for (const epsFrac of APPROX_EPSILONS) {
+          const approx = new cv.Mat();
+          try {
+            cv.approxPolyDP(c, approx, epsFrac * peri, true);
+            if (approx.rows !== 4) continue;
+            if (!cv.isContourConvex(approx)) continue;
+
+            const rect = cv.minAreaRect(approx);
+            const rectArea = rect.size.width * rect.size.height;
+            if (rectArea <= 0) continue;
+            const rectangularity = Math.min(1, area / rectArea);
+            const score = area * rectangularity;
+            if (best && score <= best.score) continue;
+
+            const corners = extractQuadrantCorners(approx, rect.center);
+            if (corners) best = { corners, score };
+          } finally {
+            approx.delete();
+          }
+        }
+      } finally {
+        c.delete();
+      }
+    }
+    return best;
+  } finally {
+    contours.delete();
+    hierarchy.delete();
+  }
+}
+
+// The original detection heuristic (fixed Canny 50/150 + dilate, largest contour by area,
+// quadrant-extreme corners) — kept as the last-resort fallback when no strategy above
+// yields a clean 4-vertex quad. Reuses the already-blurred gray Mat from the caller.
+function fallbackLargestContour(cv: CvNamespace, blurred: any, imgArea: number): [Corner, Corner, Corner, Corner] | null {
   const edges = new cv.Mat();
   const dilated = new cv.Mat();
   const kernel = cv.Mat.ones(5, 5, cv.CV_8U);
   const contours = new cv.MatVector();
   const hierarchy = new cv.Mat();
   try {
-    cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-    cv.GaussianBlur(gray, blurred, new cv.Size(5, 5), 0, 0, cv.BORDER_DEFAULT);
     cv.Canny(blurred, edges, 50, 150);
     cv.dilate(edges, dilated, kernel);
     cv.findContours(dilated, contours, hierarchy, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
@@ -182,23 +356,16 @@ function locateDocumentCorners(cv: CvNamespace, canvas: HTMLCanvasElement): [Cor
       c.delete();
     }
     if (bestIdx < 0) return null;
-
-    const imgArea = src.rows * src.cols;
     if (bestArea < imgArea * MIN_AREA_RATIO || bestArea > imgArea * MAX_AREA_RATIO) return null;
 
     const best = contours.get(bestIdx);
-    let corners: [Corner, Corner, Corner, Corner] | null = null;
     try {
       const rect = cv.minAreaRect(best);
-      corners = extractQuadrantCorners(best, rect.center);
+      return extractQuadrantCorners(best, rect.center);
     } finally {
       best.delete();
     }
-    return corners;
   } finally {
-    src.delete();
-    gray.delete();
-    blurred.delete();
     edges.delete();
     dilated.delete();
     kernel.delete();
