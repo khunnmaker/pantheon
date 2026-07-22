@@ -358,43 +358,7 @@ export default function RequestSheet({
                 </div>
               )}
 
-              {/* Amount — primary input #1 */}
-              <div>
-                <div className="text-xs font-semibold text-slate-500 mb-1.5">จำนวนเงิน</div>
-                <input
-                  inputMode="decimal"
-                  value={amount}
-                  onChange={(e) => {
-                    setAmount(e.target.value);
-                    setAmountError('');
-                  }}
-                  placeholder="0.00"
-                  className="w-full px-3 py-3 rounded-xl border border-slate-300 text-2xl font-bold focus:outline-none focus:ring-2 focus:ring-amber-400 min-h-[56px]"
-                />
-                {amountError && (
-                  <div className="flex items-center gap-1 text-rose-600 text-xs mt-1">
-                    <AlertTriangle size={12} /> {amountError}
-                  </div>
-                )}
-                {ocrDiffers && <div className="text-xs text-amber-700 mt-1">AI อ่านได้ ฿{ocr?.amount}</div>}
-              </div>
-
-              {/* Reason — primary input #2 (optional for advance; the precise detail is
-                  captured per-expense at liquidation instead) */}
-              <div>
-                <div className="text-xs font-semibold text-slate-500 mb-1.5">
-                  {requestType === 'advance' ? 'เหตุผล (ไม่บังคับ)' : 'เหตุผล / รายละเอียด'}
-                </div>
-                <textarea
-                  value={reason}
-                  onChange={(e) => setReason(e.target.value)}
-                  placeholder="เช่น ค่าน้ำมันไปส่งของ, ซื้ออุปกรณ์สำนักงาน"
-                  rows={3}
-                  className="w-full px-3 py-3 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 resize-none"
-                />
-              </div>
-
-              {/* Photo — primary input #3 (required for reimbursement, optional otherwise) */}
+              {/* Photo — primary input #1 (required for reimbursement, optional otherwise) */}
               <div>
                 <div className="text-xs font-semibold text-slate-500 mb-1.5">
                   {requestType === 'reimbursement' ? 'ใบเสร็จ (จำเป็น)' : 'รูปประกอบ (ถ้ามี)'}
@@ -489,6 +453,42 @@ export default function RequestSheet({
                     <ImageOff size={12} /> ไม่แนบรูปก็ส่งคำขอได้
                   </div>
                 )}
+              </div>
+
+              {/* Amount — primary input #2 */}
+              <div>
+                <div className="text-xs font-semibold text-slate-500 mb-1.5">จำนวนเงิน</div>
+                <input
+                  inputMode="decimal"
+                  value={amount}
+                  onChange={(e) => {
+                    setAmount(e.target.value);
+                    setAmountError('');
+                  }}
+                  placeholder="0.00"
+                  className="w-full px-3 py-3 rounded-xl border border-slate-300 text-2xl font-bold focus:outline-none focus:ring-2 focus:ring-amber-400 min-h-[56px]"
+                />
+                {amountError && (
+                  <div className="flex items-center gap-1 text-rose-600 text-xs mt-1">
+                    <AlertTriangle size={12} /> {amountError}
+                  </div>
+                )}
+                {ocrDiffers && <div className="text-xs text-amber-700 mt-1">AI อ่านได้ ฿{ocr?.amount}</div>}
+              </div>
+
+              {/* Reason — primary input #3 (optional for advance; the precise detail is
+                  captured per-expense at liquidation instead) */}
+              <div>
+                <div className="text-xs font-semibold text-slate-500 mb-1.5">
+                  {requestType === 'advance' ? 'เหตุผล (ไม่บังคับ)' : 'เหตุผล / รายละเอียด'}
+                </div>
+                <textarea
+                  value={reason}
+                  onChange={(e) => setReason(e.target.value)}
+                  placeholder="เช่น ค่าน้ำมันไปส่งของ, ซื้ออุปกรณ์สำนักงาน"
+                  rows={3}
+                  className="w-full px-3 py-3 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 resize-none"
+                />
               </div>
 
               {/* Entity — no default; explicit tap required */}
