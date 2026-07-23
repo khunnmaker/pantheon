@@ -24,19 +24,16 @@ export async function downscaleImage(file: File): Promise<{ dataB64: string; con
   }
 }
 
-// Same downscale contract as `downscaleImage`, but for a canvas already in hand (the
-// scan.ts warp/enhance output) — reused so the scanned path produces byte-for-byte the
-// same kind of payload (max 1600px edge, JPEG q0.8) as the untouched-photo path always has.
+// Same downscale contract as `downscaleImage`, but for a canvas already in hand — reused by
+// callers that decode the upright canvas themselves via `decodeUprightCanvas` below.
 export function downscaleCanvas(canvas: HTMLCanvasElement): { dataB64: string; contentType: string } {
   const { targetW, targetH } = computeTargetSize(canvas.width, canvas.height, MAX_EDGE);
   const resized = targetW === canvas.width && targetH === canvas.height ? canvas : drawToCanvas(canvas, targetW, targetH);
   return canvasToJpeg(resized);
 }
 
-// Full-resolution, EXIF-corrected working canvas — the starting point for scan.ts's edge
-// detection/perspective-warp, which needs full detail (not the 1600px upload-size cap) to
-// find document corners reliably. Never throws internally; a decode failure here should be
-// treated by the caller as "scanning unavailable for this file", not a hard error.
+// Full-resolution, EXIF-corrected working canvas. Never throws internally; a decode failure
+// here should be treated by the caller as "can't process this file", not a hard error.
 export async function decodeUprightCanvas(file: File): Promise<HTMLCanvasElement> {
   const source = await decodeUprightBitmap(file);
   try {
