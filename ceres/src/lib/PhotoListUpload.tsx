@@ -15,6 +15,7 @@ import { useEffect, useRef, useState } from 'react';
 import { AlertTriangle, Camera, Image as ImageIcon, Loader2, X } from 'lucide-react';
 import { decodeUprightCanvas, downscaleCanvas, downscaleImage } from './image';
 import { MediaThumb } from './media';
+import { nativeScannerAvailable, scanWithNativeScanner } from './nativeScanner';
 import type { DuplicateReceipt, OcrResult } from './api';
 
 type UploadPayload = { dataB64: string; contentType: string };
@@ -70,7 +71,7 @@ export default function PhotoListUpload({
     itemsRef.current = items;
   }, [items]);
 
-  async function handleFiles(fileList: FileList | null) {
+  async function handleFiles(fileList: FileList | File[] | null) {
     if (!fileList || fileList.length === 0) return;
     setError('');
     setCapNote('');
@@ -121,6 +122,26 @@ export default function PhotoListUpload({
     }
   }
 
+  // Inside the Ceres Android shell (nativeScannerAvailable()), route the camera buttons
+  // through ML Kit's document scanner instead of the plain <input capture> — it produces a
+  // cropped, deskewed, cleaned-up page instead of a raw photo. On the plain web/PWA (or if
+  // the native call comes back 'unavailable' for any reason) we fail open to the ordinary
+  // camera input so the button never just does nothing.
+  async function openCamera() {
+    if (!nativeScannerAvailable()) {
+      cameraRef.current?.click();
+      return;
+    }
+    const capacity = Math.max(1, max - itemsRef.current.length);
+    const result = await scanWithNativeScanner(capacity);
+    if (Array.isArray(result)) {
+      void handleFiles(result);
+    } else if (result === 'unavailable') {
+      cameraRef.current?.click();
+    }
+    // 'cancelled' → user backed out of the scanner; do nothing.
+  }
+
   function onCameraChange(e: React.ChangeEvent<HTMLInputElement>) {
     void handleFiles(e.target.files);
     e.target.value = '';
@@ -146,7 +167,7 @@ export default function PhotoListUpload({
         <div className="flex gap-2">
           <button
             type="button"
-            onClick={() => cameraRef.current?.click()}
+            onClick={() => void openCamera()}
             style={{ minHeight: emptyH }}
             className="flex-1 rounded-xl border-2 border-dashed border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-800 font-semibold flex flex-col items-center justify-center gap-1.5"
           >
@@ -210,7 +231,7 @@ export default function PhotoListUpload({
             <div className="flex gap-2 mt-2.5">
               <button
                 type="button"
-                onClick={() => cameraRef.current?.click()}
+                onClick={() => void openCamera()}
                 disabled={anyBusy}
                 className="flex-1 min-h-[40px] rounded-lg border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-800 text-xs font-medium disabled:opacity-50"
               >

@@ -1,0 +1,85 @@
+name: Ceres Android APK
+
+# Manual-only: builds the Ceres Android shell (Capacitor remote-URL wrapper around
+# ceres.prominentdental.com, see ceres/capacitor.config.ts) and uploads the APK as a build
+# artifact. This does NOT publish anywhere — download the artifact and sideload/distribute by
+# hand. Signs with CERES_ANDROID_KEYSTORE_B64 + friends when present, otherwise falls back to
+# an unsigned APK (ceres/android/app/build.gradle only wires signingConfigs.release when
+# CERES_KEYSTORE_FILE is set in the environment).
+on:
+  workflow_dispatch:
+    inputs:
+      label:
+        description: 'Run note (unused by the build itself, just for the Actions run list)'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build — assembleRelease
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install dependencies (repo root)
+        run: npm ci
+
+      - name: Build ceres web assets
+        run: npm run build --workspace=ceres
+
+      - name: Capacitor sync (android)
+        working-directory: ceres
+        run: npx cap sync android
+
+      - name: Decode signing keystore (if configured)
+        if: ${{ secrets.CERES_ANDROID_KEYSTORE_B64 != '' }}
+        run: |
+          KEYSTORE_PATH="${{ runner.temp }}/ceres.p12"
+          echo "${{ secrets.CERES_ANDROID_KEYSTORE_B64 }}" | base64 --decode > "$KEYSTORE_PATH"
+          echo "CERES_KEYSTORE_FILE=$KEYSTORE_PATH" >> "$GITHUB_ENV"
+          echo "CERES_KEYSTORE_PASSWORD=${{ secrets.CERES_KEYSTORE_PASSWORD }}" >> "$GITHUB_ENV"
+          echo "CERES_KEY_ALIAS=${{ secrets.CERES_KEY_ALIAS }}" >> "$GITHUB_ENV"
+          echo "CERES_KEY_PASSWORD=${{ secrets.CERES_KEY_PASSWORD }}" >> "$GITHUB_ENV"
+
+      - name: Make gradlew executable
+        working-directory: ceres/android
+        run: chmod +x gradlew
+
+      - name: Assemble release APK
+        working-directory: ceres/android
+        run: ./gradlew assembleRelease
+
+      - name: Locate built APK
+        id: apk
+        working-directory: ceres/android
+        run: |
+          SIGNED="app/build/outputs/apk/release/app-release.apk"
+          UNSIGNED="app/build/outputs/apk/release/app-release-unsigned.apk"
+          if [ -f "$SIGNED" ]; then
+            echo "path=ceres/android/$SIGNED" >> "$GITHUB_OUTPUT"
+          elif [ -f "$UNSIGNED" ]; then
+            echo "path=ceres/android/$UNSIGNED" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::No APK found at $SIGNED or $UNSIGNED"
+            exit 1
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ceres-app
+          path: ${{ steps.apk.outputs.path }}
+          retention-days: 30
