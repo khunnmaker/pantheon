@@ -11,6 +11,11 @@ var config = {
     server: {
         url: 'https://ceres.prominentdental.com',
         androidScheme: 'https',
+        // Without this, ANY top-level navigation off the server.url host is kicked out to the
+        // system browser — which is exactly what the portal-SSO login redirect
+        // (pantheon.prominentdental.com) does on first open. Allow the whole suite so SSO
+        // round-trips and AppSwitcher hops (juno/apollo/...) all stay inside the app's WebView.
+        allowNavigation: ['*.prominentdental.com'],
     },
 };
 export default config;
