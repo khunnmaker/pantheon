@@ -68,13 +68,8 @@ export async function handleMaliLineEvent(
   if (!lineUserId) return;
 
   const respond = (text: string) => sendMaliLineText(lineUserId, ev.replyToken, text);
-  if (ev.message.type !== 'text') {
-    await respond(TEXT_ONLY_MESSAGE);
-    return;
-  }
-
-  const text = ev.message.text?.trim() ?? '';
-  const bind = parseStaffBindCommand(text);
+  const text = ev.message.type === 'text' ? ev.message.text?.trim() ?? '' : '';
+  const bind = text ? parseStaffBindCommand(text) : null;
   if (bind?.form === 'mali') {
     await handleStaffBindCommand(text, lineUserId, { channel: 'mali', replyToken: ev.replyToken });
     return;
@@ -86,6 +81,11 @@ export async function handleMaliLineEvent(
   });
   if (!agent) {
     await respond(BIND_PROMPT);
+    return;
+  }
+
+  if (ev.message.type !== 'text') {
+    await respond(TEXT_ONLY_MESSAGE);
     return;
   }
 

@@ -67,6 +67,12 @@ describe('unified auth roles', () => {
     expect(auth.hasAppAccess(agent('central', ['apollo']), 'juno')).toBe(false);
   });
 
+  it('makes Mali available to every live staff role without a per-person app grant', () => {
+    for (const role of auth.ALL_ROLES) {
+      expect(auth.hasAppAccess(agent(role), 'mali')).toBe(true);
+    }
+  });
+
   it('admits a central account to juno ONLY once granted (Mail, 2026-07-21) — the role stays staff-equivalent, not widened', () => {
     expect(auth.hasAppAccess(agent('central', ['minerva', 'ceres', 'apollo']), 'juno')).toBe(false);
     expect(auth.hasAppAccess(agent('central', ['minerva', 'ceres', 'apollo', 'juno']), 'juno')).toBe(true);
