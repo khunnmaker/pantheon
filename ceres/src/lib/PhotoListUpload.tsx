@@ -129,6 +129,18 @@ export default function PhotoListUpload({
   // camera input so the button never just does nothing.
   async function openCamera() {
     if (!nativeScannerAvailable()) {
+      // TEMP diagnostic (Android-app rollout, 2026-07-23): when running inside a bare Android
+      // WebView (the Ceres shell would be one; ' wv)' UA token) that ISN'T LINE's in-app
+      // browser, report why the native scanner path was skipped. Remove once the app is
+      // confirmed working in the field.
+      const ua = navigator.userAgent;
+      if (/; wv\)/.test(ua) && !/Line\//i.test(ua)) {
+        const cap = (window as any).Capacitor;
+        const state = !cap
+          ? 'bridge=none'
+          : `bridge=yes native=${String(cap.isNativePlatform?.())} plugin=${String(Boolean(cap.Plugins?.DocumentScanner))}`;
+        setCapNote(`[diag] ${state}`);
+      }
       cameraRef.current?.click();
       return;
     }
