@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import Login from './Login';
 import Ceres from './Ceres';
+import InstallAppBanner from './lib/InstallAppBanner';
 import { getStoredAgent, getToken, setOnUnauthorized, bootstrap, type Agent } from './lib/api';
 import {
   PORTAL_URL_DEFAULT,
@@ -54,7 +55,12 @@ export default function App() {
       ? <Login onLogin={setAgent} />
       : <PortalOnlyEntry />;
   }
-  return <Ceres agent={agent} onLogout={() => setAgent(null)} portalUrl={PORTAL_URL} />;
+  return (
+    <>
+      <InstallAppBanner />
+      <Ceres agent={agent} onLogout={() => setAgent(null)} portalUrl={PORTAL_URL} />
+    </>
+  );
 }
 
 function PortalOnlyEntry() {
