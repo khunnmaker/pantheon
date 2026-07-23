@@ -49,6 +49,15 @@ describe('retrieveRelevantKnowledge SQL scoping', () => {
     expect(sql).not.toContain('AND ka."lineExposable"');
   });
 
+  it('keeps supervisor-tier content out of LINE even for a supervisor asker', async () => {
+    await retrieveRelevantKnowledge([0.1], 'supervisor', 'line', 6);
+
+    const sql = renderedQuery();
+    expect(sql).toContain("ka.audience IN ('everyone', 'gm_plus')");
+    expect(sql).not.toContain("ka.audience = 'supervisor'");
+    expect(sql).toContain('ka."lineExposable" = true');
+  });
+
   it.each(['gm', 'central'] as const)('allows everyone and gm_plus for %s retrieval', async (role) => {
     await retrieveRelevantKnowledge([0.1], role, 'web', 6);
 

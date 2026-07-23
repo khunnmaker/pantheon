@@ -40,7 +40,12 @@ describe('answerMaliQuestion', () => {
     mocks.create.mockImplementation(async ({ data }) => ({ id: 'question-1', ...data }));
     mocks.embedOne.mockResolvedValue([0.1, 0.2]);
     mocks.retrieve.mockResolvedValue([article]);
-    mocks.callClaude.mockResolvedValue('กรุณายื่นคำขอในระบบก่อนวันลาค่ะ');
+    mocks.callClaude.mockImplementation(async (...args: unknown[]) => {
+      const meta = args[4] as { feature?: string } | undefined;
+      return meta?.feature === 'confidence'
+        ? '{"confident":true}'
+        : 'กรุณายื่นคำขอในระบบก่อนวันลาค่ะ';
+    });
   });
 
   it('logs waiting and returns the forward message below the similarity gate', async () => {
@@ -70,7 +75,16 @@ describe('answerMaliQuestion', () => {
     expect(result.message).toContain('กรุณายื่นคำขอในระบบก่อนวันลาค่ะ');
     expect(result.message).toMatch(/ที่มา: วิธีขออนุมัติวันลา$/);
     expect(mocks.retrieve).toHaveBeenCalledWith([0.1, 0.2], 'staff', 'line', 6);
-    expect(mocks.callClaude).toHaveBeenCalledWith(
+    expect(mocks.callClaude).toHaveBeenNthCalledWith(
+      1,
+      expect.stringContaining('"question":"ลางานอย่างไร"'),
+      expect.stringContaining('ตอบ JSON เท่านั้น'),
+      100,
+      undefined,
+      { app: 'mali', feature: 'confidence' },
+    );
+    expect(mocks.callClaude).toHaveBeenNthCalledWith(
+      2,
       'ลางานอย่างไร',
       expect.stringContaining('ตอบคำถามจากบทความที่ให้มาเท่านั้น'),
       800,
@@ -80,8 +94,31 @@ describe('answerMaliQuestion', () => {
     expect(mocks.create).toHaveBeenCalledWith({ data: expect.objectContaining({ status: 'answered_auto' }) });
   });
 
+  it('logs waiting when the LLM self-check says the retrieved evidence is insufficient', async () => {
+    mocks.callClaude.mockResolvedValue('{"confident":false}');
+
+    const result = await answerMaliQuestion({
+      agent: { id: 'agent-1', role: 'staff' },
+      questionText: 'เรื่องที่บทความตอบไม่ครบ',
+      channel: 'line',
+    });
+
+    expect(result.status).toBe('waiting');
+    expect(mocks.callClaude).toHaveBeenCalledTimes(1);
+    expect(mocks.callClaude).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.any(String),
+      100,
+      undefined,
+      { app: 'mali', feature: 'confidence' },
+    );
+    expect(mocks.create).toHaveBeenCalledWith({ data: expect.objectContaining({ status: 'waiting' }) });
+  });
+
   it('treats an above-threshold answer that admits uncertainty as waiting', async () => {
-    mocks.callClaude.mockResolvedValue('น้องมะลิไม่ทราบค่ะ');
+    mocks.callClaude
+      .mockResolvedValueOnce('{"confident":true}')
+      .mockResolvedValueOnce('น้องมะลิไม่ทราบค่ะ');
 
     const result = await answerMaliQuestion({
       agent: { id: 'agent-1', role: 'staff' },

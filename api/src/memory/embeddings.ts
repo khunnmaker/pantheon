@@ -285,9 +285,15 @@ export async function retrieveRelevantKnowledge(
   k = 6,
 ): Promise<RetrievedKnowledgeArticle[]> {
   const lit = toVectorLiteral(queryVec);
-  const audienceClause = role === 'supervisor'
-    ? Prisma.sql`TRUE`
-    : role === 'gm' || role === 'central'
+  // LINE is a borrowable-device lane: supervisor-only material is portal-only,
+  // even when the individual asker is a supervisor.
+  const audienceClause = channel === 'line'
+    ? role === 'staff'
+      ? Prisma.sql`ka.audience = 'everyone'`
+      : Prisma.sql`ka.audience IN ('everyone', 'gm_plus')`
+    : role === 'supervisor'
+      ? Prisma.sql`TRUE`
+      : role === 'gm' || role === 'central'
       ? Prisma.sql`ka.audience IN ('everyone', 'gm_plus')`
       : Prisma.sql`ka.audience = 'everyone'`;
   const channelClause = channel === 'line'

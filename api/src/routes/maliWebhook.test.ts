@@ -77,6 +77,25 @@ describe('Mali webhook event gate', () => {
     );
   });
 
+  it('gives an unbound non-text sender only the bind prompt', async () => {
+    mocks.agentFindUnique.mockResolvedValue(null);
+
+    await handleMaliLineEvent({
+      type: 'message',
+      replyToken: 'reply-picture',
+      source: { type: 'user', userId: 'U-unbound' },
+      message: { type: 'image', id: 'M-picture' },
+    });
+
+    expect(mocks.answer).not.toHaveBeenCalled();
+    expect(mocks.sendMali).toHaveBeenCalledTimes(1);
+    expect(mocks.sendMali).toHaveBeenCalledWith(
+      'U-unbound',
+      'reply-picture',
+      expect.stringMatching(/ผูกบัญชี.*MALI-XXXXXXXX/),
+    );
+  });
+
   it('routes a MALI bind command through the Mali channel before checking binding', async () => {
     mocks.parseBind.mockReturnValue({ form: 'mali', code: 'ABCDEFGH' });
 
