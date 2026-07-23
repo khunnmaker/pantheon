@@ -134,9 +134,15 @@ export default function PhotoListUpload({
     }
     const capacity = Math.max(1, max - itemsRef.current.length);
     const result = await scanWithNativeScanner(capacity);
-    if (Array.isArray(result)) {
-      void handleFiles(result);
-    } else if (result === 'unavailable') {
+    if (result.status === 'ok') {
+      void handleFiles(result.files);
+    } else if (result.status === 'module_installing') {
+      setCapNote('กำลังติดตั้งตัวสแกนของ Google — ลองแตะถ่ายรูปใหม่อีกครั้งในสักครู่ ระหว่างนี้ใช้กล้องปกติได้');
+      cameraRef.current?.click();
+    } else if (result.status === 'error') {
+      // Surface the raw reason — this only shows in the failure lane and is what makes a
+      // remote "scanner didn't open" report debuggable without adb.
+      setCapNote(`ตัวสแกนไม่พร้อม (${result.message.slice(0, 140)}) — ใช้กล้องปกติแทน`);
       cameraRef.current?.click();
     }
     // 'cancelled' → user backed out of the scanner; do nothing.

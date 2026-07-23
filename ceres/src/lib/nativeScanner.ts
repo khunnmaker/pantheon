@@ -44,9 +44,22 @@ function isCancelledError(err: unknown): boolean {
   return message.toLowerCase().includes('cancel');
 }
 
-export async function scanWithNativeScanner(pageLimit: number): Promise<File[] | 'cancelled' | 'unavailable'> {
+// Discriminated result so the caller can tell the user WHY the native scanner didn't run
+// (module still downloading vs a real error) instead of silently opening the plain camera —
+// which reads as "the Google scanner just doesn't work" during rollout.
+export type NativeScanResult =
+  | { status: 'ok'; files: File[] }
+  | { status: 'cancelled' }
+  | { status: 'module_installing' }
+  | { status: 'error'; message: string };
+
+function errText(err: unknown): string {
+  return err instanceof Error ? err.message : String(err ?? 'unknown');
+}
+
+export async function scanWithNativeScanner(pageLimit: number): Promise<NativeScanResult> {
   const plugin = window.Capacitor?.Plugins?.DocumentScanner;
-  if (!plugin) return 'unavailable';
+  if (!plugin) return { status: 'error', message: 'bridge_no_plugin' };
 
   try {
     if (plugin.isGoogleDocumentScannerModuleAvailable) {
@@ -55,7 +68,7 @@ export async function scanWithNativeScanner(pageLimit: number): Promise<File[] |
         // Best-effort kick-off — don't block this attempt on the (slow) module download.
         // Fire-and-forget on purpose: the next scan attempt will find the module installed.
         void plugin.installGoogleDocumentScannerModule?.();
-        return 'unavailable';
+        return { status: 'module_installing' };
       }
     }
   } catch {
@@ -72,11 +85,11 @@ export async function scanWithNativeScanner(pageLimit: number): Promise<File[] |
       scannerMode: 'FULL',
     });
   } catch (err) {
-    return isCancelledError(err) ? 'cancelled' : 'unavailable';
+    return isCancelledError(err) ? { status: 'cancelled' } : { status: 'error', message: errText(err) };
   }
 
   const uris = result.scannedImages ?? [];
-  if (uris.length === 0) return 'unavailable';
+  if (uris.length === 0) return { status: 'error', message: 'no_pages_returned' };
 
   const convert = window.Capacitor?.convertFileSrc;
   const files: File[] = [];
@@ -90,6 +103,6 @@ export async function scanWithNativeScanner(pageLimit: number): Promise<File[] |
       // Skip just this page — a partial scan set is still useful to the user.
     }
   }
-  if (files.length === 0) return 'unavailable';
-  return files;
+  if (files.length === 0) return { status: 'error', message: 'scan_file_read_failed' };
+  return { status: 'ok', files };
 }
