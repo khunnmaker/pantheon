@@ -23,6 +23,7 @@ import { syncPaymentToJupiter } from '../jupiter/sync.js';
 import { readChequeFromBuffer, readSlipFromBuffer } from '../llm/readSlip.js';
 import { parseReReceipts, decodeExpressBytes } from '../finance/parseReReceipts.js';
 import { parseXsDocs } from '../finance/parseXsDocs.js';
+import { resolveXsCustomerNames } from '../finance/xsCustomers.js';
 import { autoRecordEligible } from '../finance/autoRecord.js';
 import { autoConfirmOverpayCredits } from '../finance/autoDiscConfirm.js';
 import { buildReReconIndex, computeReRow } from '../finance/reRecon.js';
@@ -3320,21 +3321,27 @@ export async function junoRoutes(app: FastifyInstance) {
           })
       : [];
 
-    const xsRows: DocRow[] = docType === 'xs' || docType === 'all'
-      ? xsDocs
+    const xsCandidates = docType === 'xs' || docType === 'all'
+      ? xsDocs.filter(
           // Existence still keys off the RAW figure (zero-value import = genuine internal doc,
           // stays hidden) — but an unconfirmed sale must NOT vanish just because its effective
           // price is 0 now; it shows at ฿0 until FIN types the real total.
-          .filter((x) => x.xsNo >= XS_SALES_FROM && (num(x.confirmedAmount) > 0 || num(x.amount) > 0))
-          .filter((x) => matchesNeedle(x.xsNo, x.note))
+          (x) => x.xsNo >= XS_SALES_FROM && (num(x.confirmedAmount) > 0 || num(x.amount) > 0),
+        )
+      : [];
+    const xsCustomerNames = await resolveXsCustomerNames(prisma, xsCandidates.map((x) => x.note));
+    const xsRows: DocRow[] = docType === 'xs' || docType === 'all'
+      ? xsCandidates
+          .filter((x) => matchesNeedle(x.xsNo, x.note, xsCustomerNames.get(x.note) ?? ''))
           .filter((x) => receiptDateInRange(x.docDate))
           .map((x) => {
             const effective = xsEffectiveAmount(x);
+            const resolvedName = xsCustomerNames.get(x.note) ?? '';
             const closed = x.paymentConfirmedAt !== null || recordedDocs.has(x.xsNo);
             const c = computeReRow(x.xsNo, effective, reIndex, !closed);
             return {
               id: x.id, docType: 'xs' as const, reNumber: x.xsNo, receiptDate: x.docDate,
-              customerName: x.note, salesName: '',
+              customerName: [x.note.trim(), resolvedName].filter(Boolean).join(' '), salesName: '',
               amount: num(effective), notPosted: false,
               manualClosed: x.paymentConfirmedAt !== null, closeNote: x.closeNote,
               invoices: [], status: c.status, paidGross: c.paidGross, diff: c.diff, paymentCount: c.paymentCount,
@@ -3435,6 +3442,7 @@ export async function junoRoutes(app: FastifyInstance) {
       where: { xsNo: { gte: XS_SALES_FROM } },
       orderBy: { xsNo: 'desc' },
     });
+    const xsCustomerNames = await resolveXsCustomerNames(prisma, docs.map((d) => d.note));
     // Same candidate-payment shape as GET /bills — non-void, at least one bill ref, loaded once.
     const candidatePayments = await prisma.payment.findMany({
       where: { status: { not: 'void' }, wrongTransferAt: null, billNos: { isEmpty: false } },
@@ -3463,6 +3471,7 @@ export async function junoRoutes(app: FastifyInstance) {
       const effectiveAmount = num(d.confirmedAmount) > 0 ? d.confirmedAmount : '0';
       return {
         id: d.id, xsNo: d.xsNo, docDate: d.docDate, note: d.note,
+        customerName: [d.note.trim(), xsCustomerNames.get(d.note)].filter(Boolean).join(' '),
         amount: d.amount, confirmedAmount: d.confirmedAmount, effectiveAmount,
         paid: paidXsNos.has(d.xsNo), closed: d.paymentConfirmedAt !== null || recordedXsNos.has(d.xsNo),
         closeNote: d.closeNote,

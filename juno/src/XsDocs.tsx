@@ -112,7 +112,7 @@ export default function XsDocs({ onCountsChanged, isCeo }: { onCountsChanged: (c
                   <tr>
                     <th className="text-left px-3 py-2 font-medium">เลขเอกสาร</th>
                     <th className="text-left px-3 py-2 font-medium">วันที่</th>
-                    <th className="text-left px-3 py-2 font-medium">หมายเหตุ</th>
+                    <th className="text-left px-3 py-2 font-medium">ลูกค้า</th>
                     <th className="text-right px-3 py-2 font-medium">ยอดที่ยืนยัน</th>
                     <th className="text-left px-3 py-2 font-medium">สถานะ</th>
                   </tr>
@@ -124,7 +124,7 @@ export default function XsDocs({ onCountsChanged, isCeo }: { onCountsChanged: (c
                       <tr key={doc.id} onClick={() => setSelected(doc)} className={`border-t border-slate-100 cursor-pointer hover:bg-amber-50/40 ${selected?.id === doc.id ? 'bg-amber-50' : ''}`}>
                         <td className="px-3 py-2 font-bold whitespace-nowrap">{doc.xsNo}</td>
                         <td className="px-3 py-2 text-slate-500 whitespace-nowrap">{fmtReportDate(doc.docDate)}</td>
-                        <td className="px-3 py-2"><div className="max-w-[200px] truncate">{doc.note || '—'}</div></td>
+                        <td className="px-3 py-2"><div className="max-w-[200px] truncate">{doc.customerName || doc.note || '—'}</div></td>
                         <td className="px-3 py-2 text-right whitespace-nowrap">
                           <div className="font-semibold">{doc.confirmedAmount ? baht(numberOf(doc.confirmedAmount)) : <span className="text-slate-300">—</span>}</div>
                           {rawDiffers && <div className="text-[11px] text-slate-400">ดิบ: {baht(numberOf(doc.amount))}</div>}
@@ -238,6 +238,7 @@ function XsDrawer({ doc, isCeo, onClose, onChanged }: {
 
         <div className="p-4 grid grid-cols-2 gap-3 text-sm">
           <Info label="วันที่" value={fmtReportDate(doc.docDate)} />
+          <Info label="ลูกค้า" value={doc.customerName} />
           <Info label="หมายเหตุ (รหัสลูกค้า Express)" value={doc.note} />
           <Info label="ยอดดิบจากรายงาน" value={numberOf(doc.amount) > 0 ? baht(numberOf(doc.amount)) : undefined} />
           <Info label="รายการรับเงินที่ผูก" value={String(doc.linkedPaymentCount)} />

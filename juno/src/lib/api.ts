@@ -1124,6 +1124,7 @@ export interface XsDoc {
   xsNo: string;
   docDate: string;
   note: string;
+  customerName: string;
   amount: string; // raw STTRNR6.TXT figure — imported, unreliable
   confirmedAmount: string; // FIN-declared, '' = not yet declared
   effectiveAmount: string; // confirmedAmount when declared, else '0' — raw amount is never money

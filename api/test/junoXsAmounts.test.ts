@@ -19,13 +19,14 @@ const mocks = vi.hoisted(() => {
   const reReceipt = { findMany: vi.fn() };
   const manualBill = { findMany: vi.fn() };
   const xsDoc = { findMany: vi.fn(), findUnique: vi.fn(), upsert: vi.fn() };
+  const venusCustomer = { findMany: vi.fn() };
   const customerCreditEntry = {
     findUnique: vi.fn(), findMany: vi.fn(), count: vi.fn(), aggregate: vi.fn(),
     create: vi.fn(), update: vi.fn(), upsert: vi.fn(), delete: vi.fn(),
   };
   const syncPaymentToJupiter = vi.fn().mockResolvedValue(undefined);
   return {
-    role, email, authed, payment, paymentBankMatch, bankTxn, reReceipt, manualBill, xsDoc,
+    role, email, authed, payment, paymentBankMatch, bankTxn, reReceipt, manualBill, xsDoc, venusCustomer,
     customerCreditEntry, syncPaymentToJupiter,
   };
 });
@@ -51,6 +52,7 @@ vi.mock('../src/db/prisma.js', () => ({
       reReceipt: mocks.reReceipt,
       manualBill: mocks.manualBill,
       xsDoc: mocks.xsDoc,
+      venusCustomer: mocks.venusCustomer,
       customerCreditEntry: mocks.customerCreditEntry,
       $queryRaw: vi.fn().mockResolvedValue([]),
       $transaction: vi.fn(),
@@ -100,6 +102,7 @@ beforeEach(() => {
   mocks.manualBill.findMany.mockResolvedValue([]);
   mocks.xsDoc.findMany.mockResolvedValue([]);
   mocks.xsDoc.findUnique.mockResolvedValue(null);
+  mocks.venusCustomer.findMany.mockResolvedValue([]);
   mocks.xsDoc.upsert.mockImplementation(async ({ where, create, update }: { where: { xsNo: string }; create: Record<string, unknown>; update: Record<string, unknown> }) =>
     baseXsDoc({ xsNo: where.xsNo, ...create, ...update }));
   mocks.customerCreditEntry.findUnique.mockResolvedValue(null);
@@ -316,6 +319,41 @@ describe('GET /api/juno/re — XS pricing uses confirmedAmount ONLY (no raw fall
     expect(byNo.get('XS6900343')).toMatchObject({ amount: 150, status: 'matched', importedAmount: 0 });
     await app.close();
   });
+
+  it('shows the Express code plus Venus name when resolved, and the bare code when unresolved', async () => {
+    const app = await server();
+    mocks.xsDoc.findMany.mockResolvedValueOnce([
+      baseXsDoc({ id: 'named', xsNo: 'XS6900342', note: 'R022', confirmedAmount: '100.00' }),
+      baseXsDoc({ id: 'bare', xsNo: 'XS6900343', note: 'R999', confirmedAmount: '100.00' }),
+    ]);
+    mocks.venusCustomer.findMany
+      .mockResolvedValueOnce([{ code: 'R022', name: 'คลินิกตัวอย่าง' }])
+      .mockResolvedValueOnce([]);
+
+    const res = await app.inject({ method: 'GET', url: '/api/juno/re?type=xs' });
+    expect(res.statusCode).toBe(200);
+    const byNo = new Map(res.json().rows.map((row: { reNumber: string }) => [row.reNumber, row]));
+    expect(byNo.get('XS6900342')).toMatchObject({ customerName: 'R022 คลินิกตัวอย่าง' });
+    expect(byNo.get('XS6900343')).toMatchObject({ customerName: 'R999' });
+    await app.close();
+  });
+
+  it('includes the resolved Venus customer name in XS text search', async () => {
+    const app = await server();
+    mocks.xsDoc.findMany.mockResolvedValueOnce([
+      baseXsDoc({ xsNo: 'XS6900342', note: 'R022', confirmedAmount: '100.00' }),
+    ]);
+    mocks.venusCustomer.findMany.mockResolvedValueOnce([{ code: 'R022', name: 'คลินิกตัวอย่าง' }]);
+
+    const res = await app.inject({ method: 'GET', url: '/api/juno/re?type=xs&q=คลินิกตัวอย่าง' });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().rows).toHaveLength(1);
+    expect(res.json().rows[0]).toMatchObject({
+      reNumber: 'XS6900342',
+      customerName: 'R022 คลินิกตัวอย่าง',
+    });
+    await app.close();
+  });
 });
 
 describe('GET /api/juno/xs/lookup', () => {
@@ -345,6 +383,24 @@ describe('GET /api/juno/xs — the XS tab', () => {
     { billNos: ['XS6900341'], status: 'recorded' },
     { billNos: ['XS6900342'], status: 'verified' },
   ];
+
+  it('adds the Express code plus Venus name to each DTO, with a bare-code fallback', async () => {
+    const app = await server();
+    mocks.xsDoc.findMany.mockResolvedValueOnce([
+      baseXsDoc({ id: 'named', xsNo: 'XS6900342', note: 'R022' }),
+      baseXsDoc({ id: 'bare', xsNo: 'XS6900343', note: 'R999' }),
+    ]);
+    mocks.venusCustomer.findMany
+      .mockResolvedValueOnce([{ code: 'R022', name: 'คลินิกตัวอย่าง' }])
+      .mockResolvedValueOnce([]);
+
+    const res = await app.inject({ method: 'GET', url: '/api/juno/xs' });
+    expect(res.statusCode).toBe(200);
+    const byNo = new Map(res.json().docs.map((doc: { xsNo: string }) => [doc.xsNo, doc]));
+    expect(byNo.get('XS6900342')).toMatchObject({ note: 'R022', customerName: 'R022 คลินิกตัวอย่าง' });
+    expect(byNo.get('XS6900343')).toMatchObject({ note: 'R999', customerName: 'R999' });
+    await app.close();
+  });
 
   it('closed > paid > unpaid precedence, and counts.unpaid over the full q-less set', async () => {
     const app = await server();
